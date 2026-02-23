@@ -22,12 +22,18 @@ pub struct EmbeddingConfig {
     pub dimension: usize,
     #[serde(default = "default_cache_size")]
     pub cache_size: usize,
+    #[serde(default = "default_persistent_cache_size")]
+    pub persistent_cache_size: usize,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
 }
 
 pub(crate) fn default_cache_size() -> usize {
     100
+}
+
+pub(crate) fn default_persistent_cache_size() -> usize {
+    1000
 }
 
 pub(crate) fn default_timeout_secs() -> u64 {
@@ -80,6 +86,7 @@ impl Default for EmbeddingConfig {
             model: default_embedding_model(),
             dimension: 1024,
             cache_size: default_cache_size(),
+            persistent_cache_size: default_persistent_cache_size(),
             timeout_secs: default_timeout_secs(),
         }
     }
@@ -181,6 +188,7 @@ mod tests {
         }
         assert_eq!(config.dimension, 1024);
         assert_eq!(config.cache_size, 100);
+        assert_eq!(config.persistent_cache_size, 1000);
         assert_eq!(config.timeout_secs, 30);
     }
 
@@ -212,6 +220,7 @@ mod tests {
     #[test]
     fn test_default_helper_functions() {
         assert_eq!(default_cache_size(), 100);
+        assert_eq!(default_persistent_cache_size(), 1000);
         assert_eq!(default_timeout_secs(), 30);
         assert_eq!(default_max_retries(), 3);
         assert_eq!(default_retry_delay_ms(), 1000);

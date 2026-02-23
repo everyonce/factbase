@@ -25,9 +25,7 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
     let today = Utc::now().date_naive();
 
     // Truncate at review queue marker — review entries are not document facts
-    let body = &content[..content
-        .find(crate::patterns::REVIEW_QUEUE_MARKER)
-        .unwrap_or(content.len())];
+    let body = &content[..crate::patterns::body_end_offset(content)];
 
     // Parse temporal tags upfront to identify closed ranges
     let tags = parse_temporal_tags(body);
@@ -452,6 +450,19 @@ mod tests {
             questions.len(),
             1,
             "Old reviewed marker should not suppress stale question"
+        );
+    }
+
+    #[test]
+    fn test_stale_skips_review_queue_without_marker() {
+        // Review queue heading without the HTML marker — entries should not be treated as facts
+        let content = "# Person\n\n- Works at Acme Corp @t[~2020-06]\n\n## Review Queue\n\n- [ ] `@q[stale]` Line 3: \"Works at Acme Corp\" - is this still accurate?\n  > \n";
+        let questions = generate_stale_questions(content, 365);
+        // Should only generate question about the real fact, not the review queue entry
+        assert!(
+            questions.iter().all(|q| q.line_ref == Some(3)),
+            "Should not generate questions about review queue entries: {:?}",
+            questions
         );
     }
 }

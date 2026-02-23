@@ -137,8 +137,14 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                                     }
                                     break match result {
                                         Ok(Ok(resp)) => resp,
-                                        Ok(Err(e)) => Some(McpResponse::error(-32603, format!("Internal error: {e}"))),
-                                        Err(_) => Some(McpResponse::error(-32603, "Internal error: tool panicked".into())),
+                                        Ok(Err(e)) => {
+                                            error!("tool call failed: {e}");
+                                            Some(McpResponse::error(-32603, format!("Internal error: {e}")))
+                                        }
+                                        Err(_) => {
+                                            error!("tool call panicked");
+                                            Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
+                                        }
                                     };
                                 }
                             }
@@ -147,9 +153,11 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                         match tool_fut.await {
                             Ok(Ok(resp)) => resp,
                             Ok(Err(e)) => {
+                                error!("tool call failed: {e}");
                                 Some(McpResponse::error(-32603, format!("Internal error: {e}")))
                             }
                             Err(_) => {
+                                error!("tool call panicked");
                                 Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
                             }
                         }
@@ -366,5 +374,170 @@ mod tests {
         assert_eq!(request.params.name.as_deref(), Some("search_knowledge"));
         assert_eq!(request.params.arguments["query"], "test");
         assert!(!request.is_notification());
+    }
+
+    /// End-to-end test: update_document through stdio transport.
+    /// Verifies that write operations produce a valid JSON-RPC response
+    /// (not a transport error).
+    #[tokio::test]
+    async fn test_e2e_stdio_update_document() {
+        use crate::models::Document;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let embedding = StubEmbedding;
+
+        // Create a repo and document on disk
+        let repo_dir = TempDir::new().unwrap();
+        let repo = crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file_path = repo_dir.path().join("test.md");
+        std::fs::write(&file_path, "<!-- factbase:abc123 -->\n# Old Title\n\nOld body").unwrap();
+
+        let doc = Document {
+            id: "abc123".to_string(),
+            repo_id: "test-repo".to_string(),
+            file_path: file_path.to_string_lossy().to_string(),
+            title: "Old Title".to_string(),
+            content: "<!-- factbase:abc123 -->\n# Old Title\n\nOld body".to_string(),
+            file_hash: "hash1".to_string(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Send update_document via stdio
+        let input = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "update_document",
+                "arguments": {
+                    "id": "abc123",
+                    "title": "New Title"
+                }
+            }
+        })
+        .to_string();
+
+        let reader = Cursor::new(input);
+        let mut output = Vec::new();
+        run_stdio_io(&db, &embedding, None, reader, &mut output)
+            .await
+            .unwrap();
+
+        let resp_str = String::from_utf8(output).unwrap();
+        let resp: Value = serde_json::from_str(resp_str.trim()).unwrap();
+
+        // Should be a success response, not an error
+        assert_eq!(resp["id"], 1);
+        assert!(
+            resp.get("error").is_none(),
+            "expected success but got error: {resp}"
+        );
+
+        // Verify the content field contains the tool result
+        let content = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let tool_result: Value = serde_json::from_str(content).unwrap();
+        assert_eq!(tool_result["id"], "abc123");
+        assert_eq!(tool_result["title"], "New Title");
+
+        // Verify file was actually updated
+        let file_content = std::fs::read_to_string(&file_path).unwrap();
+        assert!(file_content.contains("# New Title"));
+    }
+
+    /// End-to-end test: update_document with content writes new body to disk.
+    #[tokio::test]
+    async fn test_e2e_stdio_update_document_content() {
+        use crate::models::Document;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let embedding = StubEmbedding;
+
+        let repo_dir = TempDir::new().unwrap();
+        let repo = crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file_path = repo_dir.path().join("entity.md");
+        std::fs::write(
+            &file_path,
+            "<!-- factbase:def456 -->\n# Old Name\n\n- old fact\n- garbage [^1]",
+        )
+        .unwrap();
+
+        let doc = Document {
+            id: "def456".to_string(),
+            repo_id: "test-repo".to_string(),
+            file_path: "entity.md".to_string(),
+            title: "Old Name".to_string(),
+            content: "<!-- factbase:def456 -->\n# Old Name\n\n- old fact\n- garbage [^1]"
+                .to_string(),
+            file_hash: "hash1".to_string(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Send update_document with new content (including fixed title)
+        let input = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "update_document",
+                "arguments": {
+                    "id": "def456",
+                    "content": "<!-- factbase:def456 -->\n# Fixed Name\n\n- cleaned fact"
+                }
+            }
+        })
+        .to_string();
+
+        let reader = Cursor::new(input);
+        let mut output = Vec::new();
+        run_stdio_io(&db, &embedding, None, reader, &mut output)
+            .await
+            .unwrap();
+
+        let resp_str = String::from_utf8(output).unwrap();
+        let resp: Value = serde_json::from_str(resp_str.trim()).unwrap();
+        assert!(resp.get("error").is_none(), "expected success: {resp}");
+
+        let content = resp["result"]["content"][0]["text"].as_str().unwrap();
+        let tool_result: Value = serde_json::from_str(content).unwrap();
+        assert_eq!(tool_result["title"], "Fixed Name");
+
+        // Verify file on disk has new content
+        let on_disk = std::fs::read_to_string(&file_path).unwrap();
+        assert!(
+            on_disk.contains("# Fixed Name"),
+            "title should be updated on disk: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("- cleaned fact"),
+            "body should be updated on disk: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("garbage"),
+            "old content should be gone: {on_disk}"
+        );
     }
 }

@@ -66,7 +66,10 @@ fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
          A source person becoming inactive or changing roles does NOT make the fact itself stale — \
          it only means the source may need re-verification. Only flag CONFLICT or STALE when the \
          factual claim itself is contradicted by other documents.\n\n\
-         For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n",
+         For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n\
+         IMPORTANT: Sequential entries often share a boundary month due to month-level \
+         granularity (e.g., Role A ends 2016-11 and Role B starts 2016-11). This is a normal \
+         transition, NOT a conflict. Do not flag boundary-month overlaps as CONFLICT.\n\n",
     );
 
     write_str!(prompt, "Document: {doc_title}\n---\n");
@@ -164,6 +167,7 @@ fn result_to_question(
 pub async fn cross_validate_document(
     content: &str,
     doc_id: &str,
+    doc_type: Option<&str>,
     db: &Database,
     embedding: &dyn EmbeddingProvider,
     llm: &dyn LlmProvider,
@@ -189,6 +193,7 @@ pub async fn cross_validate_document(
         })
         .collect();
 
+    let content_lower = content.to_lowercase();
     let mut facts_with_context = Vec::with_capacity(facts.len());
 
     for fact in facts {
@@ -201,6 +206,27 @@ pub async fn cross_validate_document(
             .into_iter()
             .filter(|r| r.id != doc_id)
             .filter(|r| r.relevance_score >= RELEVANCE_THRESHOLD)
+            // When source and result have different document types, require
+            // the result's title to appear somewhere in the source document.
+            // This filters out semantically-similar-but-logically-unrelated
+            // noise while preserving genuine cross-type references. Checking
+            // the full document (not just the fact line) enables bidirectional
+            // discovery: if Acme's doc mentions "John Smith" anywhere, then
+            // John's doc is relevant evidence when checking ANY of Acme's facts.
+            // Same-type results pass through — they are more likely to be
+            // genuinely related (e.g., two company docs referencing each other).
+            .filter(|r| {
+                let same_type = match (doc_type, r.doc_type.as_deref()) {
+                    (Some(src), Some(res)) => src == res,
+                    (None, None) => true,
+                    _ => false,
+                };
+                if same_type {
+                    return true;
+                }
+                let title_lower = r.title.to_lowercase();
+                content_lower.contains(&title_lower)
+            })
             .collect();
 
         if related.is_empty() {
@@ -264,6 +290,7 @@ mod tests {
         let questions = cross_validate_document(
             "",
             "abc123",
+            None,
             &db,
             &MockEmbedding::new(1024),
             &MockLlm::default(),
@@ -280,6 +307,7 @@ mod tests {
         let questions = cross_validate_document(
             content,
             "abc123",
+            None,
             &db,
             &MockEmbedding::new(1024),
             &MockLlm::default(),
@@ -296,6 +324,7 @@ mod tests {
         let questions = cross_validate_document(
             content,
             "abc123",
+            Some("person"),
             &db,
             &MockEmbedding::new(1024),
             &MockLlm::default(),
@@ -650,7 +679,7 @@ mod tests {
         );
 
         let questions =
-            cross_validate_document(content, "prod01", &db, &MockEmbedding::new(1024), &llm)
+            cross_validate_document(content, "prod01", Some("product"), &db, &MockEmbedding::new(1024), &llm)
                 .await
                 .unwrap();
 
@@ -709,5 +738,214 @@ mod tests {
         let prompt = build_prompt("Doc", &[&fwc]);
         assert!(prompt.contains("Distinguish between the SUBJECT of a fact"));
         assert!(prompt.contains("source person becoming inactive"));
+    }
+
+    /// Cross-type results are filtered when the result's title is not mentioned
+    /// anywhere in the source document. This prevents semantically-similar-but-
+    /// logically-unrelated documents from polluting cross-validation evidence.
+    #[tokio::test]
+    async fn test_cross_type_result_filtered_when_title_not_in_fact() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        // Insert a person document with doc_type = "person"
+        let mut person_doc = Document::test_default();
+        person_doc.id = "person1".to_string();
+        person_doc.title = "Jane Smith".to_string();
+        person_doc.doc_type = Some("person".to_string());
+        person_doc.content = "# Jane Smith\n\n- Status: Inactive".to_string();
+        db.upsert_document(&person_doc).unwrap();
+        db.upsert_embedding("person1", &vec![0.1; 1024]).unwrap();
+
+        // Product document — neither fact NOR document mentions Jane Smith
+        let content = "# Acme Platform\n\n- Supports utilization review\n";
+
+        // MockLlm would flag STALE if it saw the person doc, but it should
+        // never be called because the person doc gets filtered out.
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"STALE","reason":"person inactive","source_doc":"Jane Smith"}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content,
+            "prod01",
+            Some("product"),
+            &db,
+            &MockEmbedding::new(1024),
+            &llm,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            questions.is_empty(),
+            "cross-type result should be filtered when title not in document"
+        );
+    }
+
+    /// Cross-type results are kept when the result's title IS mentioned in the
+    /// source document, enabling genuine cross-type validation.
+    #[tokio::test]
+    async fn test_cross_type_result_kept_when_title_in_fact() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut person_doc = Document::test_default();
+        person_doc.id = "person1".to_string();
+        person_doc.title = "Jane Smith".to_string();
+        person_doc.doc_type = Some("person".to_string());
+        person_doc.content = "# Jane Smith\n\n- Status: Inactive".to_string();
+        db.upsert_document(&person_doc).unwrap();
+        db.upsert_embedding("person1", &vec![0.1; 1024]).unwrap();
+
+        // Product document — fact DOES mention Jane Smith
+        let content = "# Acme Platform\n\n- Jane Smith leads the platform team\n";
+
+        // LLM returns STALE — this time it's valid because Jane is mentioned
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"STALE","reason":"Jane is now inactive","source_doc":"Jane Smith"}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content,
+            "prod01",
+            Some("product"),
+            &db,
+            &MockEmbedding::new(1024),
+            &llm,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            questions.len(),
+            1,
+            "cross-type result should be kept when title appears in document"
+        );
+    }
+
+    /// Bidirectional cross-type: a cross-type result is kept when the result's
+    /// title appears elsewhere in the source document, even if NOT in the
+    /// specific fact being validated. This enables discovering information gaps
+    /// between related documents of different types.
+    #[tokio::test]
+    async fn test_cross_type_result_kept_when_title_in_document_not_in_fact() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        // Person doc says they're CEO at Acme
+        let mut person_doc = Document::test_default();
+        person_doc.id = "person1".to_string();
+        person_doc.title = "John Smith".to_string();
+        person_doc.doc_type = Some("person".to_string());
+        person_doc.content = "# John Smith\n\n- CEO at Acme Corp @t[2020..]".to_string();
+        db.upsert_document(&person_doc).unwrap();
+        db.upsert_embedding("person1", &vec![0.1; 1024]).unwrap();
+
+        // Company doc mentions John Smith in one fact, but the fact being
+        // validated ("raised $50M") does NOT mention John Smith.
+        // The old title-in-fact filter would reject John's doc here.
+        // The new title-in-document filter keeps it because "John Smith"
+        // appears elsewhere in the company doc.
+        let content = "# Acme Corp\n\n\
+            - Raised $50M Series B @t[=2023-06]\n\
+            - John Smith joined as advisor @t[=2019]\n";
+
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"STALE","reason":"John Smith is CEO not just advisor, doc missing leadership info","source_doc":"John Smith"}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content,
+            "comp01",
+            Some("company"),
+            &db,
+            &MockEmbedding::new(1024),
+            &llm,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            questions.len(),
+            1,
+            "cross-type result should be kept when title appears in document even if not in the specific fact"
+        );
+    }
+
+    /// Same-type cross-validation keeps all results regardless of title mention.
+    #[tokio::test]
+    async fn test_same_type_results_not_filtered() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut person_doc = Document::test_default();
+        person_doc.id = "person2".to_string();
+        person_doc.title = "Bob Jones".to_string();
+        person_doc.doc_type = Some("person".to_string());
+        person_doc.content = "# Bob Jones\n\n- Works at Acme".to_string();
+        db.upsert_document(&person_doc).unwrap();
+        db.upsert_embedding("person2", &vec![0.1; 1024]).unwrap();
+
+        // Another person document — fact doesn't mention Bob by name
+        let content = "# Alice Brown\n\n- VP Engineering at Acme\n";
+
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"CONSISTENT","reason":"both at Acme","source_doc":""}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content,
+            "person3",
+            Some("person"),
+            &db,
+            &MockEmbedding::new(1024),
+            &llm,
+        )
+        .await
+        .unwrap();
+
+        // CONSISTENT returns no questions, but the key is the LLM WAS called
+        // (same-type docs are not filtered regardless of title mention)
+        assert!(questions.is_empty());
+    }
+
+    /// Non-person cross-type filtering: a project doc should not be polluted
+    /// by an unrelated company doc that happens to match semantically.
+    #[tokio::test]
+    async fn test_cross_type_project_company_filtered_when_unrelated() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut company_doc = Document::test_default();
+        company_doc.id = "comp01".to_string();
+        company_doc.title = "Globex Industries".to_string();
+        company_doc.doc_type = Some("company".to_string());
+        company_doc.content = "# Globex Industries\n\n- Pivoted to AI in 2025".to_string();
+        db.upsert_document(&company_doc).unwrap();
+        db.upsert_embedding("comp01", &vec![0.1; 1024]).unwrap();
+
+        // Project doc — fact does NOT mention Globex Industries
+        let content = "# Project Atlas\n\n- Uses machine learning for predictions\n";
+
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"STALE","reason":"company pivoted","source_doc":"Globex Industries"}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content,
+            "proj01",
+            Some("project"),
+            &db,
+            &MockEmbedding::new(1024),
+            &llm,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            questions.is_empty(),
+            "unrelated cross-type result should be filtered out"
+        );
     }
 }

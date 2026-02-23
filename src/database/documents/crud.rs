@@ -92,7 +92,10 @@ impl Database {
         Ok(())
     }
 
-    /// Update document content and hash in the database (used after lint writes review questions)
+    /// Update document content and hash in the database (used after lint writes review questions).
+    ///
+    /// Runs all three SQL statements (UPDATE + FTS5 sync) inside a single
+    /// transaction so a partial failure cannot leave the index inconsistent.
     pub fn update_document_content(
         &self,
         id: &str,
@@ -109,17 +112,30 @@ impl Database {
         };
         let word_count = crate::models::word_count(content) as i64;
         let has_review_queue = content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
-        conn.execute(
-            "UPDATE documents SET content = ?1, file_hash = ?2, word_count = ?3, has_review_queue = ?4 WHERE id = ?5 AND is_deleted = FALSE",
-            rusqlite::params![content_to_store, new_hash, word_count, has_review_queue, id],
-        )?;
-        // Keep FTS5 index in sync
-        conn.execute("DELETE FROM document_content_fts WHERE doc_id = ?1", [id])?;
-        conn.execute(
-            "INSERT INTO document_content_fts (doc_id, content) VALUES (?1, ?2)",
-            rusqlite::params![id, content],
-        )?;
-        Ok(())
+        conn.execute_batch("BEGIN")?;
+        let result = (|| -> Result<(), FactbaseError> {
+            conn.execute(
+                "UPDATE documents SET content = ?1, file_hash = ?2, word_count = ?3, has_review_queue = ?4 WHERE id = ?5 AND is_deleted = FALSE",
+                rusqlite::params![content_to_store, new_hash, word_count, has_review_queue, id],
+            )?;
+            // Keep FTS5 index in sync
+            conn.execute("DELETE FROM document_content_fts WHERE doc_id = ?1", [id])?;
+            conn.execute(
+                "INSERT INTO document_content_fts (doc_id, content) VALUES (?1, ?2)",
+                rusqlite::params![id, content],
+            )?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                conn.execute_batch("COMMIT")?;
+                Ok(())
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
     }
 
     /// Update only the file hash for a document (used by scan --verify --fix)

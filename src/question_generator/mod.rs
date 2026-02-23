@@ -47,8 +47,11 @@ mod temporal;
 use crate::patterns::{FACT_LINE_REGEX, META_COMMENTARY_REGEX};
 
 // Re-export all public items
-pub use ambiguous::{generate_ambiguous_questions, generate_ambiguous_questions_with_type};
-pub use conflict::{generate_conflict_questions, generate_duplicate_role_questions};
+pub use ambiguous::{extract_defined_terms, generate_ambiguous_questions, generate_ambiguous_questions_with_type};
+pub use conflict::{
+    classify_conflict_pattern, filter_sequential_conflicts, generate_conflict_questions,
+    generate_duplicate_entry_questions, ConflictPattern,
+};
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};
@@ -61,9 +64,7 @@ pub use temporal::generate_temporal_questions;
 /// and skips lines with empty fact text. Line numbers are 1-indexed.
 pub(crate) fn iter_fact_lines(content: &str) -> impl Iterator<Item = (usize, &str, String)> {
     // Stop before the review queue section — its content is not document facts
-    let end = content
-        .find(crate::patterns::REVIEW_QUEUE_MARKER)
-        .unwrap_or(content.len());
+    let end = crate::patterns::body_end_offset(content);
     let body = &content[..end];
     body.lines().enumerate().filter_map(|(line_idx, line)| {
         if !FACT_LINE_REGEX.is_match(line) {
@@ -204,5 +205,14 @@ mod tests {
         let content = "- Rewrite my own clarification text as if it were factual content";
         let results: Vec<_> = iter_fact_lines(content).collect();
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_iter_fact_lines_skips_review_queue_without_marker() {
+        // Review queue heading without the HTML marker should still be excluded
+        let content = "# Title\n\n- Real fact\n\n## Review Queue\n\n- [ ] `@q[stale]` Line 3: \"Real fact\" - is this still accurate?\n  > \n";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "Real fact");
     }
 }

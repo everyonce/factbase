@@ -383,6 +383,49 @@ pub fn stamp_reviewed_lines(content: &str, line_numbers: &[usize], date: &NaiveD
         .join("\n")
 }
 
+/// Stamp `<!-- sequential -->` on fact lines to permanently suppress conflict regeneration.
+pub fn stamp_sequential_lines(content: &str, line_numbers: &[usize]) -> String {
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line_num = i + 1;
+            if line_numbers.contains(&line_num)
+                && line.trim_start().starts_with("- ")
+                && !line.contains("<!-- sequential")
+            {
+                format!("{line} <!-- sequential -->")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Stamp `<!-- sequential -->` on fact lines matching the given text snippets.
+/// This is a text-based fallback for when line numbers may be stale due to
+/// content changes between question generation and answer application.
+pub fn stamp_sequential_by_text(content: &str, fact_texts: &[&str]) -> String {
+    if fact_texts.is_empty() {
+        return content.to_string();
+    }
+    content
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("- ")
+                && !line.contains("<!-- sequential")
+                && fact_texts.iter().any(|t| !t.is_empty() && line.contains(t))
+            {
+                format!("{line} <!-- sequential -->")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Remove processed questions from Review Queue
 pub fn remove_processed_questions(content: &str, processed_indices: &[usize]) -> String {
     let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
@@ -1012,5 +1055,68 @@ Content here
         );
         assert!(result.contains("- Fact A @t[~2026-02]"));
         assert!(result.contains("- Fact B @t[~2026-02]"));
+    }
+
+    // --- stamp_sequential_lines tests ---
+
+    #[test]
+    fn test_stamp_sequential_lines_basic() {
+        let content = "# Person\n\n- VP at Acme @t[2020..2023]\n- Director at Acme @t[2018..2020]";
+        let result = stamp_sequential_lines(content, &[3, 4]);
+        assert!(result.contains("<!-- sequential -->"));
+        assert!(result.lines().nth(2).unwrap().contains("<!-- sequential -->"));
+        assert!(result.lines().nth(3).unwrap().contains("<!-- sequential -->"));
+    }
+
+    #[test]
+    fn test_stamp_sequential_lines_no_double_stamp() {
+        let content = "- VP at Acme @t[2020..2023] <!-- sequential -->";
+        let result = stamp_sequential_lines(content, &[1]);
+        assert_eq!(result.matches("<!-- sequential").count(), 1);
+    }
+
+    #[test]
+    fn test_stamp_sequential_lines_skips_non_fact_lines() {
+        let content = "# Title\n\n- Fact line";
+        let result = stamp_sequential_lines(content, &[1]);
+        assert!(!result.lines().next().unwrap().contains("<!-- sequential"));
+    }
+
+    // --- stamp_sequential_by_text tests ---
+
+    #[test]
+    fn test_stamp_sequential_by_text_basic() {
+        let content = "# Person\n\n- VP at Acme @t[2020..2023]\n- Director at Acme @t[2018..2020]";
+        let result = stamp_sequential_by_text(content, &["VP at Acme", "Director at Acme"]);
+        assert!(result.lines().nth(2).unwrap().contains("<!-- sequential -->"));
+        assert!(result.lines().nth(3).unwrap().contains("<!-- sequential -->"));
+    }
+
+    #[test]
+    fn test_stamp_sequential_by_text_no_double_stamp() {
+        let content = "- VP at Acme @t[2020..2023] <!-- sequential -->";
+        let result = stamp_sequential_by_text(content, &["VP at Acme"]);
+        assert_eq!(result.matches("<!-- sequential").count(), 1);
+    }
+
+    #[test]
+    fn test_stamp_sequential_by_text_skips_non_fact_lines() {
+        let content = "# VP at Acme\n\n- Other fact";
+        let result = stamp_sequential_by_text(content, &["VP at Acme"]);
+        assert!(!result.lines().next().unwrap().contains("<!-- sequential"));
+    }
+
+    #[test]
+    fn test_stamp_sequential_by_text_empty_texts() {
+        let content = "- Fact line";
+        let result = stamp_sequential_by_text(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_stamp_sequential_by_text_ignores_empty_strings() {
+        let content = "- Fact line";
+        let result = stamp_sequential_by_text(content, &[""]);
+        assert!(!result.contains("<!-- sequential"));
     }
 }

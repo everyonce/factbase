@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 8;
+pub(super) const SCHEMA_VERSION: i32 = 9;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -62,6 +62,22 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         8,
         "Rename last_lint_at to last_check_at",
         "ALTER TABLE repositories RENAME COLUMN last_lint_at TO last_check_at;",
+    ),
+    // Version 9: Persistent query embedding cache
+    (
+        9,
+        "Add query_embedding_cache table",
+        "CREATE TABLE IF NOT EXISTS query_embedding_cache (
+            text_hash TEXT NOT NULL,
+            model TEXT NOT NULL,
+            text TEXT NOT NULL,
+            dimension INTEGER NOT NULL,
+            embedding BLOB NOT NULL,
+            created_at TIMESTAMP NOT NULL,
+            last_used_at TIMESTAMP NOT NULL,
+            PRIMARY KEY (text_hash, model)
+        );
+        CREATE INDEX IF NOT EXISTS idx_query_cache_last_used ON query_embedding_cache(last_used_at);",
     ),
 ];
 
@@ -152,6 +168,21 @@ impl Database {
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS document_content_fts USING fts5(doc_id UNINDEXED, content)",
             [],
+        )?;
+
+        // Persistent query embedding cache
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS query_embedding_cache (
+                text_hash TEXT NOT NULL,
+                model TEXT NOT NULL,
+                text TEXT NOT NULL,
+                dimension INTEGER NOT NULL,
+                embedding BLOB NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                last_used_at TIMESTAMP NOT NULL,
+                PRIMARY KEY (text_hash, model)
+            );
+            CREATE INDEX IF NOT EXISTS idx_query_cache_last_used ON query_embedding_cache(last_used_at);",
         )?;
 
         // Run any pending migrations
@@ -455,5 +486,26 @@ mod tests {
             .expect("query table");
 
         assert!(table_exists, "document_content_fts FTS5 table should exist");
+    }
+
+    #[test]
+    fn test_query_embedding_cache_table_exists() {
+        let temp = TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+        let _db = Database::new(&db_path).expect("create database");
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open connection");
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='query_embedding_cache'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query table");
+
+        assert!(
+            table_exists,
+            "query_embedding_cache table should exist"
+        );
     }
 }

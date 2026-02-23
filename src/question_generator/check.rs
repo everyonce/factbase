@@ -11,8 +11,8 @@ use crate::processor::{
 use crate::progress::ProgressReporter;
 use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
-    generate_ambiguous_questions_with_type, generate_conflict_questions,
-    generate_duplicate_role_questions, generate_missing_questions,
+    extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
+    generate_conflict_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };
@@ -100,6 +100,23 @@ pub async fn check_all_documents(
 
     let title_map_ref = &title_map;
 
+    // Collect defined terms from definitions/glossary documents so we don't
+    // flag acronyms that are already defined in the repo.
+    let mut defined_terms = HashSet::new();
+    for doc in docs {
+        let is_def = doc.doc_type.as_deref().is_some_and(|t| {
+            let l = t.to_lowercase();
+            l == "definition" || l == "glossary"
+        }) || doc.content.lines().take(3).any(|l| {
+            let lower = l.to_lowercase();
+            lower.contains("# glossary") || lower.contains("# definitions")
+        });
+        if is_def {
+            defined_terms.extend(extract_defined_terms(&doc.content));
+        }
+    }
+    let defined_terms_ref = &defined_terms;
+
     let mut all_results = Vec::new();
     for chunk_start in (0..total_active).step_by(config.concurrency) {
         let chunk_end = (chunk_start + config.concurrency).min(total_active);
@@ -113,13 +130,19 @@ pub async fn check_all_documents(
                 async move {
                     progress.report(idx + 1, total_active, &format!("Checking {}", doc.title));
 
-                    let mut questions = generate_temporal_questions(&doc.content);
-                    questions.extend(generate_conflict_questions(&doc.content));
-                    questions.extend(generate_duplicate_role_questions(&doc.content));
-                    questions.extend(generate_missing_questions(&doc.content));
-                    questions.extend(generate_source_quality_questions(&doc.content));
-                    questions.extend(generate_ambiguous_questions_with_type(&doc.content, doc.doc_type.as_deref()));
-                    questions.extend(generate_stale_questions(&doc.content, config.stale_days));
+                    // Prefer fresh content from disk over potentially stale database content.
+                    // apply_review_answers writes reviewed markers to files but doesn't
+                    // update the database, so the DB content may lack those markers.
+                    let disk_content = std::fs::read_to_string(&doc.file_path).ok();
+                    let content = disk_content.as_deref().unwrap_or(&doc.content);
+
+                    let mut questions = generate_temporal_questions(content);
+                    questions.extend(generate_conflict_questions(content));
+                    questions.extend(generate_duplicate_entry_questions(content));
+                    questions.extend(generate_missing_questions(content));
+                    questions.extend(generate_source_quality_questions(content));
+                    questions.extend(generate_ambiguous_questions_with_type(content, doc.doc_type.as_deref(), defined_terms_ref));
+                    questions.extend(generate_stale_questions(content, config.stale_days));
 
                     // Check for duplicate titles
                     if let Some(dupes) = title_map_ref.get(&doc.title.to_lowercase()) {
@@ -138,7 +161,7 @@ pub async fn check_all_documents(
 
                     if let Some(ref rf) = rf_ref {
                         questions.extend(generate_required_field_questions(
-                            &doc.content,
+                            content,
                             Some(doc.doc_type.as_deref().unwrap_or("unknown")),
                             rf,
                         ));
@@ -147,7 +170,7 @@ pub async fn check_all_documents(
                     // Cross-validation is done in a separate sequential pass below
                     // to avoid overwhelming the Bedrock API with concurrent calls
 
-                    let existing_questions = parse_review_queue(&doc.content).unwrap_or_default();
+                    let existing_questions = parse_review_queue(content).unwrap_or_default();
                     let existing_unanswered =
                         existing_questions.iter().filter(|q| !q.answered).count();
                     let existing_answered =
@@ -162,7 +185,7 @@ pub async fn check_all_documents(
                     // Prune stale unanswered questions from the document
                     let had_deep_check = llm.is_some();
                     let pruned_content = prune_stale_questions(
-                        &doc.content,
+                        content,
                         &valid_descriptions,
                         had_deep_check,
                     );
@@ -174,17 +197,34 @@ pub async fn check_all_documents(
                             .count();
 
                     // Dedup new questions against remaining existing questions
-                    let remaining_descs: HashSet<_> = parse_review_queue(&pruned_content)
-                        .unwrap_or_default()
+                    let remaining = parse_review_queue(&pruned_content)
+                        .unwrap_or_default();
+                    let remaining_descs: HashSet<_> = remaining
                         .iter()
                         .map(|q| q.description.clone())
                         .collect();
-                    questions.retain(|q| !remaining_descs.contains(&q.description));
+                    let remaining_conflict_normalized: HashSet<String> = remaining
+                        .iter()
+                        .filter(|q| q.question_type == QuestionType::Conflict)
+                        .map(|q| crate::processor::normalize_conflict_desc(&q.description).to_string())
+                        .collect();
+                    questions.retain(|q| {
+                        if remaining_descs.contains(&q.description) {
+                            return false;
+                        }
+                        if q.question_type == QuestionType::Conflict
+                            && remaining_conflict_normalized.contains(
+                                crate::processor::normalize_conflict_desc(&q.description),
+                            )
+                        {
+                            return false;
+                        }
+                        true
+                    });
 
                     // Count fact lines with recent reviewed markers
                     let today = Utc::now().date_naive();
-                    let skipped_reviewed = doc
-                        .content
+                    let skipped_reviewed = content
                         .lines()
                         .filter(|line| FACT_LINE_REGEX.is_match(line))
                         .filter(|line| {
@@ -218,7 +258,7 @@ pub async fn check_all_documents(
                 progress.report(i + 1, total_active, "Cross-validating");
             }
             if let Some(llm) = llm {
-                match cross_validate_document(&doc.content, &doc.id, db, embedding, llm).await {
+                match cross_validate_document(&doc.content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm).await {
                     Ok(cross) => questions.extend(cross),
                     Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
                 }
@@ -228,7 +268,13 @@ pub async fn check_all_documents(
 
     // Write results (sequential for filesystem safety)
     let mut results = Vec::new();
-    for (doc, questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed) in all_results {
+    for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed) in all_results {
+        // Post-filter: remove conflict questions for boundary-month sequential entries.
+        // This catches conflicts from any generator (rule-based or LLM cross-validation).
+        let disk_content = std::fs::read_to_string(&doc.file_path).ok();
+        let content = disk_content.as_deref().unwrap_or(&doc.content);
+        filter_sequential_conflicts(content, &mut questions);
+
         let count = questions.len();
         let needs_write = count > 0 || pruned_count > 0;
         if needs_write && !config.dry_run {

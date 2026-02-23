@@ -2,6 +2,7 @@
 //!
 //! These functions provide consistent argument parsing across all MCP tools.
 
+use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::processor::{
     calculate_fact_stats, count_facts_with_sources, parse_review_queue, parse_source_definitions,
@@ -9,6 +10,7 @@ use crate::processor::{
 };
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 // Re-export shared run_blocking for MCP tool modules
 pub(crate) use crate::async_helpers::run_blocking;
@@ -125,6 +127,24 @@ pub(crate) fn build_review_stats_json(content: &str) -> Value {
         "answered_questions": answered,
         "pending_questions": total - answered
     })
+}
+
+/// Resolve a document's absolute file path by joining the repository root with
+/// the document's relative `file_path`.
+///
+/// This ensures all MCP tools read/write the same physical file regardless of
+/// the process working directory.
+pub(crate) fn resolve_doc_path(
+    db: &Database,
+    doc: &crate::models::Document,
+) -> Result<PathBuf, FactbaseError> {
+    let repo = db.get_repository(&doc.repo_id)?.ok_or_else(|| {
+        FactbaseError::not_found(format!(
+            "Repository '{}' not found for document {}",
+            doc.repo_id, doc.id
+        ))
+    })?;
+    Ok(repo.path.join(&doc.file_path))
 }
 
 #[cfg(test)]

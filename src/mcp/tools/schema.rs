@@ -309,6 +309,36 @@ pub fn tools_list() -> Value {
                     "type": "object",
                     "properties": {}
                 }
+            },
+            {
+                "name": "embeddings_export",
+                "description": "Export pre-computed vector embeddings as JSONL. Includes model metadata and chunk boundaries for portable distribution.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": { "type": "string", "description": "Filter by repository ID (optional, exports all if omitted)" }
+                    }
+                }
+            },
+            {
+                "name": "embeddings_import",
+                "description": "Import pre-computed vector embeddings from JSONL data. Validates model and dimension compatibility. Skips embeddings for documents not in the database.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "data": { "type": "string", "description": "JSONL string with embedding header and records" },
+                        "force": { "type": "boolean", "description": "Force import even if embedding dimensions don't match (default: false)" }
+                    },
+                    "required": ["data"]
+                }
+            },
+            {
+                "name": "embeddings_status",
+                "description": "Check embedding index status: document coverage, model info, dimension, orphaned chunks.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
             }
         ]
     })
@@ -322,7 +352,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 21, "should have 21 tools");
+        assert_eq!(tools.len(), 24, "should have 24 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -346,6 +376,9 @@ mod tests {
         assert!(names.contains(&"workflow"));
         assert!(names.contains(&"organize_analyze"));
         assert!(names.contains(&"organize"));
+        assert!(names.contains(&"embeddings_export"));
+        assert!(names.contains(&"embeddings_import"));
+        assert!(names.contains(&"embeddings_status"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {

@@ -198,6 +198,29 @@ pub static MANUAL_LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Review Queue marker comment.
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
 
+/// Return the byte offset where the document body ends (before any review queue
+/// section). Checks for both the HTML marker comment and a bare `## Review Queue`
+/// heading, returning whichever appears first. This prevents question generators
+/// from treating review queue entries as document facts when the marker is missing.
+pub(crate) fn body_end_offset(content: &str) -> usize {
+    let marker = content.find(REVIEW_QUEUE_MARKER);
+    let heading = content
+        .lines()
+        .scan(0usize, |offset, line| {
+            let start = *offset;
+            *offset += line.len() + 1; // +1 for newline
+            Some((start, line))
+        })
+        .find(|(_, line)| line.trim() == "## Review Queue")
+        .map(|(pos, _)| pos);
+    match (marker, heading) {
+        (Some(m), Some(h)) => m.min(h),
+        (Some(m), None) => m,
+        (None, Some(h)) => h,
+        (None, None) => content.len(),
+    }
+}
+
 // =============================================================================
 // Orphan review patterns
 // =============================================================================
@@ -222,9 +245,10 @@ pub(crate) static SIMPLE_ORPHAN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 // Reviewed-fact markers
 // =============================================================================
 
-/// Matches `<!-- reviewed:YYYY-MM-DD -->` markers on fact lines.
+/// Matches `<!-- reviewed:YYYY-MM-DD ... -->` markers on fact lines.
+/// Allows optional explanation text after the date (e.g., `<!-- reviewed:2026-02-21 Not a conflict -->`).
 pub(crate) static REVIEWED_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<!-- reviewed:(\d{4}-\d{2}-\d{2}) -->")
+    Regex::new(r"<!-- reviewed:(\d{4}-\d{2}-\d{2})\b.*?-->")
         .expect("reviewed marker regex should be valid")
 });
 
@@ -236,16 +260,15 @@ pub fn extract_reviewed_date(line: &str) -> Option<chrono::NaiveDate> {
 
 /// Add or update a `<!-- reviewed:YYYY-MM-DD -->` marker on a line.
 ///
-/// If the line already has a reviewed marker, replaces the date.
-/// Otherwise appends the marker at the end of the line.
+/// If the line already has a reviewed marker, replaces only the date
+/// (preserving any explanation text). Otherwise appends the marker.
 pub(crate) fn add_or_update_reviewed_marker(line: &str, date: &chrono::NaiveDate) -> String {
-    let marker = format!("<!-- reviewed:{date} -->");
-    if REVIEWED_MARKER_REGEX.is_match(line) {
-        REVIEWED_MARKER_REGEX
-            .replace(line, marker.as_str())
-            .into_owned()
+    if let Some(caps) = REVIEWED_MARKER_REGEX.captures(line) {
+        let old_date = &caps[1];
+        let new_date = date.format("%Y-%m-%d").to_string();
+        line.replacen(old_date, &new_date, 1)
     } else {
-        format!("{line} {marker}")
+        format!("{line} <!-- reviewed:{date} -->")
     }
 }
 
@@ -513,6 +536,24 @@ mod tests {
         assert_eq!(result, "- Works at Acme Corp <!-- reviewed:2026-02-15 -->");
     }
 
+    #[test]
+    fn test_add_reviewed_marker_preserves_explanation() {
+        let line = "- CTO at TechCo @t[2020..] <!-- reviewed:2025-01-01 Not a conflict: advisory role -->";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = add_or_update_reviewed_marker(line, &date);
+        assert_eq!(
+            result,
+            "- CTO at TechCo @t[2020..] <!-- reviewed:2026-02-15 Not a conflict: advisory role -->"
+        );
+    }
+
+    #[test]
+    fn test_extract_reviewed_date_with_explanation() {
+        let line = "- CTO @t[2020..] <!-- reviewed:2026-02-21 Not a conflict: advisory role -->";
+        let date = extract_reviewed_date(line).unwrap();
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap());
+    }
+
     // =========================================================================
     // META_COMMENTARY_REGEX tests
     // =========================================================================
@@ -610,5 +651,34 @@ mod tests {
             - The apply_review_answers command was run\n\
             - Normal fact about a person\n";
         assert!(!has_corruption_artifacts(content));
+    }
+
+    // =========================================================================
+    // body_end_offset tests
+    // =========================================================================
+
+    #[test]
+    fn test_body_end_offset_with_marker() {
+        let content = "# Title\n\n- fact\n\n<!-- factbase:review -->\n- [ ] question";
+        assert_eq!(body_end_offset(content), content.find("<!-- factbase:review -->").unwrap());
+    }
+
+    #[test]
+    fn test_body_end_offset_with_heading_only() {
+        let content = "# Title\n\n- fact\n\n## Review Queue\n\n- [ ] question";
+        assert_eq!(body_end_offset(content), content.find("## Review Queue").unwrap());
+    }
+
+    #[test]
+    fn test_body_end_offset_heading_before_marker() {
+        let content = "# Title\n\n- fact\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] q";
+        // Heading comes first
+        assert_eq!(body_end_offset(content), content.find("## Review Queue").unwrap());
+    }
+
+    #[test]
+    fn test_body_end_offset_no_review_section() {
+        let content = "# Title\n\n- fact one\n- fact two\n";
+        assert_eq!(body_end_offset(content), content.len());
     }
 }

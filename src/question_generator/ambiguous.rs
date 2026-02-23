@@ -3,6 +3,8 @@
 //! Generates `@q[ambiguous]` questions for unclear phrasing
 //! that needs clarification.
 
+use std::collections::HashSet;
+
 use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
@@ -13,6 +15,34 @@ use super::iter_fact_lines;
 /// Default number of days a reviewed marker suppresses question regeneration.
 const REVIEWED_SKIP_DAYS: i64 = 180;
 
+/// Extract defined terms from a definitions/glossary document.
+///
+/// Parses `**TERM**:` patterns (the standard definitions file format) and
+/// `## TERM` headings, returning the set of defined terms.
+pub fn extract_defined_terms(content: &str) -> HashSet<String> {
+    let mut terms = HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim().trim_start_matches("- ");
+        // Match **TERM**: definition pattern
+        if let Some(rest) = trimmed.strip_prefix("**") {
+            if let Some(end) = rest.find("**") {
+                let term = rest[..end].trim();
+                if !term.is_empty() {
+                    terms.insert(term.to_string());
+                }
+            }
+        }
+        // Match ## TERM heading pattern
+        if let Some(heading) = trimmed.strip_prefix("## ") {
+            let term = heading.trim();
+            if !term.is_empty() && !term.contains(' ') {
+                terms.insert(term.to_string());
+            }
+        }
+    }
+    terms
+}
+
 /// Generate ambiguous questions for a document.
 ///
 /// Detects facts with unclear phrasing that needs clarification:
@@ -22,13 +52,17 @@ const REVIEWED_SKIP_DAYS: i64 = 180;
 ///
 /// Returns a list of `ReviewQuestion` with `question_type = Ambiguous`.
 pub fn generate_ambiguous_questions(content: &str) -> Vec<ReviewQuestion> {
-    generate_ambiguous_questions_with_type(content, None)
+    generate_ambiguous_questions_with_type(content, None, &HashSet::new())
 }
 
 /// Generate ambiguous questions, optionally skipping acronym detection for definition documents.
+///
+/// `defined_terms` contains terms from definitions files in the repo that should
+/// not be flagged as undefined acronyms.
 pub fn generate_ambiguous_questions_with_type(
     content: &str,
     doc_type: Option<&str>,
+    defined_terms: &HashSet<String>,
 ) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
@@ -60,7 +94,7 @@ pub fn generate_ambiguous_questions_with_type(
                 if skip_acronyms {
                     None
                 } else {
-                    detect_undefined_acronym(&fact_text)
+                    detect_undefined_acronym(&fact_text, defined_terms)
                 }
             });
 
@@ -163,17 +197,51 @@ fn detect_ambiguous_relationship(text: &str) -> Option<&'static str> {
 ///
 /// Flags uppercase sequences (2-5 chars) that aren't preceded by their expansion
 /// in the same line or a nearby heading. Common well-known acronyms are excluded.
-fn detect_undefined_acronym(text: &str) -> Option<String> {
-    // Well-known acronyms that don't need definition in a knowledge base context
+fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Option<String> {
+    // Well-known acronyms that don't need definition in a knowledge base context.
+    // Includes business, tech, cloud/AWS, and general industry terms.
     static KNOWN: &[&str] = &[
-        "US", "USA", "UK", "EU", "UN", "CEO", "CTO", "CFO", "COO", "CMO", "CIO", "CISO", "CPO",
-        "VP", "SVP", "EVP", "MD", "PhD", "MBA", "BS", "BA", "MS", "HR", "IT", "AI", "ML", "API",
-        "SDK", "CLI", "URL", "SQL", "AWS", "GCP", "IPO", "LLC", "INC", "ID", "OK", "PM", "AM",
-        "Q1", "Q2", "Q3", "Q4", "YoY", "QoQ", "MoM", "KPI", "OKR", "ROI", "P&L", "R&D",
-        "SaaS", "PaaS", "IaaS", "B2B", "B2C", "PR", "IR", "VC", "PE", "LP", "GP", "USD", "EUR",
-        "GBP", "NYC", "SF", "LA", "DC", "HQ", "FTE", "PTO", "WFH", "RTO", "ASAP", "TBD", "TBA",
-        "NA", "EMEA", "APAC", "LATAM", "AMER", "DNS", "HTTP", "HTTPS", "SSH", "TCP", "IP",
+        // Business & titles
+        "CEO", "CTO", "CFO", "COO", "CMO", "CIO", "CISO", "CPO", "CRO", "CSO",
+        "VP", "SVP", "EVP", "MD", "PhD", "MBA", "BS", "BA", "MS", "JD",
+        "HR", "IT", "PM", "AM",
+        "IPO", "LLC", "INC", "LTD", "PLC", "AG",
+        "Q1", "Q2", "Q3", "Q4", "YoY", "QoQ", "MoM",
+        "KPI", "OKR", "ROI", "P&L", "R&D", "M&A",
+        "SaaS", "PaaS", "IaaS", "B2B", "B2C", "B2G", "D2C",
+        "PR", "IR", "VC", "PE", "LP", "GP",
+        "ARR", "MRR", "GMV", "TAM", "SAM", "SOM", "NPS", "CAC", "LTV", "EBITDA",
+        "FTE", "PTO", "WFH", "RTO", "OOO",
+        // Geography & general
+        "US", "USA", "UK", "EU", "UN", "NATO",
+        "USD", "EUR", "GBP", "JPY", "CAD", "AUD",
+        "NYC", "SF", "LA", "DC", "HQ",
+        "NA", "EMEA", "APAC", "LATAM", "AMER", "ANZ", "DACH",
+        "ASAP", "TBD", "TBA", "ID", "OK", "ETA", "EOD", "COB",
+        // Core tech
+        "AI", "ML", "LLM", "NLP", "GPU", "CPU", "RAM", "SSD", "HDD",
+        "API", "SDK", "CLI", "GUI", "IDE", "URL", "URI",
+        "SQL", "DB", "ORM", "ETL", "ELT",
+        "DNS", "HTTP", "HTTPS", "SSH", "TCP", "IP", "UDP", "TLS", "SSL",
+        "REST", "RPC", "gRPC", "MQTT", "AMQP",
         "PDF", "CSV", "JSON", "YAML", "XML", "HTML", "CSS", "JS", "TS",
+        "CI", "CD", "QA", "UAT", "SLA", "SLO", "SLI",
+        "OS", "VM", "VPN", "SSO", "MFA", "RBAC", "IAM", "LDAP", "SAML",
+        "CRUD", "CQRS", "DDD", "TDD", "BDD", "OOP",
+        "JWT", "OAuth", "OIDC",
+        "CIDR", "VLAN", "BGP", "CDN", "WAF",
+        // AWS services & terms
+        "AWS", "EC2", "S3", "RDS", "ECS", "EKS", "ELB", "ALB", "NLB",
+        "VPC", "SNS", "SQS", "SES", "DMS", "KMS", "ACM",
+        "EMR", "MSK", "MQ", "DAX", "DDB",
+        "EBS", "EFS", "FSx",
+        "ECR", "EKS", "ECS",
+        "WAF", "ACL", "NAT", "IGW",
+        "SSM", "ASG", "AMI", "AZ", "ARN",
+        // Other cloud & infra
+        "GCP", "GKE", "GCE", "GCS",
+        "K8s", "CNCF", "OCI", "WASM",
+        "SOC", "PCI", "DSS", "HIPAA", "GDPR", "SOX", "FedRAMP",
     ];
 
     // Find uppercase sequences of 2-5 chars that look like acronyms
@@ -189,6 +257,10 @@ fn detect_undefined_acronym(text: &str) -> Option<String> {
             continue;
         }
         if KNOWN.iter().any(|k| k.eq_ignore_ascii_case(trimmed)) {
+            continue;
+        }
+        // Skip terms defined in the repo's definitions files
+        if defined_terms.iter().any(|t| t.eq_ignore_ascii_case(trimmed)) {
             continue;
         }
         // Check if the expansion appears in the same line (e.g., "Total Addressable Market (TAM)")
@@ -361,10 +433,11 @@ mod tests {
 
     #[test]
     fn test_undefined_acronym_flagged() {
-        let content = "# Company\n\n- Leading TAM expansion in healthcare";
+        // XYZQ is not in KNOWN or any definitions file
+        let content = "# Company\n\n- Leading XYZQ expansion in healthcare";
         let questions = generate_ambiguous_questions(content);
         assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("TAM"));
+        assert!(questions[0].description.contains("XYZQ"));
         assert!(questions[0].description.contains("what does"));
     }
 
@@ -376,6 +449,23 @@ mod tests {
             questions.is_empty(),
             "CTO is a well-known acronym, should not be flagged"
         );
+    }
+
+    #[test]
+    fn test_builtin_cloud_acronyms_not_flagged() {
+        // These were previously flagged but are now in the expanded KNOWN list
+        for acronym in &["ECS", "RDS", "SOC", "TAM", "VPC", "SQS", "EKS", "ALB"] {
+            let content = format!("# Project\n\n- Uses {acronym} for deployment");
+            let questions = generate_ambiguous_questions(&content);
+            let acronym_q: Vec<_> = questions
+                .iter()
+                .filter(|q| q.description.contains(acronym))
+                .collect();
+            assert!(
+                acronym_q.is_empty(),
+                "{acronym} should be in the built-in known list"
+            );
+        }
     }
 
     #[test]
@@ -404,7 +494,8 @@ mod tests {
 
     #[test]
     fn test_multiple_acronyms_only_first_flagged() {
-        let content = "# Doc\n\n- Working on TAM and SAM analysis";
+        // Use unknown acronyms since TAM/SAM are now in KNOWN
+        let content = "# Doc\n\n- Working on XYZQ and ABCD analysis";
         let questions = generate_ambiguous_questions(content);
         let acronym_q: Vec<_> = questions
             .iter()
@@ -422,5 +513,76 @@ mod tests {
             .filter(|q| q.description.contains("AWS"))
             .collect();
         assert!(acronym_q.is_empty());
+    }
+
+    // ==================== Definitions-Aware Tests ====================
+
+    #[test]
+    fn test_extract_defined_terms_bold_pattern() {
+        let content = "# Definitions: Business Terms\n\n## Acronyms\n- **TAM**: Total Addressable Market\n- **NPS**: Net Promoter Score\n";
+        let terms = extract_defined_terms(content);
+        assert!(terms.contains("TAM"));
+        assert!(terms.contains("NPS"));
+    }
+
+    #[test]
+    fn test_extract_defined_terms_heading_pattern() {
+        let content = "# Glossary\n\n## XYZQ\nSome custom term\n\n## ABCD\nAnother term\n";
+        let terms = extract_defined_terms(content);
+        assert!(terms.contains("XYZQ"));
+        assert!(terms.contains("ABCD"));
+    }
+
+    #[test]
+    fn test_extract_defined_terms_ignores_multi_word_headings() {
+        let content = "# Glossary\n\n## Some Phrase\nNot a term\n";
+        let terms = extract_defined_terms(content);
+        assert!(terms.is_empty());
+    }
+
+    #[test]
+    fn test_defined_term_not_flagged() {
+        let defined = HashSet::from(["XYZQ".to_string()]);
+        let content = "# Company\n\n- Uses XYZQ for analytics";
+        let questions = generate_ambiguous_questions_with_type(content, None, &defined);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("XYZQ"))
+            .collect();
+        assert!(
+            acronym_q.is_empty(),
+            "Term defined in definitions file should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_defined_term_case_insensitive() {
+        let defined = HashSet::from(["xyzq".to_string()]);
+        let content = "# Company\n\n- Uses XYZQ for analytics";
+        let questions = generate_ambiguous_questions_with_type(content, None, &defined);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("XYZQ"))
+            .collect();
+        assert!(
+            acronym_q.is_empty(),
+            "Defined term matching should be case-insensitive"
+        );
+    }
+
+    #[test]
+    fn test_undefined_term_still_flagged_with_definitions() {
+        let defined = HashSet::from(["XYZQ".to_string()]);
+        let content = "# Company\n\n- Uses ABCD for analytics";
+        let questions = generate_ambiguous_questions_with_type(content, None, &defined);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("ABCD"))
+            .collect();
+        assert_eq!(
+            acronym_q.len(),
+            1,
+            "Undefined term should still be flagged even when other terms are defined"
+        );
     }
 }

@@ -1,0 +1,430 @@
+//! Embedding import/export operations.
+//!
+//! Provides JSONL-based export and import of vector embeddings with model metadata,
+//! enabling portable distribution and backup of pre-computed embeddings.
+//!
+//! # Format
+//!
+//! The JSONL file has a header line followed by one line per embedding chunk:
+//!
+//! ```jsonl
+//! {"format_version":1,"model":"amazon.titan-embed-text-v2:0","dimension":1024,"exported_at":"...","chunk_count":42}
+//! {"doc_id":"a1cb2b","chunk_index":0,"chunk_start":0,"chunk_end":1000,"embedding":[0.1,...]}
+//! ```
+
+use crate::database::Database;
+use crate::error::FactbaseError;
+use serde::{Deserialize, Serialize};
+use std::io::{BufRead, Write};
+use std::path::Path;
+
+/// Current format version for embedding exports.
+pub const FORMAT_VERSION: u32 = 1;
+
+/// Header line in the JSONL export file.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingExportHeader {
+    pub format_version: u32,
+    pub model: String,
+    pub dimension: usize,
+    pub exported_at: String,
+    pub chunk_count: usize,
+}
+
+/// A single embedding chunk record in the JSONL export.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingRecord {
+    pub doc_id: String,
+    pub chunk_index: usize,
+    pub chunk_start: usize,
+    pub chunk_end: usize,
+    pub embedding: Vec<f32>,
+}
+
+/// Result of an embedding status check.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingsStatusInfo {
+    pub total_chunks: usize,
+    pub total_documents: usize,
+    pub dimension: Option<usize>,
+    pub model: String,
+    pub orphaned_chunks: usize,
+    pub documents_without_embeddings: usize,
+}
+
+/// Result of an embedding import operation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub imported_chunks: usize,
+    pub skipped_chunks: usize,
+    pub model: String,
+    pub dimension: usize,
+}
+
+/// Export all embeddings for a repository (or all repos) to a writer.
+pub fn export_embeddings<W: Write>(
+    db: &Database,
+    repo_id: Option<&str>,
+    model: &str,
+    writer: &mut W,
+) -> Result<usize, FactbaseError> {
+    let records = db.export_all_embeddings(repo_id)?;
+    let dimension = db.get_embedding_dimension()?.unwrap_or(1024);
+
+    let header = EmbeddingExportHeader {
+        format_version: FORMAT_VERSION,
+        model: model.to_string(),
+        dimension,
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        chunk_count: records.len(),
+    };
+
+    serde_json::to_writer(&mut *writer, &header)
+        .map_err(|e| FactbaseError::internal(format!("Failed to write header: {e}")))?;
+    writer
+        .write_all(b"\n")
+        .map_err(|e| FactbaseError::Io(e))?;
+
+    for record in &records {
+        serde_json::to_writer(&mut *writer, record)
+            .map_err(|e| FactbaseError::internal(format!("Failed to write record: {e}")))?;
+        writer
+            .write_all(b"\n")
+            .map_err(|e| FactbaseError::Io(e))?;
+    }
+
+    Ok(records.len())
+}
+
+/// Export embeddings to a file path.
+pub fn export_embeddings_to_file(
+    db: &Database,
+    repo_id: Option<&str>,
+    model: &str,
+    path: &Path,
+) -> Result<usize, FactbaseError> {
+    let file = std::fs::File::create(path)?;
+    let mut writer = std::io::BufWriter::new(file);
+    let count = export_embeddings(db, repo_id, model, &mut writer)?;
+    writer
+        .flush()
+        .map_err(|e| FactbaseError::Io(e))?;
+    Ok(count)
+}
+
+/// Import embeddings from a reader, validating model and dimension compatibility.
+pub fn import_embeddings<R: BufRead>(
+    db: &Database,
+    reader: &mut R,
+    force: bool,
+) -> Result<ImportResult, FactbaseError> {
+    let mut line = String::new();
+    reader
+        .read_line(&mut line)
+        .map_err(|e| FactbaseError::Io(e))?;
+
+    let header: EmbeddingExportHeader = serde_json::from_str(line.trim()).map_err(|e| {
+        FactbaseError::internal(format!("Invalid embedding export header: {e}"))
+    })?;
+
+    if header.format_version > FORMAT_VERSION {
+        return Err(FactbaseError::internal(format!(
+            "Unsupported format version {} (this binary supports up to {})",
+            header.format_version, FORMAT_VERSION
+        )));
+    }
+
+    // Check dimension compatibility
+    if let Some(current_dim) = db.get_embedding_dimension()? {
+        if current_dim != header.dimension && !force {
+            return Err(FactbaseError::internal(format!(
+                "Dimension mismatch: database has {current_dim}-dim embeddings, file has {}-dim. Use --force to overwrite.",
+                header.dimension
+            )));
+        }
+    }
+
+    let mut imported = 0usize;
+    let mut skipped = 0usize;
+
+    // Get set of existing document IDs to skip orphaned embeddings
+    let existing_docs = db.get_all_document_ids()?;
+
+    for line_result in reader.lines() {
+        let line = line_result.map_err(|e| FactbaseError::Io(e))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: EmbeddingRecord = serde_json::from_str(&line).map_err(|e| {
+            FactbaseError::internal(format!("Invalid embedding record: {e}"))
+        })?;
+
+        if !existing_docs.contains(&record.doc_id) {
+            skipped += 1;
+            continue;
+        }
+
+        db.upsert_embedding_chunk(
+            &record.doc_id,
+            record.chunk_index,
+            record.chunk_start,
+            record.chunk_end,
+            &record.embedding,
+        )?;
+        imported += 1;
+    }
+
+    Ok(ImportResult {
+        imported_chunks: imported,
+        skipped_chunks: skipped,
+        model: header.model,
+        dimension: header.dimension,
+    })
+}
+
+/// Import embeddings from a file path.
+pub fn import_embeddings_from_file(
+    db: &Database,
+    path: &Path,
+    force: bool,
+) -> Result<ImportResult, FactbaseError> {
+    let file = std::fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+    import_embeddings(db, &mut reader, force)
+}
+
+/// Get embedding status information.
+pub fn embeddings_status(
+    db: &Database,
+    repo_id: Option<&str>,
+    model: &str,
+) -> Result<EmbeddingsStatusInfo, FactbaseError> {
+    let status = if let Some(rid) = repo_id {
+        db.check_embedding_status(rid)?
+    } else {
+        // Check across all repos
+        let repos = db.list_repositories()?;
+        let mut combined = crate::database::EmbeddingStatus {
+            with_embeddings: Vec::new(),
+            without_embeddings: Vec::new(),
+            orphaned: Vec::new(),
+        };
+        for repo in &repos {
+            let s = db.check_embedding_status(&repo.id)?;
+            combined.with_embeddings.extend(s.with_embeddings);
+            combined.without_embeddings.extend(s.without_embeddings);
+            combined.orphaned.extend(s.orphaned);
+        }
+        combined
+    };
+
+    let total_chunks = db.count_embedding_chunks()?;
+    let dimension = db.get_embedding_dimension()?;
+
+    Ok(EmbeddingsStatusInfo {
+        total_chunks,
+        total_documents: status.with_embeddings.len(),
+        dimension,
+        model: model.to_string(),
+        orphaned_chunks: status.orphaned.len(),
+        documents_without_embeddings: status.without_embeddings.len(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::{test_db, test_doc, test_repo};
+
+    fn setup_db_with_embeddings() -> (Database, tempfile::TempDir) {
+        let (db, tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        let emb1: Vec<f32> = vec![0.1; 1024];
+        let emb2: Vec<f32> = vec![0.2; 1024];
+        db.upsert_embedding_chunk("doc1", 0, 0, 500, &emb1).unwrap();
+        db.upsert_embedding_chunk("doc1", 1, 500, 1000, &emb1).unwrap();
+        db.upsert_embedding("doc2", &emb2).unwrap();
+
+        (db, tmp)
+    }
+
+    #[test]
+    fn test_export_header_format() {
+        let header = EmbeddingExportHeader {
+            format_version: FORMAT_VERSION,
+            model: "test-model".into(),
+            dimension: 1024,
+            exported_at: "2026-01-01T00:00:00Z".into(),
+            chunk_count: 5,
+        };
+        let json = serde_json::to_string(&header).unwrap();
+        assert!(json.contains("\"format_version\":1"));
+        assert!(json.contains("\"model\":\"test-model\""));
+        assert!(json.contains("\"dimension\":1024"));
+    }
+
+    #[test]
+    fn test_embedding_record_roundtrip() {
+        let record = EmbeddingRecord {
+            doc_id: "abc123".into(),
+            chunk_index: 0,
+            chunk_start: 0,
+            chunk_end: 1000,
+            embedding: vec![0.1, 0.2, 0.3],
+        };
+        let json = serde_json::to_string(&record).unwrap();
+        let parsed: EmbeddingRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.doc_id, "abc123");
+        assert_eq!(parsed.embedding.len(), 3);
+    }
+
+    #[test]
+    fn test_export_and_import_roundtrip() {
+        let (db, _tmp) = setup_db_with_embeddings();
+
+        // Export
+        let mut buf = Vec::new();
+        let count = export_embeddings(&db, None, "test-model", &mut buf).unwrap();
+        assert_eq!(count, 3); // 2 chunks for doc1 + 1 for doc2
+
+        // Create a fresh DB with same docs but no embeddings
+        let (db2, _tmp2) = test_db();
+        let repo = test_repo();
+        db2.upsert_repository(&repo).unwrap();
+        db2.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db2.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        // Import
+        let mut reader = std::io::BufReader::new(&buf[..]);
+        let result = import_embeddings(&db2, &mut reader, false).unwrap();
+        assert_eq!(result.imported_chunks, 3);
+        assert_eq!(result.skipped_chunks, 0);
+        assert_eq!(result.model, "test-model");
+        assert_eq!(result.dimension, 1024);
+
+        // Verify chunk metadata survived
+        let meta = db2.get_chunk_metadata("doc1_0").unwrap().unwrap();
+        assert_eq!(meta.0, "doc1");
+        assert_eq!(meta.2, 0);   // chunk_start
+        assert_eq!(meta.3, 500); // chunk_end
+    }
+
+    #[test]
+    fn test_import_skips_missing_docs() {
+        let (db, _tmp) = setup_db_with_embeddings();
+
+        let mut buf = Vec::new();
+        export_embeddings(&db, None, "test-model", &mut buf).unwrap();
+
+        // Create DB with only doc1 (not doc2)
+        let (db2, _tmp2) = test_db();
+        let repo = test_repo();
+        db2.upsert_repository(&repo).unwrap();
+        db2.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+
+        let mut reader = std::io::BufReader::new(&buf[..]);
+        let result = import_embeddings(&db2, &mut reader, false).unwrap();
+        assert_eq!(result.imported_chunks, 2); // only doc1's chunks
+        assert_eq!(result.skipped_chunks, 1); // doc2's chunk skipped
+    }
+
+    #[test]
+    fn test_import_rejects_future_format_version() {
+        let header = EmbeddingExportHeader {
+            format_version: 999,
+            model: "test".into(),
+            dimension: 1024,
+            exported_at: "2026-01-01T00:00:00Z".into(),
+            chunk_count: 0,
+        };
+        let data = format!("{}\n", serde_json::to_string(&header).unwrap());
+        let (db, _tmp) = test_db();
+        let mut reader = std::io::BufReader::new(data.as_bytes());
+        let result = import_embeddings(&db, &mut reader, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported format version"));
+    }
+
+    #[test]
+    fn test_import_rejects_dimension_mismatch() {
+        let (db, _tmp) = setup_db_with_embeddings();
+
+        let header = EmbeddingExportHeader {
+            format_version: 1,
+            model: "test".into(),
+            dimension: 768, // mismatch
+            exported_at: "2026-01-01T00:00:00Z".into(),
+            chunk_count: 0,
+        };
+        let data = format!("{}\n", serde_json::to_string(&header).unwrap());
+        let mut reader = std::io::BufReader::new(data.as_bytes());
+        let result = import_embeddings(&db, &mut reader, false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Dimension mismatch"));
+    }
+
+    #[test]
+    fn test_import_force_bypasses_dimension_check() {
+        let (db, _tmp) = setup_db_with_embeddings();
+
+        let header = EmbeddingExportHeader {
+            format_version: 1,
+            model: "test".into(),
+            dimension: 768,
+            exported_at: "2026-01-01T00:00:00Z".into(),
+            chunk_count: 0,
+        };
+        let data = format!("{}\n", serde_json::to_string(&header).unwrap());
+        let mut reader = std::io::BufReader::new(data.as_bytes());
+        let result = import_embeddings(&db, &mut reader, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_embeddings_status() {
+        let (db, _tmp) = setup_db_with_embeddings();
+        let info = embeddings_status(&db, Some("test-repo"), "test-model").unwrap();
+        assert_eq!(info.total_documents, 2);
+        assert_eq!(info.total_chunks, 3);
+        assert_eq!(info.dimension, Some(1024));
+        assert_eq!(info.documents_without_embeddings, 0);
+    }
+
+    #[test]
+    fn test_export_to_file_and_import() {
+        let (db, _tmp) = setup_db_with_embeddings();
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("embeddings.jsonl");
+
+        let count = export_embeddings_to_file(&db, None, "test-model", &path).unwrap();
+        assert_eq!(count, 3);
+
+        // Import into fresh DB
+        let (db2, _tmp2) = test_db();
+        let repo = test_repo();
+        db2.upsert_repository(&repo).unwrap();
+        db2.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db2.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        let result = import_embeddings_from_file(&db2, &path, false).unwrap();
+        assert_eq!(result.imported_chunks, 3);
+    }
+
+    #[test]
+    fn test_export_empty_db() {
+        let (db, _tmp) = test_db();
+        let mut buf = Vec::new();
+        let count = export_embeddings(&db, None, "test-model", &mut buf).unwrap();
+        assert_eq!(count, 0);
+
+        // Verify header is still written
+        let lines: Vec<&str> = std::str::from_utf8(&buf).unwrap().trim().lines().collect();
+        assert_eq!(lines.len(), 1); // just header
+        let header: EmbeddingExportHeader = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(header.chunk_count, 0);
+    }
+}

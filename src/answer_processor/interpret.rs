@@ -32,6 +32,14 @@ pub fn classify_answer(answer: &str) -> AnswerType {
         || lower.starts_with("not a conflict")
         || lower.starts_with("no conflict")
         || lower.starts_with("not conflicting")
+        || lower.starts_with("sequential")
+        || lower.starts_with("roles are sequential")
+        || lower.starts_with("boundary overlap")
+        || lower.starts_with("boundary month")
+        || lower.contains("not a conflict")
+        || lower.contains("sequential roles")
+        || lower.contains("boundary overlap")
+        || lower.contains("boundary month")
     {
         return AnswerType::Dismissal;
     }
@@ -74,7 +82,7 @@ pub fn classify_answer(answer: &str) -> AnswerType {
         let date = extract_date_string(source_text);
         let source = date.as_ref().map_or(source_text.to_string(), |d| {
             source_text
-                .replace(d, "")
+                .replacen(d, "", 1)
                 .replace(',', "")
                 .trim()
                 .to_string()
@@ -85,11 +93,16 @@ pub fn classify_answer(answer: &str) -> AnswerType {
     // Source citation heuristic: looks like "SourceName, YYYY-MM-DD" or "SourceName YYYY-MM"
     if let Some(date) = extract_date_string(trimmed) {
         let source = trimmed
-            .replace(&date, "")
+            .replacen(&date, "", 1)
             .replace(',', "")
             .trim()
             .to_string();
         if !source.is_empty() && !has_correction_indicators(&lower) {
+            // If the non-date text is confirmation language, treat as confirmation
+            // rather than injecting the answer as a garbage footnote.
+            if has_confirmation_indicators(&source) {
+                return AnswerType::Confirmation;
+            }
             return AnswerType::SourceCitation {
                 source,
                 date: Some(date),
@@ -110,6 +123,15 @@ fn extract_date_string(text: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
+/// Check if text looks like confirmation language (e.g. "still current", "confirmed").
+/// Used to prevent the date heuristic from misclassifying confirmations-with-dates
+/// as source citations (the "garbage footnotes" bug).
+fn has_confirmation_indicators(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    let trimmed = lower.trim();
+    CONFIRMATION_EXACT.iter().any(|kw| trimmed.starts_with(kw))
+}
+
 /// Check if lowercased text contains indicators of a factual correction.
 fn has_correction_indicators(lower: &str) -> bool {
     lower.contains("no,")
@@ -128,33 +150,141 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
     let line_text = extract_quoted_text(&question.description).unwrap_or_default();
     let old_tag = extract_temporal_tag(&question.description);
 
-    match classify_answer(answer) {
+    let answer_type = classify_answer(answer);
+
+    // Conflict questions ("were both true simultaneously?") should only produce
+    // Dismiss, Defer, Delete, or date corrections.  Source citations and generic
+    // corrections are meaningless for conflicts and cause footnote pollution.
+    if question.question_type == crate::models::QuestionType::Conflict {
+        return match answer_type {
+            AnswerType::Dismissal | AnswerType::Confirmation => ChangeInstruction::Dismiss,
+            AnswerType::Deferral => ChangeInstruction::Defer,
+            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
+            AnswerType::Correction { .. } => {
+                // Only apply if it contains actual date info; otherwise dismiss
+                if let Some(dates) = extract_dates_from_answer(answer) {
+                    if let Some(ref old) = old_tag {
+                        let new_tag = format_temporal_tag(&dates, old);
+                        return ChangeInstruction::UpdateTemporal {
+                            line_text,
+                            old_tag: old.clone(),
+                            new_tag,
+                        };
+                    }
+                    let tag = format_new_temporal_tag(&dates);
+                    return ChangeInstruction::AddTemporal { line_text, tag };
+                }
+                ChangeInstruction::Dismiss
+            }
+            // Source citations are never meaningful for conflict answers
+            AnswerType::SourceCitation { .. } => ChangeInstruction::Dismiss,
+        };
+    }
+
+    // Missing-source questions ("what is the source for this fact?") should only
+    // produce Dismiss, Defer, or Delete.  Source citations from review answers
+    // must NOT become footnote definitions — they cause garbage footnote
+    // accumulation when questions are re-generated and re-answered.  Answers
+    // belong in the review queue section, not as source citations.
+    if question.question_type == crate::models::QuestionType::Missing {
+        return match answer_type {
+            AnswerType::Dismissal | AnswerType::Confirmation | AnswerType::SourceCitation { .. } => {
+                ChangeInstruction::Dismiss
+            }
+            AnswerType::Deferral => ChangeInstruction::Defer,
+            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
+            // Anything else (Correction fallback, etc.) is not a source — dismiss
+            AnswerType::Correction { .. } => ChangeInstruction::Dismiss,
+        };
+    }
+
+    // Stale questions ("is this still current?") should produce temporal updates
+    // or dismissals.  Source citations are misclassified confirmations — long
+    // answers with dates that corroborate a fact are confirmations, not new sources.
+    if question.question_type == crate::models::QuestionType::Stale {
+        return match answer_type {
+            AnswerType::Dismissal => ChangeInstruction::Dismiss,
+            AnswerType::Deferral => ChangeInstruction::Defer,
+            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
+            // Treat source citations as confirmations — the user is confirming
+            // the fact is still current with evidence, not providing a new source.
+            AnswerType::Confirmation | AnswerType::SourceCitation { .. } => {
+                let date_str = extract_date_string(answer)
+                    .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+                if let Some(ref old) = old_tag {
+                    let inner = old
+                        .strip_prefix("@t[")
+                        .and_then(|s| s.strip_suffix("]"))
+                        .unwrap_or("");
+                    if inner.ends_with("..") {
+                        ChangeInstruction::Dismiss
+                    } else {
+                        ChangeInstruction::UpdateTemporal {
+                            line_text,
+                            old_tag: old.clone(),
+                            new_tag: format!("@t[~{date_str}]"),
+                        }
+                    }
+                } else {
+                    ChangeInstruction::AddTemporal {
+                        line_text,
+                        tag: format!("@t[~{date_str}]"),
+                    }
+                }
+            }
+            AnswerType::Correction { .. } => {
+                // Try to extract date information for temporal updates
+                if let Some(dates) = extract_dates_from_answer(answer) {
+                    if let Some(ref old) = old_tag {
+                        let new_tag = format_temporal_tag(&dates, old);
+                        return ChangeInstruction::UpdateTemporal {
+                            line_text,
+                            old_tag: old.clone(),
+                            new_tag,
+                        };
+                    }
+                    let tag = format_new_temporal_tag(&dates);
+                    return ChangeInstruction::AddTemporal { line_text, tag };
+                }
+                ChangeInstruction::Dismiss
+            }
+        };
+    }
+
+    match answer_type {
         AnswerType::Dismissal => ChangeInstruction::Dismiss,
         AnswerType::Deferral => ChangeInstruction::Defer,
         AnswerType::Deletion => ChangeInstruction::Delete { line_text },
-        AnswerType::SourceCitation { source, date } => {
-            let source_info = match date {
-                Some(d) => format!("{source}, {d}"),
-                None => source,
-            };
-            ChangeInstruction::AddSource {
-                line_text,
-                source_info,
-            }
-        }
+        // Source citations from review answers must NOT become footnote
+        // definitions — they cause garbage footnote accumulation.  Answers
+        // belong in the review queue section, not as source citations.
+        AnswerType::SourceCitation { .. } => ChangeInstruction::Dismiss,
         AnswerType::Confirmation => {
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            // Use date from the answer if provided (e.g. "Still current 2024-02"),
+            // otherwise fall back to today's date.
+            let date_str = extract_date_string(answer)
+                .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
             if let Some(ref old) = old_tag {
-                let new_tag = format!("@t[~{today}]");
-                ChangeInstruction::UpdateTemporal {
-                    line_text,
-                    old_tag: old.clone(),
-                    new_tag,
+                // Preserve open-ended ranges: confirming @t[2023-08..] means
+                // the range is still valid and ongoing — don't replace with ~date
+                let inner = old
+                    .strip_prefix("@t[")
+                    .and_then(|s| s.strip_suffix("]"))
+                    .unwrap_or("");
+                if inner.ends_with("..") {
+                    ChangeInstruction::Dismiss
+                } else {
+                    let new_tag = format!("@t[~{date_str}]");
+                    ChangeInstruction::UpdateTemporal {
+                        line_text,
+                        old_tag: old.clone(),
+                        new_tag,
+                    }
                 }
             } else {
                 ChangeInstruction::AddTemporal {
                     line_text,
-                    tag: format!("@t[~{today}]"),
+                    tag: format!("@t[~{date_str}]"),
                 }
             }
         }
@@ -222,6 +352,30 @@ mod tests {
         );
         assert_eq!(
             classify_answer("no conflict - sequential roles with shared boundary month"),
+            AnswerType::Dismissal
+        );
+    }
+
+    #[test]
+    fn test_classify_sequential_dismissal() {
+        assert_eq!(
+            classify_answer("Sequential roles with boundary overlap"),
+            AnswerType::Dismissal
+        );
+        assert_eq!(
+            classify_answer("Roles are sequential, not a conflict"),
+            AnswerType::Dismissal
+        );
+        assert_eq!(
+            classify_answer("boundary month overlap - sequential career transition"),
+            AnswerType::Dismissal
+        );
+        assert_eq!(
+            classify_answer("boundary overlap, promotion"),
+            AnswerType::Dismissal
+        );
+        assert_eq!(
+            classify_answer("These are sequential roles, not a conflict"),
             AnswerType::Dismissal
         );
     }
@@ -481,16 +635,12 @@ mod tests {
             line_number: 10,
         };
         let result = interpret_answer(&q, "per LinkedIn profile");
-        match result {
-            ChangeInstruction::AddSource {
-                line_text,
-                source_info,
-            } => {
-                assert_eq!(line_text, "Unsourced claim");
-                assert!(source_info.contains("LinkedIn"));
-            }
-            _ => panic!("Expected AddSource, got {result:?}"),
-        }
+        // Source citations from review answers are dismissed — they should not
+        // become footnote definitions (prevents garbage footnote accumulation).
+        assert!(
+            matches!(result, ChangeInstruction::Dismiss),
+            "Expected Dismiss, got {result:?}"
+        );
     }
 
     #[test]
@@ -504,13 +654,30 @@ mod tests {
             line_number: 10,
         };
         let result = interpret_answer(&q, "Phonetool lookup, 2026-02-10");
-        match result {
-            ChangeInstruction::AddSource { source_info, .. } => {
-                assert!(source_info.contains("Phonetool"));
-                assert!(source_info.contains("2026-02-10"));
-            }
-            _ => panic!("Expected AddSource, got {result:?}"),
-        }
+        // Source citations from review answers are dismissed — they should not
+        // become footnote definitions.
+        assert!(
+            matches!(result, ChangeInstruction::Dismiss),
+            "Expected Dismiss, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_interpret_answer_temporal_source_citation_becomes_dismiss() {
+        // Source citations should never create footnotes, regardless of question type
+        let q = ReviewQuestion {
+            question_type: QuestionType::Temporal,
+            line_ref: Some(5),
+            description: r#""VP at BigCo" - when?"#.to_string(),
+            answered: true,
+            answer: Some("per LinkedIn 2024-06".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "per LinkedIn 2024-06");
+        assert!(
+            matches!(result, ChangeInstruction::Dismiss),
+            "Expected Dismiss for source citation on temporal question, got {result:?}"
+        );
     }
 
     #[test]
@@ -552,5 +719,363 @@ mod tests {
             }
             _ => panic!("Expected AddTemporal, got {result:?}"),
         }
+    }
+
+    #[test]
+    fn test_classify_confirmation_with_date_not_source() {
+        // "Still current 2024-02" should NOT be classified as SourceCitation
+        let result = classify_answer("Still current 2024-02");
+        assert!(
+            !matches!(result, AnswerType::SourceCitation { .. }),
+            "Expected non-SourceCitation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_classify_confirmed_with_date_not_source() {
+        let result = classify_answer("Confirmed 2024-02");
+        assert!(
+            !matches!(result, AnswerType::SourceCitation { .. }),
+            "Expected non-SourceCitation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_classify_verified_with_date_not_source() {
+        let result = classify_answer("Verified 2024-02-15");
+        assert!(
+            !matches!(result, AnswerType::SourceCitation { .. }),
+            "Expected non-SourceCitation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_classify_yes_verified_with_date_not_source() {
+        let result = classify_answer("Yes, verified 2024-02");
+        assert!(
+            !matches!(result, AnswerType::SourceCitation { .. }),
+            "Expected non-SourceCitation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_classify_real_source_with_date_still_works() {
+        // Genuine source citations should still be classified correctly
+        let result = classify_answer("Phonetool lookup, 2024-02-10");
+        assert!(
+            matches!(result, AnswerType::SourceCitation { .. }),
+            "Expected SourceCitation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_classify_source_prefix_with_date_still_works() {
+        let result = classify_answer("per LinkedIn 2024-02");
+        assert!(
+            matches!(result, AnswerType::SourceCitation { .. }),
+            "Expected SourceCitation, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_interpret_stale_confirmation_with_date_updates_temporal() {
+        // Stale question answered with "Still current 2024-02" should update
+        // the temporal tag, NOT inject a garbage footnote.
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""Cost optimization @t[~2024-02]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("Still current 2024-02".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "Still current 2024-02");
+        match result {
+            ChangeInstruction::UpdateTemporal {
+                old_tag, new_tag, ..
+            } => {
+                assert_eq!(old_tag, "@t[~2024-02]");
+                assert!(new_tag.contains("2024-02"), "new_tag should contain the date from the answer: {new_tag}");
+            }
+            ChangeInstruction::AddSource { source_info, .. } => {
+                panic!("Got AddSource (garbage footnote bug!): {source_info}");
+            }
+            other => panic!("Expected UpdateTemporal, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_date_replace_does_not_mangle_temporal_tags() {
+        // If answer text contains @t tags, the date extraction should not
+        // mangle them by stripping the year from inside the tag.
+        let result = classify_answer("per LinkedIn @t[~2024-02] profile, 2024-02");
+        if let AnswerType::SourceCitation { source, .. } = result {
+            assert!(
+                !source.contains("@t[~-02]"),
+                "Date replace mangled @t tag: {source}"
+            );
+        }
+    }
+
+    // --- conflict-specific answer interpretation tests ---
+
+    #[test]
+    fn test_conflict_answer_source_citation_becomes_dismiss() {
+        // Source citations are meaningless for conflict questions
+        let q = ReviewQuestion {
+            question_type: crate::models::QuestionType::Conflict,
+            line_ref: Some(5),
+            description: r#""VP at Acme" @t[2020..2023] overlaps with "Director at Acme" @t[2018..2020] - were both true simultaneously? (line:7)"#.to_string(),
+            answered: true,
+            answer: Some("per LinkedIn 2024-01".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(interpret_answer(&q, "per LinkedIn 2024-01"), ChangeInstruction::Dismiss));
+    }
+
+    #[test]
+    fn test_conflict_answer_generic_correction_becomes_dismiss() {
+        // Generic corrections without dates should dismiss for conflicts
+        let q = ReviewQuestion {
+            question_type: crate::models::QuestionType::Conflict,
+            line_ref: Some(5),
+            description: "overlap question".to_string(),
+            answered: true,
+            answer: Some("these are sequential promotions at the same company".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(interpret_answer(&q, "these are sequential promotions at the same company"), ChangeInstruction::Dismiss));
+    }
+
+    #[test]
+    fn test_conflict_answer_with_date_correction_applies() {
+        // Date corrections should still work for conflicts
+        let q = ReviewQuestion {
+            question_type: crate::models::QuestionType::Conflict,
+            line_ref: Some(5),
+            description: r#""VP at Acme" @t[2020..2023] overlaps"#.to_string(),
+            answered: true,
+            answer: Some("correct: ended 2021-06".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "correct: ended 2021-06");
+        assert!(!matches!(result, ChangeInstruction::Dismiss), "Date correction should not be dismissed");
+    }
+
+    #[test]
+    fn test_confirmation_preserves_open_ended_range() {
+        // Confirming "still current" on @t[2023-08..] should NOT replace with @t[~date]
+        let q = ReviewQuestion {
+            question_type: QuestionType::Temporal,
+            line_ref: Some(5),
+            description: r#""Engineer at Acme @t[2023-08..]" - still current?"#.to_string(),
+            answered: true,
+            answer: Some("still current per LinkedIn scraped 2026-02-10".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "still current per LinkedIn scraped 2026-02-10");
+        assert!(
+            matches!(result, ChangeInstruction::Dismiss),
+            "Open-ended range should be preserved (dismissed), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_confirmation_preserves_open_ended_range_simple_yes() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""VP at BigCo @t[2022..]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("yes".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "yes");
+        assert!(
+            matches!(result, ChangeInstruction::Dismiss),
+            "Open-ended range should be preserved (dismissed), got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_confirmation_updates_last_verified_tag() {
+        // Non-range tags like @t[~2024-01] should still get updated
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""VP at BigCo @t[~2024-01]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("confirmed".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "confirmed");
+        match result {
+            ChangeInstruction::UpdateTemporal { old_tag, new_tag, .. } => {
+                assert_eq!(old_tag, "@t[~2024-01]");
+                assert!(new_tag.starts_with("@t[~"), "Should update ~date tag: {new_tag}");
+            }
+            _ => panic!("Expected UpdateTemporal for ~date tag, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_conflict_answer_confirmation_becomes_dismiss() {
+        // "yes" to a conflict question means "yes both were true" = dismiss
+        let q = ReviewQuestion {
+            question_type: crate::models::QuestionType::Conflict,
+            line_ref: Some(5),
+            description: "overlap question".to_string(),
+            answered: true,
+            answer: Some("yes".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(interpret_answer(&q, "yes"), ChangeInstruction::Dismiss));
+    }
+
+    // --- Missing-source question tests ---
+
+    #[test]
+    fn test_missing_unable_to_verify_becomes_dismiss() {
+        // "Unable to verify" is not a source — must dismiss, not corrupt content
+        let q = ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: Some(5),
+            description: r#""Email: user@example.com @t[~2025-10]" has no source"#.to_string(),
+            answered: true,
+            answer: Some("Unable to verify from available sources".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "Unable to verify from available sources"),
+            ChangeInstruction::Dismiss
+        ));
+    }
+
+    #[test]
+    fn test_missing_source_citation_becomes_dismiss() {
+        // Source citations from review answers are dismissed — they should not
+        // become footnote definitions (prevents garbage footnote accumulation).
+        let q = ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: Some(5),
+            description: r#""Works at Acme" has no source"#.to_string(),
+            answered: true,
+            answer: Some("per LinkedIn 2024-06".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "per LinkedIn 2024-06"),
+            ChangeInstruction::Dismiss
+        ));
+    }
+
+    #[test]
+    fn test_missing_correction_fallback_becomes_dismiss() {
+        // Long freeform answers that fall through to Correction must not become Generic
+        let q = ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: Some(5),
+            description: r#""Primary contact for project" has no source"#.to_string(),
+            answered: true,
+            answer: Some("Corroborated by account document which lists them as contact".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "Corroborated by account document which lists them as contact"),
+            ChangeInstruction::Dismiss
+        ));
+    }
+
+    #[test]
+    fn test_missing_defer_works() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: Some(5),
+            description: r#""Fact here" has no source"#.to_string(),
+            answered: true,
+            answer: Some("defer".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "defer"),
+            ChangeInstruction::Defer
+        ));
+    }
+
+    #[test]
+    fn test_missing_delete_works() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: Some(5),
+            description: r#""Fact here" has no source"#.to_string(),
+            answered: true,
+            answer: Some("delete".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "delete"),
+            ChangeInstruction::Delete { .. }
+        ));
+    }
+
+    // --- Stale question tests ---
+
+    #[test]
+    fn test_stale_corroboration_with_date_becomes_confirmation_not_source() {
+        // Long answer with date that corroborates a fact should update temporal tag,
+        // NOT inject a garbage footnote
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""Technical contact @t[~2025-06]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("Corroborated by account document (0db425) which lists them as technical implementation contact @t[~] sourced from 2026-01-15 transition meeting. Role is current.".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "Corroborated by account document (0db425) which lists them as technical implementation contact @t[~] sourced from 2026-01-15 transition meeting. Role is current.");
+        match result {
+            ChangeInstruction::UpdateTemporal { old_tag, new_tag, .. } => {
+                assert_eq!(old_tag, "@t[~2025-06]");
+                assert!(new_tag.starts_with("@t[~2026"), "Should use date from answer: {new_tag}");
+            }
+            _ => panic!("Expected UpdateTemporal, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stale_source_citation_becomes_temporal_update() {
+        // "per LinkedIn 2024-06" on a stale question is confirmation, not a new source
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""VP at BigCo @t[~2024-01]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("per LinkedIn 2024-06".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "per LinkedIn 2024-06");
+        match result {
+            ChangeInstruction::UpdateTemporal { old_tag, new_tag, .. } => {
+                assert_eq!(old_tag, "@t[~2024-01]");
+                assert!(new_tag.contains("2024-06"), "Should use date from answer: {new_tag}");
+            }
+            _ => panic!("Expected UpdateTemporal for stale confirmation, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stale_correction_without_dates_becomes_dismiss() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""Works at Acme @t[~2024-01]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("role appears unchanged based on available info".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "role appears unchanged based on available info"),
+            ChangeInstruction::Dismiss
+        ));
     }
 }

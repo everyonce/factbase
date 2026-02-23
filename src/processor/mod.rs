@@ -61,7 +61,8 @@ pub use sources::{
 
 // Re-export review types and functions
 pub use review::{
-    append_review_questions, normalize_review_section, parse_review_queue, prune_stale_questions,
+    append_review_questions, normalize_conflict_desc, normalize_review_section,
+    parse_review_queue, prune_stale_questions,
 };
 
 // Re-export chunking types and functions
