@@ -20,25 +20,22 @@ async fn test_corrupted_file_handling() {
         ctx.repo_path.join("valid.md"),
         "# Valid Document\nThis is valid content.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Create corrupted file with invalid UTF-8
     let corrupted_path = ctx.repo_path.join("corrupted.md");
-    let mut file = fs::File::create(&corrupted_path).expect("operation should succeed");
+    let mut file = fs::File::create(&corrupted_path).unwrap();
     file.write_all(b"# Corrupted\n\xFF\xFE Invalid UTF-8 bytes")
-        .expect("operation should succeed");
+        .unwrap();
 
     // Scan should continue despite corrupted file
-    let result = ctx.scan().await.expect("operation should succeed");
+    let result = ctx.scan().await.unwrap();
 
     // Valid file should be indexed
     assert_eq!(result.added, 1, "Valid document should be indexed");
 
     // Verify valid document is searchable
-    let docs = ctx
-        .db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("test").unwrap();
     assert_eq!(docs.len(), 1, "Only valid document should be in database");
     assert!(
         docs.values().any(|d| d.title.contains("Valid")),
@@ -58,22 +55,19 @@ async fn test_very_large_file_handling() {
         ctx.repo_path.join("normal.md"),
         "# Normal Document\nNormal sized content.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Create very large file (2MB - exceeds default max_file_size of 1MB)
     let large_content = format!("# Large Document\n{}", "x".repeat(2 * 1024 * 1024));
-    fs::write(ctx.repo_path.join("large.md"), &large_content).expect("operation should succeed");
+    fs::write(ctx.repo_path.join("large.md"), &large_content).unwrap();
 
     // Scan should process both files (large file will be truncated for embedding)
-    let result = ctx.scan().await.expect("operation should succeed");
+    let result = ctx.scan().await.unwrap();
 
     // Both files should be indexed (large file content truncated for embedding)
     assert_eq!(result.added, 2, "Both documents should be indexed");
 
-    let docs = ctx
-        .db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("test").unwrap();
     assert_eq!(docs.len(), 2, "Both documents should be in database");
 }
 
@@ -89,40 +83,36 @@ async fn test_invalid_factbase_header_handling() {
         ctx.repo_path.join("malformed.md"),
         "<!-- factbase:INVALID -->\n# Malformed Header\nContent here.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Create file with partial header
     fs::write(
         ctx.repo_path.join("partial.md"),
         "<!-- factbase: -->\n# Partial Header\nContent here.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Create file with wrong format
     fs::write(
         ctx.repo_path.join("wrong.md"),
         "<!-- factbase:toolong123 -->\n# Wrong Format\nContent here.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Scan should handle invalid headers by generating new IDs
-    let result = ctx.scan().await.expect("operation should succeed");
+    let result = ctx.scan().await.unwrap();
 
     assert_eq!(result.added, 3, "All documents should be indexed");
 
     // Verify files now have valid headers
-    let malformed_content =
-        fs::read_to_string(ctx.repo_path.join("malformed.md")).expect("operation should succeed");
+    let malformed_content = fs::read_to_string(ctx.repo_path.join("malformed.md")).unwrap();
     assert!(
         malformed_content.contains("<!-- factbase:"),
         "Malformed file should have header"
     );
 
     // Check that IDs are valid 6-char hex
-    let docs = ctx
-        .db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("test").unwrap();
     for id in docs.keys() {
         assert_eq!(id.len(), 6, "ID should be 6 characters");
         assert!(
@@ -140,26 +130,21 @@ async fn test_empty_file_handling() {
     let ctx = TestContext::new("test");
 
     // Create empty file
-    fs::write(ctx.repo_path.join("empty.md"), "").expect("operation should succeed");
+    fs::write(ctx.repo_path.join("empty.md"), "").unwrap();
 
     // Create file with only whitespace
-    fs::write(ctx.repo_path.join("whitespace.md"), "   \n\n   \n")
-        .expect("operation should succeed");
+    fs::write(ctx.repo_path.join("whitespace.md"), "   \n\n   \n").unwrap();
 
     // Create normal file
-    fs::write(ctx.repo_path.join("normal.md"), "# Normal\nNormal content.")
-        .expect("operation should succeed");
+    fs::write(ctx.repo_path.join("normal.md"), "# Normal\nNormal content.").unwrap();
 
     // Scan should handle empty files gracefully
-    let result = ctx.scan().await.expect("operation should succeed");
+    let result = ctx.scan().await.unwrap();
 
     // All files should be processed (empty files get headers added)
     assert!(result.added >= 1, "At least normal file should be indexed");
 
-    let docs = ctx
-        .db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("test").unwrap();
     assert!(
         docs.values().any(|d| d.title.contains("Normal")),
         "Normal document should be indexed"
@@ -179,33 +164,28 @@ async fn test_permission_denied_handling() {
         ctx.repo_path.join("readable.md"),
         "# Readable\nReadable content.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Create unreadable file
     let unreadable_path = ctx.repo_path.join("unreadable.md");
-    fs::write(&unreadable_path, "# Unreadable\nUnreadable content.")
-        .expect("operation should succeed");
+    fs::write(&unreadable_path, "# Unreadable\nUnreadable content.").unwrap();
 
     // Make file unreadable (Unix only)
     use std::os::unix::fs::PermissionsExt;
-    let mut perms = fs::metadata(&unreadable_path)
-        .expect("operation should succeed")
-        .permissions();
+    let mut perms = fs::metadata(&unreadable_path).unwrap().permissions();
     perms.set_mode(0o000);
-    fs::set_permissions(&unreadable_path, perms).expect("operation should succeed");
+    fs::set_permissions(&unreadable_path, perms).unwrap();
 
     // Scan should continue despite permission error
-    let result = ctx.scan().await.expect("operation should succeed");
+    let result = ctx.scan().await.unwrap();
 
     // Readable file should be indexed
     assert_eq!(result.added, 1, "Readable document should be indexed");
 
     // Restore permissions for cleanup
-    let mut perms = fs::metadata(&unreadable_path)
-        .expect("operation should succeed")
-        .permissions();
+    let mut perms = fs::metadata(&unreadable_path).unwrap().permissions();
     perms.set_mode(0o644);
-    fs::set_permissions(&unreadable_path, perms).expect("operation should succeed");
+    fs::set_permissions(&unreadable_path, perms).unwrap();
 }
 
 /// Test 8.6: Symlink handling
@@ -221,21 +201,21 @@ async fn test_symlink_handling() {
         ctx.repo_path.join("real.md"),
         "# Real Document\nReal content.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Create symlink to real file
     std::os::unix::fs::symlink(ctx.repo_path.join("real.md"), ctx.repo_path.join("link.md"))
-        .expect("operation should succeed");
+        .unwrap();
 
     // Create broken symlink
     std::os::unix::fs::symlink(
         ctx.repo_path.join("nonexistent.md"),
         ctx.repo_path.join("broken.md"),
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Scan should handle symlinks gracefully
-    let result = ctx.scan().await.expect("operation should succeed");
+    let result = ctx.scan().await.unwrap();
 
     // At least the real file should be indexed
     assert!(result.added >= 1, "At least real file should be indexed");
@@ -253,28 +233,23 @@ async fn test_database_integrity_after_errors() {
         ctx.repo_path.join("valid1.md"),
         "# Valid One\nFirst valid document.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Invalid UTF-8
-    let mut file =
-        fs::File::create(ctx.repo_path.join("invalid.md")).expect("operation should succeed");
-    file.write_all(b"# Invalid\n\xFF\xFE bytes")
-        .expect("operation should succeed");
+    let mut file = fs::File::create(ctx.repo_path.join("invalid.md")).unwrap();
+    file.write_all(b"# Invalid\n\xFF\xFE bytes").unwrap();
 
     fs::write(
         ctx.repo_path.join("valid2.md"),
         "# Valid Two\nSecond valid document.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Run scan
-    ctx.scan().await.expect("operation should succeed");
+    ctx.scan().await.unwrap();
 
     // Verify database integrity
-    let docs = ctx
-        .db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("test").unwrap();
 
     // All valid documents should be indexed
     assert_eq!(docs.len(), 2, "Both valid documents should be indexed");
@@ -290,7 +265,7 @@ async fn test_database_integrity_after_errors() {
                 None,
                 None,
             )
-            .expect("operation should succeed");
+            .unwrap();
         assert!(
             search_results.iter().any(|r| &r.id == id),
             "Document {} should have embedding",

@@ -13,6 +13,7 @@ use crate::error::FactbaseError;
 use crate::organize::detect::entity_entries::extract_entity_entries;
 use crate::organize::types::{DuplicateEntry, EntryLocation};
 use crate::patterns::MANUAL_LINK_REGEX;
+use crate::ProgressReporter;
 
 use super::collect_active_documents;
 use super::cosine_similarity;
@@ -29,8 +30,11 @@ pub async fn detect_duplicate_entries(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
     repo_id: Option<&str>,
+    progress: &ProgressReporter,
 ) -> Result<Vec<DuplicateEntry>, FactbaseError> {
     let docs = collect_active_documents(db, repo_id)?;
+
+    progress.phase("Detecting duplicate entries");
 
     // Extract entries from all documents.
     let mut all_entries: Vec<(String, EntryLocation)> = Vec::new(); // (normalized_name, location)
@@ -40,7 +44,9 @@ pub async fn detect_duplicate_entries(
         .map(|d| (normalize_name(&d.title), d.id.as_str()))
         .collect();
 
-    for doc in &docs {
+    let total = docs.len();
+    for (i, doc) in docs.iter().enumerate() {
+        progress.report(i + 1, total, &doc.title);
         let entries = extract_entity_entries(&doc.content, &doc.id);
         let norm_doc_title = normalize_name(&doc.title);
         for entry in entries {
@@ -112,6 +118,10 @@ pub async fn detect_duplicate_entries(
         .collect();
 
     if singletons.len() >= 2 {
+        progress.log(&format!(
+            "Matching {} entries for fuzzy duplicates...",
+            singletons.len()
+        ));
         let texts: Vec<&str> = singletons.to_vec();
         let embeddings = embedding.generate_batch(&texts).await?;
 
@@ -215,7 +225,9 @@ mod tests {
     async fn test_detect_no_documents() {
         let (db, _tmp) = test_db();
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, None).await.unwrap();
+        let result = detect_duplicate_entries(&db, &emb, None, &crate::ProgressReporter::Silent)
+            .await
+            .unwrap();
         assert!(result.is_empty());
     }
 
@@ -238,9 +250,10 @@ mod tests {
         db.upsert_document(&doc2).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].entity_name, "jane smith");
@@ -268,9 +281,10 @@ mod tests {
         db.upsert_document(&doc1).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -288,9 +302,10 @@ mod tests {
         db.upsert_document(&doc1).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -313,9 +328,10 @@ mod tests {
         db.upsert_document(&doc2).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
 
         assert_eq!(result.len(), 1);
         let acme_entry = result[0]
@@ -355,9 +371,10 @@ mod tests {
         db.mark_deleted("bbb222").unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -381,9 +398,10 @@ mod tests {
         db.upsert_document(&doc2).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
         assert!(
             result.is_empty(),
             "Cross-reference-only entries should be filtered"
@@ -410,9 +428,10 @@ mod tests {
         db.upsert_document(&doc2).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
         // Only one entry remains (from Acme Corp), so no duplicate group.
         assert!(
             result.is_empty(),
@@ -446,9 +465,10 @@ mod tests {
         db.upsert_document(&globex_doc).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
 
         // "Jane Smith" entries from acme and globex should be flagged as duplicates.
         // The entry from jane_doc is excluded (authoritative doc).
@@ -485,9 +505,10 @@ mod tests {
         db.upsert_document(&doc2).unwrap();
 
         let emb = HashEmbedding;
-        let result = detect_duplicate_entries(&db, &emb, Some("r1"))
-            .await
-            .unwrap();
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
         assert_eq!(result.len(), 1, "Mixed facts entry should be kept");
     }
 }

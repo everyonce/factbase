@@ -162,8 +162,7 @@ impl Database {
 
         // Fetch outgoing links (where doc is source)
         let outgoing_sql = format!(
-            "SELECT source_id, target_id, context, created_at FROM document_links WHERE source_id IN ({})",
-            placeholders
+            "SELECT source_id, target_id, context, created_at FROM document_links WHERE source_id IN ({placeholders})"
         );
         let mut stmt = conn.prepare(&outgoing_sql)?;
         let params: Vec<&dyn rusqlite::ToSql> =
@@ -178,8 +177,7 @@ impl Database {
 
         // Fetch incoming links (where doc is target)
         let incoming_sql = format!(
-            "SELECT source_id, target_id, context, created_at FROM document_links WHERE target_id IN ({})",
-            placeholders
+            "SELECT source_id, target_id, context, created_at FROM document_links WHERE target_id IN ({placeholders})"
         );
         let mut stmt = conn.prepare(&incoming_sql)?;
         let params: Vec<&dyn rusqlite::ToSql> =

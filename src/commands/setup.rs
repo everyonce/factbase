@@ -29,7 +29,7 @@ use factbase::{
     CachedEmbedding, Config, Database, EmbeddingProvider, LinkDetector, LlmProvider,
     OllamaEmbedding, OllamaLlm, Repository, ReviewLlm,
 };
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Print a one-time notice when no config file exists
 fn print_first_run_notice() {
@@ -45,12 +45,30 @@ fn print_first_run_notice() {
     eprintln!("  Run `factbase doctor` to verify connectivity.\n");
 }
 
-/// Load config and open database - common setup for most commands
+/// Resolve the database path: local `.factbase/factbase.db` takes priority
+/// over the global config `database.path`.
+///
+/// Checks for the `.factbase/` directory (not the DB file itself) since the
+/// directory indicates "this is a factbase repo" even before the DB is created.
+fn local_or_global_db_path(config: &Config) -> PathBuf {
+    if let Ok(cwd) = std::env::current_dir() {
+        let factbase_dir = cwd.join(".factbase");
+        if factbase_dir.is_dir() {
+            return factbase_dir.join("factbase.db");
+        }
+    }
+    PathBuf::from(shellexpand::tilde(&config.database.path).to_string())
+}
+
+/// Load config and open database - common setup for most commands.
+///
+/// Checks for a local `.factbase/factbase.db` in the current directory first,
+/// then falls back to the global config `database.path`.
 pub fn setup_database() -> anyhow::Result<(Config, Database)> {
     print_first_run_notice();
     let config = Config::load(None)?;
-    let db_path = Path::new(&config.database.path);
-    let db = config.open_database(db_path)?;
+    let db_path = local_or_global_db_path(&config);
+    let db = config.open_database(&db_path)?;
     Ok((config, db))
 }
 
@@ -67,7 +85,7 @@ pub fn setup_database_only() -> anyhow::Result<Database> {
 /// Also returns the expanded database path for commands that need it.
 pub fn setup_database_checked() -> anyhow::Result<(Config, Database, PathBuf)> {
     let config = Config::load(None)?;
-    let db_path = PathBuf::from(shellexpand::tilde(&config.database.path).to_string());
+    let db_path = local_or_global_db_path(&config);
 
     if !db_path.exists() {
         return Err(db_not_found_error(&db_path));
@@ -75,6 +93,42 @@ pub fn setup_database_checked() -> anyhow::Result<(Config, Database, PathBuf)> {
 
     let db = config.open_database(&db_path)?;
     Ok((config, db, db_path))
+}
+
+/// Auto-initialize a factbase repository in the given directory.
+///
+/// Creates `.factbase/` dir, `perspective.yaml`, database, and registers the repo.
+/// Returns (Config, Database, Repository). Shared by `cmd_mcp`, `cmd_serve`, etc.
+pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database, Repository)> {
+    let factbase_dir = dir.join(".factbase");
+    std::fs::create_dir_all(&factbase_dir)?;
+    let perspective_path = dir.join("perspective.yaml");
+    if !perspective_path.exists() {
+        std::fs::write(&perspective_path, "# Factbase perspective\n")?;
+    }
+    let config = Config::load(None)?;
+    let db_path = factbase_dir.join("factbase.db");
+    let db = config.open_database(&db_path)?;
+    let name = dir
+        .file_name()
+        .map_or_else(|| "main".into(), |s| s.to_string_lossy().to_string());
+    let repo = super::create_repository("main", &name, dir);
+    db.upsert_repository(&repo)?;
+    tracing::info!("Auto-initialized factbase at {}", dir.display());
+    Ok((config, db, repo))
+}
+
+/// Canonicalize a path, stripping the Windows `\\?\` prefix if present.
+pub fn clean_canonicalize(path: &std::path::Path) -> std::path::PathBuf {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    #[cfg(target_os = "windows")]
+    {
+        let s = canonical.to_string_lossy();
+        if let Some(stripped) = s.strip_prefix(r"\\?\") {
+            return std::path::PathBuf::from(stripped);
+        }
+    }
+    canonical
 }
 
 /// Find repository by ID or from current directory, returning config for callers that need it.
@@ -85,28 +139,25 @@ pub fn find_repo_with_config(
     repo_id: Option<&str>,
 ) -> anyhow::Result<(Config, Database, Repository)> {
     print_first_run_notice();
-    let mut dir = std::env::current_dir()?;
+    let dir = std::env::current_dir()?;
     let config = Config::load(None)?;
 
-    loop {
-        let factbase_dir = dir.join(".factbase");
-        if factbase_dir.exists() {
-            let db_path = factbase_dir.join("factbase.db");
-            let db = config.open_database(&db_path)?;
-            let repos = db.list_repositories()?;
-            let repo = if let Some(id) = repo_id {
-                repos.into_iter().find(|r| r.id == id)
-            } else {
-                repos.into_iter().next()
-            };
-            if let Some(r) = repo {
-                return Ok((config, db, r));
-            }
-            anyhow::bail!("No repository found");
+    // Only check the current directory for .factbase/ — don't walk up.
+    // Walking up caused confusion when a parent directory had its own .factbase/.
+    let factbase_dir = dir.join(".factbase");
+    if factbase_dir.exists() {
+        let db_path = factbase_dir.join("factbase.db");
+        let db = config.open_database(&db_path)?;
+        let repos = db.list_repositories()?;
+        let repo = if let Some(id) = repo_id {
+            repos.into_iter().find(|r| r.id == id)
+        } else {
+            repos.into_iter().next()
+        };
+        if let Some(r) = repo {
+            return Ok((config, db, r));
         }
-        if !dir.pop() {
-            break;
-        }
+        anyhow::bail!("No repository found in {}", factbase_dir.display());
     }
     anyhow::bail!("Not in a factbase repository. Run `factbase init <path>` first.")
 }
@@ -147,6 +198,7 @@ pub async fn setup_embedding_with_timeout(
                     &config.embedding.model,
                     config.embedding.dimension,
                     region,
+                    config.embedding.profile.as_deref(),
                 )
                 .await,
             )
@@ -190,7 +242,10 @@ async fn create_llm(
         #[cfg(feature = "bedrock")]
         "bedrock" => {
             let region = resolve_bedrock_region(config.llm.effective_base_url());
-            Box::new(factbase::bedrock::BedrockLlm::new(model, region).await)
+            Box::new(
+                factbase::bedrock::BedrockLlm::new(model, region, config.llm.profile.as_deref())
+                    .await,
+            )
         }
         _ => {
             let timeout = timeout_override.unwrap_or(config.llm.timeout_secs);

@@ -4,13 +4,9 @@
 
 mod common;
 
-use chrono::Utc;
 use common::ollama_helpers::require_ollama;
 use common::{run_scan, TestContext};
-use factbase::{
-    config::Config, database::Database, embedding::OllamaEmbedding, mcp::McpServer,
-    models::Repository,
-};
+use factbase::{config::Config, database::Database, embedding::OllamaEmbedding, mcp::McpServer};
 use reqwest::Client;
 use serde_json::json;
 use std::fs;
@@ -26,9 +22,9 @@ use tokio::sync::oneshot;
 async fn test_stability_short() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Create initial documents
     for i in 0..10 {
@@ -36,22 +32,14 @@ async fn test_stability_short() {
             repo_path.join(format!("docs/doc{}.md", i)),
             format!("# Document {}\nInitial content for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -61,9 +49,7 @@ async fn test_stability_short() {
     );
 
     // Initial scan
-    run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    run_scan(&repo, &db, &config).await.unwrap();
 
     // Start MCP server
     let port = common::random_port();
@@ -74,6 +60,7 @@ async fn test_stability_short() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -87,7 +74,7 @@ async fn test_stability_short() {
         Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("operation should succeed"),
+            .unwrap(),
     );
 
     let errors = Arc::new(AtomicUsize::new(0));
@@ -136,7 +123,7 @@ async fn test_stability_short() {
                     doc_num, iteration
                 ),
             )
-            .expect("operation should succeed");
+            .unwrap();
             file_changes.fetch_add(1, Ordering::SeqCst);
         }
 
@@ -164,9 +151,7 @@ async fn test_stability_short() {
     println!("  Errors: {}", total_errors);
 
     // Verify database integrity
-    let docs = db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("test").unwrap();
     assert_eq!(docs.len(), 10, "All documents should still exist");
 
     assert!(total_errors < 3, "Should have minimal errors");
@@ -183,9 +168,9 @@ async fn test_stability_short() {
 async fn test_stability_long() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Create initial documents
     for i in 0..20 {
@@ -193,22 +178,14 @@ async fn test_stability_long() {
             repo_path.join(format!("docs/doc{}.md", i)),
             format!("# Document {}\nInitial content for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -218,9 +195,7 @@ async fn test_stability_long() {
     );
 
     // Initial scan
-    run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    run_scan(&repo, &db, &config).await.unwrap();
 
     // Start MCP server
     let port = common::random_port();
@@ -231,6 +206,7 @@ async fn test_stability_long() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -244,7 +220,7 @@ async fn test_stability_long() {
         Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("operation should succeed"),
+            .unwrap(),
     );
 
     let errors = Arc::new(AtomicUsize::new(0));
@@ -292,7 +268,7 @@ async fn test_stability_long() {
                     doc_num, iteration
                 ),
             )
-            .expect("operation should succeed");
+            .unwrap();
             file_changes.fetch_add(1, Ordering::SeqCst);
         }
 
@@ -334,9 +310,7 @@ async fn test_stability_long() {
     println!("  Errors: {}", total_errors);
 
     // Verify database integrity
-    let docs = db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("test").unwrap();
     assert_eq!(docs.len(), 20, "All documents should still exist");
 
     assert!(
@@ -356,7 +330,7 @@ async fn test_database_integrity_after_operations() {
 
     let ctx = TestContext::new("test");
     let repo_path = ctx.repo_path.clone();
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Create documents
     for i in 0..5 {
@@ -364,11 +338,11 @@ async fn test_database_integrity_after_operations() {
             repo_path.join(format!("docs/doc{}.md", i)),
             format!("# Document {}\nContent for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     // Initial scan
-    ctx.scan().await.expect("operation should succeed");
+    ctx.scan().await.unwrap();
 
     // Perform multiple operations
     for i in 0..10 {
@@ -378,10 +352,10 @@ async fn test_database_integrity_after_operations() {
             repo_path.join(format!("docs/doc{}.md", doc_num)),
             format!("# Document {}\nIteration {} content.", doc_num, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
 
         // Rescan
-        ctx.scan().await.expect("operation should succeed");
+        ctx.scan().await.unwrap();
     }
 
     // Add new document
@@ -389,18 +363,15 @@ async fn test_database_integrity_after_operations() {
         repo_path.join("docs/new.md"),
         "# New Document\nNew content.",
     )
-    .expect("operation should succeed");
-    ctx.scan().await.expect("operation should succeed");
+    .unwrap();
+    ctx.scan().await.unwrap();
 
     // Delete a document
-    fs::remove_file(repo_path.join("docs/doc0.md")).expect("operation should succeed");
-    ctx.scan().await.expect("operation should succeed");
+    fs::remove_file(repo_path.join("docs/doc0.md")).unwrap();
+    ctx.scan().await.unwrap();
 
     // Verify database integrity
-    let docs = ctx
-        .db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("test").unwrap();
 
     // Should have 5 docs (4 original + 1 new, 1 deleted)
     let active_docs: Vec<_> = docs.values().filter(|d| !d.is_deleted).collect();
@@ -417,7 +388,7 @@ async fn test_database_integrity_after_operations() {
                 None,
                 None,
             )
-            .expect("operation should succeed");
+            .unwrap();
         assert!(
             results.iter().any(|r| r.id == doc.id),
             "Document {} should have embedding",
@@ -436,7 +407,7 @@ async fn test_database_integrity_after_operations() {
             None,
             None,
         )
-        .expect("operation should succeed");
+        .unwrap();
 
     for result in &search_results {
         assert!(

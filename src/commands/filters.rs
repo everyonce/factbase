@@ -84,21 +84,24 @@ pub fn matches_filter(
             }
         }
         FilterExpr::LinksGreaterThan(n) => {
-            let count = outgoing_links
-                .map(|links| links.len())
-                .unwrap_or_else(|| db.get_links_from(&result.id).unwrap_or_default().len());
+            let count = outgoing_links.map_or_else(
+                || db.get_links_from(&result.id).unwrap_or_default().len(),
+                <[factbase::Link]>::len,
+            );
             count > *n
         }
         FilterExpr::LinksLessThan(n) => {
-            let count = outgoing_links
-                .map(|links| links.len())
-                .unwrap_or_else(|| db.get_links_from(&result.id).unwrap_or_default().len());
+            let count = outgoing_links.map_or_else(
+                || db.get_links_from(&result.id).unwrap_or_default().len(),
+                <[factbase::Link]>::len,
+            );
             count < *n
         }
         FilterExpr::LinksEquals(n) => {
-            let count = outgoing_links
-                .map(|links| links.len())
-                .unwrap_or_else(|| db.get_links_from(&result.id).unwrap_or_default().len());
+            let count = outgoing_links.map_or_else(
+                || db.get_links_from(&result.id).unwrap_or_default().len(),
+                <[factbase::Link]>::len,
+            );
             count == *n
         }
     }
@@ -149,7 +152,7 @@ pub fn apply_include_filters(
     let links_map = fetch_links_if_needed(results, filters, db);
 
     results.retain(|r| {
-        let outgoing = links_map.get(&r.id).map(|v| v.as_slice());
+        let outgoing = links_map.get(&r.id).map(std::vec::Vec::as_slice);
         filters.iter().all(|f| matches_filter(r, f, db, outgoing))
     });
     results.truncate(limit);
@@ -170,7 +173,7 @@ pub fn apply_exclude_filters(
     let links_map = fetch_links_if_needed(results, excludes, db);
 
     results.retain(|r| {
-        let outgoing = links_map.get(&r.id).map(|v| v.as_slice());
+        let outgoing = links_map.get(&r.id).map(std::vec::Vec::as_slice);
         !excludes.iter().any(|f| matches_filter(r, f, db, outgoing))
     });
     results.truncate(limit);

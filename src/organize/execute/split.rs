@@ -106,7 +106,7 @@ pub fn execute_split(
 
         // Build file path in same directory as source
         let safe_title = sanitize_filename(&proposed.title);
-        let new_filename = format!("{}.md", safe_title);
+        let new_filename = format!("{safe_title}.md");
         let new_path = source_dir.join(&new_filename);
 
         // Inject factbase header into content

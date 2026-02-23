@@ -95,10 +95,7 @@ fn collect_facts_with_ranges(content: &str) -> Vec<FactWithRange> {
                     })
                 });
 
-            let tag = match tag {
-                Some(t) => t,
-                None => continue,
-            };
+            let Some(tag) = tag else { continue };
 
             let is_ongoing = matches!(tag.tag_type, crate::models::TemporalTagType::Ongoing);
 

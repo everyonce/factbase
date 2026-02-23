@@ -152,3 +152,11 @@ Current merge detection (`organize/detect/merge.rs`) compares whole documents by
 - [x] 6.1 Consolidate 6 duplicate `BoxFuture` type aliases: identical `type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>` defined in `embedding.rs`, `bedrock.rs`, `llm/ollama.rs`, `llm/review.rs`, `llm/link_detector.rs` (test module), and `question_generator/cross_validate.rs` (test module). Extract to a single `pub(crate)` definition in `lib.rs` and import everywhere.
 - [x] 6.2 Consolidate 3 duplicate `LlmProvider` test mocks: `MockLlm` in `llm/review.rs` (returns "mock"), `llm/link_detector.rs` (configurable response string), and `question_generator/cross_validate.rs` (returns "[]"). Extract into a shared `llm::test_helpers` `#[cfg(test)]` module with a configurable `MockLlm::new(response)` and a `MockLlm::default()` returning "[]", then replace all 3 inline definitions.
 - [x] 6.3 Audit and remove stale `#[allow(dead_code)]` annotations: search for `allow(dead_code)` across the codebase and verify each is still needed — remove any that guard code now used, or replace with `#[cfg(test)]` gating where the code is test-only.
+
+### Task 6.1+6.2+6.3 — BoxFuture, MockLlm consolidation, dead_code audit (commit 44996e8)
+- Task 6.1: Single `pub(crate) type BoxFuture` in `lib.rs` replaces 6 identical definitions across `embedding.rs`, `bedrock.rs`, `llm/ollama.rs`, `llm/review.rs`, and 2 test modules
+- Task 6.2: Shared `MockLlm` in `llm::test_helpers` (`#[cfg(test)]` module in `llm/mod.rs`) replaces 3 inline mocks. `MockLlm::new(response)` for configurable, `MockLlm::default()` for `"[]"`
+- Task 6.3: All 14 `#[allow(dead_code)]` annotations audited — all intentional (operational utilities, serde fields, integration test helpers). 2 remain: `organize/audit.rs` module-level (operational utility not yet wired), `organize/plan/merge.rs:292` (context field for duplicate decisions)
+- Net reduction of 41 lines across 8 files
+- 950 lib + 348 bin tests passing, zero clippy warnings
+- Phase 46 complete

@@ -82,7 +82,7 @@ impl LinkDetector {
             let target_id = cap[1].to_string();
             if target_id != source_id {
                 if let Some(&title) = id_to_title.get(target_id.as_str()) {
-                    let mention_text = format!("[[{}]]", target_id);
+                    let mention_text = format!("[[{target_id}]]");
                     links.push(DetectedLink {
                         target_id,
                         target_title: title.to_string(),
@@ -102,7 +102,7 @@ impl LinkDetector {
         let entities_list: String = known_entities
             .iter()
             .filter(|(id, _)| id != source_id)
-            .map(|(id, title)| format!("- {} (id: {})", title, id))
+            .map(|(id, title)| format!("- {title} (id: {id})"))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -114,15 +114,14 @@ impl LinkDetector {
             r#"Analyze this document and find mentions of these known entities. Return ONLY a JSON array.
 
 Known entities:
-{}
+{entities_list}
 
 Document:
-{}
+{content}
 
 Return a JSON array of objects with "entity" (exact title from list) and "context" (surrounding text). 
 Only include entities that are clearly mentioned. Return [] if none found.
-Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#,
-            entities_list, content
+Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#
         );
 
         let response = self.llm.complete(&prompt).await?;
@@ -178,7 +177,7 @@ Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#,
                 let target_id = cap[1].to_string();
                 if target_id != *id {
                     if let Some(&title) = id_to_title.get(target_id.as_str()) {
-                        let mention_text = format!("[[{}]]", target_id);
+                        let mention_text = format!("[[{target_id}]]");
                         links.push(DetectedLink {
                             target_id,
                             target_title: title.to_string(),
@@ -200,7 +199,7 @@ Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#,
         let entities_list: String = known_entities
             .iter()
             .filter(|(id, _)| !doc_ids.contains(id.as_str()))
-            .map(|(id, title)| format!("- {} (id: {})", title, id))
+            .map(|(id, title)| format!("- {title} (id: {id})"))
             .collect::<Vec<_>>()
             .join("\n");
 
@@ -219,7 +218,7 @@ Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#,
                 } else {
                     content
                 };
-                format!("=== DOC_ID: {} ===\nTitle: {}\n{}", id, title, truncated)
+                format!("=== DOC_ID: {id} ===\nTitle: {title}\n{truncated}")
             })
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -228,15 +227,14 @@ Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#,
             r#"Analyze these documents and find mentions of known entities. Return ONLY a JSON object.
 
 Known entities:
-{}
+{entities_list}
 
 Documents:
-{}
+{docs_section}
 
 Return a JSON object where keys are DOC_IDs and values are arrays of {{"entity": "exact title", "context": "surrounding text"}}.
 Only include entities clearly mentioned. Use empty array [] for docs with no matches.
-Example: {{"abc123": [{{"entity": "John Doe", "context": "met John"}}], "def456": []}}"#,
-            entities_list, docs_section
+Example: {{"abc123": [{{"entity": "John Doe", "context": "met John"}}], "def456": []}}"#
         );
 
         let response = self.llm.complete(&prompt).await?;
@@ -348,7 +346,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_link_detector_extracts_json_from_text() {
-        let mock = MockLlm::new(r#"Here are the results: [{"entity": "Project X", "context": "working on Project X"}]"#);
+        let mock = MockLlm::new(
+            r#"Here are the results: [{"entity": "Project X", "context": "working on Project X"}]"#,
+        );
         let detector = LinkDetector::new(Box::new(mock));
 
         let content = "Currently working on Project X.";
@@ -395,7 +395,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_link_detector_deduplicates() {
-        let mock = MockLlm::new(r#"[{"entity": "Test Doc", "context": "first mention"}, {"entity": "Test Doc", "context": "second mention"}]"#);
+        let mock = MockLlm::new(
+            r#"[{"entity": "Test Doc", "context": "first mention"}, {"entity": "Test Doc", "context": "second mention"}]"#,
+        );
         let detector = LinkDetector::new(Box::new(mock));
 
         let content = "Test Doc mentioned twice.";

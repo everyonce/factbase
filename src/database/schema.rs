@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 5;
+pub(super) const SCHEMA_VERSION: i32 = 7;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -44,6 +44,18 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         5,
         "Add cross_check_hash to documents",
         "ALTER TABLE documents ADD COLUMN cross_check_hash TEXT;",
+    ),
+    // Version 6: Add has_review_queue flag to avoid full-scan when listing review questions
+    (
+        6,
+        "Add has_review_queue to documents",
+        "ALTER TABLE documents ADD COLUMN has_review_queue BOOLEAN DEFAULT FALSE;",
+    ),
+    // Version 7: FTS5 virtual table for full-text content search
+    (
+        7,
+        "Add FTS5 full-text search index",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS document_content_fts USING fts5(doc_id UNINDEXED, content);",
     ),
 ];
 
@@ -77,6 +89,7 @@ impl Database {
                 is_deleted BOOLEAN DEFAULT FALSE,
                 word_count INTEGER,
                 cross_check_hash TEXT,
+                has_review_queue BOOLEAN DEFAULT FALSE,
                 UNIQUE(repo_id, file_path),
                 FOREIGN KEY (repo_id) REFERENCES repositories(id)
             );
@@ -100,7 +113,7 @@ impl Database {
 
         // Create virtual table for embeddings
         // Check if we need to migrate from 768 to 1024 dimensions or old schema
-        let needs_migration = self.check_embedding_migration(&conn)?;
+        let needs_migration = Self::check_embedding_migration(&conn)?;
         if needs_migration {
             tracing::warn!("Migrating embeddings schema. Full rescan required.");
             conn.execute("DROP TABLE IF EXISTS document_embeddings", [])?;
@@ -129,32 +142,38 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_chunks_doc ON embedding_chunks(document_id);",
         )?;
 
+        // FTS5 full-text search index for content search optimization
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS document_content_fts USING fts5(doc_id UNINDEXED, content)",
+            [],
+        )?;
+
         // Run any pending migrations
-        self.run_migrations(&conn)?;
+        Self::run_migrations(&conn)?;
 
         Ok(())
     }
 
     /// Get current schema version from database
-    fn get_schema_version(&self, conn: &DbConn) -> Result<i32, FactbaseError> {
+    fn get_schema_version(conn: &DbConn) -> Result<i32, FactbaseError> {
         let version: i32 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         Ok(version)
     }
 
     /// Set schema version in database
-    fn set_schema_version(&self, conn: &DbConn, version: i32) -> Result<(), FactbaseError> {
+    fn set_schema_version(conn: &DbConn, version: i32) -> Result<(), FactbaseError> {
         // PRAGMA doesn't support parameters, so we format directly
-        conn.execute(&format!("PRAGMA user_version = {}", version), [])?;
+        conn.execute(&format!("PRAGMA user_version = {version}"), [])?;
         Ok(())
     }
 
     /// Run pending database migrations
-    fn run_migrations(&self, conn: &DbConn) -> Result<(), FactbaseError> {
-        let current_version = self.get_schema_version(conn)?;
+    fn run_migrations(conn: &DbConn) -> Result<(), FactbaseError> {
+        let current_version = Self::get_schema_version(conn)?;
 
         // If database is new (version 0), set to current schema version
         if current_version == 0 {
-            self.set_schema_version(conn, SCHEMA_VERSION)?;
+            Self::set_schema_version(conn, SCHEMA_VERSION)?;
             tracing::debug!("Initialized schema version to {}", SCHEMA_VERSION);
             return Ok(());
         }
@@ -164,7 +183,16 @@ impl Database {
             if *version > current_version {
                 tracing::info!("Running migration {}: {}", version, description);
                 conn.execute_batch(sql)?;
-                self.set_schema_version(conn, *version)?;
+
+                // Post-migration hooks
+                if *version == 6 {
+                    Self::backfill_has_review_queue(conn)?;
+                }
+                if *version == 7 {
+                    Self::backfill_fts5(conn)?;
+                }
+
+                Self::set_schema_version(conn, *version)?;
                 tracing::info!("Migration {} complete", version);
             }
         }
@@ -172,8 +200,61 @@ impl Database {
         Ok(())
     }
 
+    /// Backfill has_review_queue for existing documents
+    fn backfill_has_review_queue(conn: &DbConn) -> Result<(), FactbaseError> {
+        use crate::patterns::REVIEW_QUEUE_MARKER;
+
+        let mut stmt =
+            conn.prepare("SELECT id, content FROM documents WHERE is_deleted = FALSE")?;
+        let mut rows = stmt.query([])?;
+        let mut ids_with_review: Vec<String> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let stored: String = row.get(1)?;
+            let content = super::decode_content_lossy(stored);
+            if content.contains(REVIEW_QUEUE_MARKER) {
+                ids_with_review.push(id);
+            }
+        }
+        if !ids_with_review.is_empty() {
+            tracing::info!(
+                "Backfilling has_review_queue for {} documents",
+                ids_with_review.len()
+            );
+            for id in &ids_with_review {
+                conn.execute(
+                    "UPDATE documents SET has_review_queue = TRUE WHERE id = ?1",
+                    [id],
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Backfill FTS5 index from existing documents
+    fn backfill_fts5(conn: &DbConn) -> Result<(), FactbaseError> {
+        let mut stmt =
+            conn.prepare("SELECT id, content FROM documents WHERE is_deleted = FALSE")?;
+        let mut rows = stmt.query([])?;
+        let mut count = 0usize;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let stored: String = row.get(1)?;
+            let content = super::decode_content_lossy(stored);
+            conn.execute(
+                "INSERT INTO document_content_fts (doc_id, content) VALUES (?1, ?2)",
+                rusqlite::params![id, content],
+            )?;
+            count += 1;
+        }
+        if count > 0 {
+            tracing::info!("Backfilled FTS5 index for {} documents", count);
+        }
+        Ok(())
+    }
+
     /// Check if embedding schema needs migration
-    fn check_embedding_migration(&self, conn: &DbConn) -> Result<bool, FactbaseError> {
+    fn check_embedding_migration(conn: &DbConn) -> Result<bool, FactbaseError> {
         // Check if table exists
         let table_exists: bool = conn
             .query_row(
@@ -274,7 +355,7 @@ mod tests {
         let db = Database::new(&db_path).expect("create database");
 
         let conn = db.get_conn().expect("get connection");
-        let version = db.get_schema_version(&conn).expect("get version");
+        let version = Database::get_schema_version(&conn).expect("get version");
 
         // Should be set to current schema version
         assert_eq!(version, SCHEMA_VERSION);
@@ -342,5 +423,23 @@ mod tests {
             column_exists,
             "cross_check_hash column should exist in documents table"
         );
+    }
+
+    #[test]
+    fn test_fts5_table_exists() {
+        let temp = TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+        let _db = Database::new(&db_path).expect("create database");
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open connection");
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='document_content_fts'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query table");
+
+        assert!(table_exists, "document_content_fts FTS5 table should exist");
     }
 }

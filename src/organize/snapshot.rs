@@ -125,7 +125,7 @@ pub fn create_snapshot(
         // Backup file if it exists
         if let Some(ref doc) = doc {
             let file_path = repo_path.join(&doc.file_path);
-            let backup_path = snap_dir.join(format!("{}.md", doc_id));
+            let backup_path = snap_dir.join(format!("{doc_id}.md"));
 
             let existed = file_path.exists();
             if existed {

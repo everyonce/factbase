@@ -10,6 +10,9 @@ pub struct EmbeddingConfig {
     /// Preferred field for Bedrock: AWS region (e.g. "us-east-1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// AWS profile name (e.g. "poc"). Optional, uses default credentials if omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     /// For Ollama: HTTP URL. For Bedrock: deprecated alias for `region`.
     #[serde(default = "default_base_url")]
     pub base_url: String,
@@ -72,6 +75,7 @@ impl Default for EmbeddingConfig {
         Self {
             provider: default_provider(),
             region: None,
+            profile: None,
             base_url: default_base_url(),
             model: default_embedding_model(),
             dimension: 1024,
@@ -97,6 +101,9 @@ pub struct LlmConfig {
     /// Preferred field for Bedrock: AWS region (e.g. "us-east-1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// AWS profile name (e.g. "poc"). Optional, uses default credentials if omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     /// For Ollama: HTTP URL. For Bedrock: deprecated alias for `region`.
     #[serde(default = "default_base_url")]
     pub base_url: String,
@@ -111,6 +118,7 @@ impl Default for LlmConfig {
         Self {
             provider: default_provider(),
             region: None,
+            profile: None,
             base_url: default_base_url(),
             model: default_llm_model(),
             timeout_secs: default_timeout_secs(),

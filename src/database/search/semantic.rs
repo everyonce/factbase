@@ -23,7 +23,7 @@ impl Database {
         let conn = self.get_conn()?;
 
         // Get the embedding for the source document (first chunk)
-        let chunk_id = format!("{}_0", doc_id);
+        let chunk_id = format!("{doc_id}_0");
         let embedding: Vec<u8> = conn.query_row(
             "SELECT embedding FROM document_embeddings WHERE id = ?1",
             [&chunk_id],
@@ -152,7 +152,7 @@ impl Database {
                     }
                 }
 
-                let result = Self::row_to_search_result_with_chunk(row, query)?;
+                let result = Self::row_to_search_result_with_chunk(row, doc_id.clone(), query)?;
                 doc_results.insert(doc_id, result);
             }
             Ok(())
@@ -198,6 +198,7 @@ impl Database {
 
     fn row_to_search_result_with_chunk(
         row: &rusqlite::Row,
+        doc_id: String,
         query: Option<&str>,
     ) -> Result<SearchResult, FactbaseError> {
         let stored_content: String = row.get(4)?;
@@ -221,7 +222,7 @@ impl Database {
         let highlighted_snippet = query.map(|q| Self::highlight_terms(&snippet, q));
 
         Ok(SearchResult {
-            id: row.get(0)?,
+            id: doc_id,
             title: row.get(1)?,
             doc_type: row.get(2).ok(),
             file_path: row.get(3)?,

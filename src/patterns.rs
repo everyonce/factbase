@@ -183,20 +183,20 @@ pub(crate) fn normalize_date_for_comparison(date: &str) -> String {
         let year = &date[0..4];
         let quarter = &date[6..7];
         let month = match quarter {
-            "1" => "01",
             "2" => "04",
             "3" => "07",
             "4" => "10",
+            // Q1 and any unrecognized quarter default to January
             _ => "01",
         };
-        return format!("{}-{}-01", year, month);
+        return format!("{year}-{month}-01");
     }
 
     match date.len() {
-        4 => format!("{}-01-01", date), // YYYY -> YYYY-01-01
-        7 => format!("{}-01", date),    // YYYY-MM -> YYYY-MM-01
-        10 => date.to_string(),         // YYYY-MM-DD
-        _ => date.to_string(),          // Unknown format, return as-is
+        4 => format!("{date}-01-01"), // YYYY -> YYYY-01-01
+        7 => format!("{date}-01"),    // YYYY-MM -> YYYY-MM-01
+        // YYYY-MM-DD and unknown formats returned as-is
+        _ => date.to_string(),
     }
 }
 
@@ -215,20 +215,19 @@ pub(crate) fn normalize_date_to_end(date: &str) -> String {
             "1" => ("03", "31"), // Q1 ends March 31
             "2" => ("06", "30"), // Q2 ends June 30
             "3" => ("09", "30"), // Q3 ends September 30
-            "4" => ("12", "31"), // Q4 ends December 31
+            // Q4 and any unrecognized quarter default to December 31
             _ => ("12", "31"),
         };
-        return format!("{}-{}-{}", year, month, day);
+        return format!("{year}-{month}-{day}");
     }
 
     match date.len() {
-        4 => format!("{}-12-31", date), // YYYY -> YYYY-12-31
+        4 => format!("{date}-12-31"), // YYYY -> YYYY-12-31
         7 => {
             // YYYY-MM -> YYYY-MM-{last day}
             let year: i32 = date[0..4].parse().unwrap_or(2000);
             let month: u32 = date[5..7].parse().unwrap_or(1);
             let last_day = match month {
-                1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
                 4 | 6 | 9 | 11 => 30,
                 2 => {
                     // Leap year check
@@ -238,12 +237,13 @@ pub(crate) fn normalize_date_to_end(date: &str) -> String {
                         28
                     }
                 }
+                // Months with 31 days and any unrecognized month
                 _ => 31,
             };
-            format!("{}-{:02}", date, last_day)
+            format!("{date}-{last_day:02}")
         }
-        10 => date.to_string(), // YYYY-MM-DD
-        _ => date.to_string(),  // Unknown format, return as-is
+        // YYYY-MM-DD and unknown formats returned as-is
+        _ => date.to_string(),
     }
 }
 

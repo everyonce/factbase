@@ -111,7 +111,7 @@ pub async fn plan_merge(
 
     Ok(MergePlan {
         keep_id: keep_id.to_string(),
-        merge_ids: merge_ids.iter().map(|s| s.to_string()).collect(),
+        merge_ids: merge_ids.iter().map(ToString::to_string).collect(),
         ledger,
         combined_content,
     })
@@ -126,23 +126,22 @@ fn build_merge_prompt(
     let mut prompt = format!(
         r#"You are analyzing facts from multiple documents to merge them into one.
 
-TARGET DOCUMENT: "{}"
+TARGET DOCUMENT: "{keep_title}"
 
 FACTS FROM TARGET (to keep):
-"#,
-        keep_title
+"#
     );
 
     for (i, fact) in keep_facts.iter().enumerate() {
-        prompt.push_str(&format!("K{}: {}\n", i, fact.content));
+        writeln_str!(prompt, "K{}: {}", i, fact.content);
     }
 
     prompt.push_str("\nFACTS FROM DOCUMENTS TO MERGE:\n");
 
     for (doc_id, facts) in merge_facts {
-        prompt.push_str(&format!("\nFrom document {}:\n", doc_id));
+        writeln_str!(prompt, "\nFrom document {}:", doc_id);
         for (i, fact) in facts.iter().enumerate() {
-            prompt.push_str(&format!("M{}_{}: {}\n", doc_id, i, fact.content));
+            writeln_str!(prompt, "M{}_{}: {}", doc_id, i, fact.content);
         }
     }
 
@@ -198,8 +197,8 @@ fn parse_merge_response(
                     let destination = match decision.action.to_uppercase().as_str() {
                         "KEEP" => FactDestination::Document,
                         "DUPLICATE" => FactDestination::Duplicate,
-                        "ORPHAN" => FactDestination::Orphan,
-                        _ => FactDestination::Orphan, // Default to orphan for safety
+                        // "ORPHAN" and any unrecognized action default to orphan for safety
+                        _ => FactDestination::Orphan,
                     };
                     assignments.push((fact.id.clone(), destination, decision.reason));
                 }

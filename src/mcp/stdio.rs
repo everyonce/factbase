@@ -101,7 +101,7 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                         .cloned();
 
                     let (tx, progress) = if progress_token.is_some() {
-                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
                         (Some(rx), Some(tx))
                     } else {
                         (None, None)
@@ -111,21 +111,23 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                     tokio::pin!(tool_fut);
 
                     if let Some(mut rx) = tx {
-                        let token = progress_token.unwrap();
+                        // Safety: progress_token is guaranteed Some when tx channel exists
+                        let token = progress_token
+                            .expect("progress_token is Some when progress channel is created");
                         loop {
                             tokio::select! {
                                 biased;
                                 Some(msg) = rx.recv() => {
-                                    let p = msg.get("progress").and_then(|v| v.as_u64()).unwrap_or(0);
-                                    let t = msg.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                                    let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
+                                    let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
                                     let m = msg.get("message").and_then(|v| v.as_str());
                                     let _ = write_progress(&mut writer, &token, p, t, m);
                                 }
                                 result = &mut tool_fut => {
                                     // Drain remaining progress
                                     while let Ok(msg) = rx.try_recv() {
-                                        let p = msg.get("progress").and_then(|v| v.as_u64()).unwrap_or(0);
-                                        let t = msg.get("total").and_then(|v| v.as_u64()).unwrap_or(0);
+                                        let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
+                                        let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
                                         let m = msg.get("message").and_then(|v| v.as_str());
                                         let _ = write_progress(&mut writer, &token, p, t, m);
                                     }
@@ -139,7 +141,9 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                     } else {
                         match tool_fut.await {
                             Ok(resp) => resp,
-                            Err(e) => Some(McpResponse::error(-32603, format!("Internal error: {e}"))),
+                            Err(e) => {
+                                Some(McpResponse::error(-32603, format!("Internal error: {e}")))
+                            }
                         }
                     }
                 }

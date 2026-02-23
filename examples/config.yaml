@@ -1,5 +1,6 @@
 # Factbase Configuration
-# Copy to ~/.config/factbase/config.yaml
+# Place at ~/.config/factbase/config.yaml (global)
+# or .factbase/config.yaml (per-repo, takes priority)
 
 database:
   path: ~/.local/share/factbase/factbase.db
@@ -16,23 +17,28 @@ watcher:
     - ".DS_Store"
 
 processor:
-  max_file_size: 1048576   # Max file size in bytes (1MB)
-  snippet_length: 200      # Search result snippet length
-  chunk_size: 100000       # Embedding chunk size in chars (for large docs)
-  chunk_overlap: 2000      # Overlap between chunks for context continuity
+  max_file_size: 1048576       # Max file size in bytes (1MB)
+  snippet_length: 200          # Search result snippet length
+  chunk_size: 100000           # Embedding chunk size in chars (for large docs)
+  chunk_overlap: 2000          # Overlap between chunks for context continuity
+  embedding_batch_size: 10     # Docs per embedding API call (1-100)
+  link_batch_size: 5           # Docs per link detection batch (1-50)
+  lint_concurrency: 5          # Parallel lint/cross-validation (1-20)
 
 embedding:
   provider: bedrock
-  region: us-east-1                        # AWS region
-  model: amazon.nova-2-multimodal-embeddings-v1:0      # 1024 dims, 8K context
+  profile: default             # AWS profile name (optional, uses default credentials if omitted)
+  region: us-east-1            # AWS region
+  model: amazon.nova-2-multimodal-embeddings-v1:0
   dimension: 1024
   cache_size: 100              # Query embedding cache (1-10000)
   timeout_secs: 30             # HTTP timeout (1-300)
 
 llm:
   provider: bedrock
-  region: us-east-1                                         # AWS region
-  model: us.anthropic.claude-haiku-4-5-20251001-v1:0        # Cross-region, fast
+  profile: default             # AWS profile name (optional, uses default credentials if omitted)
+  region: us-east-1            # AWS region
+  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
   timeout_secs: 30             # HTTP timeout (1-300)
 
 # --- Alternative: Ollama (self-hosted) ---
@@ -51,6 +57,10 @@ llm:
 #   base_url: http://localhost:11434
 #   model: rnj-1-extended          # Extended context model (49K)
 #   timeout_secs: 30
+#
+# ollama:
+#   max_retries: 3         # Retry count for failed requests
+#   retry_delay_ms: 1000   # Delay between retries
 
 rate_limit:
   per_second: 10    # MCP server rate limit
@@ -59,3 +69,7 @@ rate_limit:
 server:
   host: 127.0.0.1   # MCP server host
   port: 3000        # MCP server port
+
+web:
+  enabled: false    # Enable web UI (requires 'web' feature)
+  port: 3001        # Web UI port

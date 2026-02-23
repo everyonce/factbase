@@ -29,7 +29,7 @@ pub fn parse_temporal_tags(content: &str) -> Vec<TemporalTag> {
         let normalized = normalize_temporal_tags(line);
 
         for cap in TEMPORAL_TAG_FULL_REGEX.captures_iter(&normalized) {
-            let raw_text = cap.get(0).map(|m| m.as_str()).unwrap_or("").to_string();
+            let raw_text = cap.get(0).map_or("", |m| m.as_str()).to_string();
             let (tag_type, start_date, end_date) = parse_tag_components(&cap);
 
             tags.push(TemporalTag {
@@ -59,7 +59,7 @@ pub fn parse_temporal_tags(content: &str) -> Vec<TemporalTag> {
 fn parse_tag_components(
     cap: &regex::Captures,
 ) -> (TemporalTagType, Option<String>, Option<String>) {
-    let full_match = cap.get(0).map(|m| m.as_str()).unwrap_or("");
+    let full_match = cap.get(0).map_or("", |m| m.as_str());
 
     if full_match == "@t[?]" {
         return (TemporalTagType::Unknown, None, None);
@@ -79,11 +79,10 @@ fn parse_tag_components(
     let end_date = cap.get(4).map(|m| m.as_str().to_string());
 
     let tag_type = match (prefix, has_range, &end_date) {
-        (Some("="), false, None) => TemporalTagType::PointInTime,
         (Some("~"), false, None) => TemporalTagType::LastSeen,
         (None, true, Some(_)) => TemporalTagType::Range,
         (None, true, None) => TemporalTagType::Ongoing,
-        (None, false, None) => TemporalTagType::PointInTime,
+        // (Some("="), false, None), (None, false, None), and any unrecognized combination
         _ => TemporalTagType::PointInTime,
     };
 

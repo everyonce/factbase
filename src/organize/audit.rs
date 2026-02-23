@@ -309,7 +309,7 @@ pub(crate) fn write_audit_log(
     let log_path = log_dir.join(&filename);
 
     let yaml = serde_yaml_ng::to_string(entry)
-        .map_err(|e| FactbaseError::internal(format!("Failed to serialize audit entry: {}", e)))?;
+        .map_err(|e| FactbaseError::internal(format!("Failed to serialize audit entry: {e}")))?;
 
     fs::write(&log_path, yaml)?;
 
@@ -325,7 +325,7 @@ pub(crate) fn list_audit_logs(repo_path: &Path) -> Result<Vec<PathBuf>, Factbase
     }
 
     let mut logs: Vec<PathBuf> = fs::read_dir(&log_dir)?
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "yaml"))
         .collect();
@@ -340,7 +340,7 @@ pub(crate) fn list_audit_logs(repo_path: &Path) -> Result<Vec<PathBuf>, Factbase
 pub(crate) fn read_audit_log(path: &Path) -> Result<AuditEntry, FactbaseError> {
     let content = fs::read_to_string(path)?;
     let entry: AuditEntry = serde_yaml_ng::from_str(&content)
-        .map_err(|e| FactbaseError::internal(format!("Failed to parse audit log: {}", e)))?;
+        .map_err(|e| FactbaseError::internal(format!("Failed to parse audit log: {e}")))?;
     Ok(entry)
 }
 
