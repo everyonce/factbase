@@ -36,7 +36,7 @@ pub async fn scan_repository(
 
     // Link detection uses LLM which requires 'static ownership.
     // MCP scan uses NoOpLlm — manual [[id]] links are still detected.
-    // For LLM-powered entity detection, run lint_repository after scanning.
+    // For LLM-powered entity detection, run check_repository after scanning.
     let link_detector = LinkDetector::new(Box::new(NoOpLlm));
 
     progress.log(&format!("Scanning repository '{}'...", repo.id));
@@ -130,7 +130,7 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         perspective: None,
         created_at: chrono::Utc::now(),
         last_indexed_at: None,
-        last_lint_at: None,
+        last_check_at: None,
     };
     db.upsert_repository(&repo)?;
 

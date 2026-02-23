@@ -55,7 +55,7 @@ pub fn create_repository(id: &str, name: &str, path: &Path) -> Repository {
         perspective: None,
         created_at: Utc::now(),
         last_indexed_at: None,
-        last_lint_at: None,
+        last_check_at: None,
     }
 }
 

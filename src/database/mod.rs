@@ -41,7 +41,7 @@
 //! - [`Database::remove_repository`] - Remove repository and docs
 //! - [`Database::get_repository_by_path`] - Find repo by filesystem path
 //! - [`Database::list_repositories_with_stats`] - List repos with doc counts
-//! - [`Database::update_last_lint_at`] - Update lint timestamp
+//! - [`Database::update_last_check_at`] - Update check timestamp
 //!
 //! ### Document Operations (17) — `documents/` submodule
 //!
@@ -69,8 +69,7 @@
 //! - [`Database::backfill_word_counts`] - Populate word counts for existing docs
 //!
 //! ### Transaction Control (2)
-//! - [`Database::begin_transaction`] - Start transaction
-//! - [`Database::commit_transaction`] - Commit transaction
+//! - [`Database::with_transaction`] - Execute operations in a transaction
 //!
 //! ### Statistics & Caching (7)
 //! - [`Database::get_stats`] - Basic repo stats
@@ -266,18 +265,30 @@ impl Database {
         })
     }
 
-    /// Begin a transaction for batch operations
-    pub fn begin_transaction(&self) -> Result<(), FactbaseError> {
+    /// Execute a closure within a single-connection transaction.
+    ///
+    /// Checks out one connection, begins a transaction, runs the closure,
+    /// and commits on success or rolls back on error. The closure receives
+    /// the connection so all operations run on the same connection.
+    ///
+    /// # Errors
+    /// Returns the closure's error (after rollback) or a transaction error.
+    pub fn with_transaction<F, T>(&self, f: F) -> Result<T, FactbaseError>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<T, FactbaseError>,
+    {
         let conn = self.get_conn()?;
         conn.execute("BEGIN TRANSACTION", [])?;
-        Ok(())
-    }
-
-    /// Commit a transaction
-    pub fn commit_transaction(&self) -> Result<(), FactbaseError> {
-        let conn = self.get_conn()?;
-        conn.execute("COMMIT", [])?;
-        Ok(())
+        match f(&conn) {
+            Ok(val) => {
+                conn.execute("COMMIT", [])?;
+                Ok(val)
+            }
+            Err(e) => {
+                let _ = conn.execute("ROLLBACK", []);
+                Err(e)
+            }
+        }
     }
 
     // Stats operations are in stats.rs
@@ -347,7 +358,7 @@ pub(crate) mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_lint_at: None,
+            last_check_at: None,
         };
         db.upsert_repository(&repo).expect("create repo");
     }
@@ -360,7 +371,7 @@ pub(crate) mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_lint_at: None,
+            last_check_at: None,
         }
     }
 
@@ -372,7 +383,7 @@ pub(crate) mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_lint_at: None,
+            last_check_at: None,
         }
     }
 
@@ -441,4 +452,45 @@ pub(crate) mod tests {
     }
 
     // Note: Schema version tests moved to schema.rs
+
+    #[test]
+    fn test_with_transaction_commits_on_success() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+
+        db.with_transaction(|conn| {
+            let doc = test_doc("aaa111", "Tx Test");
+            conn.execute(
+                "INSERT INTO documents (id, repo_id, file_path, title, content, file_hash, indexed_at, is_deleted)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), FALSE)",
+                rusqlite::params![doc.id, "test-repo", doc.file_path, doc.title, doc.content, "hash1"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        // Document should be visible after commit
+        assert!(db.get_document("aaa111").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_with_transaction_rolls_back_on_error() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+
+        let result: Result<(), _> = db.with_transaction(|conn| {
+            conn.execute(
+                "INSERT INTO documents (id, repo_id, file_path, title, content, file_hash, indexed_at, is_deleted)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'), FALSE)",
+                rusqlite::params!["bbb222", "test-repo", "bbb222.md", "Rollback", "content", "hash2"],
+            )?;
+            Err(FactbaseError::internal("forced error"))
+        });
+
+        assert!(result.is_err());
+        // Document should NOT exist after rollback
+        assert!(db.get_document("bbb222").unwrap().is_none());
+    }
 }

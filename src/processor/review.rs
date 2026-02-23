@@ -3,6 +3,8 @@
 //! This module handles parsing `@q[...]` review questions from document content
 //! and appending new questions to documents.
 
+use std::collections::HashSet;
+
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{INLINE_QUESTION_MARKER, REVIEW_QUESTION_REGEX, REVIEW_QUEUE_MARKER};
 use tracing::warn;
@@ -111,6 +113,106 @@ fn extract_line_ref(description: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Remove unanswered questions whose trigger conditions no longer exist.
+///
+/// Takes the set of descriptions that the generators would produce today.
+/// Any unanswered question whose description is NOT in `valid_descriptions`
+/// is removed. Answered and deferred questions are always kept.
+///
+/// If `had_cross_check` is false, questions starting with "Cross-check" are
+/// preserved regardless (they require LLM to regenerate).
+pub fn prune_stale_questions(
+    content: &str,
+    valid_descriptions: &HashSet<String>,
+    had_cross_check: bool,
+) -> String {
+    let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
+        return content.to_string();
+    };
+
+    let (before_marker, after_marker) = content.split_at(marker_pos);
+    let queue_content = &after_marker[REVIEW_QUEUE_MARKER.len()..];
+
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut skip_answer = false;
+    let mut pruned = 0usize;
+
+    for line in queue_content.lines() {
+        let trimmed = line.trim_start();
+        let is_question = trimmed.starts_with("- [");
+
+        if is_question {
+            let is_answered = trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]");
+            let is_cross_check = trimmed.contains("Cross-check");
+
+            // Keep answered questions, cross-check questions (when no LLM), and valid questions
+            if is_answered
+                || (!had_cross_check && is_cross_check)
+                || question_description_matches(trimmed, valid_descriptions)
+            {
+                result_lines.push(line);
+                skip_answer = false;
+            } else {
+                skip_answer = true;
+                pruned += 1;
+            }
+        } else if skip_answer && trimmed.starts_with('>') {
+            continue;
+        } else {
+            result_lines.push(line);
+            skip_answer = false;
+        }
+    }
+
+    if pruned == 0 {
+        return content.to_string();
+    }
+
+    // Check if any questions remain
+    let has_questions = result_lines
+        .iter()
+        .any(|l| l.trim_start().starts_with("- ["));
+
+    if has_questions {
+        format!(
+            "{}{}\n{}",
+            before_marker,
+            REVIEW_QUEUE_MARKER,
+            result_lines.join("\n")
+        )
+    } else {
+        // Remove entire Review Queue section including heading and separator
+        let mut body = before_marker.to_string();
+        loop {
+            let trimmed = body.trim_end();
+            if trimmed.ends_with("## Review Queue") {
+                body = trimmed.trim_end_matches("## Review Queue").to_string();
+            } else if trimmed.ends_with("---") {
+                body = trimmed.trim_end_matches("---").to_string();
+            } else {
+                body = trimmed.to_string();
+                break;
+            }
+        }
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body
+    }
+}
+
+/// Check if a question line's description matches any in the valid set.
+fn question_description_matches(line: &str, valid: &HashSet<String>) -> bool {
+    // Question format: "- [ ] `@q[type]` Description text"
+    // Extract description after the @q[...] tag
+    if let Some(pos) = line.find("]` ") {
+        let desc = &line[pos + 3..];
+        return valid.contains(desc);
+    }
+    // If we can't parse it, keep it (conservative)
+    true
 }
 
 /// Normalize the review queue section to prevent format degradation.
@@ -647,5 +749,73 @@ Line 3
         assert!(result.contains("## Review Queue"));
         assert!(result.contains("<!-- factbase:review -->"));
         assert!(result.contains("- [ ] `@q[temporal]` Line 5: when?"));
+    }
+
+    // ============================================================================
+    // Prune Stale Questions Tests
+    // ============================================================================
+
+    #[test]
+    fn test_prune_removes_stale_unanswered() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` \"Old fact\" - when was this true?\n  > \n";
+        let valid = HashSet::new(); // no valid questions — the trigger is gone
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(!result.contains("Old fact"), "Stale question should be removed");
+    }
+
+    #[test]
+    fn test_prune_keeps_valid_unanswered() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` \"Current fact\" - when was this true?\n  > \n";
+        let mut valid = HashSet::new();
+        valid.insert("\"Current fact\" - when was this true?".to_string());
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(result.contains("Current fact"), "Valid question should be kept");
+    }
+
+    #[test]
+    fn test_prune_keeps_answered() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [x] `@q[temporal]` \"Old fact\" - when was this true?\n  > 2024\n";
+        let valid = HashSet::new(); // not in valid set, but answered
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(result.contains("Old fact"), "Answered question should be kept");
+    }
+
+    #[test]
+    fn test_prune_keeps_cross_check_without_llm() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[stale]` Cross-check with doc2: fact is outdated\n  > \n";
+        let valid = HashSet::new();
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(result.contains("Cross-check"), "Cross-check kept when no LLM");
+    }
+
+    #[test]
+    fn test_prune_removes_cross_check_with_llm() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[stale]` Cross-check with doc2: fact is outdated\n  > \n";
+        let valid = HashSet::new();
+        let result = prune_stale_questions(content, &valid, true);
+        assert!(!result.contains("Cross-check"), "Cross-check pruned when LLM ran");
+    }
+
+    #[test]
+    fn test_prune_removes_entire_section_when_empty() {
+        let content = "# Doc\n\nContent here.\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` stale question\n  > \n";
+        let valid = HashSet::new();
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(!result.contains("Review Queue"), "Empty section should be removed");
+        assert!(result.contains("Content here"), "Body should be preserved");
+    }
+
+    #[test]
+    fn test_prune_no_review_section() {
+        let content = "# Doc\n\nJust content.";
+        let valid = HashSet::new();
+        let result = prune_stale_questions(content, &valid, false);
+        assert_eq!(result, content);
     }
 }

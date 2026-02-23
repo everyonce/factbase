@@ -34,7 +34,9 @@ pub fn generate_ambiguous_questions(content: &str) -> Vec<ReviewQuestion> {
 
         // Check for ambiguous location (no context like "home", "work", "office")
         let ambiguity = detect_ambiguous_location(&fact_text)
-            .or_else(|| detect_ambiguous_relationship(&fact_text));
+            .or_else(|| detect_ambiguous_relationship(&fact_text))
+            .map(String::from)
+            .or_else(|| detect_undefined_acronym(&fact_text));
 
         if let Some(ambiguity) = ambiguity {
             questions.push(ReviewQuestion::new(
@@ -129,6 +131,53 @@ fn detect_ambiguous_relationship(text: &str) -> Option<&'static str> {
     }
 
     None
+}
+
+/// Detect undefined acronyms/abbreviations that could have multiple meanings.
+///
+/// Flags uppercase sequences (2-5 chars) that aren't preceded by their expansion
+/// in the same line or a nearby heading. Common well-known acronyms are excluded.
+fn detect_undefined_acronym(text: &str) -> Option<String> {
+    // Well-known acronyms that don't need definition in a knowledge base context
+    static KNOWN: &[&str] = &[
+        "US", "USA", "UK", "EU", "UN", "CEO", "CTO", "CFO", "COO", "CMO", "CIO", "CISO", "CPO",
+        "VP", "SVP", "EVP", "MD", "PhD", "MBA", "BS", "BA", "MS", "HR", "IT", "AI", "ML", "API",
+        "SDK", "CLI", "URL", "SQL", "AWS", "GCP", "IPO", "LLC", "INC", "ID", "OK", "PM", "AM",
+        "Q1", "Q2", "Q3", "Q4", "YoY", "QoQ", "MoM", "KPI", "OKR", "ROI", "P&L", "R&D",
+        "SaaS", "PaaS", "IaaS", "B2B", "B2C", "PR", "IR", "VC", "PE", "LP", "GP", "USD", "EUR",
+        "GBP", "NYC", "SF", "LA", "DC", "HQ", "FTE", "PTO", "WFH", "RTO", "ASAP", "TBD", "TBA",
+        "NA", "EMEA", "APAC", "LATAM", "AMER", "DNS", "HTTP", "HTTPS", "SSH", "TCP", "IP",
+        "PDF", "CSV", "JSON", "YAML", "XML", "HTML", "CSS", "JS", "TS",
+    ];
+
+    // Find uppercase sequences of 2-5 chars that look like acronyms
+    let mut found: Option<&str> = None;
+    for word in text.split(|c: char| !c.is_alphanumeric() && c != '&') {
+        let trimmed = word.trim();
+        if trimmed.len() < 2 || trimmed.len() > 5 {
+            continue;
+        }
+        // Must be mostly uppercase letters (allow digits like "S3" or "&" like "P&L")
+        let alpha_chars: Vec<char> = trimmed.chars().filter(|c| c.is_alphabetic()).collect();
+        if alpha_chars.len() < 2 || !alpha_chars.iter().all(|c| c.is_uppercase()) {
+            continue;
+        }
+        if KNOWN.iter().any(|k| k.eq_ignore_ascii_case(trimmed)) {
+            continue;
+        }
+        // Check if the expansion appears in the same line (e.g., "Total Addressable Market (TAM)")
+        let lower = text.to_lowercase();
+        let acronym_lower = trimmed.to_lowercase();
+        if lower.contains(&format!("({acronym_lower})"))
+            || lower.contains(&format!("({trimmed})"))
+        {
+            continue;
+        }
+        found = Some(trimmed);
+        break; // One per fact line
+    }
+
+    found.map(|acronym| format!("what does \"{acronym}\" mean in this context?"))
 }
 
 #[cfg(test)]
@@ -280,5 +329,72 @@ mod tests {
             1,
             "Old reviewed marker should not suppress ambiguous question"
         );
+    }
+
+    // ==================== Acronym Detection Tests ====================
+
+    #[test]
+    fn test_undefined_acronym_flagged() {
+        let content = "# Company\n\n- Leading TAM expansion in healthcare";
+        let questions = generate_ambiguous_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("TAM"));
+        assert!(questions[0].description.contains("what does"));
+    }
+
+    #[test]
+    fn test_known_acronym_not_flagged() {
+        let content = "# Person\n\n- CTO at Acme Corp @t[2024..]";
+        let questions = generate_ambiguous_questions(content);
+        assert!(
+            questions.is_empty(),
+            "CTO is a well-known acronym, should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_expanded_acronym_not_flagged() {
+        let content =
+            "# Company\n\n- Total Addressable Market (TAM) is $5B";
+        let questions = generate_ambiguous_questions(content);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("TAM"))
+            .collect();
+        assert!(acronym_q.is_empty(), "Expanded acronym should not be flagged");
+    }
+
+    #[test]
+    fn test_short_uppercase_word_not_flagged() {
+        // Single uppercase letter or very common patterns
+        let content = "# Doc\n\n- Phase A of the project";
+        let questions = generate_ambiguous_questions(content);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("what does"))
+            .collect();
+        assert!(acronym_q.is_empty(), "Single letter should not be flagged");
+    }
+
+    #[test]
+    fn test_multiple_acronyms_only_first_flagged() {
+        let content = "# Doc\n\n- Working on TAM and SAM analysis";
+        let questions = generate_ambiguous_questions(content);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("what does"))
+            .collect();
+        assert_eq!(acronym_q.len(), 1, "Only one acronym question per fact line");
+    }
+
+    #[test]
+    fn test_aws_not_flagged() {
+        let content = "# Project\n\n- Deployed on AWS infrastructure";
+        let questions = generate_ambiguous_questions(content);
+        let acronym_q: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("AWS"))
+            .collect();
+        assert!(acronym_q.is_empty());
     }
 }

@@ -63,7 +63,7 @@ pub fn check_document_basics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::lint::execute::test_helpers::make_test_doc;
+    use crate::commands::check::execute::test_helpers::make_test_doc;
 
     #[test]
     fn test_check_document_basics_stub() {

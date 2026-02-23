@@ -47,7 +47,7 @@ pub use organize::get_duplicate_entries;
 pub use repository::{init_repository, scan_repository};
 pub use review::{
     answer_question, answer_questions, apply_review_answers, bulk_answer_questions,
-    generate_questions, get_deferred_items, get_review_queue, lint_repository,
+    generate_questions, get_deferred_items, get_review_queue, check_repository,
 };
 pub use search::{search_content, search_knowledge};
 
@@ -197,7 +197,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "answer_questions" => {
                     blocking_tool!(db, args, reporter, answer_questions)
                 }
-                "lint_repository" => lint_repository(db, embedding, llm, &args, &reporter).await?,
+                "check_repository" => check_repository(db, embedding, llm, &args, &reporter).await?,
                 "scan_repository" => scan_repository(db, embedding, llm, &args, &reporter).await?,
                 "init_repository" => blocking_tool!(db, args, init_repository),
                 "apply_review_answers" => apply_review_answers(db, llm, &args, &reporter).await?,
@@ -336,7 +336,7 @@ mod tests {
             "get_review_queue",
             "get_deferred_items",
             "answer_questions",
-            "lint_repository",
+            "check_repository",
             "scan_repository",
             "init_repository",
             "apply_review_answers",

@@ -40,7 +40,7 @@ pub fn test_repo(id: &str, path: PathBuf) -> Repository {
         perspective: None,
         created_at: Utc::now(),
         last_indexed_at: None,
-        last_lint_at: None,
+        last_check_at: None,
     }
 }
 
@@ -303,7 +303,7 @@ impl TestServer {
             }),
             created_at: Utc::now(),
             last_indexed_at: None,
-            last_lint_at: None,
+            last_check_at: None,
         };
         db.upsert_repository(&repo).unwrap();
 

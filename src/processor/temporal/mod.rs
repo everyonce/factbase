@@ -33,7 +33,7 @@ mod range;
 mod validation;
 
 // Re-export parser functions
-pub use parser::parse_temporal_tags;
+pub use parser::{find_malformed_tags, parse_temporal_tags};
 
 // Re-export date functions
 pub use date::validate_date;

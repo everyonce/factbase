@@ -4,9 +4,9 @@
 //! source citations, and other quality metrics.
 
 use super::ReviewQuestionOptions;
-use crate::commands::lint::output::{ExportedDocQuestions, ExportedQuestion};
-use crate::commands::lint::review::{
-    add_duplicate_questions, generate_questions_for_content, ReviewConfig,
+use crate::commands::check::output::{ExportedDocQuestions, ExportedQuestion};
+use crate::commands::check::review::{
+    add_duplicate_questions, generate_and_prune, ReviewConfig,
 };
 use factbase::{append_review_questions, Database, Document, Repository};
 use glob::Pattern;
@@ -88,16 +88,16 @@ pub fn generate_review_questions(
         required_fields,
     };
 
-    // Generate questions
-    let mut questions_to_add =
-        generate_questions_for_content(&doc.content, doc.doc_type.as_deref(), &review_config);
+    // Generate questions and prune stale ones
+    let (mut questions_to_add, pruned_content, pruned_count) =
+        generate_and_prune(&doc.content, doc.doc_type.as_deref(), &review_config);
 
     // Add duplicate questions
     if let Ok(similar_docs) = db.find_similar_documents(&doc.id, opts.min_similarity) {
         add_duplicate_questions(&mut questions_to_add, &similar_docs);
     }
 
-    if questions_to_add.is_empty() {
+    if questions_to_add.is_empty() && pruned_count == 0 {
         return Ok((0, None));
     }
 
@@ -152,8 +152,8 @@ pub fn generate_review_questions(
             }
         }
     } else {
-        // Normal mode: append questions to document
-        let updated_content = append_review_questions(&doc.content, &questions_to_add);
+        // Normal mode: append questions to document (using pruned content)
+        let updated_content = append_review_questions(&pruned_content, &questions_to_add);
         let abs_path = Path::new(&repo.path).join(&doc.file_path);
         fs::write(&abs_path, &updated_content)?;
         if opts.is_table_format {

@@ -3,7 +3,7 @@ mod commands;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     cmd_completions, cmd_db_vacuum, cmd_doctor, cmd_export, cmd_grep, cmd_import, cmd_init,
-    cmd_links, cmd_lint, cmd_organize, cmd_repo_add, cmd_repo_list, cmd_repo_remove, cmd_review,
+    cmd_links, cmd_check, cmd_organize, cmd_repo_add, cmd_repo_list, cmd_repo_remove, cmd_review,
     cmd_scan, cmd_search, cmd_show, cmd_stats, cmd_status, cmd_version, StatsArgs,
 };
 #[cfg(feature = "mcp")]
@@ -92,7 +92,7 @@ enum Commands {
     Stats(StatsArgs),
 
     /// Check knowledge base quality
-    Lint(commands::lint::LintArgs),
+    Check(commands::check::CheckArgs),
     /// Process review questions
     Review(commands::review::ReviewArgs),
     /// Reorganize knowledge base
@@ -229,7 +229,7 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Export(args) => cmd_export(args)?,
         Commands::Import(args) => cmd_import(args)?,
         Commands::Doctor(args) => cmd_doctor(args).await?,
-        Commands::Lint(args) => cmd_lint(args).await?,
+        Commands::Check(args) => cmd_check(args).await?,
         Commands::Review(args) => cmd_review(args).await?,
         Commands::Show(args) => cmd_show(args)?,
         Commands::Links(args) => cmd_links(args)?,

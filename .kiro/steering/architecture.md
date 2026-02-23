@@ -74,11 +74,11 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 ┌─────────────────────────────────────────────────────────────┐
 │              MCP Server                                      │
 │  - HTTP server on localhost:3000 (configurable)             │
-│  - 18 tools for AI agents (search, entity, CRUD, review, workflow)    │
-│  - search_knowledge, search_content, search_temporal        │
+│  - 20 tools for AI agents (search, entity, CRUD, review, workflow)    │
+│  - search_knowledge, search_content                         │
 │  - get_entity, list_entities, get_perspective               │
 │  - create/update/delete/bulk_create documents               │
-│  - Review queue tools for human-in-the-loop QA              │
+│  - Review queue + workflow tools for human-in-the-loop QA   │
 └─────────────────────────────────────────────────────────────┘
 ```
 

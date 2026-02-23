@@ -1,6 +1,4 @@
-//! Lint command argument parsing.
-//!
-//! Contains the `LintArgs` struct with clap attributes for CLI argument parsing.
+//! Check command argument parsing.
 
 use super::OutputFormat;
 use clap::Parser;
@@ -8,16 +6,18 @@ use clap::Parser;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Check knowledge base quality",
+    about = "Check knowledge base quality and generate review questions",
     after_help = "\
 EXAMPLES:
-    factbase lint --repo myrepo
-    factbase lint --check-duplicates --min-similarity 0.9
-    factbase lint --review --dry-run
-    factbase lint --max-age 365 --fix
+    factbase check
+    factbase check --repo myrepo
+    factbase check --dry-run
+    factbase check --cross-check
+    factbase check --check-duplicates --min-similarity 0.9
+    factbase check --max-age 365 --fix
 "
 )]
-pub struct LintArgs {
+pub struct CheckArgs {
     #[arg(long, short = 'r')]
     pub repo: Option<String>,
     #[arg(long, default_value = "100")]
@@ -54,12 +54,7 @@ pub struct LintArgs {
     pub format: OutputFormat,
     #[arg(
         long,
-        help = "Generate review questions for documents using LLM analysis"
-    )]
-    pub review: bool,
-    #[arg(
-        long,
-        help = "Preview changes without modifying files (use with --fix or --review)"
+        help = "Preview changes without modifying files"
     )]
     pub dry_run: bool,
     #[arg(long, short = 'q', help = "Suppress progress output")]
@@ -67,18 +62,18 @@ pub struct LintArgs {
     #[arg(
         long,
         short = 'w',
-        help = "Watch for file changes and re-lint automatically"
+        help = "Watch for file changes and re-check automatically"
     )]
     pub watch: bool,
     #[arg(
         long,
         short = 'p',
-        help = "Process documents in parallel for faster linting"
+        help = "Process documents in parallel for faster checking"
     )]
     pub parallel: bool,
     #[arg(
         long,
-        help = "Only lint files modified since date (ISO 8601 or relative: 1h, 1d, 1w)"
+        help = "Only check files modified since date (ISO 8601 or relative: 1h, 1d, 1w)"
     )]
     pub since: Option<String>,
     #[arg(
@@ -89,7 +84,7 @@ pub struct LintArgs {
     pub batch_size: usize,
     #[arg(
         long,
-        help = "Export generated questions to file instead of appending to documents (use with --review)"
+        help = "Export generated questions to file instead of appending to documents"
     )]
     pub export_questions: Option<String>,
     #[arg(
@@ -100,17 +95,17 @@ pub struct LintArgs {
     pub check_all: bool,
     #[arg(
         long,
-        help = "Only lint documents modified since last lint (tracks timestamp per repository)"
+        help = "Only check documents modified since last check (tracks timestamp per repository)"
     )]
     pub incremental: bool,
     #[arg(
         long,
-        help = "Cross-check facts against other documents for conflicts and staleness (expensive, opt-in)"
+        help = "Cross-check facts against other documents for conflicts and staleness (requires inference backend)"
     )]
     pub cross_check: bool,
     #[arg(
         long,
-        help = "Timeout in seconds for Ollama API calls (default: from config, max: 300)"
+        help = "Timeout in seconds for API calls (default: from config, max: 300)"
     )]
     pub timeout: Option<u64>,
 }

@@ -21,7 +21,7 @@ use crate::error::FactbaseError;
 use database::{default_compression, default_pool_size};
 use processor::{
     default_chunk_overlap, default_chunk_size, default_embedding_batch_size,
-    default_link_batch_size, default_lint_concurrency, default_metadata_cache_size,
+    default_link_batch_size, default_check_concurrency, default_metadata_cache_size,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -84,7 +84,7 @@ impl Default for Config {
                 chunk_overlap: default_chunk_overlap(),
                 embedding_batch_size: default_embedding_batch_size(),
                 link_batch_size: default_link_batch_size(),
-                lint_concurrency: default_lint_concurrency(),
+                check_concurrency: default_check_concurrency(),
                 metadata_cache_size: default_metadata_cache_size(),
             },
             embedding: EmbeddingConfig::default(),

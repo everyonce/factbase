@@ -6,7 +6,7 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::organize::fs_helpers::write_file;
-use crate::processor::{normalize_review_section, parse_review_queue};
+use crate::processor::{content_hash, normalize_review_section, parse_review_queue};
 use crate::progress::ProgressReporter;
 use crate::{
     apply_changes_to_section, apply_confirmations, apply_source_citations,
@@ -115,6 +115,13 @@ pub async fn apply_all_review_answers(
 
         match apply_one_document(llm, abs_path, answered, config.dry_run).await {
             Ok(applied) => {
+                // Sync updated file content back to database
+                if !config.dry_run {
+                    if let Ok(new_content) = fs::read_to_string(abs_path) {
+                        let new_hash = content_hash(&new_content);
+                        let _ = db.update_document_content(&doc.id, &new_content, &new_hash);
+                    }
+                }
                 result.total_applied += applied;
                 result.documents.push(ApplyDocResult {
                     doc_id: doc.id.clone(),

@@ -106,7 +106,7 @@ pub fn check_document_links(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::lint::execute::test_helpers::make_test_doc_with_id;
+    use crate::commands::check::execute::test_helpers::make_test_doc_with_id;
     use chrono::Utc;
 
     #[test]

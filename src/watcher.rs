@@ -221,7 +221,7 @@ mod tests {
                 perspective: None,
                 created_at: Utc::now(),
                 last_indexed_at: None,
-                last_lint_at: None,
+                last_check_at: None,
             },
             Repository {
                 id: "repo2".into(),
@@ -230,7 +230,7 @@ mod tests {
                 perspective: None,
                 created_at: Utc::now(),
                 last_indexed_at: None,
-                last_lint_at: None,
+                last_check_at: None,
             },
         ];
 

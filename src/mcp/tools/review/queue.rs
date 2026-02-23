@@ -107,7 +107,7 @@ pub fn get_review_queue(
                 }
 
                 // Classify: answered, deferred (unchecked but has answer/note), unanswered
-                let is_deferred = !q.answered && q.answer.is_some();
+                let is_deferred = q.is_deferred();
                 if q.answered {
                     total_answered += 1;
                 } else if is_deferred {

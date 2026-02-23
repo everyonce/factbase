@@ -87,7 +87,7 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
                 answered += doc_answered;
 
                 for q in &questions {
-                    if !q.answered && q.answer.is_some() {
+                    if q.is_deferred() {
                         deferred += 1;
                     }
                     let entry = by_type.entry(q.question_type).or_insert((0, 0));
@@ -164,7 +164,7 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
             }
         } else {
             println!("No review questions found.");
-            println!("Run `factbase lint --review` to generate review questions.");
+            println!("Run `factbase check` to generate review questions.");
         }
     })?;
 

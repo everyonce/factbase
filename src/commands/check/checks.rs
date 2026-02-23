@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Result of linting a single document (for parallel processing)
 #[derive(Debug, Default)]
-pub struct DocLintResult {
+pub struct DocCheckResult {
     pub errors: usize,
     pub warnings: usize,
     pub messages: Vec<String>,
@@ -46,7 +46,7 @@ pub struct DocLintResult {
 
 /// Options for parallel lint checks
 #[derive(Clone)]
-pub struct ParallelLintOptions {
+pub struct ParallelCheckOptions {
     pub check_temporal: bool,
     pub check_sources: bool,
     pub min_length: usize,
@@ -55,16 +55,16 @@ pub struct ParallelLintOptions {
 }
 
 /// Perform CPU-bound lint checks on a document (can be parallelized)
-pub fn lint_document_content(
+pub fn check_document_content(
     content: &str,
     doc_id: &str,
     doc_title: &str,
     doc_type: Option<&str>,
     file_modified_at: Option<DateTime<Utc>>,
     indexed_at: DateTime<Utc>,
-    opts: &ParallelLintOptions,
-) -> DocLintResult {
-    let mut result = DocLintResult::default();
+    opts: &ParallelCheckOptions,
+) -> DocCheckResult {
+    let mut result = DocCheckResult::default();
 
     // Check for stub documents (content too short)
     let content_len = content.len();
@@ -239,9 +239,9 @@ pub fn lint_document_content(
 mod tests {
     use super::*;
 
-    /// Helper to create default ParallelLintOptions for tests
-    fn test_opts(check_temporal: bool, check_sources: bool) -> ParallelLintOptions {
-        ParallelLintOptions {
+    /// Helper to create default ParallelCheckOptions for tests
+    fn test_opts(check_temporal: bool, check_sources: bool) -> ParallelCheckOptions {
+        ParallelCheckOptions {
             check_temporal,
             check_sources,
             min_length: 0, // Disable stub check by default in tests
@@ -251,10 +251,10 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_no_checks() {
+    fn test_check_document_content_no_checks() {
         let content = "# Test Document\n\n- Some fact\n- Another fact";
         let opts = test_opts(false, false);
-        let result = lint_document_content(
+        let result = check_document_content(
             content,
             "abc123",
             "Test Document",
@@ -270,11 +270,11 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_temporal_coverage() {
+    fn test_check_document_content_temporal_coverage() {
         let content = "# Test\n\n- Fact without tag\n- Fact with tag @t[2024]";
         let opts = test_opts(true, false);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.temporal_total_facts, 2);
         assert_eq!(result.temporal_facts_with_tags, 1);
@@ -286,11 +286,11 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_temporal_full_coverage() {
+    fn test_check_document_content_temporal_full_coverage() {
         let content = "# Test\n\n- Fact @t[2024]\n- Another @t[2023..2024]";
         let opts = test_opts(true, false);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.temporal_total_facts, 2);
         assert_eq!(result.temporal_facts_with_tags, 2);
@@ -302,11 +302,11 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_temporal_invalid_tag() {
+    fn test_check_document_content_temporal_invalid_tag() {
         let content = "# Test\n\n- Fact @t[2024-13]"; // Invalid month
         let opts = test_opts(true, false);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.temporal_format_errors, 1);
         assert_eq!(result.errors, 1);
@@ -317,11 +317,11 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_temporal_conflict() {
+    fn test_check_document_content_temporal_conflict() {
         let content = "# Test\n\n- Role @t[2020..2022] @t[2021..]"; // Conflict
         let opts = test_opts(true, false);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.temporal_conflicts, 1);
         assert_eq!(result.warnings, 1);
@@ -332,11 +332,11 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_source_orphan_ref() {
+    fn test_check_document_content_source_orphan_ref() {
         let content = "# Test\n\n- Fact [^1]\n\n---\n[^2]: LinkedIn profile, 2024-01-01"; // Ref 1 has no def
         let opts = test_opts(false, true);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.source_orphan_refs, 1);
         assert_eq!(result.errors, 1);
@@ -347,11 +347,11 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_source_orphan_def() {
+    fn test_check_document_content_source_orphan_def() {
         let content = "# Test\n\n- Fact [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-01\n[^2]: News article, 2024-01-01"; // Def 2 not used
         let opts = test_opts(false, true);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.source_orphan_defs, 1);
         assert_eq!(result.warnings, 1);
@@ -362,22 +362,22 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_source_coverage() {
+    fn test_check_document_content_source_coverage() {
         let content = "# Test\n\n- Fact with source [^1]\n- Fact without source\n\n---\n[^1]: LinkedIn profile, 2024-01-01";
         let opts = test_opts(false, true);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.source_total_facts, 2);
         assert_eq!(result.source_facts_with_sources, 1);
     }
 
     #[test]
-    fn test_lint_document_content_both_checks() {
+    fn test_check_document_content_both_checks() {
         let content = "# Test\n\n- Fact @t[2024] [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-01";
         let opts = test_opts(true, true);
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert_eq!(result.temporal_total_facts, 1);
         assert_eq!(result.temporal_facts_with_tags, 1);
@@ -388,12 +388,12 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_stub_check() {
+    fn test_check_document_content_stub_check() {
         let content = "# Test\n\nShort"; // Only 14 chars, below 100
         let mut opts = test_opts(false, false);
         opts.min_length = 100; // Enable stub check
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert!(result.is_stub);
         assert_eq!(result.warnings, 1);
@@ -407,7 +407,7 @@ mod tests {
         let mut opts = test_opts(false, false);
         opts.min_length = 50;
         let result =
-            lint_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert!(!result.is_stub);
         assert_eq!(result.warnings, 0);
@@ -420,7 +420,7 @@ mod tests {
         let mut opts = test_opts(false, false);
         opts.min_length = 50;
         let result =
-            lint_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert!(result.is_stub);
         assert_eq!(result.warnings, 1);
@@ -434,7 +434,7 @@ mod tests {
         let mut opts = test_opts(false, false);
         opts.min_length = 50;
         let result =
-            lint_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert!(!result.is_stub);
         assert_eq!(result.warnings, 0);
@@ -447,18 +447,18 @@ mod tests {
         let mut opts = test_opts(false, false);
         opts.min_length = 0;
         let result =
-            lint_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
+            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
 
         assert!(!result.is_stub);
         assert_eq!(result.warnings, 0);
     }
 
     #[test]
-    fn test_lint_document_content_unknown_type_check() {
+    fn test_check_document_content_unknown_type_check() {
         let content = "# Test\n\nSome content that is long enough to pass the stub check easily.";
         let mut opts = test_opts(false, false);
         opts.allowed_types = Some(vec!["person".to_string(), "project".to_string()]);
-        let result = lint_document_content(
+        let result = check_document_content(
             content,
             "abc123",
             "Test",
@@ -474,13 +474,13 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_document_content_stale_check() {
+    fn test_check_document_content_stale_check() {
         let content = "# Test\n\nSome content that is long enough to pass the stub check easily.";
         let mut opts = test_opts(false, false);
         opts.max_age_days = Some(30);
         // Create a date 60 days ago
         let old_date = Utc::now() - Duration::days(60);
-        let result = lint_document_content(
+        let result = check_document_content(
             content,
             "abc123",
             "Test",

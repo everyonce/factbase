@@ -4,7 +4,6 @@ use crate::models::{TemporalTag, TemporalTagType};
 use crate::patterns::{MALFORMED_TAG_REGEX, TEMPORAL_TAG_FULL_REGEX};
 use regex::Regex;
 use std::sync::LazyLock;
-use tracing::warn;
 
 /// Regex to find range tags where the end date is missing the year (e.g., @t[2025-Q3..Q4])
 static SHORT_RANGE_END_REGEX: LazyLock<Regex> = LazyLock::new(|| {
@@ -20,7 +19,6 @@ fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
 
 /// Parse all temporal tags from document content.
 /// Returns a Vec of TemporalTag with line numbers (1-indexed).
-/// Logs warnings for malformed tags that look like temporal tags but don't match.
 pub fn parse_temporal_tags(content: &str) -> Vec<TemporalTag> {
     let mut tags = Vec::with_capacity(8);
 
@@ -40,19 +38,25 @@ pub fn parse_temporal_tags(content: &str) -> Vec<TemporalTag> {
                 raw_text,
             });
         }
-
-        for malformed in MALFORMED_TAG_REGEX.find_iter(&normalized) {
-            let malformed_text = malformed.as_str();
-            if !TEMPORAL_TAG_FULL_REGEX.is_match(malformed_text) {
-                warn!(
-                    "Malformed temporal tag at line {}: {}",
-                    line_number, malformed_text
-                );
-            }
-        }
     }
 
     tags
+}
+
+/// Find malformed temporal tags — things that look like `@t[...]` but don't parse.
+/// Returns `(line_number, raw_text)` pairs.
+pub fn find_malformed_tags(content: &str) -> Vec<(usize, String)> {
+    let mut malformed = Vec::new();
+    for (line_idx, line) in content.lines().enumerate() {
+        let normalized = normalize_temporal_tags(line);
+        for m in MALFORMED_TAG_REGEX.find_iter(&normalized) {
+            let text = m.as_str();
+            if !TEMPORAL_TAG_FULL_REGEX.is_match(text) {
+                malformed.push((line_idx + 1, text.to_string()));
+            }
+        }
+    }
+    malformed
 }
 
 /// Parse capture groups into tag type and dates

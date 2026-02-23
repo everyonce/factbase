@@ -30,8 +30,8 @@ Every fact or detail SHOULD include a temporal tag indicating when the informati
 
 | Syntax | Meaning | Use When |
 |--------|---------|----------|
-| `@t[=YYYY-MM-DD]` | Point in time / as of | Fact is known true at specific date |
-| `@t[~YYYY-MM-DD]` | Last seen / last known | Most recent verification date |
+| `@t[=YYYY-MM-DD]` | Event — happened at this date | One-time events: founding, graduation, marriage |
+| `@t[~YYYY-MM-DD]` | State — true as of this date, may have changed | Changeable facts: location, role, contact info |
 | `@t[YYYY..YYYY]` | Date range (inclusive) | Fact was true during period |
 | `@t[YYYY..]` | Start date, ongoing | Started and believed current |
 | `@t[..YYYY]` | Unknown start, ended | Historical fact with known end |
@@ -85,16 +85,34 @@ Multiple sources for one fact:
 
 | Source Type | Format |
 |-------------|--------|
-| LinkedIn | `LinkedIn profile, scraped YYYY-MM-DD` |
-| Website | `Company website, accessed YYYY-MM-DD` |
+| LinkedIn | `LinkedIn profile (<URL>), scraped YYYY-MM-DD` |
+| Website | `Company website (<URL>), accessed YYYY-MM-DD` |
 | Press release | `Press release, YYYY-MM-DD` |
 | News | `News article, <publication>, YYYY-MM-DD` |
 | Filing | `Public filing (<type>), YYYY` |
-| Direct | `Direct conversation, YYYY-MM-DD` |
-| Email | `Email from <person>, YYYY-MM-DD` |
+| Author knowledge | `Author knowledge, see [[id]]` |
+| Email | `Email from <person>, subject "<subject>", YYYY-MM-DD` |
 | Event | `Conference bio, <event name> YYYY` |
+| Slack | `Slack #<channel>, YYYY-MM-DD, <message URL>` |
 | Inferred | `Inferred from <description>` |
 | Unverified | `Unverified` |
+
+### Source Traceability
+
+Every source definition MUST include enough detail to locate the original data. A platform name alone is never sufficient — include dates, URLs, channel names, subject lines, or other identifiers.
+
+**Traceable** (good): `Slack #project-alpha, 2024-01-10, https://workspace.slack.com/archives/C01234/p1234`
+**Untraceable** (bad): `Slack message`
+
+### Author Knowledge
+
+Facts known firsthand by the knowledge base owner belong in dedicated author knowledge documents (placed in an `author-knowledge/` folder). Other documents cite them as a source:
+
+```
+[^1]: Author knowledge, see [[a1b2c3]]
+```
+
+Author knowledge files are exclusively human-authored. Agents must never create them or use "Author knowledge" as a source for agent-obtained data.
 
 ### Complete Example
 
@@ -129,9 +147,9 @@ Multiple sources for one fact:
 1. Include `@t[...]` on every fact where temporal context is known
 2. Use `@t[?]` explicitly when temporal context is unavailable
 3. Prefer specific dates over ranges when known
-4. Use `@t[~...]` for facts that may change (location, role, status)
-5. Use `@t[=...]` for immutable facts (graduation, founding, marriage)
-6. Deduplicate sources - reuse footnote numbers for same source
+4. Use `@t[~...]` for changeable facts where you're recording when you last checked (location, role, contact info)
+5. Use `@t[=...]` for one-time events (graduation, founding, marriage)
+6. Reuse footnote numbers for the same source at the same point in time. Use separate footnotes if the same source was checked on different dates.
 
 ### For Document Consumers
 
@@ -182,10 +200,12 @@ Factbase can analyze documents and generate questions about inconsistencies, mis
 ### Question Lifecycle
 
 ```
-[Generated] → [ ] Unanswered, empty blockquote
-[Answered]  → [x] Checked, blockquote filled
-[Applied]   → Removed from queue, fact updated
-[Dismissed] → [x] Checked, blockquote contains "dismiss" or "ignore"
+[Generated]  → [ ] Unanswered, empty blockquote
+[Answered]   → [x] Checked, blockquote filled
+[Applied]    → Removed from queue, fact updated, reviewed marker added
+[Dismissed]  → [x] Checked, blockquote contains "dismiss" or "ignore"
+[Deferred]   → [x] Checked, blockquote contains "defer: <note>" → unchecked, note kept
+[Pruned]     → Removed by lint when trigger condition no longer exists
 ```
 
 ## Validation

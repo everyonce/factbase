@@ -19,7 +19,7 @@ pub mod grep;
 pub mod import;
 pub mod init;
 pub mod links;
-pub mod lint;
+pub mod check;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod organize;
@@ -70,7 +70,7 @@ pub use grep::cmd_grep;
 pub use import::cmd_import;
 pub use init::cmd_init;
 pub use links::cmd_links;
-pub use lint::cmd_lint;
+pub use check::cmd_check;
 #[cfg(feature = "mcp")]
 pub use mcp::cmd_mcp;
 pub use organize::cmd_organize;

@@ -2129,3 +2129,32 @@ Key Features:
 - `REVIEW_QUESTION_REGEX` requires backtick-wrapped `@q[type]` markers — bare markers won't parse
 
 **Test counts at Phase 48 completion:** 1115 lib + 358 binary = 1473 (with all features). Zero clippy warnings.
+
+---
+
+## Phase 49: Consolidation & Documentation Sync (3/3 Complete - 2026-02-15)
+
+**Goal:** Post-Phase 48 cleanup — consolidate deferred question detection, sync MCP tool documentation, and extract deferred counting as a Database helper.
+
+### 49.1 — Add `is_deferred()` method to ReviewQuestion (Complete - commit fa6b989)
+- Added `pub fn is_deferred(&self) -> bool` to `ReviewQuestion` in `models/question.rs`
+- Replaced all 4 inline occurrences of `!q.answered && q.answer.is_some()` across queue.rs, workflow.rs, lint.rs, status.rs
+- 3 unit tests covering deferred, answered, and unanswered states
+
+### 49.2 — Sync MCP tool documentation (Complete - commit 1b513e9)
+- Rebuilt README.md MCP tools table from scratch to match 20 tools in `schema.rs`
+- Removed 7 stale entries, added 6 missing entries
+- Updated architecture.md from "18 tools" to "20 tools"
+- current-state.md already had correct 20-tool list from Phase 48
+
+### 49.3 — Extract `count_deferred_questions` as Database helper (Complete - commit 1971dae)
+- Added `pub fn count_deferred_questions(&self, repo_id: Option<&str>) -> Result<usize, FactbaseError>` to `Database` in `database/stats/basic.rs`
+- Replaced standalone `count_deferred()` in workflow.rs and 5-line inline counting in lint.rs
+- Unit test with mixed question states plus repo filtering
+
+**Key Learnings:**
+- Semantic concepts like "is this question deferred?" belong as methods on the model struct, not inline patterns
+- MCP tool documentation drifts easily — use `test_schema_dispatch_consistency` test to catch dispatch drift, but doc tables need manual sync
+- Database helper methods can delegate to processor parsing functions within the same crate
+
+**Test counts:** ~1058 lib + ~351 binary (default features); ~1119 lib + ~358 binary (with all features). Zero clippy warnings.

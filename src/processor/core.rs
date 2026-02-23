@@ -85,11 +85,33 @@ impl DocumentProcessor {
     /// Derive the document type from the parent folder name (e.g., "people/" → "person").
     pub fn derive_type(&self, path: &Path, repo_root: &Path) -> String {
         let relative = path.strip_prefix(repo_root).unwrap_or(path);
+        let file_stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+
         if let Some(parent) = relative.parent() {
-            if let Some(folder) = parent.file_name().and_then(|s| s.to_str()) {
-                if !folder.is_empty() {
-                    return normalize_type(folder);
+            let parent_name = parent
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+
+            // If filename matches parent folder (e.g., xsolis/xsolis.md),
+            // derive type from grandparent instead (e.g., companies/xsolis/xsolis.md → "company")
+            if !parent_name.is_empty()
+                && parent_name.eq_ignore_ascii_case(file_stem)
+            {
+                if let Some(grandparent) = parent.parent() {
+                    if let Some(gp_name) = grandparent.file_name().and_then(|s| s.to_str()) {
+                        if !gp_name.is_empty() {
+                            return normalize_type(gp_name);
+                        }
+                    }
                 }
+            }
+
+            if !parent_name.is_empty() {
+                return normalize_type(parent_name);
             }
         }
         "document".to_string()
@@ -211,6 +233,42 @@ mod tests {
         let path = PathBuf::from("/repo/doc.md");
         let repo_root = PathBuf::from("/repo");
         assert_eq!(processor.derive_type(&path, &repo_root), "document");
+    }
+
+    #[test]
+    fn test_derive_type_entity_folder_convention() {
+        let processor = DocumentProcessor::new();
+        // projects/alpha/alpha.md → type "project" (grandparent, singularized)
+        let path = PathBuf::from("/repo/projects/alpha/alpha.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "project");
+    }
+
+    #[test]
+    fn test_derive_type_entity_folder_case_insensitive() {
+        let processor = DocumentProcessor::new();
+        // projects/Alpha/alpha.md → still matches
+        let path = PathBuf::from("/repo/projects/Alpha/alpha.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "project");
+    }
+
+    #[test]
+    fn test_derive_type_entity_folder_sibling_normal() {
+        let processor = DocumentProcessor::new();
+        // projects/alpha/people/jane.md → type "people" (normal derivation)
+        let path = PathBuf::from("/repo/projects/alpha/people/jane.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "people");
+    }
+
+    #[test]
+    fn test_derive_type_entity_folder_no_false_positive() {
+        let processor = DocumentProcessor::new();
+        // projects/alpha/overview.md → type "alpha" (filename doesn't match folder)
+        let path = PathBuf::from("/repo/projects/alpha/overview.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "alpha");
     }
 
     #[test]

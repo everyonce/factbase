@@ -1,6 +1,6 @@
 //! Core lint execution logic.
 //!
-//! This module contains helper functions extracted from `cmd_lint` to improve
+//! This module contains helper functions extracted from `cmd_check` to improve
 //! code organization and maintainability.
 //!
 //! # Module Organization

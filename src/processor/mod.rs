@@ -48,16 +48,21 @@ pub use core::{content_hash, DocumentProcessor};
 
 // Re-export temporal types and functions
 pub use temporal::{
-    calculate_recency_boost, detect_illogical_sequences, detect_temporal_conflicts, overlaps_point,
-    overlaps_range, parse_temporal_tags, validate_date, validate_temporal_tags, TemporalConflict,
-    TemporalSequenceError, TemporalValidationError,
+    calculate_recency_boost, detect_illogical_sequences, detect_temporal_conflicts,
+    find_malformed_tags, overlaps_point, overlaps_range, parse_temporal_tags, validate_date,
+    validate_temporal_tags, TemporalConflict, TemporalSequenceError, TemporalValidationError,
 };
 
 // Re-export source types and functions
-pub use sources::{count_facts_with_sources, parse_source_definitions, parse_source_references};
+pub use sources::{
+    count_facts_with_sources, extract_source_date, parse_source_definitions,
+    parse_source_references,
+};
 
 // Re-export review types and functions
-pub use review::{append_review_questions, normalize_review_section, parse_review_queue};
+pub use review::{
+    append_review_questions, normalize_review_section, parse_review_queue, prune_stale_questions,
+};
 
 // Re-export chunking types and functions
 pub use chunks::{chunk_document, DocumentChunk};

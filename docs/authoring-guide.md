@@ -32,6 +32,13 @@ Nested folders use only the immediate parent:
 /clients/acme-corp/contacts/john-smith.md → type: "contact" (not "client")
 ```
 
+**Entity folder convention:** When an entity is large enough for its own directory, name the entity file the same as the folder. The type is derived from the grandparent:
+```
+/companies/xsolis/xsolis.md       → type: "company" (entity doc)
+/companies/xsolis/people/jane.md  → type: "person"  (normal)
+/companies/xsolis/overview.md     → type: "xsolis"  (no match, normal)
+```
+
 Folder names are automatically singularized: `people/` → "person", `projects/` → "project".
 
 ### Title from First H1
@@ -251,7 +258,7 @@ Factbase will warn about documents in folders that don't match allowed types.
 
 ## Content Length Guidelines
 
-- **Minimum**: 100+ characters of meaningful content (very short docs may be flagged by `factbase lint`)
+- **Minimum**: 100+ characters of meaningful content (very short docs may be flagged by `factbase check`)
 - **Optimal**: 500-5000 characters for best embedding quality
 - **Maximum**: No hard limit, but documents over 100K characters will be chunked for embedding
 
@@ -295,8 +302,10 @@ Not: "CTO at XSOLIS" (when? still true?)
 ```
 
 ### Static vs. Dynamic Facts
-- **Static** (no date needed): Education degrees, past events, historical projects, awards
+- **Static** (no date needed): Historical events, past projects, awards
 - **Dynamic** (always date): Job title, employer, contact info, team members, office location
+
+Education degrees are static, but graduation years should still use `@t[=YYYY]`.
 
 ## What to Avoid
 
@@ -308,9 +317,19 @@ Not: "CTO at XSOLIS" (when? still true?)
 
 4. **Orphan documents** - Documents with no links to/from other docs are harder to discover. Add context.
 
-5. **Stale content** - Update documents when information changes. Use `factbase lint --max-age 365` to find old docs.
+5. **Stale content** - Update documents when information changes. Use `factbase check --stale-days 365` to find old docs.
 
 6. **Undated dynamic facts** - Employment, contact info, and relationships without dates are unreliable. Always include "as of [date]" for facts that change over time.
+
+7. **Untraceable sources** - "Slack message" or "Outlook" alone can't be verified. Include channel, date, URL, or subject line so the source can be relocated.
+
+## Special Document Types
+
+### Author Knowledge (`author-knowledge/` folder)
+For facts the knowledge base owner knows firsthand — things not available from any external source. Only humans should create these files. Other documents cite them as: `[^1]: Author knowledge, see [[id]]`.
+
+### Definitions (`definitions/` folder)
+Glossaries for acronyms, jargon, and domain-specific terms. Organize by domain: `definitions/business-terms.md`, `definitions/technical-terms.md`. When lint flags an undefined acronym, add it here.
 
 ## Verification
 
@@ -327,7 +346,7 @@ factbase search "your document title"
 factbase status --detailed
 
 # Find quality issues
-factbase lint
+factbase check
 ```
 
 ## Inbox Blocks

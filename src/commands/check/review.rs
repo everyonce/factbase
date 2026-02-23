@@ -6,9 +6,12 @@
 
 use factbase::{
     generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_missing_questions, generate_required_field_questions, generate_stale_questions,
-    generate_temporal_questions, parse_review_queue, QuestionType, ReviewQuestion,
+    generate_missing_questions, generate_required_field_questions,
+    generate_source_quality_questions, generate_stale_questions, generate_temporal_questions,
+    parse_review_queue, prune_stale_questions, ReviewQuestion,
 };
+#[cfg(test)]
+use factbase::QuestionType;
 use std::collections::{HashMap, HashSet};
 
 /// Configuration for review question generation
@@ -47,6 +50,7 @@ impl Default for ReviewConfig {
 ///
 /// # Returns
 /// Vector of new questions (excludes questions already in the document's review queue)
+#[cfg(test)]
 pub fn generate_questions_for_content(
     content: &str,
     doc_type: Option<&str>,
@@ -60,6 +64,9 @@ pub fn generate_questions_for_content(
 
     // Generate missing source questions
     new_questions.extend(generate_missing_questions(content));
+
+    // Generate source quality questions (untraceable sources)
+    new_questions.extend(generate_source_quality_questions(content));
 
     // Generate ambiguous questions (unclear phrasing)
     new_questions.extend(generate_ambiguous_questions(content));
@@ -89,6 +96,56 @@ pub fn generate_questions_for_content(
 
     // Filter out questions that already exist in the document
     filter_existing_questions(content, new_questions)
+}
+
+/// Generate questions and prune stale ones from the document content.
+///
+/// Returns `(new_questions, pruned_content, pruned_count)`.
+/// `pruned_content` has stale unanswered questions removed.
+pub fn generate_and_prune(
+    content: &str,
+    doc_type: Option<&str>,
+    config: &ReviewConfig,
+) -> (Vec<ReviewQuestion>, String, usize) {
+    // Generate all questions (before dedup) to get the "valid" set
+    let mut all_generated = generate_temporal_questions(content);
+    all_generated.extend(generate_conflict_questions(content));
+    all_generated.extend(generate_missing_questions(content));
+    all_generated.extend(generate_source_quality_questions(content));
+    all_generated.extend(generate_ambiguous_questions(content));
+    all_generated.extend(generate_stale_questions(content, config.stale_threshold));
+    if let Some(ref required_fields) = config.required_fields {
+        all_generated.extend(generate_required_field_questions(
+            content,
+            doc_type,
+            required_fields,
+        ));
+    }
+
+    let valid_descriptions: HashSet<_> =
+        all_generated.iter().map(|q| q.description.clone()).collect();
+
+    // Count existing unanswered before pruning
+    let existing_unanswered = parse_review_queue(content)
+        .unwrap_or_default()
+        .iter()
+        .filter(|q| !q.answered)
+        .count();
+
+    // Prune stale questions (no cross-check in CLI path without --cross-check)
+    let pruned_content = prune_stale_questions(content, &valid_descriptions, false);
+
+    let remaining_unanswered = parse_review_queue(&pruned_content)
+        .unwrap_or_default()
+        .iter()
+        .filter(|q| !q.answered)
+        .count();
+    let pruned_count = existing_unanswered - remaining_unanswered;
+
+    // Dedup against remaining questions
+    let new_questions = filter_existing_questions(&pruned_content, all_generated);
+
+    (new_questions, pruned_content, pruned_count)
 }
 
 /// Add duplicate questions to an existing question list.

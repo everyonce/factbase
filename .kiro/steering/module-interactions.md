@@ -222,7 +222,7 @@ src/
 │   │   ├── display.rs
 │   │   └── detailed.rs
 │   ├── stats.rs         # factbase stats
-│   ├── lint/            # factbase lint
+│   ├── lint/            # factbase check
 │   │   ├── mod.rs
 │   │   ├── args.rs
 │   │   ├── checks.rs

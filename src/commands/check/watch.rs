@@ -1,4 +1,4 @@
-//! Watch mode for lint command.
+//! Watch mode for check command.
 //!
 //! Monitors file changes and re-lints affected repositories.
 
@@ -13,8 +13,8 @@ use std::time::Duration as StdDuration;
 /// Press Ctrl+C to stop.
 ///
 /// Note: Uses custom inline lint logic for performance rather than re-running
-/// the full lint command. Only checks broken links, stubs, and orphans.
-pub fn run_lint_watch_mode(
+/// the full check command. Only checks broken links, stubs, and orphans.
+pub fn run_check_watch_mode(
     ctx: &mut WatchContext,
     db: &Database,
     min_length: usize,
@@ -25,7 +25,7 @@ pub fn run_lint_watch_mode(
             // Find which repo the changed file belongs to
             if let Some(path) = changed_paths.first() {
                 if let Some(repo) = find_repo_for_path(path, &ctx.repos) {
-                    run_quick_lint(repo, db, min_length, quiet)?;
+                    run_quick_check(repo, db, min_length, quiet)?;
                 }
             }
         }
@@ -35,14 +35,14 @@ pub fn run_lint_watch_mode(
 }
 
 /// Run a quick lint check on a single repository.
-fn run_quick_lint(
+fn run_quick_check(
     repo: &Repository,
     db: &Database,
     min_length: usize,
     quiet: bool,
 ) -> anyhow::Result<()> {
     if !quiet {
-        println!("\n--- Re-linting {} ({}) ---", repo.name, repo.id);
+        println!("\n--- Re-checking {} ({}) ---", repo.name, repo.id);
     }
 
     let docs = db.list_documents(None, Some(&repo.id), None, 10000)?;

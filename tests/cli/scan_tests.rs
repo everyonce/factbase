@@ -190,7 +190,7 @@ async fn test_init_scan_search_workflow() {
         }),
         created_at: Utc::now(),
         last_indexed_at: None,
-        last_lint_at: None,
+        last_check_at: None,
     };
     db.add_repository(&repo).unwrap();
 

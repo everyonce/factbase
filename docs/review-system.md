@@ -6,7 +6,7 @@ Factbase can analyze fact documents for inconsistencies, missing data, and ambig
 
 ## Commands
 
-### `factbase lint --review [--repo <repo>]`
+### `factbase check [--repo <repo>]`
 
 Analyzes documents and appends a Review Queue section with generated questions.
 
@@ -77,14 +77,15 @@ Triggers:
 Triggers:
 - Fact without source reference `[^N]`
 - Footnote reference without definition
+- Source definition lacking traceability (e.g., just "Slack message" or "Outlook" with no channel, date, URL, or subject)
 - Expected fields missing (configurable per document type in perspective.yaml)
 
 ### `@q[ambiguous]` - Unclear Meaning
 
 Triggers:
-- LLM-detected ambiguity in phrasing
 - Location without context (home vs. work vs. birth)
 - Relationship without direction (advisor to whom?)
+- Undefined acronyms or abbreviations (e.g., "TAM" without expansion)
 
 ### `@q[stale]` - Potentially Outdated
 
@@ -102,35 +103,39 @@ Triggers:
 
 ## Answer Processing
 
-When `review --apply` processes answered questions, it:
+When `review --apply` processes answered questions, it classifies each answer and handles it accordingly:
 
-1. Collects all answered questions for the document
-2. Groups questions by affected section/lines
-3. Sends to LLM with full context:
-   ```
-   Document section:
-   ## Career
-   - CTO at Acme Corp @t[2020..2022] [^1]
-   - VP Engineering at BigCo @t[2022..] [^2]
-   
-   Answered questions:
-   1. Q: "VP Engineering at BigCo" has no end date - is this role still current?
-      A: "No, left in March 2024"
-   2. Q: CTO ended 2022, VP started 2022 - same month? Overlap?
-      A: "CTO ended Feb 2022, VP started March 2022, no overlap"
-   
-   Rewrite the section incorporating all answers with correct temporal tags.
-   ```
-4. Replaces entire section with LLM output
-5. Removes processed questions from Review Queue
+### Deterministic Processing (no LLM needed)
+- **Source citations** (e.g., "LinkedIn profile, 2024-01-15") → adds footnote to the fact
+- **Confirmations** (e.g., "still accurate", "confirmed") → updates `@t[~date]` to today, preserving the `~` prefix
+- **Deletions** (e.g., "delete") → removes the fact line
+- **Dismissals** (e.g., "dismiss", "ignore") → removes the question, no content changes
+
+### LLM-Assisted Processing
+- **Corrections** (e.g., "Actually left in March 2024") → LLM rewrites the affected section
+- **Complex changes** → LLM interprets the answer in context and rewrites
+
+### Reviewed Markers
+
+After processing, affected fact lines receive a `<!-- reviewed:YYYY-MM-DD -->` marker. Lint skips recently-reviewed facts (within 180 days) to prevent regenerating the same questions.
 
 ### Special Answers
 
 - `dismiss` or `ignore` - Remove question without changes
+- `defer: <note>` - Keep question in queue with your note for future reviewers
 - `delete` - Remove the fact entirely
 - `split: ...` - Split fact into multiple lines (LLM interprets)
 
-## File Format
+### Question Lifecycle
+
+```
+[Generated]  → [ ] Unanswered, empty blockquote
+[Answered]   → [x] Checked, blockquote filled → apply processes it
+[Applied]    → Removed from queue, fact updated, reviewed marker added
+[Dismissed]  → [x] "dismiss" → removed from queue, reviewed marker added
+[Deferred]   → [x] "defer: note" → unchecked, note preserved for future
+[Pruned]     → Removed automatically by lint when trigger condition no longer exists
+```
 
 Review Queue is always at the end of the document, after footnotes:
 
@@ -174,9 +179,11 @@ review:
 In `config.yaml` (global):
 
 ```yaml
-review:
-  model: rnj-1-extended  # LLM for question generation and answer processing
-  # Defaults to llm.model if not specified
+# LLM used for answer processing and cross-validation
+# Defaults to the llm.model setting
+llm:
+  provider: bedrock
+  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
 ```
 
 ## Implementation Notes
@@ -199,5 +206,5 @@ No schema changes required. Review Queue lives in the markdown files only.
 
 ### Concurrency
 
-- `lint --review` can run in parallel across documents
+- `check` can run in parallel across documents
 - `review --apply` should process one document at a time to avoid conflicts

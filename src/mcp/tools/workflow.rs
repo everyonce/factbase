@@ -23,7 +23,9 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     match workflow.as_str() {
         "update" => Ok(update_step(step, args, &perspective)),
         "resolve" => {
-            let deferred = count_deferred(db, get_str_arg(args, "repo"));
+            let deferred = db
+                .count_deferred_questions(get_str_arg(args, "repo"))
+                .unwrap_or(0);
             Ok(resolve_step(step, args, &perspective, deferred))
         }
         "ingest" => Ok(ingest_step(step, args, &perspective)),
@@ -51,18 +53,6 @@ fn load_perspective(db: &Database, repo_id: Option<&str>) -> Option<Perspective>
         repos.into_iter().next()
     };
     repo.and_then(|r| r.perspective)
-}
-
-/// Count deferred review items across documents.
-fn count_deferred(db: &Database, repo_id: Option<&str>) -> usize {
-    let Ok(docs) = db.get_documents_with_review_queue(repo_id) else {
-        return 0;
-    };
-    docs.iter()
-        .filter_map(|d| crate::processor::parse_review_queue(&d.content))
-        .flatten()
-        .filter(|q| !q.answered && q.answer.is_some())
-        .count()
 }
 
 /// Build a context string from perspective for embedding in instructions.
@@ -125,8 +115,8 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": "Run a deep quality check across all documents. Call lint_repository — this performs local checks (temporal tags, sources, stale facts) AND cross-document validation using the LLM, so it may take several minutes on large knowledge bases. Tell the user this step takes a while before calling it.",
-            "next_tool": "lint_repository",
+            "instruction": "Run a deep quality check across all documents. Call check_repository — this performs local checks (temporal tags, sources, stale facts) AND cross-document validation using the LLM, so it may take several minutes on large knowledge bases. Tell the user this step takes a while before calling it.",
+            "next_tool": "check_repository",
             "suggested_args": {"dry_run": false},
             "when_done": "Call workflow with workflow='update', step=3"
         }),
@@ -179,7 +169,7 @@ fn resolve_step(
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Determine which is current. This includes cross-document conflicts where a fact in one document contradicts another document. Check both documents and resolve. Answer: '[fact A] is current, [fact B] ended [date] per [source]'\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: Clarify. Answer: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nCross-document conflict questions include the source document ID in their description — use get_entity to read that document for context.\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
+            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Determine which is current. This includes cross-document conflicts where a fact in one document contradicts another document. Check both documents and resolve. Answer: '[fact A] is current, [fact B] ended [date] per [source]'\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nCross-document conflict questions include the source document ID in their description — use get_entity to read that document for context.\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
             "next_tool": "answer_question",
             "when_done": "After resolving questions, call workflow with workflow='resolve', step=3"
         }),
@@ -230,7 +220,7 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, etc.\n- First # Heading = document title\n- Every dynamic fact needs a temporal tag:\n  @t[2020..2023] = date range, @t[2024..] = ongoing, @t[=2024-03] = point in time, @t[~2025-02] = last verified, @t[?] = unverified\n- Add source footnotes: [^1] on the fact, [^1]: Source type, date at the bottom\n- Use exact entity names matching other document titles for cross-linking\n- Never modify <!-- factbase:XXXXXX --> headers{fields}"),
+            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Every dynamic fact needs a temporal tag:\n  @t[2020..2023] = date range, @t[2024..] = ongoing, @t[=2024-03] = event date, @t[~2025-02] = last verified, @t[?] = unverified\n- Add source footnotes: [^1] on the fact, [^1]: Source type, date at the bottom — sources must be traceable (include URLs, dates, channels)\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers{fields}"),
             "next_tool": "create_document",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
@@ -267,14 +257,14 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type{fields}"),
+            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too{fields}"),
             "next_tool": "get_entity",
             "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": format!("Research the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely{ctx}"),
+            "instruction": format!("Research the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If your research answers any existing review questions, call answer_question to resolve them{ctx}"),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
