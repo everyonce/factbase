@@ -134,7 +134,7 @@ After processing, affected fact lines receive a `<!-- reviewed:YYYY-MM-DD -->` m
 [Applied]    → Removed from queue, fact updated, reviewed marker added
 [Dismissed]  → [x] "dismiss" → removed from queue, reviewed marker added
 [Deferred]   → [x] "defer: note" → unchecked, note preserved for future
-[Pruned]     → Removed automatically by lint when trigger condition no longer exists
+[Pruned]     → Removed automatically by check when trigger condition no longer exists
 ```
 
 Review Queue is always at the end of the document, after footnotes:

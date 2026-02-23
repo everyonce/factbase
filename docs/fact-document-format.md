@@ -205,7 +205,7 @@ Factbase can analyze documents and generate questions about inconsistencies, mis
 [Applied]    → Removed from queue, fact updated, reviewed marker added
 [Dismissed]  → [x] Checked, blockquote contains "dismiss" or "ignore"
 [Deferred]   → [x] Checked, blockquote contains "defer: <note>" → unchecked, note kept
-[Pruned]     → Removed by lint when trigger condition no longer exists
+[Pruned]     → Removed by check when trigger condition no longer exists
 ```
 
 ## Validation

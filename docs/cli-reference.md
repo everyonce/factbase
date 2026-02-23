@@ -330,16 +330,16 @@ factbase doctor
 
 Check knowledge base quality for common issues.
 
-- `-r, --repo` - Lint specific repository (all repos if omitted)
+- `-r, --repo` - Check specific repository (all repos if omitted)
 - `--min-length` - Minimum document length in characters (default: 100)
 - `--max-age` - Warn about documents not modified in N days
 - `--check-duplicates` - Check for duplicate or near-duplicate documents
 - `--min-similarity` - Minimum similarity threshold for duplicates (default: 0.95, range: 0.0-1.0)
 - `--fix` - Auto-fix broken links by removing them (prompts for confirmation)
-- `--incremental` - Only lint documents modified since last lint (tracks timestamp per repository)
-- `--since` - Only lint files modified since date (ISO 8601 or relative: 1h, 1d, 1w)
+- `--incremental` - Only check documents modified since last check (tracks timestamp per repository)
+- `--since` - Only check files modified since date (ISO 8601 or relative: 1h, 1d, 1w)
 - `-a, --check-all` - Run all validation checks (equivalent to --check-temporal --check-sources --check-duplicates)
-- `-p, --parallel` - Process documents in parallel for faster linting
+- `-p, --parallel` - Process documents in parallel for faster checking
 - `--batch-size` - Process documents in batches of N to limit memory usage (default: 0 = no batching)
 
 Checks for: orphan documents, broken `[[id]]` links, stub documents, unknown types, stale documents, duplicates.
@@ -378,7 +378,7 @@ Show summary of pending review questions.
 
 ## `factbase review --import-questions <path> [--repo <repo>] [--dry-run]`
 
-Import review questions from JSON/YAML file (complement to `lint --export-questions`).
+Import review questions from JSON/YAML file (complement to `check --export-questions`).
 
 ## `factbase db vacuum`
 

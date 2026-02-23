@@ -23,7 +23,7 @@ processor:
   chunk_overlap: 2000          # Overlap between chunks for context continuity
   embedding_batch_size: 10     # Docs per embedding API call (1-100)
   link_batch_size: 5           # Docs per link detection batch (1-50)
-  lint_concurrency: 5          # Parallel lint/cross-validation (1-20)
+  check_concurrency: 5          # Parallel lint/cross-validation (1-20)
 
 embedding:
   provider: bedrock

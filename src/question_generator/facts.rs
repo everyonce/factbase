@@ -29,7 +29,12 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
     let mut facts = Vec::new();
     let mut current_section: Option<String> = None;
 
-    for (line_idx, line) in content.lines().enumerate() {
+    // Stop before the review queue section
+    let end = content
+        .find(crate::patterns::REVIEW_QUEUE_MARKER)
+        .unwrap_or(content.len());
+
+    for (line_idx, line) in content[..end].lines().enumerate() {
         // Track section headings
         if line.starts_with("## ") {
             current_section = Some(line.trim_start_matches('#').trim().to_string());

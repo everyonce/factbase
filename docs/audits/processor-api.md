@@ -13,9 +13,9 @@
 |------|------|---------------------|---------|
 | `DocumentProcessor` | 17 | ✓ | scan.rs, serve.rs, mcp/tools/document.rs |
 | `DocumentChunk` | 207 | ✗ (internal) | processor.rs only |
-| `TemporalValidationError` | 445 | ✓ | lint.rs, import.rs |
-| `TemporalSequenceError` | 602 | ✓ | lint.rs |
-| `TemporalConflict` | 675 | ✓ | lint.rs |
+| `TemporalValidationError` | 445 | ✓ | check.rs, import.rs |
+| `TemporalSequenceError` | 602 | ✓ | check.rs |
+| `TemporalConflict` | 675 | ✓ | check.rs |
 
 ### Functions (17)
 
@@ -36,11 +36,11 @@
 #### Temporal Tag Functions
 | Function | Line | Exported | Used By |
 |----------|------|----------|---------|
-| `parse_temporal_tags` | 110 | ✓ | lint.rs, search.rs, question_generator.rs, mcp/tools/entity.rs, mcp/tools/search.rs |
+| `parse_temporal_tags` | 110 | ✓ | check.rs, search.rs, question_generator.rs, mcp/tools/entity.rs, mcp/tools/search.rs |
 | `validate_date` | 457 | ✓ | (internal validation) |
-| `validate_temporal_tags` | 569 | ✓ | lint.rs, import.rs |
-| `detect_illogical_sequences` | 615 | ✓ | lint.rs |
-| `detect_temporal_conflicts` | 690 | ✓ | lint.rs |
+| `validate_temporal_tags` | 569 | ✓ | check.rs, import.rs |
+| `detect_illogical_sequences` | 615 | ✓ | check.rs |
+| `detect_temporal_conflicts` | 690 | ✓ | check.rs |
 | `overlaps_point` | 811 | ✓ | search.rs, mcp/tools/search.rs |
 | `overlaps_range` | 885 | ✓ | search.rs, mcp/tools/search.rs |
 | `calculate_recency_boost` | 974 | ✓ | search.rs |
@@ -48,16 +48,16 @@
 #### Source Reference Functions
 | Function | Line | Exported | Used By |
 |----------|------|----------|---------|
-| `parse_source_references` | 283 | ✓ | lint.rs, search.rs, import.rs, question_generator.rs, mcp/tools/entity.rs |
-| `parse_source_definitions` | 332 | ✓ | lint.rs, import.rs, question_generator.rs, mcp/tools/entity.rs |
+| `parse_source_references` | 283 | ✓ | check.rs, search.rs, import.rs, question_generator.rs, mcp/tools/entity.rs |
+| `parse_source_definitions` | 332 | ✓ | check.rs, import.rs, question_generator.rs, mcp/tools/entity.rs |
 
 #### Fact Statistics Functions
 | Function | Line | Exported | Used By |
 |----------|------|----------|---------|
 | `count_facts` | 1012 | ✓ | (available but rarely used) |
 | `count_facts_with_temporal_tags` | 1020 | ✓ | (available but rarely used) |
-| `count_facts_with_sources` | 1028 | ✓ | database.rs, lint.rs, mcp/tools/entity.rs |
-| `calculate_fact_stats` | 1037 | ✓ | cache.rs, lint.rs, mcp/tools/entity.rs |
+| `count_facts_with_sources` | 1028 | ✓ | database.rs, check.rs, mcp/tools/entity.rs |
+| `calculate_fact_stats` | 1037 | ✓ | cache.rs, check.rs, mcp/tools/entity.rs |
 
 #### Chunking Functions
 | Function | Line | Exported | Used By |
@@ -67,8 +67,8 @@
 #### Review Queue Functions
 | Function | Line | Exported | Used By |
 |----------|------|----------|---------|
-| `parse_review_queue` | 1056 | ✓ | lint.rs, mcp/tools/entity.rs, mcp/tools/review.rs |
-| `append_review_questions` | 1161 | ✓ | lint.rs, review.rs, mcp/tools/review.rs |
+| `parse_review_queue` | 1056 | ✓ | check.rs, mcp/tools/entity.rs, mcp/tools/review.rs |
+| `append_review_questions` | 1161 | ✓ | check.rs, review.rs, mcp/tools/review.rs |
 
 ## Dependency Graph
 
@@ -85,7 +85,7 @@
 │         │           │              │         │              │
 │ - full  │           │ - scan.rs    │         │ - entity.rs  │
 │   scan  │           │ - serve.rs   │         │ - search.rs  │
-│         │           │ - lint.rs    │         │ - review.rs  │
+│         │           │ - check.rs    │         │ - review.rs  │
 │         │           │ - search.rs  │         │ - document.rs│
 │         │           │ - import.rs  │         │              │
 │         │           │ - review.rs  │         │              │

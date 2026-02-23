@@ -60,7 +60,12 @@ pub use temporal::generate_temporal_questions;
 /// Filters to list-item lines matching `FACT_LINE_REGEX`, extracts fact text,
 /// and skips lines with empty fact text. Line numbers are 1-indexed.
 pub(crate) fn iter_fact_lines(content: &str) -> impl Iterator<Item = (usize, &str, String)> {
-    content.lines().enumerate().filter_map(|(line_idx, line)| {
+    // Stop before the review queue section — its content is not document facts
+    let end = content
+        .find(crate::patterns::REVIEW_QUEUE_MARKER)
+        .unwrap_or(content.len());
+    let body = &content[..end];
+    body.lines().enumerate().filter_map(|(line_idx, line)| {
         if !FACT_LINE_REGEX.is_match(line) {
             return None;
         }

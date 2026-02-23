@@ -233,14 +233,26 @@ Keep it flat when possible:
 /projects/
 /concepts/
 /meetings/
+/definitions/          ← glossaries, acronyms
+/author-knowledge/     ← human-only facts
 ```
 
-Use nesting only when necessary:
+Use nesting for large entities:
 ```
-/clients/
+/companies/
   /acme-corp/
-    /contacts/      ← type will be "contact"
-    /contracts/     ← type will be "contract"
+    /acme-corp.md      ← entity doc (type: "company", see entity folder convention)
+    /people/           ← type: "person"
+    /archive/          ← skipped by check
+```
+
+### Archiving Documents
+
+Move stable documents into an `archive/` subfolder. They stay indexed and searchable but are skipped by `factbase check` — no review questions, no deep-check cycles.
+
+```
+/people/archive/former-employee.md    ← searchable, not checked
+/projects/archive/completed-2024.md   ← searchable, not checked
 ```
 
 ### Allowed Types
@@ -329,7 +341,7 @@ Education degrees are static, but graduation years should still use `@t[=YYYY]`.
 For facts the knowledge base owner knows firsthand — things not available from any external source. Only humans should create these files. Other documents cite them as: `[^1]: Author knowledge, see [[id]]`.
 
 ### Definitions (`definitions/` folder)
-Glossaries for acronyms, jargon, and domain-specific terms. Organize by domain: `definitions/business-terms.md`, `definitions/technical-terms.md`. When lint flags an undefined acronym, add it here.
+Glossaries for acronyms, jargon, and domain-specific terms. Organize by domain: `definitions/business-terms.md`, `definitions/technical-terms.md`. When check flags an undefined acronym, add it here.
 
 ## Verification
 

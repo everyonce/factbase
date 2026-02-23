@@ -51,7 +51,12 @@ fn collect_facts_with_ranges(content: &str) -> Vec<FactWithRange> {
     let tags = parse_temporal_tags(content);
     let mut current_section: Option<String> = None;
 
-    for (line_idx, line) in content.lines().enumerate() {
+    // Stop before the review queue section
+    let end = content
+        .find(crate::patterns::REVIEW_QUEUE_MARKER)
+        .unwrap_or(content.len());
+
+    for (line_idx, line) in content[..end].lines().enumerate() {
         let line_number = line_idx + 1;
 
         // Track section headings
