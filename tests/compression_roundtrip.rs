@@ -233,15 +233,7 @@ async fn test_json_zst_roundtrip() {
     let dest_path = temp_dir.path().join("dest");
     fs::create_dir_all(&dest_path).expect("create dest dir");
 
-    let dest_repo = Repository {
-        id: "dest".into(),
-        name: "Dest Repo".into(),
-        path: dest_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
+    let dest_repo = common::test_repo("dest", dest_path.clone());
     db.add_repository(&dest_repo).expect("add dest repo");
 
     // Import from json.zst
@@ -293,15 +285,7 @@ async fn test_tar_zst_roundtrip() {
     let dest_path = temp_dir.path().join("dest");
     fs::create_dir_all(&dest_path).expect("create dest dir");
 
-    let dest_repo = Repository {
-        id: "dest".into(),
-        name: "Dest Repo".into(),
-        path: dest_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
+    let dest_repo = common::test_repo("dest", dest_path.clone());
     db.add_repository(&dest_repo).expect("add dest repo");
 
     // Import from tar.zst

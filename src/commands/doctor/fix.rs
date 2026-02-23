@@ -12,7 +12,7 @@ pub fn pull_ollama_model(model: &str) -> anyhow::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        bail!("ollama pull exited with status: {}", status)
+        bail!("ollama pull exited with status: {status}")
     }
 }
 

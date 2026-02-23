@@ -94,6 +94,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use crate::content_hash;
     use crate::database::tests::{test_db, test_doc, test_repo};
 
     #[test]
@@ -106,7 +107,7 @@ mod tests {
         doc.content =
             "- Fact one [^1]\n- Fact two [^2]\n\n[^1]: LinkedIn, 2024-01\n[^2]: News, 2024-02"
                 .to_string();
-        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
+        doc.file_hash = content_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats1 = db.compute_source_stats(&repo.id).expect("compute");
@@ -117,7 +118,7 @@ mod tests {
         assert_eq!(stats2.total_facts, stats1.total_facts);
 
         doc.content = "- Fact one\n- Fact two\n- Fact three".to_string();
-        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
+        doc.file_hash = content_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats3 = db.compute_source_stats(&repo.id).expect("compute");
@@ -151,7 +152,7 @@ mod tests {
         let mut doc = test_doc("abc123", "Test Doc");
         // [^1] referenced but not defined, [^3] defined but not referenced
         doc.content = "- Fact with orphan ref [^1]\n- Fact with valid ref [^2]\n\n[^2]: LinkedIn, 2024-01\n[^3]: News, 2024-02".to_string();
-        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
+        doc.file_hash = content_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats = db.compute_source_stats(&repo.id).expect("compute");
@@ -167,7 +168,7 @@ mod tests {
 
         let mut doc = test_doc("abc123", "Test Doc");
         doc.content = "- Fact [^1]\n- Fact [^2]\n- Fact [^3]\n\n[^1]: LinkedIn, 2022-06\n[^2]: News, 2024-01-15\n[^3]: Website, 2023".to_string();
-        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
+        doc.file_hash = content_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats = db.compute_source_stats(&repo.id).expect("compute");

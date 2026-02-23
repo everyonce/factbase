@@ -191,9 +191,6 @@ pub(crate) async fn run_single_search(args: &SearchArgs) -> anyhow::Result<()> {
 
     // Apply --sort ordering (after all filtering and boosting)
     match args.sort.as_str() {
-        "relevance" => {
-            // Already sorted by relevance (default from search)
-        }
         "date" => {
             // Sort by file modification time (newest first)
             results.sort_by(|a, b| {
@@ -220,7 +217,7 @@ pub(crate) async fn run_single_search(args: &SearchArgs) -> anyhow::Result<()> {
                 }
             });
         }
-        _ => {} // Invalid sort option (shouldn't happen due to value_parser)
+        _ => {} // "relevance" (already sorted) and invalid sort options
     }
 
     // Count mode: output only the number of results

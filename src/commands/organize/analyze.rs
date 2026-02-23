@@ -48,22 +48,27 @@ impl AnalysisResults {
 pub async fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
     let (config, db, repo) = find_repo_with_config(args.repo.as_deref())?;
     let format = OutputFormat::resolve(args.json, args.format);
+    let progress = factbase::ProgressReporter::Cli { quiet: false };
 
     let repo_id = Some(repo.id.as_str());
 
     // Detect merge candidates (no embedding needed, uses existing embeddings)
-    let merge_candidates = detect_merge_candidates(&db, args.merge_threshold, repo_id)?;
+    progress.phase("Analysis 1/4: Merge candidates");
+    let merge_candidates = detect_merge_candidates(&db, args.merge_threshold, repo_id, &progress)?;
 
     // Detect split candidates (needs embedding provider for section embeddings)
+    progress.phase("Analysis 2/4: Split candidates");
     let embedding = setup_embedding_with_timeout(&config, args.timeout).await;
     let split_candidates =
-        detect_split_candidates(&db, &embedding, args.split_threshold, repo_id).await?;
+        detect_split_candidates(&db, &embedding, args.split_threshold, repo_id, &progress).await?;
 
     // Detect misplaced documents (uses existing embeddings)
-    let misplaced_candidates = detect_misplaced(&db, repo_id)?;
+    progress.phase("Analysis 3/4: Misplaced documents");
+    let misplaced_candidates = detect_misplaced(&db, repo_id, &progress)?;
 
     // Detect duplicate entity entries across documents
-    let duplicate_entries = detect_duplicate_entries(&db, &*embedding, repo_id).await?;
+    progress.phase("Analysis 4/4: Duplicate entries");
+    let duplicate_entries = detect_duplicate_entries(&db, &*embedding, repo_id, &progress).await?;
 
     // Assess staleness of duplicate entries
     let stale_entries = assess_staleness(&duplicate_entries, &db)?;
@@ -83,7 +88,7 @@ pub async fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
 
 /// Print results in table format.
 fn print_table(results: &AnalysisResults, repo_id: &str) {
-    println!("Reorganization Analysis: {}", repo_id);
+    println!("Reorganization Analysis: {repo_id}");
     println!("{}", "=".repeat(40));
 
     if results.is_empty() {

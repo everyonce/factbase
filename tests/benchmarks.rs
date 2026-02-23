@@ -4,20 +4,16 @@
 
 mod common;
 
-use chrono::Utc;
 use common::ollama_helpers::require_ollama;
 use common::run_scan;
-use factbase::{
-    config::Config, database::Database, embedding::OllamaEmbedding, models::Repository,
-    EmbeddingProvider,
-};
+use factbase::{config::Config, database::Database, embedding::OllamaEmbedding, EmbeddingProvider};
 use std::fs;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 /// Generate test documents of specified count
 fn generate_test_docs(repo_path: &std::path::Path, count: usize) {
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
     for i in 0..count {
         let content = format!(
             "# Document {}\n\nThis is test document number {}.\n\n{}",
@@ -25,8 +21,7 @@ fn generate_test_docs(repo_path: &std::path::Path, count: usize) {
             i,
             "Lorem ipsum dolor sit amet. ".repeat(50)
         );
-        fs::write(repo_path.join(format!("docs/doc{}.md", i)), content)
-            .expect("operation should succeed");
+        fs::write(repo_path.join(format!("docs/doc{}.md", i)), content).unwrap();
     }
 }
 
@@ -42,30 +37,20 @@ async fn benchmark_scan_performance() {
 
     for doc_count in [5, 10, 20] {
         // Reduced for faster testing
-        let temp_dir = TempDir::new().expect("operation should succeed");
+        let temp_dir = TempDir::new().unwrap();
         let repo_path = temp_dir.path().join("repo");
         generate_test_docs(&repo_path, doc_count);
 
         let db_path = temp_dir.path().join("test.db");
-        let db = Database::new(&db_path).expect("operation should succeed");
+        let db = Database::new(&db_path).unwrap();
 
-        let repo = Repository {
-            id: "bench".into(),
-            name: "Benchmark".into(),
-            path: repo_path,
-            perspective: None,
-            created_at: Utc::now(),
-            last_indexed_at: None,
-            last_lint_at: None,
-        };
-        db.add_repository(&repo).expect("operation should succeed");
+        let repo = common::test_repo("bench", repo_path);
+        db.add_repository(&repo).unwrap();
 
         let config = Config::default();
 
         let start = Instant::now();
-        let result = run_scan(&repo, &db, &config)
-            .await
-            .expect("operation should succeed");
+        let result = run_scan(&repo, &db, &config).await.unwrap();
         let elapsed = start.elapsed();
 
         let per_doc = elapsed / doc_count as u32;
@@ -88,30 +73,20 @@ async fn benchmark_scan_performance() {
 async fn benchmark_search_latency() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
     generate_test_docs(&repo_path, 10); // Reduced for faster testing
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "bench".into(),
-        name: "Benchmark".into(),
-        path: repo_path,
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("bench", repo_path);
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
 
     // Index documents
-    run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    run_scan(&repo, &db, &config).await.unwrap();
 
     // Create embedding provider for search queries
     let embedding = OllamaEmbedding::new(
@@ -134,16 +109,13 @@ async fn benchmark_search_latency() {
 
     for query in &queries {
         let start = Instant::now();
-        let query_emb = embedding
-            .generate(query)
-            .await
-            .expect("operation should succeed");
+        let query_emb = embedding.generate(query).await.unwrap();
         let embed_time = start.elapsed();
 
         let search_start = Instant::now();
         let results = db
             .search_semantic_with_query(&query_emb, 10, None, None, None)
-            .expect("operation should succeed");
+            .unwrap();
         let search_time = search_start.elapsed();
 
         let total = start.elapsed();
@@ -161,8 +133,8 @@ async fn benchmark_search_latency() {
 
     // Calculate statistics
     latencies.sort();
-    let min = latencies.first().expect("operation should succeed");
-    let max = latencies.last().expect("operation should succeed");
+    let min = latencies.first().unwrap();
+    let max = latencies.last().unwrap();
     let avg = latencies.iter().sum::<Duration>() / latencies.len() as u32;
     let p50 = &latencies[latencies.len() / 2];
 
@@ -197,10 +169,7 @@ async fn benchmark_embedding_generation() {
         let char_count = text.len();
 
         let start = Instant::now();
-        let emb = embedding
-            .generate(&text)
-            .await
-            .expect("operation should succeed");
+        let emb = embedding.generate(&text).await.unwrap();
         let elapsed = start.elapsed();
 
         let chars_per_sec = char_count as f64 / elapsed.as_secs_f64();
@@ -239,19 +208,13 @@ async fn benchmark_batch_embedding() {
     // Individual embedding
     let start = Instant::now();
     for text in &texts {
-        embedding
-            .generate(text)
-            .await
-            .expect("operation should succeed");
+        embedding.generate(text).await.unwrap();
     }
     let individual_time = start.elapsed();
 
     // Batch embedding
     let start = Instant::now();
-    let batch_results = embedding
-        .generate_batch(&text_refs)
-        .await
-        .expect("operation should succeed");
+    let batch_results = embedding.generate_batch(&text_refs).await.unwrap();
     let batch_time = start.elapsed();
 
     println!("10 documents:");

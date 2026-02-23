@@ -7,7 +7,7 @@
 //! - `document`: Document CRUD tools (create, update, delete, bulk_create)
 //! - `entity`: Entity query tools (get_entity, list_entities, get_perspective)
 //! - `review`: Review queue tools (get_review_queue, answer_question, etc.)
-//! - `search`: Search tools (search_knowledge, search_content, search_temporal)
+//! - `search`: Search tools (search_knowledge, search_content, search_knowledge (temporal))
 //!
 //! # Public API
 //!
@@ -35,26 +35,21 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
+use crate::progress::ProgressSender;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-/// Channel for sending progress notifications during long-running tool calls.
-/// Each message is a complete JSON-RPC notification ready to write.
-pub type ProgressSender = tokio::sync::mpsc::UnboundedSender<Value>;
 
 // Re-export tool implementations
 pub use authoring::get_authoring_guide;
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
-pub use entity::{
-    get_document_stats, get_entity, get_perspective, list_entities, list_repositories,
-};
+pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
 pub use organize::get_duplicate_entries;
 pub use repository::{init_repository, scan_repository};
 pub use review::{
-    answer_question, apply_review_answers, bulk_answer_questions, generate_questions,
-    get_review_queue, lint_repository,
+    answer_question, answer_questions, apply_review_answers, bulk_answer_questions,
+    generate_questions, get_review_queue, lint_repository,
 };
-pub use search::{search_content, search_knowledge, search_temporal};
+pub use search::{search_content, search_knowledge};
 
 // Re-export helpers for submodules
 pub(crate) use helpers::{
@@ -140,12 +135,18 @@ impl McpResponse {
 /// `McpResponse` with either success result or error code/message.
 ///
 /// # Supported Tools
-/// - Search: `search_knowledge`, `search_content`, `search_temporal`
+/// - Search: `search_knowledge`, `search_content`, `search_knowledge (temporal)`
 /// - Entity: `get_entity`, `list_entities`, `get_perspective`, `list_repositories`, `get_document_stats`
 /// - Document: `create_document`, `update_document`, `delete_document`, `bulk_create_documents`
 /// - Review: `get_review_queue`, `answer_question`, `generate_questions`, `bulk_answer_questions`
 // Dispatches a blocking tool function with cloned db and args via `run_blocking`.
 macro_rules! blocking_tool {
+    ($db:expr, $args:expr, $reporter:expr, $fn:path) => {{
+        let db = $db.clone();
+        let args = $args.clone();
+        let r = $reporter.clone();
+        run_blocking(move || $fn(&db, &args, &r)).await?
+    }};
     ($db:expr, $args:expr, $fn:path) => {{
         let db = $db.clone();
         let args = $args.clone();
@@ -174,45 +175,53 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
         "tools/call" => {
             let tool_name = request.params.name.as_deref().unwrap_or("");
             let args = request.params.arguments.clone();
+            let reporter = crate::ProgressReporter::Mcp { sender: progress };
 
             let result = match tool_name {
                 "search_knowledge" => search_knowledge(db, embedding, &args).await?,
-                "search_temporal" => search_temporal(db, embedding, &args).await?,
                 "get_entity" => blocking_tool!(db, args, get_entity),
                 "list_entities" => blocking_tool!(db, args, list_entities),
                 "get_perspective" => blocking_tool!(db, args, get_perspective),
                 "list_repositories" => blocking_tool!(db, list_repositories),
-                "get_document_stats" => blocking_tool!(db, args, get_document_stats),
                 "create_document" => blocking_tool!(db, args, create_document),
                 "update_document" => blocking_tool!(db, args, update_document),
                 "delete_document" => blocking_tool!(db, args, delete_document),
-                "bulk_create_documents" => blocking_tool!(db, args, bulk_create_documents),
-                "search_content" => blocking_tool!(db, args, search_content),
-                "get_review_queue" => blocking_tool!(db, args, get_review_queue),
-                "answer_question" => blocking_tool!(db, args, answer_question),
-                "generate_questions" => generate_questions(db, embedding, llm, &args).await?,
-                "lint_repository" => {
-                    lint_repository(db, embedding, llm, &args, progress).await?
+                "bulk_create_documents" => {
+                    blocking_tool!(db, args, reporter, bulk_create_documents)
                 }
-                "scan_repository" => {
-                    scan_repository(db, embedding, llm, &args, progress).await?
+                "search_content" => {
+                    blocking_tool!(db, args, reporter, search_content)
                 }
+                "get_review_queue" => get_review_queue(db, &args, &reporter)?,
+                "answer_questions" => {
+                    blocking_tool!(db, args, reporter, answer_questions)
+                }
+                "lint_repository" => lint_repository(db, embedding, llm, &args, &reporter).await?,
+                "scan_repository" => scan_repository(db, embedding, llm, &args, &reporter).await?,
                 "init_repository" => blocking_tool!(db, args, init_repository),
-                "bulk_answer_questions" => blocking_tool!(db, args, bulk_answer_questions),
-                "apply_review_answers" => apply_review_answers(db, llm, &args).await?,
-                "get_duplicate_entries" => get_duplicate_entries(db, embedding, &args).await?,
-                "workflow_start" => blocking_tool!(db, args, workflow::workflow_start),
-                "workflow_next" => blocking_tool!(db, args, workflow::workflow_next),
+                "apply_review_answers" => apply_review_answers(db, llm, &args, &reporter).await?,
+                "get_duplicate_entries" => {
+                    get_duplicate_entries(db, embedding, &args, &reporter).await?
+                }
+                "workflow" => blocking_tool!(db, args, workflow::workflow),
                 "get_authoring_guide" => get_authoring_guide(),
                 _ => {
                     return Ok(Some(McpResponse::error(
                         -32602,
-                        format!("Unknown tool: {}", tool_name),
+                        format!("Unknown tool: {tool_name}"),
                     )))
                 }
             };
 
-            Ok(Some(McpResponse::success(id, result)))
+            Ok(Some(McpResponse::success(
+                id,
+                serde_json::json!({
+                    "content": [{
+                        "type": "text",
+                        "text": serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+                    }]
+                }),
+            )))
         }
         _ => Ok(Some(McpResponse::error(-32601, "Method not found".into()))),
     }
@@ -314,29 +323,24 @@ mod tests {
 
         let dispatch_names: HashSet<String> = [
             "search_knowledge",
-            "search_temporal",
             "get_entity",
             "list_entities",
             "get_perspective",
             "list_repositories",
-            "get_document_stats",
             "create_document",
             "update_document",
             "delete_document",
             "bulk_create_documents",
             "search_content",
             "get_review_queue",
-            "answer_question",
-            "generate_questions",
+            "answer_questions",
             "lint_repository",
             "scan_repository",
             "init_repository",
-            "bulk_answer_questions",
             "apply_review_answers",
             "get_duplicate_entries",
             "get_authoring_guide",
-            "workflow_start",
-            "workflow_next",
+            "workflow",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -366,10 +370,9 @@ mod tests {
         // Tools that filter by document type must use "doc_type", not "type"
         let doc_type_tools = [
             "search_knowledge",
-            "search_temporal",
             "search_content",
             "list_entities",
-            "workflow_start",
+            "workflow",
         ];
 
         for tool_name in &doc_type_tools {
@@ -404,5 +407,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository_sends_progress_via_mcp_channel() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        // Create a few markdown files
+        std::fs::write(repo_path.join("doc1.md"), "# Doc One\nContent one.").unwrap();
+        std::fs::write(repo_path.join("doc2.md"), "# Doc Two\nContent two.").unwrap();
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
+
+        let args = serde_json::json!({});
+        let result = scan_repository(&db, &embedding, None, &args, &reporter).await;
+        assert!(result.is_ok());
+
+        // Collect all progress messages
+        let mut messages = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            messages.push(msg);
+        }
+
+        // Should have received at least one progress message
+        assert!(
+            !messages.is_empty(),
+            "expected progress messages on channel"
+        );
+
+        // Verify message structure: should have "message" field
+        let has_phase = messages.iter().any(|m| m.get("phase").is_some());
+        let has_log = messages.iter().any(|m| {
+            m.get("message").is_some() && m.get("progress").is_none() && m.get("phase").is_none()
+        });
+        assert!(
+            has_phase || has_log,
+            "expected at least a phase or log message"
+        );
     }
 }

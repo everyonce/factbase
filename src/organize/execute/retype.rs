@@ -93,10 +93,7 @@ fn persist_type_to_file(file_path: &Path, new_type: &str) -> Result<(), Factbase
 /// Update or insert type override comment in content.
 /// Places it on the line after the factbase ID comment.
 fn update_type_comment(content: &str, new_type: &str) -> String {
-    let type_comment = format!(
-        "{}{}{}",
-        TYPE_OVERRIDE_PREFIX, new_type, TYPE_OVERRIDE_SUFFIX
-    );
+    let type_comment = format!("{TYPE_OVERRIDE_PREFIX}{new_type}{TYPE_OVERRIDE_SUFFIX}");
     let mut lines: Vec<&str> = content.lines().collect();
 
     // Find existing type comment
@@ -116,7 +113,7 @@ fn update_type_comment(content: &str, new_type: &str) -> String {
     }
 
     // No ID line found, prepend type comment
-    format!("{}\n{}", type_comment, content)
+    format!("{type_comment}\n{content}")
 }
 
 /// Extract type override from content if present.

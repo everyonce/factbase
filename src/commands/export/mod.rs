@@ -22,26 +22,28 @@ mod markdown;
 pub use args::ExportArgs;
 
 use super::setup_database_only;
+use super::utils::ends_with_ext;
+use factbase::ProgressReporter;
 
 /// Determine if the output path represents a single file (vs directory)
 pub fn is_single_file_output(path: &str) -> bool {
-    path.ends_with(".md")
-        || path.ends_with(".json")
-        || path.ends_with(".yaml")
-        || path.ends_with(".md.zst")
-        || path.ends_with(".json.zst")
-        || path.ends_with(".tar.zst")
+    ends_with_ext(path, ".md")
+        || ends_with_ext(path, ".json")
+        || ends_with_ext(path, ".yaml")
+        || ends_with_ext(path, ".md.zst")
+        || ends_with_ext(path, ".json.zst")
+        || ends_with_ext(path, ".tar.zst")
 }
 
 /// Determine the effective export format from path extension
 /// Used in tests to verify format detection logic
 #[cfg(test)]
 pub fn detect_format_from_path(path: &str) -> Option<&'static str> {
-    if path.ends_with(".json") || path.ends_with(".json.zst") {
+    if ends_with_ext(path, ".json") || ends_with_ext(path, ".json.zst") {
         Some("json")
-    } else if path.ends_with(".yaml") {
+    } else if ends_with_ext(path, ".yaml") {
         Some("yaml")
-    } else if path.ends_with(".md") || path.ends_with(".md.zst") || path.ends_with(".tar.zst") {
+    } else if ends_with_ext(path, ".md") || ends_with_ext(path, ".md.zst") || ends_with_ext(path, ".tar.zst") {
         Some("md")
     } else {
         None
@@ -84,20 +86,28 @@ pub fn cmd_export(args: ExportArgs) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let progress = ProgressReporter::Cli { quiet: false };
     let output_str = args.output.to_string_lossy();
     let is_single_file = is_single_file_output(&output_str);
 
     match args.format.as_str() {
         "json" => {
-            json::export_json(&docs, &db, &args.output, args.compress, args.stdout)?;
+            json::export_json(
+                &docs,
+                &db,
+                &args.output,
+                args.compress,
+                args.stdout,
+                &progress,
+            )?;
         }
         "yaml" => {
-            json::export_yaml(&docs, &db, &args.output, args.stdout)?;
+            json::export_yaml(&docs, &db, &args.output, args.stdout, &progress)?;
         }
         _ => {
             // Markdown format (default)
             if args.stdout {
-                markdown::export_markdown_stdout(&docs, &db, args.with_metadata)?;
+                markdown::export_markdown_stdout(&docs, &db, args.with_metadata, &progress)?;
             } else if is_single_file
                 && (output_str.ends_with(".md") || output_str.ends_with(".md.zst"))
             {
@@ -107,6 +117,7 @@ pub fn cmd_export(args: ExportArgs) -> anyhow::Result<()> {
                     &args.output,
                     args.with_metadata,
                     args.compress,
+                    &progress,
                 )?;
             } else if args.compress {
                 #[cfg(feature = "compression")]
@@ -117,6 +128,7 @@ pub fn cmd_export(args: ExportArgs) -> anyhow::Result<()> {
                         &args.output,
                         &repo.path,
                         args.with_metadata,
+                        &progress,
                     )?;
                 }
                 #[cfg(not(feature = "compression"))]
@@ -128,6 +140,7 @@ pub fn cmd_export(args: ExportArgs) -> anyhow::Result<()> {
                     &args.output,
                     &repo.path,
                     args.with_metadata,
+                    &progress,
                 )?;
             }
         }

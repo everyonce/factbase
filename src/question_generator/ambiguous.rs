@@ -27,7 +27,7 @@ pub fn generate_ambiguous_questions(content: &str) -> Vec<ReviewQuestion> {
             questions.push(ReviewQuestion::new(
                 QuestionType::Ambiguous,
                 Some(line_number),
-                format!("\"{}\" - {}", fact_text, ambiguity),
+                format!("\"{fact_text}\" - {ambiguity}"),
             ));
         }
     }

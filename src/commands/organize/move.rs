@@ -70,7 +70,7 @@ pub fn run(args: MoveArgs) -> anyhow::Result<()> {
 
     // Normalize destination: ensure it ends with the filename
     let dest = args.to.trim_end_matches('/');
-    let new_path = if dest.ends_with(".md") {
+    let new_path = if crate::commands::utils::ends_with_ext(dest, ".md") {
         // User provided full path including filename
         dest.to_string()
     } else {

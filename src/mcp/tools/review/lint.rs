@@ -4,18 +4,11 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::mcp::tools::{get_str_arg, ProgressSender};
+use crate::mcp::tools::get_str_arg;
 use crate::models::Perspective;
-use crate::processor::{append_review_questions, parse_review_queue};
-use crate::question_generator::cross_validate::cross_validate_document;
-use crate::question_generator::{
-    generate_ambiguous_questions, generate_conflict_questions, generate_missing_questions,
-    generate_required_field_questions, generate_stale_questions, generate_temporal_questions,
-};
+use crate::progress::ProgressReporter;
+use crate::question_generator::lint::{lint_all_documents, LintConfig};
 use serde_json::Value;
-use std::collections::HashSet;
-use std::path::PathBuf;
-use tracing::{info, warn};
 
 /// Default concurrency for parallel lint (LLM calls).
 const LINT_CONCURRENCY: usize = 5;
@@ -26,13 +19,23 @@ pub async fn lint_repository(
     embedding: &dyn EmbeddingProvider,
     llm: Option<&dyn LlmProvider>,
     args: &Value,
-    progress: Option<ProgressSender>,
+    progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let repo_id = get_str_arg(args, "repo");
+    let doc_id = get_str_arg(args, "doc_id");
     let dry_run = args
         .get("dry_run")
-        .and_then(|v| v.as_bool())
+        .and_then(Value::as_bool)
         .unwrap_or(false);
+
+    // If doc_id is provided, lint just that one document (replaces generate_questions)
+    if doc_id.is_some() {
+        return super::generate_questions(db, embedding, llm, args).await;
+    }
+
+    let lint_concurrency = crate::Config::load(None)
+        .map(|c| c.processor.lint_concurrency)
+        .unwrap_or(LINT_CONCURRENCY);
 
     // Load perspective for stale_days and required_fields
     let perspective = load_perspective(db, repo_id);
@@ -67,103 +70,29 @@ pub async fn lint_repository(
     };
 
     let total = docs.len();
-    let progress_ref = &progress;
-    let rf_ref = &required_fields;
+    progress.phase("Generating review questions");
 
-    // Process documents in concurrent batches
-    let mut all_results = Vec::new();
-    for chunk_start in (0..total).step_by(LINT_CONCURRENCY) {
-        let chunk_end = (chunk_start + LINT_CONCURRENCY).min(total);
-        let chunk = &docs[chunk_start..chunk_end];
+    let config = LintConfig {
+        stale_days,
+        required_fields,
+        dry_run,
+        concurrency: lint_concurrency,
+    };
 
-        let futs: Vec<_> = chunk
-            .iter()
-            .enumerate()
-            .map(|(ci, doc)| {
-                let idx = chunk_start + ci;
-                async move {
-                    // Log progress (always visible in stderr)
-                    info!("Linting [{}/{}] {}", idx + 1, total, doc.title);
-                    if let Some(ref tx) = progress_ref {
-                        let _ = tx.send(serde_json::json!({
-                            "progress": idx,
-                            "total": total,
-                            "message": format!("Linting {}", doc.title),
-                        }));
-                    }
+    let results = lint_all_documents(&docs, db, embedding, llm, &config, progress).await?;
 
-                    // Local generators (fast, CPU-only)
-                    let mut questions = generate_temporal_questions(&doc.content);
-                    questions.extend(generate_conflict_questions(&doc.content));
-                    questions.extend(generate_missing_questions(&doc.content));
-                    questions.extend(generate_ambiguous_questions(&doc.content));
-                    questions.extend(generate_stale_questions(&doc.content, stale_days));
-
-                    if let Some(ref rf) = rf_ref {
-                        questions.extend(generate_required_field_questions(
-                            &doc.content,
-                            Some(doc.doc_type.as_deref().unwrap_or("unknown")),
-                            rf,
-                        ));
-                    }
-
-                    // Cross-document validation (slow, LLM call)
-                    if let Some(llm) = llm {
-                        match cross_validate_document(&doc.content, &doc.id, db, embedding, llm)
-                            .await
-                        {
-                            Ok(cross) => questions.extend(cross),
-                            Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
-                        }
-                    }
-
-                    // Filter existing questions
-                    let existing: HashSet<_> = parse_review_queue(&doc.content)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|q| q.description.clone())
-                        .collect();
-                    questions.retain(|q| !existing.contains(&q.description));
-
-                    (doc, questions)
-                }
+    let docs_with_questions = results.len();
+    let total_questions: usize = results.iter().map(|r| r.questions_added).sum();
+    let details: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "doc_id": r.doc_id,
+                "doc_title": r.doc_title,
+                "questions_added": r.questions_added,
             })
-            .collect();
-
-        let batch = futures::future::join_all(futs).await;
-        all_results.extend(batch);
-    }
-
-    // Write results and build summary (sequential for filesystem safety)
-    let mut docs_with_questions = 0;
-    let mut total_questions = 0;
-    let mut details = Vec::new();
-
-    for (doc, questions) in all_results {
-        if questions.is_empty() {
-            continue;
-        }
-
-        let count = questions.len();
-        total_questions += count;
-        docs_with_questions += 1;
-
-        if !dry_run {
-            let updated = append_review_questions(&doc.content, &questions);
-            let path = PathBuf::from(&doc.file_path);
-            if path.exists() {
-                std::fs::write(&path, &updated)?;
-            }
-        }
-
-        details.push(serde_json::json!({
-            "doc_id": doc.id,
-            "doc_title": doc.title,
-            "questions_added": count,
-        }));
-
-        info!("{}: {} new questions", doc.title, count);
-    }
+        })
+        .collect();
 
     Ok(serde_json::json!({
         "documents_scanned": total,

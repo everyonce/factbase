@@ -174,7 +174,7 @@ pub fn cmd_db_backfill_word_counts() -> anyhow::Result<()> {
     if updated == 0 {
         println!("All documents already have word counts");
     } else {
-        println!("Updated {} document(s) with word counts", updated);
+        println!("Updated {updated} document(s) with word counts");
     }
 
     Ok(())

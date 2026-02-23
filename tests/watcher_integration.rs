@@ -1,8 +1,8 @@
 //! Integration tests for file watcher
 //! These tests use real filesystem events with tempfile directories.
 
-use chrono::Utc;
-use factbase::models::Repository;
+mod common;
+
 use factbase::watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
 use std::fs;
 use std::path::PathBuf;
@@ -26,18 +26,16 @@ fn wait_for_events(watcher: &FileWatcher, max_wait_ms: u64) -> Vec<PathBuf> {
 
 #[test]
 fn test_detect_file_creation() {
-    let temp = TempDir::new().expect("operation should succeed");
-    let mut watcher = FileWatcher::new(100, &[]).expect("operation should succeed");
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
+    let mut watcher = FileWatcher::new(100, &[]).unwrap();
+    watcher.watch_directory(temp.path()).unwrap();
 
     // Give watcher time to initialize
     thread::sleep(Duration::from_millis(200));
 
     // Create a new .md file
     let file_path = temp.path().join("new_doc.md");
-    fs::write(&file_path, "# New Document\n\nContent here.").expect("operation should succeed");
+    fs::write(&file_path, "# New Document\n\nContent here.").unwrap();
 
     // Wait for event
     let events = wait_for_events(&watcher, 2000);
@@ -48,19 +46,17 @@ fn test_detect_file_creation() {
 
 #[test]
 fn test_detect_file_modification() {
-    let temp = TempDir::new().expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
     let file_path = temp.path().join("existing.md");
-    fs::write(&file_path, "# Original\n\nOriginal content.").expect("operation should succeed");
+    fs::write(&file_path, "# Original\n\nOriginal content.").unwrap();
 
-    let mut watcher = FileWatcher::new(100, &[]).expect("operation should succeed");
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    let mut watcher = FileWatcher::new(100, &[]).unwrap();
+    watcher.watch_directory(temp.path()).unwrap();
 
     thread::sleep(Duration::from_millis(200));
 
     // Modify the file
-    fs::write(&file_path, "# Modified\n\nUpdated content.").expect("operation should succeed");
+    fs::write(&file_path, "# Modified\n\nUpdated content.").unwrap();
 
     let events = wait_for_events(&watcher, 2000);
 
@@ -70,19 +66,17 @@ fn test_detect_file_modification() {
 
 #[test]
 fn test_detect_file_deletion() {
-    let temp = TempDir::new().expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
     let file_path = temp.path().join("to_delete.md");
-    fs::write(&file_path, "# To Delete").expect("operation should succeed");
+    fs::write(&file_path, "# To Delete").unwrap();
 
-    let mut watcher = FileWatcher::new(100, &[]).expect("operation should succeed");
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    let mut watcher = FileWatcher::new(100, &[]).unwrap();
+    watcher.watch_directory(temp.path()).unwrap();
 
     thread::sleep(Duration::from_millis(200));
 
     // Delete the file
-    fs::remove_file(&file_path).expect("operation should succeed");
+    fs::remove_file(&file_path).unwrap();
 
     // Note: deletion events may or may not include the path depending on OS
     // The key is that we get some event notification
@@ -96,18 +90,16 @@ fn test_detect_file_deletion() {
 
 #[test]
 fn test_debouncing_batches_rapid_changes() {
-    let temp = TempDir::new().expect("operation should succeed");
-    let mut watcher = FileWatcher::new(500, &[]).expect("operation should succeed"); // 500ms debounce
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
+    let mut watcher = FileWatcher::new(500, &[]).unwrap(); // 500ms debounce
+    watcher.watch_directory(temp.path()).unwrap();
 
     thread::sleep(Duration::from_millis(300));
 
     // Make 10 rapid changes within debounce window
     for i in 0..10 {
         let file_path = temp.path().join(format!("rapid_{}.md", i));
-        fs::write(&file_path, format!("# Doc {}", i)).expect("operation should succeed");
+        fs::write(&file_path, format!("# Doc {}", i)).unwrap();
         thread::sleep(Duration::from_millis(10)); // 10ms between writes
     }
 
@@ -134,18 +126,16 @@ fn test_debouncing_batches_rapid_changes() {
 
 #[test]
 fn test_ignore_non_md_files() {
-    let temp = TempDir::new().expect("operation should succeed");
-    let mut watcher = FileWatcher::new(100, &[]).expect("operation should succeed");
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
+    let mut watcher = FileWatcher::new(100, &[]).unwrap();
+    watcher.watch_directory(temp.path()).unwrap();
 
     thread::sleep(Duration::from_millis(200));
 
     // Create non-md files
-    fs::write(temp.path().join("file.txt"), "text file").expect("operation should succeed");
-    fs::write(temp.path().join("file.json"), "{}").expect("operation should succeed");
-    fs::write(temp.path().join("file.rs"), "fn main() {}").expect("operation should succeed");
+    fs::write(temp.path().join("file.txt"), "text file").unwrap();
+    fs::write(temp.path().join("file.json"), "{}").unwrap();
+    fs::write(temp.path().join("file.rs"), "fn main() {}").unwrap();
 
     let events = wait_for_events(&watcher, 1000);
 
@@ -159,22 +149,20 @@ fn test_ignore_non_md_files() {
 
 #[test]
 fn test_ignore_patterns() {
-    let temp = TempDir::new().expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
     let patterns = vec!["*.swp".to_string(), "**/.git/**".to_string()];
-    let mut watcher = FileWatcher::new(100, &patterns).expect("operation should succeed");
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    let mut watcher = FileWatcher::new(100, &patterns).unwrap();
+    watcher.watch_directory(temp.path()).unwrap();
 
     thread::sleep(Duration::from_millis(200));
 
     // Create files matching ignore patterns
-    fs::write(temp.path().join("doc.md.swp"), "swap file").expect("operation should succeed");
-    fs::create_dir_all(temp.path().join(".git")).expect("operation should succeed");
-    fs::write(temp.path().join(".git/config.md"), "git config").expect("operation should succeed");
+    fs::write(temp.path().join("doc.md.swp"), "swap file").unwrap();
+    fs::create_dir_all(temp.path().join(".git")).unwrap();
+    fs::write(temp.path().join(".git/config.md"), "git config").unwrap();
 
     // Also create a valid md file
-    fs::write(temp.path().join("valid.md"), "# Valid").expect("operation should succeed");
+    fs::write(temp.path().join("valid.md"), "# Valid").unwrap();
 
     let events = wait_for_events(&watcher, 2000);
 
@@ -187,26 +175,22 @@ fn test_ignore_patterns() {
 
 #[test]
 fn test_watch_unwatch() {
-    let temp = TempDir::new().expect("operation should succeed");
-    let mut watcher = FileWatcher::new(100, &[]).expect("operation should succeed");
+    let temp = TempDir::new().unwrap();
+    let mut watcher = FileWatcher::new(100, &[]).unwrap();
 
     // Watch
-    watcher
-        .watch_directory(temp.path())
-        .expect("operation should succeed");
+    watcher.watch_directory(temp.path()).unwrap();
     thread::sleep(Duration::from_millis(200));
 
-    fs::write(temp.path().join("before.md"), "# Before").expect("operation should succeed");
+    fs::write(temp.path().join("before.md"), "# Before").unwrap();
     let events = wait_for_events(&watcher, 1000);
     assert!(!events.is_empty(), "Should detect events while watching");
 
     // Unwatch
-    watcher
-        .unwatch_directory(temp.path())
-        .expect("operation should succeed");
+    watcher.unwatch_directory(temp.path()).unwrap();
     thread::sleep(Duration::from_millis(200));
 
-    fs::write(temp.path().join("after.md"), "# After").expect("operation should succeed");
+    fs::write(temp.path().join("after.md"), "# After").unwrap();
     let events = wait_for_events(&watcher, 500);
     assert!(
         events.is_empty(),
@@ -236,7 +220,7 @@ fn test_scan_coordinator_thread_safety() {
     }
 
     for h in handles {
-        h.join().expect("operation should succeed");
+        h.join().unwrap();
     }
 
     // At least one should have succeeded
@@ -245,15 +229,7 @@ fn test_scan_coordinator_thread_safety() {
 
 #[test]
 fn test_find_repo_for_nested_path() {
-    let repos = vec![Repository {
-        id: "main".into(),
-        name: "Main".into(),
-        path: PathBuf::from("/projects/main"),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    }];
+    let repos = vec![common::test_repo("main", PathBuf::from("/projects/main"))];
 
     // Deeply nested path should still match
     let found = find_repo_for_path(

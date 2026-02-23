@@ -25,6 +25,8 @@ mod content;
 mod semantic;
 mod title;
 
+pub use content::ContentSearchParams;
+
 // Re-export all search functions via Database impl
 // The actual implementations are in the submodules
 
@@ -41,13 +43,12 @@ pub(crate) fn append_type_repo_filters(
     repo_id: Option<&str>,
     column_prefix: &str,
 ) -> usize {
-    use std::fmt::Write;
     if doc_type.is_some() {
-        write!(sql, " AND {}doc_type = ?{}", column_prefix, param_idx).expect("write to String");
+        write_str!(sql, " AND {}doc_type = ?{}", column_prefix, param_idx);
         param_idx += 1;
     }
     if repo_id.is_some() {
-        write!(sql, " AND {}repo_id = ?{}", column_prefix, param_idx).expect("write to String");
+        write_str!(sql, " AND {}repo_id = ?{}", column_prefix, param_idx);
         param_idx += 1;
     }
     param_idx

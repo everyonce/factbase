@@ -2,9 +2,10 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::mcp::tools::{get_bool_arg, get_str_arg};
+use crate::mcp::tools::{get_bool_arg, get_str_arg, get_u64_arg};
 use crate::models::QuestionType;
 use crate::processor::parse_review_queue;
+use crate::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
 
@@ -38,12 +39,17 @@ fn parse_type_filter(type_str: &str) -> Option<QuestionType> {
 /// # Returns
 /// JSON with `questions` array (doc_id, doc_title, type, description, answered, answer),
 /// `total`, `answered`, and `unanswered` counts.
-#[instrument(name = "mcp_get_review_queue", skip(db, args))]
-pub fn get_review_queue(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+#[instrument(name = "mcp_get_review_queue", skip(db, args, progress))]
+pub fn get_review_queue(
+    db: &Database,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
     let repo_filter = get_str_arg(args, "repo").map(String::from);
     let doc_id_filter = get_str_arg(args, "doc_id").map(String::from);
     let type_filter = get_str_arg(args, "type").map(String::from);
-    let include_context = get_bool_arg(args, "include_context", false);
+    let _include_context = get_bool_arg(args, "include_context", false);
+    let status_filter = get_str_arg(args, "status").unwrap_or("unanswered");
 
     // Parse type filter into QuestionType
     let question_type_filter: Option<QuestionType> =
@@ -52,75 +58,111 @@ pub fn get_review_queue(db: &Database, args: &Value) -> Result<Value, FactbaseEr
     let mut all_questions: Vec<Value> = Vec::new();
     let mut total_answered = 0;
     let mut total_unanswered = 0;
+    let mut total_deferred = 0;
 
-    // Get repositories to scan
-    let repos = if let Some(ref repo_id) = repo_filter {
-        db.get_repository(repo_id)?
-            .map(|r| vec![r])
-            .unwrap_or_default()
-    } else {
-        db.list_repositories()?
-    };
+    let limit = get_u64_arg(args, "limit", 10) as usize;
+    let offset = get_u64_arg(args, "offset", 0) as usize;
 
-    for repo in repos {
-        let docs = db.get_documents_for_repo(&repo.id)?;
+    // Only load documents that have review queues (indexed via has_review_queue flag)
+    let docs = db.get_documents_with_review_queue(repo_filter.as_deref())?;
+    let total_docs = docs.len();
 
-        for (_id, doc) in docs {
-            // Skip deleted documents
-            if doc.is_deleted {
+    progress.log(&format!(
+        "Processing {total_docs} documents with review queues"
+    ));
+
+    let mut matched = 0usize; // count of questions matching all filters (for pagination)
+    let mut docs_processed = 0usize;
+    let page_filled = |qs: &[Value]| qs.len() >= limit;
+
+    for doc in &docs {
+        // Early termination: once page is filled, skip remaining docs
+        // (totals will reflect only documents processed so far)
+        if page_filled(&all_questions) {
+            break;
+        }
+
+        // Skip if doc_id filter doesn't match
+        if let Some(ref filter_id) = doc_id_filter {
+            if &doc.id != filter_id {
                 continue;
             }
+        }
 
-            // Skip if doc_id filter doesn't match
-            if let Some(ref filter_id) = doc_id_filter {
-                if &doc.id != filter_id {
+        docs_processed += 1;
+
+        // Report progress every 50 documents
+        if total_docs >= 50 && docs_processed.is_multiple_of(50) {
+            progress.report(docs_processed, total_docs, &doc.title);
+        }
+
+        // Parse review queue from document
+        if let Some(questions) = parse_review_queue(&doc.content) {
+            for (idx, q) in questions.iter().enumerate() {
+                // Apply type filter
+                if let Some(ref filter_type) = question_type_filter {
+                    if &q.question_type != filter_type {
+                        continue;
+                    }
+                }
+
+                // Classify: answered, deferred (unchecked but has answer/note), unanswered
+                let is_deferred = !q.answered && q.answer.is_some();
+                if q.answered {
+                    total_answered += 1;
+                } else if is_deferred {
+                    total_deferred += 1;
+                } else {
+                    total_unanswered += 1;
+                }
+
+                // Apply status filter
+                let include = match status_filter {
+                    "all" => true,
+                    "answered" => q.answered,
+                    "deferred" => is_deferred,
+                    _ => !q.answered && !is_deferred, // "unanswered" (default)
+                };
+                if !include {
                     continue;
                 }
-            }
 
-            // Parse review queue from document
-            if let Some(questions) = parse_review_queue(&doc.content) {
-                for q in questions {
-                    // Apply type filter
-                    if let Some(ref filter_type) = question_type_filter {
-                        if &q.question_type != filter_type {
-                            continue;
+                // Paginate over matched questions
+                if matched >= offset && all_questions.len() < limit {
+                    let mut qjson = format_question_json(q, Some((&doc.id, &doc.title)));
+                    if let Some(obj) = qjson.as_object_mut() {
+                        obj.insert("question_index".to_string(), serde_json::json!(idx));
+                        if is_deferred {
+                            obj.insert("deferred".to_string(), Value::Bool(true));
                         }
                     }
-
-                    if q.answered {
-                        total_answered += 1;
-                    } else {
-                        total_unanswered += 1;
-                    }
-
-                    let mut qjson = format_question_json(&q, Some((&doc.id, &doc.title)));
-
-                    if include_context {
-                        if let Some(line_ref) = q.line_ref {
-                            let lines: Vec<&str> = doc.content.lines().collect();
-                            let start = line_ref.saturating_sub(3); // 2 lines before (0-indexed)
-                            let end = (line_ref + 2).min(lines.len()); // 2 lines after
-                            let context: Vec<&str> = lines[start..end].to_vec();
-                            qjson["context"] = serde_json::json!({
-                                "lines": context,
-                                "start_line": start + 1,
-                            });
-                        }
-                    }
-
                     all_questions.push(qjson);
                 }
+                matched += 1;
             }
         }
     }
 
-    Ok(serde_json::json!({
+    let mut result = serde_json::json!({
         "questions": all_questions,
-        "total": all_questions.len(),
+        "total": total_answered + total_deferred + total_unanswered,
+        "returned": all_questions.len(),
+        "offset": offset,
+        "limit": limit,
         "answered": total_answered,
-        "unanswered": total_unanswered
-    }))
+        "deferred": total_deferred,
+        "unanswered": total_unanswered,
+        "status_filter": status_filter
+    });
+
+    // Indicate when totals are approximate due to early termination
+    if docs_processed < total_docs {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("has_more".to_string(), Value::Bool(true));
+        }
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]

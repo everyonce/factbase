@@ -140,7 +140,7 @@ async fn health<E: EmbeddingProvider>(
 async fn check_ollama(base_url: &str) -> bool {
     let client = crate::ollama::create_http_client(std::time::Duration::from_secs(2));
     client
-        .get(format!("{}/api/tags", base_url))
+        .get(format!("{base_url}/api/tags"))
         .send()
         .await
         .map(|r| r.status().is_success())

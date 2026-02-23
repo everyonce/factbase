@@ -14,9 +14,9 @@ pub fn format_coverage(coverage: f32) -> String {
     if coverage == 100.0 {
         "100%".to_string()
     } else if coverage >= 10.0 {
-        format!("{:.1}%", coverage)
+        format!("{coverage:.1}%")
     } else {
-        format!("{:.2}%", coverage)
+        format!("{coverage:.2}%")
     }
 }
 

@@ -34,17 +34,15 @@ async fn test_add_multiple_repositories() {
         &[("doc2.md", "# Doc 2\nRepo 2 content")],
     );
 
-    db.add_repository(&repo1).expect("operation should succeed");
-    db.add_repository(&repo2).expect("operation should succeed");
+    db.add_repository(&repo1).unwrap();
+    db.add_repository(&repo2).unwrap();
 
-    let repos = db.list_repositories().expect("operation should succeed");
+    let repos = db.list_repositories().unwrap();
     assert_eq!(repos.len(), 2);
     assert!(repos.iter().any(|r| r.id == "repo1"));
     assert!(repos.iter().any(|r| r.id == "repo2"));
 
-    let stats = db
-        .list_repositories_with_stats()
-        .expect("operation should succeed");
+    let stats = db.list_repositories_with_stats().unwrap();
     assert_eq!(stats.len(), 2);
 }
 
@@ -53,7 +51,7 @@ async fn test_add_repository_duplicate_id_fails() {
     let (db, _temp) = create_test_db();
 
     let (repo, _repo_dir) = create_test_repo("myrepo", "My Repo", &[]);
-    db.add_repository(&repo).expect("operation should succeed");
+    db.add_repository(&repo).unwrap();
 
     let (repo2, _repo2_dir) = create_test_repo("myrepo", "Another Repo", &[]);
     let result = db.add_repository(&repo2);
@@ -70,22 +68,16 @@ async fn test_scan_specific_repository() {
     let ctx2 = TestContext::with_files("repo2", &[("beta.md", "# Beta\nSecond repo doc")]);
 
     // Scan only repo1
-    ctx1.scan().await.expect("operation should succeed");
+    ctx1.scan().await.unwrap();
 
     // Verify repo1 has docs
-    let repo1_docs = ctx1
-        .db
-        .get_documents_for_repo("repo1")
-        .expect("operation should succeed");
+    let repo1_docs = ctx1.db.get_documents_for_repo("repo1").unwrap();
     assert_eq!(repo1_docs.len(), 1);
 
     // Scan repo2
-    ctx2.scan().await.expect("operation should succeed");
+    ctx2.scan().await.unwrap();
 
-    let repo2_docs = ctx2
-        .db
-        .get_documents_for_repo("repo2")
-        .expect("operation should succeed");
+    let repo2_docs = ctx2.db.get_documents_for_repo("repo2").unwrap();
     assert_eq!(repo2_docs.len(), 1);
 }
 
@@ -115,8 +107,8 @@ async fn test_search_across_repos() {
         )],
     );
 
-    db.add_repository(&repo1).expect("operation should succeed");
-    db.add_repository(&repo2).expect("operation should succeed");
+    db.add_repository(&repo1).unwrap();
+    db.add_repository(&repo2).unwrap();
 
     let embedding = OllamaEmbedding::new(
         &config.embedding.base_url,
@@ -129,10 +121,8 @@ async fn test_search_across_repos() {
     // Index both repos
     for repo in [&repo1, &repo2] {
         for file in scanner.find_markdown_files(&repo.path) {
-            let content = std::fs::read_to_string(&file).expect("operation should succeed");
-            let rel_path = file
-                .strip_prefix(&repo.path)
-                .expect("operation should succeed");
+            let content = std::fs::read_to_string(&file).unwrap();
+            let rel_path = file.strip_prefix(&repo.path).unwrap();
             let id = processor
                 .extract_id(&content)
                 .unwrap_or_else(|| processor.generate_id());
@@ -151,36 +141,29 @@ async fn test_search_across_repos() {
                 indexed_at: Utc::now(),
                 is_deleted: false,
             };
-            db.upsert_document(&doc).expect("operation should succeed");
-            let emb = embedding
-                .generate(&content)
-                .await
-                .expect("operation should succeed");
-            db.upsert_embedding(&id, &emb)
-                .expect("operation should succeed");
+            db.upsert_document(&doc).unwrap();
+            let emb = embedding.generate(&content).await.unwrap();
+            db.upsert_embedding(&id, &emb).unwrap();
         }
     }
 
     // Search without repo filter - should find both
-    let query_emb = embedding
-        .generate("programming language")
-        .await
-        .expect("operation should succeed");
+    let query_emb = embedding.generate("programming language").await.unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, 10, None, None, None)
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(results.len(), 2);
 
     // Search with repo filter
     let results = db
         .search_semantic_with_query(&query_emb, 10, None, Some("repo1"), None)
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].title.contains("Rust"));
 
     let results = db
         .search_semantic_with_query(&query_emb, 10, None, Some("repo2"), None)
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].title.contains("Python"));
 }
@@ -192,51 +175,32 @@ async fn test_remove_repository() {
     require_ollama().await;
 
     let ctx = TestContext::with_files("todelete", &[("test.md", "# Test\nTest content")]);
-    ctx.scan().await.expect("operation should succeed");
+    ctx.scan().await.unwrap();
 
     // Verify repo exists with docs
-    let repos = ctx
-        .db
-        .list_repositories()
-        .expect("operation should succeed");
+    let repos = ctx.db.list_repositories().unwrap();
     assert_eq!(repos.len(), 1);
-    let docs = ctx
-        .db
-        .get_documents_for_repo("todelete")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("todelete").unwrap();
     assert_eq!(docs.len(), 1);
 
     // Remove repo
-    let deleted = ctx
-        .db
-        .remove_repository("todelete")
-        .expect("operation should succeed");
+    let deleted = ctx.db.remove_repository("todelete").unwrap();
     assert_eq!(deleted, 1);
 
     // Verify repo not in list
-    let repos = ctx
-        .db
-        .list_repositories()
-        .expect("operation should succeed");
+    let repos = ctx.db.list_repositories().unwrap();
     assert!(repos.is_empty());
 
     // Verify documents deleted
-    let docs = ctx
-        .db
-        .get_documents_for_repo("todelete")
-        .expect("operation should succeed");
+    let docs = ctx.db.get_documents_for_repo("todelete").unwrap();
     assert!(docs.is_empty());
 
     // Verify search excludes removed repo
-    let query_emb = ctx
-        .embedding()
-        .generate("test")
-        .await
-        .expect("operation should succeed");
+    let query_emb = ctx.embedding().generate("test").await.unwrap();
     let results = ctx
         .db
         .search_semantic_with_query(&query_emb, 10, None, None, None)
-        .expect("operation should succeed");
+        .unwrap();
     assert!(results.is_empty());
 }
 
@@ -252,8 +216,8 @@ async fn test_repo_isolation_after_file_change() {
     let (repo1, repo1_dir) = create_test_repo("repo1", "Repo 1", &[("a.md", "# A\nOriginal")]);
     let (repo2, _repo2_dir) = create_test_repo("repo2", "Repo 2", &[("b.md", "# B\nOriginal")]);
 
-    db.add_repository(&repo1).expect("operation should succeed");
-    db.add_repository(&repo2).expect("operation should succeed");
+    db.add_repository(&repo1).unwrap();
+    db.add_repository(&repo2).unwrap();
 
     let embedding = OllamaEmbedding::new(
         &config.embedding.base_url,
@@ -272,10 +236,8 @@ async fn test_repo_isolation_after_file_change() {
         embedding: &OllamaEmbedding,
     ) {
         for file in scanner.find_markdown_files(&repo.path) {
-            let content = std::fs::read_to_string(&file).expect("operation should succeed");
-            let rel_path = file
-                .strip_prefix(&repo.path)
-                .expect("operation should succeed");
+            let content = std::fs::read_to_string(&file).unwrap();
+            let rel_path = file.strip_prefix(&repo.path).unwrap();
             let id = processor
                 .extract_id(&content)
                 .unwrap_or_else(|| processor.generate_id());
@@ -294,13 +256,9 @@ async fn test_repo_isolation_after_file_change() {
                 indexed_at: Utc::now(),
                 is_deleted: false,
             };
-            db.upsert_document(&doc).expect("operation should succeed");
-            let emb = embedding
-                .generate(&content)
-                .await
-                .expect("operation should succeed");
-            db.upsert_embedding(&id, &emb)
-                .expect("operation should succeed");
+            db.upsert_document(&doc).unwrap();
+            let emb = embedding.generate(&content).await.unwrap();
+            db.upsert_embedding(&id, &emb).unwrap();
         }
     }
 
@@ -308,58 +266,31 @@ async fn test_repo_isolation_after_file_change() {
     scan_repo(&db, &repo1, &scanner, &processor, &embedding).await;
     scan_repo(&db, &repo2, &scanner, &processor, &embedding).await;
 
-    let repo1_docs_before = db
-        .get_documents_for_repo("repo1")
-        .expect("operation should succeed");
-    let repo2_docs_before = db
-        .get_documents_for_repo("repo2")
-        .expect("operation should succeed");
-    let repo2_hash_before: String = repo2_docs_before
-        .values()
-        .next()
-        .expect("operation should succeed")
-        .file_hash
-        .clone();
-    let repo1_hash_before: String = repo1_docs_before
-        .values()
-        .next()
-        .expect("operation should succeed")
-        .file_hash
-        .clone();
+    let repo1_docs_before = db.get_documents_for_repo("repo1").unwrap();
+    let repo2_docs_before = db.get_documents_for_repo("repo2").unwrap();
+    let repo2_hash_before: String = repo2_docs_before.values().next().unwrap().file_hash.clone();
+    let repo1_hash_before: String = repo1_docs_before.values().next().unwrap().file_hash.clone();
 
     // Modify file in repo1
-    std::fs::write(repo1_dir.path().join("a.md"), "# A\nModified content")
-        .expect("operation should succeed");
+    std::fs::write(repo1_dir.path().join("a.md"), "# A\nModified content").unwrap();
 
     // Rescan only repo1
     scan_repo(&db, &repo1, &scanner, &processor, &embedding).await;
 
     // Verify repo2 unchanged
-    let repo2_docs_after = db
-        .get_documents_for_repo("repo2")
-        .expect("operation should succeed");
+    let repo2_docs_after = db.get_documents_for_repo("repo2").unwrap();
     assert_eq!(repo2_docs_before.len(), repo2_docs_after.len());
     assert_eq!(
         repo2_hash_before,
-        repo2_docs_after
-            .values()
-            .next()
-            .expect("operation should succeed")
-            .file_hash
+        repo2_docs_after.values().next().unwrap().file_hash
     );
 
     // Verify repo1 updated
-    let repo1_docs_after = db
-        .get_documents_for_repo("repo1")
-        .expect("operation should succeed");
+    let repo1_docs_after = db.get_documents_for_repo("repo1").unwrap();
     assert_eq!(repo1_docs_before.len(), repo1_docs_after.len());
     assert_ne!(
         repo1_hash_before,
-        repo1_docs_after
-            .values()
-            .next()
-            .expect("operation should succeed")
-            .file_hash
+        repo1_docs_after.values().next().unwrap().file_hash
     );
 }
 

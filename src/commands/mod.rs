@@ -89,8 +89,8 @@ pub use version::cmd_version;
 pub use errors::repo_path_not_found_error;
 pub use paths::{validate_directory_path, validate_file_path};
 pub use setup::{
-    find_repo, find_repo_with_config, setup_cached_embedding, setup_database,
-    setup_database_checked, setup_database_only, setup_embedding_with_timeout,
+    auto_init_repo, clean_canonicalize, find_repo, find_repo_with_config, setup_cached_embedding,
+    setup_database, setup_database_checked, setup_database_only, setup_embedding_with_timeout,
     setup_llm_with_timeout, setup_review_llm_with_timeout, setup_services_with_timeout,
 };
 #[cfg(feature = "mcp")]

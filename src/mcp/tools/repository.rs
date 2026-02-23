@@ -4,8 +4,10 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::mcp::tools::{get_str_arg, ProgressSender};
-use crate::{Config, DocumentProcessor, LinkDetector, ScanOptions, Scanner};
+use crate::mcp::tools::get_str_arg;
+use crate::{
+    Config, DocumentProcessor, LinkDetector, ProgressReporter, ScanContext, ScanOptions, Scanner,
+};
 use serde_json::Value;
 use tracing::info;
 
@@ -15,7 +17,7 @@ pub async fn scan_repository(
     embedding: &dyn EmbeddingProvider,
     _llm: Option<&dyn LlmProvider>,
     args: &Value,
-    progress: Option<ProgressSender>,
+    progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let repo_id = get_str_arg(args, "repo");
 
@@ -25,9 +27,7 @@ pub async fn scan_repository(
     } else {
         repos.into_iter().next()
     };
-    let repo = repo.ok_or_else(|| {
-        FactbaseError::NotFound("No repository found.".into())
-    })?;
+    let repo = repo.ok_or_else(|| FactbaseError::NotFound("No repository found.".into()))?;
 
     let config = Config::load(None).unwrap_or_default();
     let scanner = Scanner::new(&config.watcher.ignore_patterns);
@@ -39,29 +39,20 @@ pub async fn scan_repository(
     // For LLM-powered entity detection, run lint_repository after scanning.
     let link_detector = LinkDetector::new(Box::new(NoOpLlm));
 
-    info!("Scanning repository '{}'...", repo.id);
+    progress.log(&format!("Scanning repository '{}'...", repo.id));
 
-    let scan_fut = crate::full_scan(&repo, db, &scanner, &processor, embedding, &link_detector, &opts);
-    tokio::pin!(scan_fut);
-    let mut elapsed_secs = 0u64;
-    let result = loop {
-        tokio::select! {
-            result = &mut scan_fut => {
-                break result.map_err(|e| FactbaseError::Internal(e.to_string()))?;
-            }
-            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-                elapsed_secs += 10;
-                info!("Scan in progress... ({}s elapsed)", elapsed_secs);
-                if let Some(ref tx) = progress {
-                    let _ = tx.send(serde_json::json!({
-                        "progress": elapsed_secs,
-                        "total": 0,
-                        "message": format!("Scan in progress... ({}s elapsed)", elapsed_secs),
-                    }));
-                }
-            }
-        }
+    let ctx = ScanContext {
+        scanner: &scanner,
+        processor: &processor,
+        embedding,
+        link_detector: &link_detector,
+        opts: &opts,
+        progress,
     };
+
+    let result = crate::full_scan(&repo, db, &ctx)
+        .await
+        .map_err(|e| FactbaseError::Internal(e.to_string()))?;
 
     info!(
         "Scan complete: {} added, {} updated, {} unchanged",
@@ -82,7 +73,10 @@ pub async fn scan_repository(
 struct NoOpLlm;
 
 impl LlmProvider for NoOpLlm {
-    fn complete<'a>(&'a self, _prompt: &'a str) -> crate::BoxFuture<'a, Result<String, FactbaseError>> {
+    fn complete<'a>(
+        &'a self,
+        _prompt: &'a str,
+    ) -> crate::BoxFuture<'a, Result<String, FactbaseError>> {
         Box::pin(async { Ok("[]".to_string()) })
     }
 }
@@ -96,14 +90,11 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let path = std::path::Path::new(&path_str);
     if !path.is_dir() {
         return Err(FactbaseError::not_found(format!(
-            "Directory does not exist: {}",
-            path_str
+            "Directory does not exist: {path_str}"
         )));
     }
 
-    let abs_path = path
-        .canonicalize()
-        .map_err(|e| FactbaseError::internal(format!("Cannot resolve path: {}", e)))?;
+    let abs_path = crate::organize::fs_helpers::clean_canonicalize(path);
 
     // Check if already registered
     let repos = db.list_repositories()?;
@@ -119,15 +110,14 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     let default_id = abs_path
         .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "main".into());
+        .map_or_else(|| "main".into(), |s| s.to_string_lossy().to_string());
     let repo_id = id.unwrap_or(&default_id);
     let repo_name = name.unwrap_or(repo_id);
 
     // Create .factbase dir and perspective.yaml if needed
     let factbase_dir = abs_path.join(".factbase");
     std::fs::create_dir_all(&factbase_dir)
-        .map_err(|e| FactbaseError::internal(format!("Cannot create .factbase dir: {}", e)))?;
+        .map_err(|e| FactbaseError::internal(format!("Cannot create .factbase dir: {e}")))?;
     let perspective_path = abs_path.join("perspective.yaml");
     if !perspective_path.exists() {
         let _ = std::fs::write(&perspective_path, "# Factbase perspective\n");
@@ -144,7 +134,11 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     };
     db.upsert_repository(&repo)?;
 
-    info!("Initialized repository '{}' at {}", repo_id, abs_path.display());
+    info!(
+        "Initialized repository '{}' at {}",
+        repo_id,
+        abs_path.display()
+    );
 
     Ok(serde_json::json!({
         "id": repo_id,

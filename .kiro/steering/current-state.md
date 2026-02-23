@@ -2,13 +2,10 @@
 
 ## Project Status
 
-**Phases 1-45 complete, Phase 46 in progress (670+ tasks)**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3.
+**Phases 1-47 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v0.7.7.
 
 ### Active Work
-Phase 46 Task 6: Further deduplication and cleanup (0/3 subtasks)
-- 6.1: Consolidate 6 duplicate `BoxFuture` type aliases into single `pub(crate)` definition
-- 6.2: Consolidate 3 duplicate `MockLlm` test mocks into shared `llm::test_helpers` module
-- 6.3: Audit and remove stale `#[allow(dead_code)]` annotations
+- None — all phases complete
 
 ## Current Configuration
 
@@ -17,7 +14,7 @@ Phase 46 Task 6: Further deduplication and cleanup (0/3 subtasks)
 - **Alternative**: amazon.nova-2-multimodal-embeddings-v1:0
 
 ### LLM Model
-- **Model**: us.anthropic.claude-3-5-haiku-20241022-v1:0 via Bedrock
+- **Model**: us.anthropic.claude-haiku-4-5-20251001-v1:0 via Bedrock
 - **Usage**: Link detection, review question generation
 
 ## Known Limitations
@@ -56,14 +53,14 @@ Phase 46 Task 6: Further deduplication and cleanup (0/3 subtasks)
 - `factbase review --status` - Show review queue summary
 
 ### Organize Commands (Phase 10)
-- `factbase organize analyze` - Detect merge/split/misplaced candidates
+- `factbase organize analyze` - Detect merge/split/misplaced/duplicate candidates
 - `factbase organize merge <id1> <id2>` - Merge two documents
 - `factbase organize split <id>` - Split document by sections
 - `factbase organize move <id> --to <folder>` - Move document to new folder
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (19 total)
+## MCP Tools (21 total)
 
 ### Search Operations
 | Tool | Description |
@@ -96,6 +93,7 @@ Phase 46 Task 6: Further deduplication and cleanup (0/3 subtasks)
 | `answer_question` | Answer a single review question |
 | `bulk_answer_questions` | Answer multiple questions |
 | `generate_questions` | Generate review questions for document |
+| `lint_repository` | Run quality checks and generate review questions |
 
 ### Workflow Operations
 | Tool | Description |
@@ -103,9 +101,10 @@ Phase 46 Task 6: Further deduplication and cleanup (0/3 subtasks)
 | `workflow_start` | Start a guided workflow (resolve, ingest, enrich) |
 | `workflow_next` | Get next step in an active workflow |
 
-### Organize Operations
+### Scan & Organize Operations
 | Tool | Description |
 |------|-------------|
+| `scan_repository` | Index (or re-index) all documents |
 | `get_duplicate_entries` | Detect entity entries duplicated across documents |
 
 ## Web API Endpoints (17 total, feature-gated)
@@ -142,12 +141,12 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: 1011 lib tests (with all features including web), 950 without web
+- Currently: 1031 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
 - No external dependencies required
-- Currently: 355 bin tests (with all features including web), 348 without web
+- Currently: 355 bin tests (with all features including web)
 
 ### Integration Tests (Require inference backend)
 - Run with: `cargo test -- --ignored`
@@ -159,7 +158,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Vitest with jsdom environment
 - Currently: 56 tests
 
-### Total: 1366 unit/binary tests (with all features) + 73+ integration tests + 56 frontend tests
+### Total: 1386 unit/binary tests (with all features) + 73+ integration tests + 56 frontend tests
 
 ## Codebase Structure
 
@@ -170,13 +169,16 @@ The codebase has been modularized into focused submodules. See `.kiro/steering/m
 |--------|------------|
 | `config/` | database, embedding, processor, server, web, validation |
 | `models/` | document, repository, link, search, scan, stats, temporal, question |
-| `database/` | schema, documents, repositories, links, embeddings, search/, stats/ |
+| `database/` | schema, documents/, repositories, links, embeddings, search/, stats/, compression |
 | `processor/` | core, temporal/, sources, review, chunks, stats |
-| `llm/` | ollama, link_detector, review |
+| `llm/` | ollama, link_detector, review, test_helpers |
 | `scanner/` | options, progress, orchestration/ |
 | `organize/` | types, extract, links, orphans, review, audit, snapshot, verify, detect/, plan/, execute/ |
-| `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, fields, facts, cross_validate |
+| `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, fields, facts, cross_validate, lint |
+| `answer_processor/` | mod, interpret, apply, temporal, inbox, apply_all |
 | `commands/` | scan/, search/, grep/, status/, lint/, review/, export/, import/, doctor/, organize/, mcp |
 | `mcp/` | protocol, stdio, server, tools/ |
-| `mcp/tools/` | schema, helpers, search, entity, document, review/ |
+| `mcp/tools/` | schema, helpers, search, entity, document, organize, review/ |
 | `web/` (feature-gated) | server, assets, api/ |
+| `progress.rs` | ProgressReporter enum (Cli/Mcp/Silent), ProgressSender type alias |
+| `embedding.rs` | EmbeddingProvider trait, OllamaEmbedding, test_helpers (MockEmbedding, HashEmbedding) |

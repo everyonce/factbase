@@ -100,7 +100,7 @@ pub fn compute_search_summary(
 
 /// Print search summary in human-readable format
 pub fn print_search_summary(summary: &SearchSummary, query: &str) {
-    println!("Search Summary for: \"{}\"", query);
+    println!("Search Summary for: \"{query}\"");
     println!("{}", "=".repeat(40));
     println!();
     println!("Total matches: {}", summary.total_matches);
@@ -119,7 +119,7 @@ pub fn print_search_summary(summary: &SearchSummary, query: &str) {
         let mut types: Vec<_> = summary.by_type.iter().collect();
         types.sort_by(|a, b| b.1.cmp(a.1));
         for (t, count) in types {
-            println!("  {}: {}", t, count);
+            println!("  {t}: {count}");
         }
         println!();
     }
@@ -129,7 +129,7 @@ pub fn print_search_summary(summary: &SearchSummary, query: &str) {
         let mut repos: Vec<_> = summary.by_repo.iter().collect();
         repos.sort_by(|a, b| b.1.cmp(a.1));
         for (repo, count) in repos {
-            println!("  {}: {}", repo, count);
+            println!("  {repo}: {count}");
         }
     }
 }
@@ -146,13 +146,13 @@ pub fn print_detailed_results(results: &[SearchResult]) {
     for (i, r) in results.iter().enumerate() {
         println!("{}. {} ({:.0}%)", i + 1, r.title, r.relevance_score * 100.0);
         if let Some(t) = &r.doc_type {
-            println!("   Type: {}", t);
+            println!("   Type: {t}");
         }
         println!("   Path: {}", r.file_path);
         println!("   ID: {}", r.id);
         if let Some(idx) = r.chunk_index {
             if let (Some(start), Some(end)) = (r.chunk_start, r.chunk_end) {
-                println!("   Chunk: {} (chars {}-{})", idx, start, end);
+                println!("   Chunk: {idx} (chars {start}-{end})");
             }
         }
         let display_snippet = r.highlighted_snippet.as_ref().unwrap_or(&r.snippet);

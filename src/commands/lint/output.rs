@@ -94,7 +94,7 @@ pub fn print_lint_result(result: &LintResult, format: OutputFormat) -> anyhow::R
                     let mut types: Vec<_> = ts.by_type.iter().collect();
                     types.sort_by(|a, b| b.1.cmp(a.1));
                     let type_strs: Vec<_> =
-                        types.iter().map(|(t, c)| format!("{}: {}", t, c)).collect();
+                        types.iter().map(|(t, c)| format!("{t}: {c}")).collect();
                     println!("{}", type_strs.join(", "));
                 }
                 println!();
@@ -115,7 +115,7 @@ pub fn print_lint_result(result: &LintResult, format: OutputFormat) -> anyhow::R
                     let mut types: Vec<_> = ss.by_type.iter().collect();
                     types.sort_by(|a, b| b.1.cmp(a.1));
                     let type_strs: Vec<_> =
-                        types.iter().map(|(t, c)| format!("{}: {}", t, c)).collect();
+                        types.iter().map(|(t, c)| format!("{t}: {c}")).collect();
                     println!("{}", type_strs.join(", "));
                 }
                 println!();

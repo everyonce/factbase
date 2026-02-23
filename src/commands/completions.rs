@@ -80,8 +80,7 @@ fn inject_bash_repos(script: &str, repo_ids: &[String]) -> String {
     script.replace(
         "--repo)\n                    COMPREPLY=($(compgen -f \"${cur}\"))",
         &format!(
-            "--repo)\n                    COMPREPLY=($(compgen -W \"{}\" -- \"${{cur}}\"))",
-            repos_str
+            "--repo)\n                    COMPREPLY=($(compgen -W \"{repos_str}\" -- \"${{cur}}\"))"
         ),
     )
 }
@@ -89,13 +88,13 @@ fn inject_bash_repos(script: &str, repo_ids: &[String]) -> String {
 fn inject_zsh_repos(script: &str, repo_ids: &[String]) -> String {
     let repos_list = repo_ids
         .iter()
-        .map(|id| format!("'{}'", id))
+        .map(|id| format!("'{id}'"))
         .collect::<Vec<_>>()
         .join(" ");
     // Replace ':REPO:_default' with ':REPO:(repo1 repo2 ...)'
     script
-        .replace(":REPO:_default'", &format!(":REPO:({})' ", repos_list))
-        .replace(":repo:_default'", &format!(":repo:({})' ", repos_list))
+        .replace(":REPO:_default'", &format!(":REPO:({repos_list})' "))
+        .replace(":repo:_default'", &format!(":repo:({repos_list})' "))
 }
 
 fn inject_fish_repos(script: &str, repo_ids: &[String]) -> String {
@@ -105,11 +104,11 @@ fn inject_fish_repos(script: &str, repo_ids: &[String]) -> String {
     script
         .replace(
             "-l repo -r\n",
-            &format!("-l repo -r -f -a \"{}\"\n", repos_str),
+            &format!("-l repo -r -f -a \"{repos_str}\"\n"),
         )
         .replace(
             "-s r -l repo -r\n",
-            &format!("-s r -l repo -r -f -a \"{}\"\n", repos_str),
+            &format!("-s r -l repo -r -f -a \"{repos_str}\"\n"),
         )
 }
 

@@ -7,7 +7,6 @@ use base64::Engine;
 
 impl Database {
     pub(crate) fn compute_compression_stats(
-        &self,
         conn: &DbConn,
         repo_id: &str,
     ) -> Result<Option<CompressionStats>, FactbaseError> {

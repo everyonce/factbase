@@ -93,10 +93,7 @@ pub fn cmd_repo_add(args: RepoAddArgs) -> anyhow::Result<()> {
     // Validate repository ID
     validate_repo_id(&args.id)?;
 
-    let path = args
-        .path
-        .canonicalize()
-        .unwrap_or_else(|_| args.path.clone());
+    let path = super::clean_canonicalize(&args.path);
 
     validate_directory_path(&path)?;
 
@@ -134,7 +131,7 @@ pub fn cmd_repo_remove(args: RepoRemoveArgs) -> anyhow::Result<()> {
     // Dry-run mode: show what would be deleted and exit
     if args.dry_run {
         println!("Would remove repository: {}", args.id);
-        println!("Would delete {} documents", doc_count);
+        println!("Would delete {doc_count} documents");
         return Ok(());
     }
 
@@ -154,7 +151,7 @@ pub fn cmd_repo_remove(args: RepoRemoveArgs) -> anyhow::Result<()> {
 
     let deleted = db.remove_repository(&args.id)?;
     println!("Removed repository: {}", args.id);
-    println!("Deleted {} documents", deleted);
+    println!("Deleted {deleted} documents");
     Ok(())
 }
 

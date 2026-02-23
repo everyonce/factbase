@@ -3,7 +3,8 @@
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::mcp::tools::{get_str_arg_required, get_u64_arg_required};
-use crate::processor::parse_review_queue;
+use crate::processor::{content_hash, parse_review_queue};
+use crate::ProgressReporter;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
@@ -49,7 +50,7 @@ fn modify_question_in_queue(
                 }
 
                 // Add the answer/note as a blockquote
-                new_queue_lines.push(format!("> {}", answer));
+                new_queue_lines.push(format!("> {answer}"));
                 modified = true;
             } else {
                 new_queue_lines.push(line.to_string());
@@ -117,7 +118,7 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // Parse the review queue
     let questions = parse_review_queue(&doc.content).ok_or_else(|| {
-        FactbaseError::not_found(format!("No Review Queue found in document: {}", doc_id))
+        FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
     })?;
 
     // Validate question index
@@ -134,8 +135,7 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Check if already answered (deferred questions can be re-answered or re-deferred)
     if question.answered {
         return Err(FactbaseError::parse(format!(
-            "Question {} is already answered",
-            question_index
+            "Question {question_index} is already answered"
         )));
     }
 
@@ -150,11 +150,12 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let queue_content = &after_marker[marker.len()..];
 
     // Modify the question using the extracted helper
-    let modified_queue = modify_question_in_queue(queue_content, question_index, answer_text, defer)
-        .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
+    let modified_queue =
+        modify_question_in_queue(queue_content, question_index, answer_text, defer)
+            .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
     // Reconstruct the document
-    let new_content = format!("{}{}{}", before_marker, marker, modified_queue);
+    let new_content = format!("{before_marker}{marker}{modified_queue}");
 
     // Write to file
     let file_path = PathBuf::from(&doc.file_path);
@@ -165,6 +166,10 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         )));
     }
     fs::write(&file_path, &new_content)?;
+
+    // Sync updated content back to database so subsequent queries see the answer
+    let new_hash = content_hash(&new_content);
+    db.update_document_content(&doc_id, &new_content, &new_hash)?;
 
     let type_str = question.question_type.as_str();
 
@@ -209,8 +214,12 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 /// # Errors
 /// - `FactbaseError::NotFound` if any document doesn't exist
 /// - `FactbaseError::Parse` if any question already answered or index invalid
-#[instrument(name = "mcp_bulk_answer_questions", skip(db, args))]
-pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+#[instrument(name = "mcp_bulk_answer_questions", skip(db, args, progress))]
+pub fn bulk_answer_questions(
+    db: &Database,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
     let answers = args
         .get("answers")
         .and_then(|v| v.as_array())
@@ -235,23 +244,22 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
         let doc_id = answer
             .get("doc_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| FactbaseError::parse(format!("answers[{}]: doc_id is required", i)))?;
+            .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: doc_id is required")))?;
         let question_index = answer
             .get("question_index")
-            .and_then(|v| v.as_u64())
+            .and_then(Value::as_u64)
             .ok_or_else(|| {
-                FactbaseError::parse(format!("answers[{}]: question_index is required", i))
+                FactbaseError::parse(format!("answers[{i}]: question_index is required"))
             })? as usize;
         let answer_text = answer
             .get("answer")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| FactbaseError::parse(format!("answers[{}]: answer is required", i)))?
+            .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: answer is required")))?
             .trim();
 
         if answer_text.is_empty() {
             return Err(FactbaseError::parse(format!(
-                "answers[{}]: answer cannot be empty",
-                i
+                "answers[{i}]: answer cannot be empty"
             )));
         }
 
@@ -273,7 +281,7 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
         let doc = db.require_document(doc_id)?;
 
         let questions = parse_review_queue(&doc.content).ok_or_else(|| {
-            FactbaseError::not_found(format!("No Review Queue found in document: {}", doc_id))
+            FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
         })?;
 
         // Validate all question indices
@@ -288,8 +296,7 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
             }
             if questions[*question_index].answered {
                 return Err(FactbaseError::parse(format!(
-                    "Question {} in document {} is already answered",
-                    question_index, doc_id
+                    "Question {question_index} in document {doc_id} is already answered"
                 )));
             }
         }
@@ -299,10 +306,21 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
 
     // Now apply all changes
     let mut results: Vec<Value> = Vec::new();
-    for (doc_id, answers_for_doc) in &by_doc {
+    let total_docs = by_doc.len();
+    for (i, (doc_id, answers_for_doc)) in by_doc.iter().enumerate() {
         let (doc, _) = doc_contents
             .get(doc_id)
             .ok_or_else(|| FactbaseError::internal(format!("missing doc_contents for {doc_id}")))?;
+
+        progress.report(
+            i + 1,
+            total_docs,
+            &format!(
+                "Answering {} question(s) in {}",
+                answers_for_doc.len(),
+                doc_id
+            ),
+        );
 
         // Sort answers by question index in descending order to avoid index shifting
         let mut sorted_answers = answers_for_doc.clone();
@@ -335,7 +353,7 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
                 modify_question_in_queue(queue_content, *question_index, text, defer)
                     .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
-            content = format!("{}{}{}", before_marker, marker, modified_queue);
+            content = format!("{before_marker}{marker}{modified_queue}");
         }
 
         // Write to file
@@ -347,6 +365,10 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
             )));
         }
         fs::write(&file_path, &content)?;
+
+        // Sync updated content back to database
+        let new_hash = content_hash(&content);
+        db.update_document_content(doc_id, &content, &new_hash)?;
 
         for (question_index, answer_text) in answers_for_doc {
             results.push(serde_json::json!({

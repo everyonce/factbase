@@ -24,7 +24,8 @@ pub use args::ScanArgs;
 use super::{parse_since, resolve_repos, setup_database, setup_services_with_timeout};
 use factbase::{
     config::validate_timeout, find_repo_for_path, format_json, full_scan, scan_all_repositories,
-    DocumentProcessor, FileWatcher, ScanCoordinator, ScanOptions, Scanner,
+    DocumentProcessor, FileWatcher, ProgressReporter, ScanContext, ScanCoordinator, ScanOptions,
+    Scanner,
 };
 use prune::cmd_scan_prune;
 use stats::{cmd_scan_check, cmd_scan_stats_only};
@@ -126,8 +127,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         eprintln!(
             "{}",
             factbase::format_warning(&format!(
-                "Large batch size ({}) may increase memory usage significantly",
-                batch_size
+                "Large batch size ({batch_size}) may increase memory usage significantly"
             ))
         );
     }
@@ -163,19 +163,21 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         println!("Reindex mode - regenerating embeddings for all documents");
     }
 
+    let progress = ProgressReporter::Cli { quiet };
+
+    let ctx = ScanContext {
+        scanner: &scanner,
+        processor: &processor,
+        embedding: &embedding,
+        link_detector: &link_detector,
+        opts: &opts,
+        progress: &progress,
+    };
+
     let result = if target_repos.len() == 1 {
-        full_scan(
-            &target_repos[0],
-            &db,
-            &scanner,
-            &processor,
-            &embedding,
-            &link_detector,
-            &opts,
-        )
-        .await?
+        full_scan(&target_repos[0], &db, &ctx).await?
     } else {
-        scan_all_repositories(&db, &scanner, &processor, &embedding, &link_detector, &opts).await?
+        scan_all_repositories(&db, &ctx).await?
     };
 
     // Check if scan was interrupted
@@ -187,7 +189,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         if was_interrupted {
             println!("Scan interrupted - partial results saved");
         }
-        println!("{}", result);
+        println!("{result}");
         if result.links_detected > 0 {
             println!("{} links detected", result.links_detected);
         }
@@ -292,20 +294,18 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
                     if let Some(repo) = find_repo_for_path(path, &target_repos) {
                         if scan_coordinator.try_start() {
                             info!("Rescanning repository: {}", repo.id);
-                            match full_scan(
-                                repo,
-                                &db,
-                                &scanner,
-                                &processor,
-                                &embedding,
-                                &link_detector,
-                                &watch_opts,
-                            )
-                            .await
-                            {
+                            let watch_ctx = ScanContext {
+                                scanner: &scanner,
+                                processor: &processor,
+                                embedding: &embedding,
+                                link_detector: &link_detector,
+                                opts: &watch_opts,
+                                progress: &progress,
+                            };
+                            match full_scan(repo, &db, &watch_ctx).await {
                                 Ok(r) => {
                                     if !quiet {
-                                        println!("Rescan: {}", r)
+                                        println!("Rescan: {r}")
                                     }
                                 }
                                 Err(e) => error!("Scan error: {}", e),

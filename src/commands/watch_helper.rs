@@ -83,7 +83,7 @@ where
             if let Err(e) = run_fn() {
                 eprintln!(
                     "{}",
-                    factbase::format_user_error(&format!("Command failed: {}", e), None)
+                    factbase::format_user_error(&format!("Command failed: {e}"), None)
                 );
             }
 
@@ -121,7 +121,7 @@ where
             if let Err(e) = run_fn().await {
                 eprintln!(
                     "{}",
-                    factbase::format_user_error(&format!("Command failed: {}", e), None)
+                    factbase::format_user_error(&format!("Command failed: {e}"), None)
                 );
             }
 
