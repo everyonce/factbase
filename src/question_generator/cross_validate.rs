@@ -11,6 +11,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::models::{QuestionType, ReviewQuestion, SearchResult};
+use crate::processor::parse_source_definitions;
 
 use super::facts::{extract_all_facts, FactLine};
 
@@ -23,10 +24,12 @@ const BATCH_SIZE: usize = 10;
 /// Maximum snippet length in prompt to avoid huge prompts.
 const MAX_SNIPPET_LEN: usize = 200;
 
-/// A fact paired with its cross-document search results.
+/// A fact paired with its cross-document search results and source context.
 struct FactWithContext {
     fact: FactLine,
     related: Vec<SearchResult>,
+    /// Source footnote definitions referenced by this fact (e.g., "LinkedIn profile, scraped 2024-01-15").
+    source_defs: Vec<String>,
 }
 
 /// Parsed LLM response for a single fact classification.
@@ -58,6 +61,11 @@ fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
          - CONFLICT: directly contradicts information in another document\n\
          - STALE: may have been true but other sources suggest it's no longer current\n\
          - UNCERTAIN: insufficient information to validate\n\n\
+         IMPORTANT: Distinguish between the SUBJECT of a fact (the entity the fact describes) \
+         and entities mentioned only as SOURCES (people who provided or verified the information). \
+         A source person becoming inactive or changing roles does NOT make the fact itself stale — \
+         it only means the source may need re-verification. Only flag CONFLICT or STALE when the \
+         factual claim itself is contradicted by other documents.\n\n\
          For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n",
     );
 
@@ -78,6 +86,16 @@ fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
                 r.snippet.clone()
             };
             writeln_str!(prompt, "- [{}] \"{}\"", r.title, snip);
+        }
+        if !fwc.source_defs.is_empty() {
+            write_str!(prompt, "Sources for this fact: ");
+            for (j, sd) in fwc.source_defs.iter().enumerate() {
+                if j > 0 {
+                    prompt.push_str("; ");
+                }
+                prompt.push_str(sd);
+            }
+            prompt.push('\n');
         }
         prompt.push('\n');
     }
@@ -155,6 +173,22 @@ pub async fn cross_validate_document(
         return Ok(Vec::new());
     }
 
+    // Build a lookup from footnote number → definition text for source context.
+    let source_defs = parse_source_definitions(content);
+    let source_map: std::collections::HashMap<u32, String> = source_defs
+        .into_iter()
+        .map(|d| {
+            let text = if let Some(date) = &d.date {
+                format!("[^{}]: {} {}, {}", d.number, d.source_type, d.context, date)
+            } else if d.context.is_empty() {
+                format!("[^{}]: {}", d.number, d.source_type)
+            } else {
+                format!("[^{}]: {} {}", d.number, d.source_type, d.context)
+            };
+            (d.number, text)
+        })
+        .collect();
+
     let mut facts_with_context = Vec::with_capacity(facts.len());
 
     for fact in facts {
@@ -173,7 +207,17 @@ pub async fn cross_validate_document(
             continue;
         }
 
-        facts_with_context.push(FactWithContext { fact, related });
+        let fact_source_defs: Vec<String> = fact
+            .source_refs
+            .iter()
+            .filter_map(|n| source_map.get(n).cloned())
+            .collect();
+
+        facts_with_context.push(FactWithContext {
+            fact,
+            related,
+            source_defs: fact_source_defs,
+        });
     }
 
     if facts_with_context.is_empty() {
@@ -209,9 +253,10 @@ pub async fn cross_validate_document(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::tests::test_db;
+    use crate::database::tests::{test_db, test_repo_in_db};
     use crate::embedding::test_helpers::MockEmbedding;
     use crate::llm::test_helpers::MockLlm;
+    use crate::models::Document;
 
     #[tokio::test]
     async fn test_empty_content_returns_no_questions() {
@@ -277,6 +322,7 @@ mod tests {
                 line_number: 5,
                 text: "VP at Acme".into(),
                 section: None,
+                source_refs: vec![],
             },
             related: vec![SearchResult {
                 id: "def456".into(),
@@ -290,6 +336,7 @@ mod tests {
                 chunk_start: None,
                 chunk_end: None,
             }],
+            source_defs: vec![],
         };
         let prompt = build_prompt("Acme Corp", &[&fwc]);
         assert!(prompt.contains("Fact 1 (line 5)"));
@@ -327,8 +374,10 @@ mod tests {
                 line_number: 10,
                 text: "VP at Acme".into(),
                 section: None,
+                source_refs: vec![],
             },
             related: vec![],
+            source_defs: vec![],
         };
         let r = CrossCheckResult {
             fact: 1,
@@ -349,8 +398,10 @@ mod tests {
                 line_number: 3,
                 text: "Based in Seattle".into(),
                 section: None,
+                source_refs: vec![],
             },
             related: vec![],
+            source_defs: vec![],
         };
         let r = CrossCheckResult {
             fact: 1,
@@ -370,8 +421,10 @@ mod tests {
                 line_number: 1,
                 text: "fact".into(),
                 section: None,
+                source_refs: vec![],
             },
             related: vec![],
+            source_defs: vec![],
         };
         let r = CrossCheckResult {
             fact: 1,
@@ -389,8 +442,10 @@ mod tests {
                 line_number: 1,
                 text: "fact".into(),
                 section: None,
+                source_refs: vec![],
             },
             related: vec![],
+            source_defs: vec![],
         };
         let r = CrossCheckResult {
             fact: 1,
@@ -422,5 +477,237 @@ mod tests {
         };
         // fact 0 with checked_sub(1) returns None
         assert!(result_to_question(&r, &[]).is_none());
+    }
+
+    #[test]
+    fn test_source_map_built_from_definitions() {
+        let content = "# Person\n\n\
+            - VP at Acme [^1]\n\
+            - Based in Seattle\n\n\
+            ---\n\
+            [^1]: LinkedIn profile, scraped 2024-01-15\n";
+        let defs = parse_source_definitions(content);
+        let source_map: std::collections::HashMap<u32, String> = defs
+            .into_iter()
+            .map(|d| {
+                let text = if let Some(date) = &d.date {
+                    format!("[^{}]: {} {}, {}", d.number, d.source_type, d.context, date)
+                } else if d.context.is_empty() {
+                    format!("[^{}]: {}", d.number, d.source_type)
+                } else {
+                    format!("[^{}]: {} {}", d.number, d.source_type, d.context)
+                };
+                (d.number, text)
+            })
+            .collect();
+        assert_eq!(source_map.len(), 1);
+        assert!(source_map.get(&1).unwrap().contains("LinkedIn"));
+    }
+
+    #[test]
+    fn test_source_defs_attached_to_fact_with_refs() {
+        // Simulate the lookup logic from cross_validate_document
+        let source_map: std::collections::HashMap<u32, String> = [
+            (1, "[^1]: LinkedIn profile, scraped 2024-01-15".into()),
+            (2, "[^2]: Internal wiki".into()),
+        ]
+        .into();
+        let fact = FactLine {
+            line_number: 3,
+            text: "VP at Acme".into(),
+            section: None,
+            source_refs: vec![1],
+        };
+        let defs: Vec<String> = fact
+            .source_refs
+            .iter()
+            .filter_map(|n| source_map.get(n).cloned())
+            .collect();
+        assert_eq!(defs.len(), 1);
+        assert!(defs[0].contains("LinkedIn"));
+    }
+
+    #[test]
+    fn test_source_defs_empty_when_no_refs() {
+        let source_map: std::collections::HashMap<u32, String> =
+            [(1, "[^1]: LinkedIn".into())].into();
+        let fact = FactLine {
+            line_number: 3,
+            text: "Based in Seattle".into(),
+            section: None,
+            source_refs: vec![],
+        };
+        let defs: Vec<String> = fact
+            .source_refs
+            .iter()
+            .filter_map(|n| source_map.get(n).cloned())
+            .collect();
+        assert!(defs.is_empty());
+    }
+
+    #[test]
+    fn test_source_defs_multiple_refs() {
+        let source_map: std::collections::HashMap<u32, String> = [
+            (1, "[^1]: LinkedIn".into()),
+            (2, "[^2]: Internal wiki".into()),
+            (3, "[^3]: Press release".into()),
+        ]
+        .into();
+        let fact = FactLine {
+            line_number: 5,
+            text: "Joined in 2020".into(),
+            section: None,
+            source_refs: vec![1, 3],
+        };
+        let defs: Vec<String> = fact
+            .source_refs
+            .iter()
+            .filter_map(|n| source_map.get(n).cloned())
+            .collect();
+        assert_eq!(defs.len(), 2);
+        assert!(defs[0].contains("LinkedIn"));
+        assert!(defs[1].contains("Press release"));
+    }
+
+    #[test]
+    fn test_build_prompt_multiple_source_defs_semicolon_separated() {
+        let fwc = FactWithContext {
+            fact: FactLine {
+                line_number: 5,
+                text: "Joined Acme in 2020".into(),
+                section: None,
+                source_refs: vec![1, 2],
+            },
+            related: vec![],
+            source_defs: vec![
+                "[^1]: LinkedIn profile, scraped 2024-01-15".into(),
+                "[^2]: Press release, 2020-03-01".into(),
+            ],
+        };
+        let prompt = build_prompt("Acme Corp", &[&fwc]);
+        assert!(prompt.contains(
+            "Sources for this fact: [^1]: LinkedIn profile, scraped 2024-01-15; [^2]: Press release, 2020-03-01"
+        ));
+    }
+
+    #[test]
+    fn test_build_prompt_source_context_after_related_info() {
+        let fwc = FactWithContext {
+            fact: FactLine {
+                line_number: 3,
+                text: "VP at Acme".into(),
+                section: None,
+                source_refs: vec![1],
+            },
+            related: vec![SearchResult {
+                id: "def456".into(),
+                title: "Jane Smith".into(),
+                doc_type: None,
+                file_path: "people/jane.md".into(),
+                relevance_score: 0.8,
+                snippet: "Left Acme in 2024".into(),
+                highlighted_snippet: None,
+                chunk_index: None,
+                chunk_start: None,
+                chunk_end: None,
+            }],
+            source_defs: vec!["[^1]: LinkedIn profile".into()],
+        };
+        let prompt = build_prompt("Acme Corp", &[&fwc]);
+        let related_pos = prompt.find("[Jane Smith]").unwrap();
+        let source_pos = prompt.find("Sources for this fact:").unwrap();
+        assert!(
+            source_pos > related_pos,
+            "source context should appear after related info"
+        );
+    }
+
+    /// Integration-style test: product fact sourced from a person — MockLlm returns
+    /// CONSISTENT, verifying no stale questions are generated for the product fact
+    /// even though the source person might be inactive.
+    #[tokio::test]
+    async fn test_cross_validate_product_fact_with_source_not_flagged_stale() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        // Insert a "person" document that could be stale
+        let mut person_doc = Document::test_default();
+        person_doc.id = "person1".to_string();
+        person_doc.title = "Jane Smith".to_string();
+        person_doc.content = "# Jane Smith\n\n- Left Acme Corp in 2024".to_string();
+        db.upsert_document(&person_doc).unwrap();
+        db.upsert_embedding("person1", &vec![0.1; 1024]).unwrap();
+
+        // Product document with a fact sourced from Jane
+        let content = "# Acme Product\n\n\
+            - Supports 10K concurrent users [^1]\n\n\
+            ---\n\
+            [^1]: Jane Smith, internal review 2024-06\n";
+
+        // LLM returns CONSISTENT — the product fact is valid regardless of Jane's status
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"CONSISTENT","reason":"Product capability confirmed","source_doc":""}]"#,
+        );
+
+        let questions =
+            cross_validate_document(content, "prod01", &db, &MockEmbedding::new(1024), &llm)
+                .await
+                .unwrap();
+
+        assert!(
+            questions.is_empty(),
+            "product fact with stale source should not generate questions"
+        );
+    }
+
+    #[test]
+    fn test_build_prompt_includes_source_context() {
+        let fwc = FactWithContext {
+            fact: FactLine {
+                line_number: 3,
+                text: "VP at Acme".into(),
+                section: None,
+                source_refs: vec![1],
+            },
+            related: vec![],
+            source_defs: vec!["[^1]: LinkedIn profile, scraped 2024-01-15".into()],
+        };
+        let prompt = build_prompt("Acme Corp", &[&fwc]);
+        assert!(
+            prompt.contains("Sources for this fact: [^1]: LinkedIn profile, scraped 2024-01-15")
+        );
+    }
+
+    #[test]
+    fn test_build_prompt_no_source_context_when_empty() {
+        let fwc = FactWithContext {
+            fact: FactLine {
+                line_number: 3,
+                text: "Based in Seattle".into(),
+                section: None,
+                source_refs: vec![],
+            },
+            related: vec![],
+            source_defs: vec![],
+        };
+        let prompt = build_prompt("Acme Corp", &[&fwc]);
+        assert!(!prompt.contains("Sources for this fact:"));
+    }
+
+    #[test]
+    fn test_build_prompt_entity_role_instruction() {
+        let fwc = FactWithContext {
+            fact: FactLine {
+                line_number: 1,
+                text: "fact".into(),
+                section: None,
+                source_refs: vec![],
+            },
+            related: vec![],
+            source_defs: vec![],
+        };
+        let prompt = build_prompt("Doc", &[&fwc]);
+        assert!(prompt.contains("Distinguish between the SUBJECT of a fact"));
+        assert!(prompt.contains("source person becoming inactive"));
     }
 }

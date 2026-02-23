@@ -15,6 +15,7 @@ pub struct ReviewStatusJson {
     pub total: usize,
     pub answered: usize,
     pub unanswered: usize,
+    pub deferred: usize,
     pub by_type: HashMap<String, TypeStats>,
     pub documents: Vec<DocStats>,
 }
@@ -56,6 +57,7 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
     // Collect all questions grouped by document
     let mut total = 0usize;
     let mut answered = 0usize;
+    let mut deferred = 0usize;
     let mut by_type: HashMap<QuestionType, (usize, usize)> = HashMap::new(); // (total, answered)
     let mut docs_with_questions: Vec<(String, String, usize, usize)> = Vec::with_capacity(32); // (id, title, total, answered)
     let mut filtered_count = 0usize;
@@ -85,6 +87,9 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
                 answered += doc_answered;
 
                 for q in &questions {
+                    if !q.answered && q.answer.is_some() {
+                        deferred += 1;
+                    }
                     let entry = by_type.entry(q.question_type).or_insert((0, 0));
                     entry.0 += 1;
                     if q.answered {
@@ -109,7 +114,8 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
     let output = ReviewStatusJson {
         total,
         answered,
-        unanswered: total - answered,
+        unanswered: total - answered - deferred,
+        deferred,
         by_type: by_type
             .iter()
             .map(|(k, (t, a))| {
@@ -144,7 +150,8 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
             println!("=============");
             println!("Total questions: {total}");
             println!("  Answered:   {answered} (ready to apply)");
-            println!("  Unanswered: {}", total - answered);
+            println!("  Deferred:   {deferred}");
+            println!("  Unanswered: {}", total - answered - deferred);
             println!();
             println!("By type:");
             for (qtype, (t, a)) in &by_type {
@@ -248,7 +255,8 @@ mod tests {
         let status = ReviewStatusJson {
             total: 5,
             answered: 2,
-            unanswered: 3,
+            unanswered: 2,
+            deferred: 1,
             by_type,
             documents: vec![DocStats {
                 id: "doc1".to_string(),
@@ -261,7 +269,8 @@ mod tests {
         let json = serde_json::to_string(&status).unwrap();
         assert!(json.contains("\"total\":5"));
         assert!(json.contains("\"answered\":2"));
-        assert!(json.contains("\"unanswered\":3"));
+        assert!(json.contains("\"unanswered\":2"));
+        assert!(json.contains("\"deferred\":1"));
         assert!(json.contains("\"temporal\""));
         assert!(json.contains("\"documents\""));
     }
@@ -272,6 +281,7 @@ mod tests {
             total: 0,
             answered: 0,
             unanswered: 0,
+            deferred: 0,
             by_type: HashMap::new(),
             documents: Vec::new(),
         };

@@ -81,15 +81,27 @@ pub async fn lint_repository(
 
     let results = lint_all_documents(&docs, db, embedding, llm, &config, progress).await?;
 
-    let docs_with_questions = results.len();
-    let total_questions: usize = results.iter().map(|r| r.questions_added).sum();
+    let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
+    let total_new: usize = results.iter().map(|r| r.new_questions).sum();
+    let total_existing: usize = results
+        .iter()
+        .map(|r| r.existing_unanswered + r.existing_answered)
+        .sum();
+    let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
+    let deferred_count: usize = docs
+        .iter()
+        .filter_map(|d| crate::processor::parse_review_queue(&d.content))
+        .flatten()
+        .filter(|q| !q.answered && q.answer.is_some())
+        .count();
     let details: Vec<Value> = results
         .iter()
+        .filter(|r| r.new_questions > 0)
         .map(|r| {
             serde_json::json!({
                 "doc_id": r.doc_id,
                 "doc_title": r.doc_title,
-                "questions_added": r.questions_added,
+                "new_questions": r.new_questions,
             })
         })
         .collect();
@@ -97,7 +109,11 @@ pub async fn lint_repository(
     Ok(serde_json::json!({
         "documents_scanned": total,
         "documents_with_new_questions": docs_with_questions,
-        "total_questions_generated": total_questions,
+        "total_questions_generated": total_new + total_existing,
+        "new_unanswered": total_new,
+        "already_in_queue": total_existing,
+        "skipped_reviewed": total_skipped,
+        "deferred_count": deferred_count,
         "dry_run": dry_run,
         "details": details,
     }))

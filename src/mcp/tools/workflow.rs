@@ -22,7 +22,10 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
 
     match workflow.as_str() {
         "update" => Ok(update_step(step, args, &perspective)),
-        "resolve" => Ok(resolve_step(step, args, &perspective)),
+        "resolve" => {
+            let deferred = count_deferred(db, get_str_arg(args, "repo"));
+            Ok(resolve_step(step, args, &perspective, deferred))
+        }
         "ingest" => Ok(ingest_step(step, args, &perspective)),
         "enrich" => Ok(enrich_step(step, args, &perspective)),
         "list" => Ok(serde_json::json!({
@@ -48,6 +51,18 @@ fn load_perspective(db: &Database, repo_id: Option<&str>) -> Option<Perspective>
         repos.into_iter().next()
     };
     repo.and_then(|r| r.perspective)
+}
+
+/// Count deferred review items across documents.
+fn count_deferred(db: &Database, repo_id: Option<&str>) -> usize {
+    let Ok(docs) = db.get_documents_with_review_queue(repo_id) else {
+        return 0;
+    };
+    docs.iter()
+        .filter_map(|d| crate::processor::parse_review_queue(&d.content))
+        .flatten()
+        .filter(|q| !q.answered && q.answer.is_some())
+        .count()
 }
 
 /// Build a context string from perspective for embedding in instructions.
@@ -136,18 +151,24 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
     }
 }
 
-fn resolve_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
+fn resolve_step(step: usize, _args: &Value, perspective: &Option<Perspective>, deferred: usize) -> Value {
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
     let total = 4;
+    let deferred_note = if deferred > 0 {
+        format!("\n\nYou have {deferred} deferred item(s) that need human attention. Call get_deferred_items first to review them before proceeding with new questions.")
+    } else {
+        String::new()
+    };
     match step {
         1 => serde_json::json!({
             "workflow": "resolve",
             "step": 1, "total_steps": total,
-            "instruction": format!("Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}"),
+            "instruction": format!("Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}"),
             "next_tool": "get_review_queue",
             "suggested_args": {"include_context": true},
             "policy": {"stale_days": stale},
+            "deferred_count": deferred,
             "when_done": "Call workflow with workflow='resolve', step=2"
         }),
         2 => serde_json::json!({
@@ -320,14 +341,14 @@ mod tests {
     #[test]
     fn test_resolve_includes_perspective() {
         let p = mock_perspective();
-        let step = resolve_step(1, &serde_json::json!({}), &p);
+        let step = resolve_step(1, &serde_json::json!({}), &p, 0);
         assert!(step["instruction"].as_str().unwrap().contains("Acme Corp"));
         assert_eq!(step["policy"]["stale_days"], 180);
     }
 
     #[test]
     fn test_resolve_without_perspective() {
-        let step = resolve_step(1, &serde_json::json!({}), &None);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0);
         assert!(!step["instruction"]
             .as_str()
             .unwrap()
@@ -358,13 +379,29 @@ mod tests {
     #[test]
     fn test_resolve_stale_days_in_instructions() {
         let p = mock_perspective();
-        let step = resolve_step(2, &serde_json::json!({}), &p);
+        let step = resolve_step(2, &serde_json::json!({}), &p, 0);
         assert!(step["instruction"].as_str().unwrap().contains("180 days"));
     }
 
     #[test]
     fn test_past_last_step_returns_complete() {
-        let step = resolve_step(99, &serde_json::json!({}), &None);
+        let step = resolve_step(99, &serde_json::json!({}), &None, 0);
         assert!(step["complete"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_resolve_step1_includes_deferred_note() {
+        let step = resolve_step(1, &serde_json::json!({}), &None, 5);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("5 deferred item(s)"));
+        assert_eq!(step["deferred_count"], 5);
+    }
+
+    #[test]
+    fn test_resolve_step1_no_deferred_note_when_zero() {
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(!instruction.contains("deferred"));
+        assert_eq!(step["deferred_count"], 0);
     }
 }

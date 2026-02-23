@@ -137,6 +137,11 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
     // Pre-allocate for typical case of ~16 documents with questions
     let mut exported_questions: Vec<ExportedDocQuestions> = Vec::with_capacity(16);
 
+    // Review summary counters (populated when --review is used)
+    let mut review_new_total: usize = 0;
+    let mut review_already_in_queue: usize = 0;
+    let mut review_skipped_reviewed: usize = 0;
+
     // Track lint start time for updating last_lint_at
     let lint_start_time = Utc::now();
 
@@ -356,6 +361,11 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
 
                 // Generate review questions when --review flag is set
                 if args.review {
+                    // Count existing questions and reviewed markers for summary
+                    let existing = factbase::parse_review_queue(&doc.content).unwrap_or_default();
+                    review_already_in_queue += existing.len();
+                    review_skipped_reviewed += review::count_reviewed_facts(&doc.content);
+
                     let opts = execute::ReviewQuestionOptions {
                         min_similarity: args.min_similarity,
                         dry_run: args.dry_run,
@@ -363,10 +373,11 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                         is_table_format,
                         max_age: args.max_age,
                     };
-                    if let Some(exported) =
-                        execute::generate_review_questions(doc, repo, &db, &opts)?
-                    {
-                        exported_questions.push(exported);
+                    let (new_count, exported) =
+                        execute::generate_review_questions(doc, repo, &db, &opts)?;
+                    review_new_total += new_count;
+                    if let Some(e) = exported {
+                        exported_questions.push(e);
                     }
                 }
             }
@@ -501,7 +512,9 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
         let total_docs = exported_questions.len();
 
         // Determine format from file extension
-        let output = if super::utils::ends_with_ext(export_path, ".yaml") || super::utils::ends_with_ext(export_path, ".yml") {
+        let output = if super::utils::ends_with_ext(export_path, ".yaml")
+            || super::utils::ends_with_ext(export_path, ".yml")
+        {
             format_yaml(&exported_questions)?
         } else {
             // Default to JSON
@@ -515,6 +528,16 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                 "\nExported {total_questions} question(s) from {total_docs} document(s) to {export_path}"
             );
         }
+    }
+
+    // Print review summary when --review was used
+    if args.review && is_table_format && !args.quiet {
+        let total_generated = review_new_total + review_already_in_queue;
+        println!(
+            "\nReview: Generated {total_generated} total, {review_new_total} new \
+             ({review_already_in_queue} already in queue, \
+             {review_skipped_reviewed} skipped as recently reviewed)"
+        );
     }
 
     // Output results

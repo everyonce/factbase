@@ -22,6 +22,7 @@
 //! - [`identify_affected_section`] - Find document section affected by questions
 //! - [`replace_section`] - Replace section in document content
 //! - [`remove_processed_questions`] - Remove processed questions from review queue
+//! - [`uncheck_deferred_questions`] - Uncheck deferred questions (keep in queue)
 
 mod apply;
 pub(crate) mod apply_all;
@@ -33,16 +34,42 @@ use crate::ReviewQuestion;
 
 // Re-export public API
 pub use apply::{
-    apply_changes_to_section, build_rewrite_prompt, format_changes_for_llm,
-    identify_affected_section, remove_processed_questions, replace_section,
+    apply_changes_to_section, apply_confirmations, apply_source_citations, build_rewrite_prompt,
+    format_changes_for_llm, identify_affected_section, remove_processed_questions, replace_section,
+    stamp_reviewed_lines, stamp_reviewed_markers, uncheck_deferred_questions,
 };
-pub use interpret::interpret_answer;
+pub use interpret::{classify_answer, interpret_answer};
+
+/// Classified answer type for deterministic handling.
+///
+/// Only `Correction` (and complex cases) need LLM rewrite.
+/// `SourceCitation` and `Confirmation` can be handled deterministically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AnswerType {
+    /// "dismiss", "ignore" — remove question, no changes
+    Dismissal,
+    /// "defer", "later", "needs ..." — keep question, mark deferred
+    Deferral,
+    /// Source name + optional date — add/update footnote and temporal tag
+    SourceCitation {
+        source: String,
+        date: Option<String>,
+    },
+    /// "confirmed", "still accurate", "yes" — refresh last-seen date
+    Confirmation,
+    /// "correct: ..." or explicit correction — LLM rewrite
+    Correction { detail: String },
+    /// "delete", "remove" — remove the fact line
+    Deletion,
+}
 
 /// Represents a change instruction for the LLM
 #[derive(Debug, Clone)]
 pub enum ChangeInstruction {
     /// Remove question without changes
     Dismiss,
+    /// Keep question, mark deferred (uncheck checkbox)
+    Defer,
     /// Delete the referenced line
     Delete { line_text: String },
     /// Update temporal tag

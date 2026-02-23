@@ -85,7 +85,7 @@ pub(crate) static SOURCE_DEF_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Regex for detecting list items (facts).
 /// Matches: `- text`, `* text`, `1. text`, `1) text` (with optional leading whitespace).
-pub(crate) static FACT_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+pub static FACT_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^\s*(?:[-*]|\d+[.\)])\s+\S").expect("fact line regex should be valid")
 });
 
@@ -117,6 +117,11 @@ pub(crate) static YEAR_REGEX: LazyLock<Regex> =
 pub(crate) static REVIEW_QUESTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^-\s+\[([ xX])\]\s+`@q\[(\w+)\]`\s+(.+)$")
         .expect("review question regex should be valid")
+});
+
+/// Inline `@q[type]` marker (backtick-wrapped or bare) — for detecting orphaned markers outside review section.
+pub(crate) static INLINE_QUESTION_MARKER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\s*`?@q\[\w+\]`?").expect("inline question marker regex should be valid")
 });
 
 /// Regex to extract quoted text from questions.
@@ -166,6 +171,37 @@ pub(crate) static SIMPLE_ORPHAN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^-\s+(.+?)\s+@r\[orphan\]\s*(?:<!--\s*from\s+(\w+)\s+line\s+(\d+)\s*-->)?$")
         .expect("simple orphan regex should be valid")
 });
+
+// =============================================================================
+// Reviewed-fact markers
+// =============================================================================
+
+/// Matches `<!-- reviewed:YYYY-MM-DD -->` markers on fact lines.
+pub(crate) static REVIEWED_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<!-- reviewed:(\d{4}-\d{2}-\d{2}) -->")
+        .expect("reviewed marker regex should be valid")
+});
+
+/// Extract the reviewed date from a line containing a `<!-- reviewed:YYYY-MM-DD -->` marker.
+pub fn extract_reviewed_date(line: &str) -> Option<chrono::NaiveDate> {
+    let caps = REVIEWED_MARKER_REGEX.captures(line)?;
+    chrono::NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()
+}
+
+/// Add or update a `<!-- reviewed:YYYY-MM-DD -->` marker on a line.
+///
+/// If the line already has a reviewed marker, replaces the date.
+/// Otherwise appends the marker at the end of the line.
+pub(crate) fn add_or_update_reviewed_marker(line: &str, date: &chrono::NaiveDate) -> String {
+    let marker = format!("<!-- reviewed:{date} -->");
+    if REVIEWED_MARKER_REGEX.is_match(line) {
+        REVIEWED_MARKER_REGEX
+            .replace(line, marker.as_str())
+            .into_owned()
+    } else {
+        format!("{line} {marker}")
+    }
+}
 
 // =============================================================================
 // Date normalization functions
@@ -375,5 +411,59 @@ mod tests {
         assert_eq!(normalize_date_to_end("2024-Q2"), "2024-06-30");
         assert_eq!(normalize_date_to_end("2024-Q3"), "2024-09-30");
         assert_eq!(normalize_date_to_end("2024-Q4"), "2024-12-31");
+    }
+
+    #[test]
+    fn test_extract_reviewed_date_valid() {
+        let line = "- VP of Engineering @t[~2026-02] [^1] <!-- reviewed:2026-02-15 -->";
+        let date = extract_reviewed_date(line).unwrap();
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap());
+    }
+
+    #[test]
+    fn test_extract_reviewed_date_no_marker() {
+        assert!(extract_reviewed_date("- Some fact @t[~2026-02]").is_none());
+    }
+
+    #[test]
+    fn test_extract_reviewed_date_invalid_date() {
+        assert!(extract_reviewed_date("<!-- reviewed:2026-13-45 -->").is_none());
+    }
+
+    #[test]
+    fn test_reviewed_marker_regex_captures() {
+        let text = "fact text <!-- reviewed:2025-06-01 --> more text";
+        let caps = REVIEWED_MARKER_REGEX.captures(text).unwrap();
+        assert_eq!(&caps[1], "2025-06-01");
+    }
+
+    #[test]
+    fn test_add_reviewed_marker_new() {
+        let line = "- VP of Engineering @t[~2026-02] [^1]";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = add_or_update_reviewed_marker(line, &date);
+        assert_eq!(
+            result,
+            "- VP of Engineering @t[~2026-02] [^1] <!-- reviewed:2026-02-15 -->"
+        );
+    }
+
+    #[test]
+    fn test_add_reviewed_marker_update_existing() {
+        let line = "- VP of Engineering @t[~2026-02] <!-- reviewed:2025-01-01 -->";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = add_or_update_reviewed_marker(line, &date);
+        assert_eq!(
+            result,
+            "- VP of Engineering @t[~2026-02] <!-- reviewed:2026-02-15 -->"
+        );
+    }
+
+    #[test]
+    fn test_add_reviewed_marker_no_existing_tags() {
+        let line = "- Works at Acme Corp";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = add_or_update_reviewed_marker(line, &date);
+        assert_eq!(result, "- Works at Acme Corp <!-- reviewed:2026-02-15 -->");
     }
 }

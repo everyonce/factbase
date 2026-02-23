@@ -128,6 +128,19 @@ pub fn filter_existing_questions(
         .collect()
 }
 
+/// Count fact lines with recent reviewed markers (within 180 days).
+pub fn count_reviewed_facts(content: &str) -> usize {
+    use chrono::Utc;
+    use factbase::{extract_reviewed_date, FACT_LINE_REGEX};
+
+    let today = Utc::now().date_naive();
+    content
+        .lines()
+        .filter(|line| FACT_LINE_REGEX.is_match(line))
+        .filter(|line| extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= 180))
+        .count()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,5 +203,26 @@ mod tests {
         let config = ReviewConfig::default();
         assert_eq!(config.stale_threshold, 365);
         assert!(config.required_fields.is_none());
+    }
+
+    #[test]
+    fn test_count_reviewed_facts_recent() {
+        let today = chrono::Utc::now().format("%Y-%m-%d");
+        let content = format!(
+            "- Fact one <!-- reviewed:{today} -->\n- Fact two\n- Fact three <!-- reviewed:{today} -->\n"
+        );
+        assert_eq!(count_reviewed_facts(&content), 2);
+    }
+
+    #[test]
+    fn test_count_reviewed_facts_old() {
+        let content = "- Fact one <!-- reviewed:2020-01-01 -->\n- Fact two\n";
+        assert_eq!(count_reviewed_facts(content), 0);
+    }
+
+    #[test]
+    fn test_count_reviewed_facts_none() {
+        let content = "- Fact one\n- Fact two\n";
+        assert_eq!(count_reviewed_facts(content), 0);
     }
 }

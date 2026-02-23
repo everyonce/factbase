@@ -1,6 +1,6 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 19 MCP tools exposed by factbase.
+//! Contains the JSON schema for all 20 MCP tools exposed by factbase.
 
 use serde_json::Value;
 
@@ -265,6 +265,19 @@ pub fn tools_list() -> Value {
                 }
             },
             {
+                "name": "get_deferred_items",
+                "description": "Get deferred review items that need human attention. Returns a focused summary of items previously deferred by agents.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": { "type": "string", "description": "Filter by repository ID" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate)" },
+                        "limit": { "type": "integer", "description": "Max items to return (default: 10)" },
+                        "offset": { "type": "integer", "description": "Skip items for pagination (default: 0)" }
+                    }
+                }
+            },
+            {
                 "name": "get_authoring_guide",
                 "description": "Get document formatting rules, temporal tag syntax, source citation format, and templates.\n\nTriggers: 'how should I format documents', 'what format does factbase use', 'how do I write a factbase document'",
                 "inputSchema": {
@@ -284,7 +297,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 19, "should have 19 tools");
+        assert_eq!(tools.len(), 20, "should have 20 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -304,6 +317,7 @@ mod tests {
         assert!(names.contains(&"bulk_create_documents"));
         assert!(names.contains(&"search_content"));
         assert!(names.contains(&"get_duplicate_entries"));
+        assert!(names.contains(&"get_deferred_items"));
         assert!(names.contains(&"get_authoring_guide"));
         assert!(names.contains(&"workflow"));
 

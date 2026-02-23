@@ -7,7 +7,7 @@ use chrono::{NaiveDate, Utc};
 use std::collections::HashMap;
 
 use crate::models::{QuestionType, ReviewQuestion, TemporalTagType};
-use crate::patterns::FACT_LINE_REGEX;
+use crate::patterns::{extract_reviewed_date, FACT_LINE_REGEX};
 use crate::processor::{parse_source_definitions, parse_source_references, parse_temporal_tags};
 
 use super::temporal::has_recent_verification;
@@ -73,6 +73,11 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
             .filter(|r| r.line_number == line_number)
             .collect();
 
+        // Skip facts with a recent reviewed marker
+        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= max_age_days) {
+            continue;
+        }
+
         // Check if any source is stale
         for source_ref in &line_refs {
             if let Some((source_type, Some(date_str), _)) = def_map.get(&source_ref.number) {
@@ -102,6 +107,12 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                         // Get the fact text from this line
                         if tag.line_number > 0 && tag.line_number <= lines.len() {
                             let line = lines[tag.line_number - 1];
+                            // Skip facts with a recent reviewed marker
+                            if extract_reviewed_date(line)
+                                .is_some_and(|d| (today - d).num_days() <= max_age_days)
+                            {
+                                continue;
+                            }
                             if FACT_LINE_REGEX.is_match(line) {
                                 let fact_text = extract_fact_text(line);
                                 // Avoid duplicate if we already have a stale source question for this line
@@ -395,6 +406,47 @@ mod tests {
             questions.len(),
             1,
             "Ongoing heading should not suppress stale questions"
+        );
+    }
+
+    #[test]
+    fn test_reviewed_marker_suppresses_stale_source() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        let content = format!(
+            "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:{} -->\n\n[^1]: LinkedIn profile, scraped 2020-01-15",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_stale_questions(&content, 365);
+        assert!(
+            questions.is_empty(),
+            "Recent reviewed marker should suppress stale source question"
+        );
+    }
+
+    #[test]
+    fn test_reviewed_marker_suppresses_stale_last_seen() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        let content = format!(
+            "# Person\n\n- Lives in NYC @t[~2020-06] <!-- reviewed:{} -->",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_stale_questions(&content, 365);
+        assert!(
+            questions.is_empty(),
+            "Recent reviewed marker should suppress stale @t[~] question"
+        );
+    }
+
+    #[test]
+    fn test_old_reviewed_marker_still_generates() {
+        let content = "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:2020-01-01 -->\n\n[^1]: LinkedIn profile, scraped 2019-06-01";
+        let questions = generate_stale_questions(content, 365);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Old reviewed marker should not suppress stale question"
         );
     }
 }

@@ -4,6 +4,7 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::llm::LlmProvider;
 use crate::models::Document;
+use crate::patterns::{extract_reviewed_date, FACT_LINE_REGEX};
 use crate::processor::{append_review_questions, content_hash, parse_review_queue};
 use crate::progress::ProgressReporter;
 use crate::question_generator::cross_validate::cross_validate_document;
@@ -11,9 +12,13 @@ use crate::question_generator::{
     generate_ambiguous_questions, generate_conflict_questions, generate_missing_questions,
     generate_required_field_questions, generate_stale_questions, generate_temporal_questions,
 };
+use chrono::Utc;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tracing::{info, warn};
+
+/// Days within which a reviewed marker suppresses question generation.
+const REVIEWED_SKIP_DAYS: i64 = 180;
 
 /// Configuration for the shared lint loop.
 pub struct LintConfig {
@@ -27,7 +32,10 @@ pub struct LintConfig {
 pub struct LintDocResult {
     pub doc_id: String,
     pub doc_title: String,
-    pub questions_added: usize,
+    pub new_questions: usize,
+    pub existing_unanswered: usize,
+    pub existing_answered: usize,
+    pub skipped_reviewed: usize,
 }
 
 /// Lint all documents: generate review questions, optionally cross-validate, write results.
@@ -80,14 +88,37 @@ pub async fn lint_all_documents(
                         }
                     }
 
-                    let existing: HashSet<_> = parse_review_queue(&doc.content)
-                        .unwrap_or_default()
+                    let existing_questions = parse_review_queue(&doc.content).unwrap_or_default();
+                    let existing_descs: HashSet<_> = existing_questions
                         .iter()
                         .map(|q| q.description.clone())
                         .collect();
-                    questions.retain(|q| !existing.contains(&q.description));
+                    let existing_unanswered =
+                        existing_questions.iter().filter(|q| !q.answered).count();
+                    let existing_answered =
+                        existing_questions.iter().filter(|q| q.answered).count();
 
-                    (doc, questions)
+                    // Count fact lines with recent reviewed markers
+                    let today = Utc::now().date_naive();
+                    let skipped_reviewed = doc
+                        .content
+                        .lines()
+                        .filter(|line| FACT_LINE_REGEX.is_match(line))
+                        .filter(|line| {
+                            extract_reviewed_date(line)
+                                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+                        })
+                        .count();
+
+                    questions.retain(|q| !existing_descs.contains(&q.description));
+
+                    (
+                        doc,
+                        questions,
+                        existing_unanswered,
+                        existing_answered,
+                        skipped_reviewed,
+                    )
                 }
             })
             .collect();
@@ -98,27 +129,115 @@ pub async fn lint_all_documents(
 
     // Write results (sequential for filesystem safety)
     let mut results = Vec::new();
-    for (doc, questions) in all_results {
-        if questions.is_empty() {
-            continue;
-        }
+    for (doc, questions, existing_unanswered, existing_answered, skipped_reviewed) in all_results {
         let count = questions.len();
-        if !config.dry_run {
-            let updated = append_review_questions(&doc.content, &questions);
-            let path = PathBuf::from(&doc.file_path);
-            if path.exists() {
-                std::fs::write(&path, &updated)?;
-                let new_hash = content_hash(&updated);
-                db.update_document_content(&doc.id, &updated, &new_hash)?;
+        if count > 0 {
+            if !config.dry_run {
+                let updated = append_review_questions(&doc.content, &questions);
+                let path = PathBuf::from(&doc.file_path);
+                if path.exists() {
+                    std::fs::write(&path, &updated)?;
+                    let new_hash = content_hash(&updated);
+                    db.update_document_content(&doc.id, &updated, &new_hash)?;
+                }
             }
+            info!("{}: {} new questions", doc.title, count);
         }
-        info!("{}: {} new questions", doc.title, count);
-        results.push(LintDocResult {
-            doc_id: doc.id.clone(),
-            doc_title: doc.title.clone(),
-            questions_added: count,
-        });
+        // Include docs with existing questions or skipped facts even if no new questions
+        if count > 0 || existing_unanswered > 0 || existing_answered > 0 || skipped_reviewed > 0 {
+            results.push(LintDocResult {
+                doc_id: doc.id.clone(),
+                doc_title: doc.title.clone(),
+                new_questions: count,
+                existing_unanswered,
+                existing_answered,
+                skipped_reviewed,
+            });
+        }
     }
 
     Ok(results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::test_db;
+    use crate::embedding::test_helpers::MockEmbedding;
+    use crate::models::Document;
+    use crate::progress::ProgressReporter;
+
+    fn make_doc(id: &str, title: &str, content: &str) -> Document {
+        Document {
+            id: id.to_string(),
+            title: title.to_string(),
+            content: content.to_string(),
+            ..Document::test_default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_lint_reports_existing_unanswered() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let content = "- Fact one\n\n<!-- factbase:review -->\n## Review Queue\n\n\
+                       - [ ] `@q[temporal]` Line 1: when was this true?\n";
+        let docs = vec![make_doc("aaa", "Test", content)];
+        let config = LintConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+        };
+        let progress = ProgressReporter::Silent;
+        let results = lint_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].existing_unanswered, 1);
+        assert_eq!(results[0].existing_answered, 0);
+    }
+
+    #[tokio::test]
+    async fn test_lint_reports_existing_answered() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let content = "- Fact one\n\n<!-- factbase:review -->\n## Review Queue\n\n\
+                       - [x] `@q[stale]` Line 1: is this still accurate?\n\
+                       > confirmed\n";
+        let docs = vec![make_doc("bbb", "Test", content)];
+        let config = LintConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+        };
+        let progress = ProgressReporter::Silent;
+        let results = lint_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].existing_answered, 1);
+    }
+
+    #[tokio::test]
+    async fn test_lint_reports_skipped_reviewed() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let today = Utc::now().format("%Y-%m-%d");
+        let content = format!("- Fact one <!-- reviewed:{today} -->\n- Fact two\n");
+        let docs = vec![make_doc("ccc", "Test", &content)];
+        let config = LintConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+        };
+        let progress = ProgressReporter::Silent;
+        let results = lint_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
+        assert_eq!(total_skipped, 1);
+    }
 }
