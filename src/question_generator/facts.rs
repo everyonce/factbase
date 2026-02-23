@@ -116,47 +116,17 @@ mod tests {
     // --- clean_fact_text tests ---
 
     #[test]
-    fn test_clean_dash_item() {
+    fn test_clean_fact_text_formats() {
+        // All list marker formats
         assert_eq!(clean_fact_text("- Simple fact"), "Simple fact");
-    }
-
-    #[test]
-    fn test_clean_asterisk_item() {
         assert_eq!(clean_fact_text("* Another fact"), "Another fact");
-    }
-
-    #[test]
-    fn test_clean_numbered_dot() {
         assert_eq!(clean_fact_text("1. Numbered fact"), "Numbered fact");
-    }
-
-    #[test]
-    fn test_clean_numbered_paren() {
         assert_eq!(clean_fact_text("2) Paren fact"), "Paren fact");
-    }
-
-    #[test]
-    fn test_clean_checkbox_unchecked() {
         assert_eq!(clean_fact_text("- [ ] Todo item"), "Todo item");
-    }
-
-    #[test]
-    fn test_clean_checkbox_checked() {
         assert_eq!(clean_fact_text("- [x] Done item"), "Done item");
-    }
-
-    #[test]
-    fn test_clean_checkbox_checked_upper() {
         assert_eq!(clean_fact_text("- [X] Done item"), "Done item");
-    }
-
-    #[test]
-    fn test_clean_indented() {
         assert_eq!(clean_fact_text("  - Indented fact"), "Indented fact");
-    }
-
-    #[test]
-    fn test_clean_does_not_truncate() {
+        // Does not truncate long text
         let long = "- ".to_string() + &"x".repeat(200);
         let result = clean_fact_text(&long);
         assert_eq!(result.len(), 200);
