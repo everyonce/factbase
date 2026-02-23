@@ -3,7 +3,7 @@
 use super::super::Database;
 use crate::error::FactbaseError;
 use crate::models::SourceStats;
-use crate::patterns::normalize_date_for_comparison;
+use crate::patterns::{date_cmp, normalize_date_for_comparison};
 use crate::processor::count_facts_with_sources;
 use std::collections::{HashMap, HashSet};
 
@@ -52,14 +52,14 @@ impl Database {
                 if let Some(ref date) = def.date {
                     let normalized = normalize_date_for_comparison(date);
                     if let Some(ref old) = oldest_source_date {
-                        if normalized < normalize_date_for_comparison(old) {
+                        if date_cmp(&normalized, &normalize_date_for_comparison(old)) == std::cmp::Ordering::Less {
                             oldest_source_date = Some(date.clone());
                         }
                     } else {
                         oldest_source_date = Some(date.clone());
                     }
                     if let Some(ref new) = newest_source_date {
-                        if normalized > normalize_date_for_comparison(new) {
+                        if date_cmp(&normalized, &normalize_date_for_comparison(new)) == std::cmp::Ordering::Greater {
                             newest_source_date = Some(date.clone());
                         }
                     } else {

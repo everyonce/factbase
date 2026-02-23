@@ -4,8 +4,7 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::mcp::tools::get_str_arg;
-use crate::models::Perspective;
+use crate::mcp::tools::{get_str_arg, load_perspective};
 use crate::progress::ProgressReporter;
 use crate::question_generator::check::{check_all_documents, CheckConfig};
 use serde_json::Value;
@@ -124,14 +123,4 @@ pub async fn check_repository(
         "dry_run": dry_run,
         "details": details,
     }))
-}
-
-fn load_perspective(db: &Database, repo_id: Option<&str>) -> Option<Perspective> {
-    let repos = db.list_repositories().ok()?;
-    let repo = if let Some(id) = repo_id {
-        repos.into_iter().find(|r| r.id == id)
-    } else {
-        repos.into_iter().next()
-    };
-    repo.and_then(|r| r.perspective)
 }

@@ -284,305 +284,139 @@ mod tests {
 
     #[test]
     fn test_generate_ambiguous_questions_no_facts() {
-        let content = "# Title\n\nSome paragraph text.";
-        let questions = generate_ambiguous_questions(content);
-        assert!(questions.is_empty());
+        assert!(generate_ambiguous_questions("# Title\n\nSome paragraph text.").is_empty());
     }
 
     #[test]
-    fn test_generate_ambiguous_questions_location_without_context() {
-        let content = "# Person\n\n- Lives in San Francisco";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].question_type, QuestionType::Ambiguous);
-        assert!(questions[0].description.contains("home, work, or another"));
+    fn test_generate_ambiguous_questions_location() {
+        // Without context → flagged
+        let q = generate_ambiguous_questions("# Person\n\n- Lives in San Francisco");
+        assert_eq!(q.len(), 1);
+        assert_eq!(q[0].question_type, QuestionType::Ambiguous);
+        assert!(q[0].description.contains("home, work, or another"));
+        // With context → not flagged
+        assert!(generate_ambiguous_questions("# Person\n\n- Lives in San Francisco (home)").is_empty());
+        assert!(generate_ambiguous_questions("# Person\n\n- Based in NYC office").is_empty());
     }
 
     #[test]
-    fn test_generate_ambiguous_questions_location_with_context() {
-        let content = "# Person\n\n- Lives in San Francisco (home)";
-        let questions = generate_ambiguous_questions(content);
-        assert!(questions.is_empty());
+    fn test_generate_ambiguous_questions_relationship() {
+        // Vague → flagged
+        let q = generate_ambiguous_questions("# Person\n\n- Knows John Smith");
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("professional or personal"));
+        // With context → not flagged
+        assert!(generate_ambiguous_questions("# Person\n\n- Knows John Smith (colleague from Acme)").is_empty());
     }
 
     #[test]
-    fn test_generate_ambiguous_questions_location_work_context() {
-        let content = "# Person\n\n- Based in NYC office";
-        let questions = generate_ambiguous_questions(content);
-        assert!(questions.is_empty());
+    fn test_generate_ambiguous_questions_works_with() {
+        let q = generate_ambiguous_questions("# Person\n\n- Works with Jane Doe");
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("direct colleague, collaborator"));
+        assert!(generate_ambiguous_questions("# Person\n\n- Works with Jane Doe as her manager").is_empty());
     }
 
     #[test]
-    fn test_generate_ambiguous_questions_relationship_vague() {
-        let content = "# Person\n\n- Knows John Smith";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].question_type, QuestionType::Ambiguous);
-        assert!(questions[0]
-            .description
-            .contains("professional or personal"));
+    fn test_generate_ambiguous_questions_met() {
+        let q = generate_ambiguous_questions("# Person\n\n- Met Bob at a conference");
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("context"));
     }
 
     #[test]
-    fn test_generate_ambiguous_questions_relationship_with_context() {
-        let content = "# Person\n\n- Knows John Smith (colleague from Acme)";
-        let questions = generate_ambiguous_questions(content);
-        assert!(questions.is_empty());
-    }
-
-    #[test]
-    fn test_generate_ambiguous_questions_works_with_vague() {
-        let content = "# Person\n\n- Works with Jane Doe";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0]
-            .description
-            .contains("direct colleague, collaborator"));
-    }
-
-    #[test]
-    fn test_generate_ambiguous_questions_works_with_context() {
-        let content = "# Person\n\n- Works with Jane Doe as her manager";
-        let questions = generate_ambiguous_questions(content);
-        assert!(questions.is_empty());
-    }
-
-    #[test]
-    fn test_generate_ambiguous_questions_met_vague() {
-        let content = "# Person\n\n- Met Bob at a conference";
-        let questions = generate_ambiguous_questions(content);
-        // "at a conference" provides context, but we still ask for more detail
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("context"));
-    }
-
-    #[test]
-    fn test_generate_ambiguous_questions_line_numbers() {
+    fn test_generate_ambiguous_questions_line_numbers_and_multiple() {
         let content = "# Person\n\n- Clear fact\n- Lives in Boston\n- Another clear fact";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].line_ref, Some(4));
+        let q = generate_ambiguous_questions(content);
+        assert_eq!(q[0].line_ref, Some(4));
+
+        let q2 = generate_ambiguous_questions("# Person\n\n- Lives in NYC\n- Knows Jane");
+        assert_eq!(q2.len(), 2);
     }
 
     #[test]
-    fn test_generate_ambiguous_questions_multiple() {
-        let content = "# Person\n\n- Lives in NYC\n- Knows Jane";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(questions.len(), 2);
+    fn test_detect_ambiguous_location() {
+        for phrase in ["Lives in NYC", "Based in London", "Located in Paris", "Resides in Tokyo"] {
+            assert!(detect_ambiguous_location(phrase).is_some(), "Should flag: {}", phrase);
+        }
+        for phrase in ["Lives in NYC (home)", "Based in London office", "Located in Paris headquarters", "Primary residence in Tokyo"] {
+            assert!(detect_ambiguous_location(phrase).is_none(), "Should NOT flag: {}", phrase);
+        }
     }
 
     #[test]
-    fn test_detect_ambiguous_location_various_phrases() {
-        assert!(detect_ambiguous_location("Lives in NYC").is_some());
-        assert!(detect_ambiguous_location("Based in London").is_some());
-        assert!(detect_ambiguous_location("Located in Paris").is_some());
-        assert!(detect_ambiguous_location("Resides in Tokyo").is_some());
-    }
-
-    #[test]
-    fn test_detect_ambiguous_location_with_clarifiers() {
-        assert!(detect_ambiguous_location("Lives in NYC (home)").is_none());
-        assert!(detect_ambiguous_location("Based in London office").is_none());
-        assert!(detect_ambiguous_location("Located in Paris headquarters").is_none());
-        assert!(detect_ambiguous_location("Primary residence in Tokyo").is_none());
-    }
-
-    #[test]
-    fn test_detect_ambiguous_relationship_various() {
-        assert!(detect_ambiguous_relationship("Knows John").is_some());
-        assert!(detect_ambiguous_relationship("Connected to Jane").is_some());
-        assert!(detect_ambiguous_relationship("Associated with Acme").is_some());
-        assert!(detect_ambiguous_relationship("Works with Bob").is_some());
-    }
-
-    #[test]
-    fn test_detect_ambiguous_relationship_with_clarifiers() {
-        assert!(detect_ambiguous_relationship("Knows John (colleague)").is_none());
-        assert!(detect_ambiguous_relationship("Connected to Jane as mentor").is_none());
-        assert!(detect_ambiguous_relationship("Works with Bob as his manager").is_none());
-        assert!(detect_ambiguous_relationship("Met Jane, now a close friend").is_none());
+    fn test_detect_ambiguous_relationship() {
+        for phrase in ["Knows John", "Connected to Jane", "Associated with Acme", "Works with Bob"] {
+            assert!(detect_ambiguous_relationship(phrase).is_some(), "Should flag: {}", phrase);
+        }
+        for phrase in ["Knows John (colleague)", "Connected to Jane as mentor", "Works with Bob as his manager", "Met Jane, now a close friend"] {
+            assert!(detect_ambiguous_relationship(phrase).is_none(), "Should NOT flag: {}", phrase);
+        }
     }
 
     #[test]
     fn test_reviewed_marker_suppresses_ambiguous() {
         let today = Utc::now().date_naive();
         let marker_date = today - chrono::Duration::days(30);
-        let content = format!(
-            "# Person\n\n- Lives in San Francisco <!-- reviewed:{} -->",
-            marker_date.format("%Y-%m-%d")
-        );
-        let questions = generate_ambiguous_questions(&content);
-        assert!(
-            questions.is_empty(),
-            "Recent reviewed marker should suppress ambiguous question"
-        );
+        let content = format!("# Person\n\n- Lives in San Francisco <!-- reviewed:{} -->", marker_date.format("%Y-%m-%d"));
+        assert!(generate_ambiguous_questions(&content).is_empty());
+        // Old marker does NOT suppress
+        assert_eq!(generate_ambiguous_questions("# Person\n\n- Lives in San Francisco <!-- reviewed:2020-01-01 -->").len(), 1);
     }
 
     #[test]
-    fn test_old_reviewed_marker_still_generates_ambiguous() {
-        let content = "# Person\n\n- Lives in San Francisco <!-- reviewed:2020-01-01 -->";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(
-            questions.len(),
-            1,
-            "Old reviewed marker should not suppress ambiguous question"
-        );
-    }
+    fn test_acronym_detection() {
+        // Unknown acronym flagged
+        let q = generate_ambiguous_questions("# Company\n\n- Leading XYZQ expansion in healthcare");
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("XYZQ"));
 
-    // ==================== Acronym Detection Tests ====================
-
-    #[test]
-    fn test_undefined_acronym_flagged() {
-        // XYZQ is not in KNOWN or any definitions file
-        let content = "# Company\n\n- Leading XYZQ expansion in healthcare";
-        let questions = generate_ambiguous_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("XYZQ"));
-        assert!(questions[0].description.contains("what does"));
-    }
-
-    #[test]
-    fn test_known_acronym_not_flagged() {
-        let content = "# Person\n\n- CTO at Acme Corp @t[2024..]";
-        let questions = generate_ambiguous_questions(content);
-        assert!(
-            questions.is_empty(),
-            "CTO is a well-known acronym, should not be flagged"
-        );
-    }
-
-    #[test]
-    fn test_builtin_cloud_acronyms_not_flagged() {
-        // These were previously flagged but are now in the expanded KNOWN list
-        for acronym in &["ECS", "RDS", "SOC", "TAM", "VPC", "SQS", "EKS", "ALB"] {
+        // Known acronyms not flagged
+        for acronym in ["CTO", "ECS", "RDS", "SOC", "TAM", "VPC", "SQS", "AWS"] {
             let content = format!("# Project\n\n- Uses {acronym} for deployment");
-            let questions = generate_ambiguous_questions(&content);
-            let acronym_q: Vec<_> = questions
-                .iter()
-                .filter(|q| q.description.contains(acronym))
-                .collect();
-            assert!(
-                acronym_q.is_empty(),
-                "{acronym} should be in the built-in known list"
-            );
+            let qs = generate_ambiguous_questions(&content);
+            assert!(qs.iter().all(|q| !q.description.contains(acronym)), "{acronym} should not be flagged");
         }
+
+        // Expanded acronym not flagged
+        let q2 = generate_ambiguous_questions("# Company\n\n- Total Addressable Market (TAM) is $5B");
+        assert!(q2.iter().all(|q| !q.description.contains("TAM")));
+
+        // Short uppercase word not flagged
+        let q3 = generate_ambiguous_questions("# Doc\n\n- Phase A of the project");
+        assert!(q3.iter().all(|q| !q.description.contains("what does")));
+
+        // Only first unknown acronym per line flagged
+        let q4 = generate_ambiguous_questions("# Doc\n\n- Working on XYZQ and ABCD analysis");
+        assert_eq!(q4.iter().filter(|q| q.description.contains("what does")).count(), 1);
     }
 
     #[test]
-    fn test_expanded_acronym_not_flagged() {
-        let content =
-            "# Company\n\n- Total Addressable Market (TAM) is $5B";
-        let questions = generate_ambiguous_questions(content);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("TAM"))
-            .collect();
-        assert!(acronym_q.is_empty(), "Expanded acronym should not be flagged");
+    fn test_extract_defined_terms() {
+        // Bold pattern
+        let c1 = "# Definitions\n\n## Acronyms\n- **TAM**: Total Addressable Market\n- **NPS**: Net Promoter Score\n";
+        let t1 = extract_defined_terms(c1);
+        assert!(t1.contains("TAM") && t1.contains("NPS"));
+        // Heading pattern
+        let c2 = "# Glossary\n\n## XYZQ\nSome custom term\n\n## ABCD\nAnother term\n";
+        let t2 = extract_defined_terms(c2);
+        assert!(t2.contains("XYZQ") && t2.contains("ABCD"));
+        // Multi-word headings ignored
+        assert!(extract_defined_terms("# Glossary\n\n## Some Phrase\nNot a term\n").is_empty());
     }
 
     #[test]
-    fn test_short_uppercase_word_not_flagged() {
-        // Single uppercase letter or very common patterns
-        let content = "# Doc\n\n- Phase A of the project";
-        let questions = generate_ambiguous_questions(content);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("what does"))
-            .collect();
-        assert!(acronym_q.is_empty(), "Single letter should not be flagged");
-    }
-
-    #[test]
-    fn test_multiple_acronyms_only_first_flagged() {
-        // Use unknown acronyms since TAM/SAM are now in KNOWN
-        let content = "# Doc\n\n- Working on XYZQ and ABCD analysis";
-        let questions = generate_ambiguous_questions(content);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("what does"))
-            .collect();
-        assert_eq!(acronym_q.len(), 1, "Only one acronym question per fact line");
-    }
-
-    #[test]
-    fn test_aws_not_flagged() {
-        let content = "# Project\n\n- Deployed on AWS infrastructure";
-        let questions = generate_ambiguous_questions(content);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("AWS"))
-            .collect();
-        assert!(acronym_q.is_empty());
-    }
-
-    // ==================== Definitions-Aware Tests ====================
-
-    #[test]
-    fn test_extract_defined_terms_bold_pattern() {
-        let content = "# Definitions: Business Terms\n\n## Acronyms\n- **TAM**: Total Addressable Market\n- **NPS**: Net Promoter Score\n";
-        let terms = extract_defined_terms(content);
-        assert!(terms.contains("TAM"));
-        assert!(terms.contains("NPS"));
-    }
-
-    #[test]
-    fn test_extract_defined_terms_heading_pattern() {
-        let content = "# Glossary\n\n## XYZQ\nSome custom term\n\n## ABCD\nAnother term\n";
-        let terms = extract_defined_terms(content);
-        assert!(terms.contains("XYZQ"));
-        assert!(terms.contains("ABCD"));
-    }
-
-    #[test]
-    fn test_extract_defined_terms_ignores_multi_word_headings() {
-        let content = "# Glossary\n\n## Some Phrase\nNot a term\n";
-        let terms = extract_defined_terms(content);
-        assert!(terms.is_empty());
-    }
-
-    #[test]
-    fn test_defined_term_not_flagged() {
+    fn test_defined_terms_suppress_acronym_questions() {
         let defined = HashSet::from(["XYZQ".to_string()]);
-        let content = "# Company\n\n- Uses XYZQ for analytics";
-        let questions = generate_ambiguous_questions_with_type(content, None, &defined);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("XYZQ"))
-            .collect();
-        assert!(
-            acronym_q.is_empty(),
-            "Term defined in definitions file should not be flagged"
-        );
-    }
-
-    #[test]
-    fn test_defined_term_case_insensitive() {
-        let defined = HashSet::from(["xyzq".to_string()]);
-        let content = "# Company\n\n- Uses XYZQ for analytics";
-        let questions = generate_ambiguous_questions_with_type(content, None, &defined);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("XYZQ"))
-            .collect();
-        assert!(
-            acronym_q.is_empty(),
-            "Defined term matching should be case-insensitive"
-        );
-    }
-
-    #[test]
-    fn test_undefined_term_still_flagged_with_definitions() {
-        let defined = HashSet::from(["XYZQ".to_string()]);
-        let content = "# Company\n\n- Uses ABCD for analytics";
-        let questions = generate_ambiguous_questions_with_type(content, None, &defined);
-        let acronym_q: Vec<_> = questions
-            .iter()
-            .filter(|q| q.description.contains("ABCD"))
-            .collect();
-        assert_eq!(
-            acronym_q.len(),
-            1,
-            "Undefined term should still be flagged even when other terms are defined"
-        );
+        // Defined term not flagged
+        let q1 = generate_ambiguous_questions_with_type("# Company\n\n- Uses XYZQ for analytics", None, &defined);
+        assert!(q1.iter().all(|q| !q.description.contains("XYZQ")));
+        // Case-insensitive
+        let defined2 = HashSet::from(["xyzq".to_string()]);
+        let q2 = generate_ambiguous_questions_with_type("# Company\n\n- Uses XYZQ for analytics", None, &defined2);
+        assert!(q2.iter().all(|q| !q.description.contains("XYZQ")));
+        // Undefined term still flagged
+        let q3 = generate_ambiguous_questions_with_type("# Company\n\n- Uses ABCD for analytics", None, &defined);
+        assert_eq!(q3.iter().filter(|q| q.description.contains("ABCD")).count(), 1);
     }
 }

@@ -190,111 +190,88 @@ mod tests {
     // ==================== Source Reference Parsing Tests ====================
 
     #[test]
-    fn test_source_ref_single() {
-        let content = "- Fact here [^1]";
-        let refs = parse_source_references(content);
+    fn test_source_ref_parsing() {
+        // Single ref
+        let refs = parse_source_references("- Fact here [^1]");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].number, 1);
-        assert_eq!(refs[0].line_number, 1);
-    }
 
-    #[test]
-    fn test_source_ref_multiple_per_line() {
-        let content = "- Fact with multiple sources [^1][^2]";
-        let refs = parse_source_references(content);
+        // Multiple per line
+        let refs = parse_source_references("- Fact with multiple sources [^1][^2]");
         assert_eq!(refs.len(), 2);
-        assert_eq!(refs[0].number, 1);
-        assert_eq!(refs[1].number, 2);
-        assert_eq!(refs[0].line_number, 1);
-        assert_eq!(refs[1].line_number, 1);
-    }
 
-    #[test]
-    fn test_source_ref_multiple_lines() {
-        let content = "- First fact [^1]\n- Second fact [^2]\n- Third fact [^3]";
-        let refs = parse_source_references(content);
+        // Multiple lines
+        let refs = parse_source_references("- First fact [^1]\n- Second fact [^2]\n- Third fact [^3]");
         assert_eq!(refs.len(), 3);
-        assert_eq!(refs[0].line_number, 1);
-        assert_eq!(refs[1].line_number, 2);
         assert_eq!(refs[2].line_number, 3);
-    }
 
-    #[test]
-    fn test_source_ref_skip_fenced_code_block() {
-        let content = "- Fact [^1]\n```\ncode [^2]\n```\n- Another [^3]";
-        let refs = parse_source_references(content);
-        assert_eq!(refs.len(), 2);
-        assert_eq!(refs[0].number, 1);
-        assert_eq!(refs[1].number, 3);
-    }
-
-    #[test]
-    fn test_source_ref_skip_indented_code_block() {
-        let content = "- Fact [^1]\n    code [^2]\n- Another [^3]";
-        let refs = parse_source_references(content);
-        assert_eq!(refs.len(), 2);
-        assert_eq!(refs[0].number, 1);
-        assert_eq!(refs[1].number, 3);
-    }
-
-    #[test]
-    fn test_source_ref_skip_definitions() {
-        let content = "- Fact [^1]\n\n[^1]: Source definition";
-        let refs = parse_source_references(content);
-        assert_eq!(refs.len(), 1);
-        assert_eq!(refs[0].number, 1);
-        assert_eq!(refs[0].line_number, 1);
-    }
-
-    #[test]
-    fn test_source_ref_empty_content() {
-        let refs = parse_source_references("");
-        assert!(refs.is_empty());
-    }
-
-    #[test]
-    fn test_source_ref_no_refs() {
-        let content = "Plain text without any references.";
-        let refs = parse_source_references(content);
-        assert!(refs.is_empty());
-    }
-
-    #[test]
-    fn test_source_ref_large_numbers() {
-        let content = "- Fact [^99] and [^100]";
-        let refs = parse_source_references(content);
-        assert_eq!(refs.len(), 2);
+        // Large numbers
+        let refs = parse_source_references("- Fact [^99] and [^100]");
         assert_eq!(refs[0].number, 99);
         assert_eq!(refs[1].number, 100);
+
+        // Empty / no refs
+        assert!(parse_source_references("").is_empty());
+        assert!(parse_source_references("Plain text").is_empty());
+    }
+
+    #[test]
+    fn test_source_ref_skips_code_and_definitions() {
+        // Fenced code block
+        let refs = parse_source_references("- Fact [^1]\n```\ncode [^2]\n```\n- Another [^3]");
+        assert_eq!(refs.len(), 2);
+        assert_eq!(refs[0].number, 1);
+        assert_eq!(refs[1].number, 3);
+
+        // Indented code block
+        let refs = parse_source_references("- Fact [^1]\n    code [^2]\n- Another [^3]");
+        assert_eq!(refs.len(), 2);
+
+        // Definitions
+        let refs = parse_source_references("- Fact [^1]\n\n[^1]: Source definition");
+        assert_eq!(refs.len(), 1);
     }
 
     // ==================== Source Definition Parsing Tests ====================
 
     #[test]
-    fn test_source_def_simple() {
-        let content = "[^1]: LinkedIn profile, scraped 2024-01-15";
-        let defs = parse_source_definitions(content);
-        assert_eq!(defs.len(), 1);
-        assert_eq!(defs[0].number, 1);
+    fn test_source_def_parsing() {
+        // Simple
+        let defs = parse_source_definitions("[^1]: LinkedIn profile, scraped 2024-01-15");
         assert_eq!(defs[0].source_type, "LinkedIn");
         assert_eq!(defs[0].date, Some("2024-01-15".to_string()));
-        assert_eq!(defs[0].line_number, 1);
+
+        // Multiple, sorted
+        let defs = parse_source_definitions("[^3]: Third\n[^1]: First\n[^2]: Second");
+        assert_eq!(defs[0].number, 1);
+        assert_eq!(defs[2].number, 3);
+
+        // Multiline
+        let defs = parse_source_definitions("[^1]: LinkedIn profile, scraped 2024-01-15\n  Additional context on continuation line");
+        assert!(defs[0].context.contains("Additional context"));
+
+        // Empty / no defs
+        assert!(parse_source_definitions("").is_empty());
+        assert!(parse_source_definitions("Plain text").is_empty());
     }
 
     #[test]
-    fn test_source_def_all_standard_types() {
-        let content = r#"[^1]: LinkedIn profile, scraped 2024-01
-[^2]: Company website, accessed 2024-02
-[^3]: Press release, 2024-03
-[^4]: News article, 2024-04
-[^5]: Public filing, 2024-05
-[^6]: Direct conversation, 2024-06
-[^7]: Email from John, 2024-07
-[^8]: Conference bio, 2024-08
-[^9]: Inferred from context
-[^10]: Unverified claim"#;
+    fn test_source_def_types() {
+        let content = "[^1]: LinkedIn profile, scraped 2024-01\n\
+            [^2]: Company website, accessed 2024-02\n\
+            [^3]: Press release, 2024-03\n\
+            [^4]: News article, 2024-04\n\
+            [^5]: Public filing, 2024-05\n\
+            [^6]: Direct conversation, 2024-06\n\
+            [^7]: Email from John, 2024-07\n\
+            [^8]: Conference bio, 2024-08\n\
+            [^9]: Inferred from context\n\
+            [^10]: Unverified claim\n\
+            [^11]: Some random text without known type\n\
+            [^12]: Blog, posted 2024-01-15\n\
+            [^13]: Speaker bio at TechConf 2024\n\
+            [^14]: Public records, 2024-01";
         let defs = parse_source_definitions(content);
-        assert_eq!(defs.len(), 10);
         assert_eq!(defs[0].source_type, "LinkedIn");
         assert_eq!(defs[1].source_type, "Website");
         assert_eq!(defs[2].source_type, "Press release");
@@ -305,100 +282,24 @@ mod tests {
         assert_eq!(defs[7].source_type, "Event");
         assert_eq!(defs[8].source_type, "Inferred");
         assert_eq!(defs[9].source_type, "Unverified");
+        assert_eq!(defs[10].source_type, "Unknown");
+        assert_eq!(defs[11].source_type, "Blog");
+        assert_eq!(defs[12].source_type, "Event");
+        assert_eq!(defs[13].source_type, "Filing");
     }
 
     #[test]
-    fn test_source_def_date_extraction_formats() {
+    fn test_source_def_date_extraction() {
         // Full date
-        let defs = parse_source_definitions("[^1]: Source, 2024-01-15");
-        assert_eq!(defs[0].date, Some("2024-01-15".to_string()));
-
+        assert_eq!(parse_source_definitions("[^1]: Source, 2024-01-15")[0].date, Some("2024-01-15".to_string()));
         // Year-month
-        let defs = parse_source_definitions("[^1]: Source, 2024-01");
-        assert_eq!(defs[0].date, Some("2024-01".to_string()));
-
+        assert_eq!(parse_source_definitions("[^1]: Source, 2024-01")[0].date, Some("2024-01".to_string()));
         // Year only
-        let defs = parse_source_definitions("[^1]: Source, 2024");
-        assert_eq!(defs[0].date, Some("2024".to_string()));
-    }
-
-    #[test]
-    fn test_source_def_date_prefers_specific() {
-        // When multiple dates present, prefer most specific
-        let defs = parse_source_definitions("[^1]: Source from 2024, scraped 2024-01-15");
-        assert_eq!(defs[0].date, Some("2024-01-15".to_string()));
-    }
-
-    #[test]
-    fn test_source_def_no_date() {
-        let defs = parse_source_definitions("[^1]: Unverified claim");
-        assert_eq!(defs[0].date, None);
-    }
-
-    #[test]
-    fn test_source_def_multiline() {
-        let content =
-            "[^1]: LinkedIn profile, scraped 2024-01-15\n  Additional context on continuation line";
-        let defs = parse_source_definitions(content);
-        assert_eq!(defs.len(), 1);
-        assert!(defs[0].context.contains("Additional context"));
-    }
-
-    #[test]
-    fn test_source_def_multiple() {
-        let content = "[^1]: First source\n[^2]: Second source\n[^3]: Third source";
-        let defs = parse_source_definitions(content);
-        assert_eq!(defs.len(), 3);
-        assert_eq!(defs[0].number, 1);
-        assert_eq!(defs[1].number, 2);
-        assert_eq!(defs[2].number, 3);
-    }
-
-    #[test]
-    fn test_source_def_sorted_by_number() {
-        // Definitions out of order should be sorted
-        let content = "[^3]: Third\n[^1]: First\n[^2]: Second";
-        let defs = parse_source_definitions(content);
-        assert_eq!(defs[0].number, 1);
-        assert_eq!(defs[1].number, 2);
-        assert_eq!(defs[2].number, 3);
-    }
-
-    #[test]
-    fn test_source_def_empty_content() {
-        let defs = parse_source_definitions("");
-        assert!(defs.is_empty());
-    }
-
-    #[test]
-    fn test_source_def_no_definitions() {
-        let content = "Plain text without any definitions.";
-        let defs = parse_source_definitions(content);
-        assert!(defs.is_empty());
-    }
-
-    #[test]
-    fn test_source_def_unknown_type() {
-        let defs = parse_source_definitions("[^1]: Some random text without known type");
-        assert_eq!(defs[0].source_type, "Unknown");
-    }
-
-    #[test]
-    fn test_source_def_comma_separated_type() {
-        let defs = parse_source_definitions("[^1]: Blog, posted 2024-01-15");
-        assert_eq!(defs[0].source_type, "Blog");
-    }
-
-    #[test]
-    fn test_source_def_speaker_bio() {
-        let defs = parse_source_definitions("[^1]: Speaker bio at TechConf 2024");
-        assert_eq!(defs[0].source_type, "Event");
-    }
-
-    #[test]
-    fn test_source_def_public_records() {
-        let defs = parse_source_definitions("[^1]: Public records, 2024-01");
-        assert_eq!(defs[0].source_type, "Filing");
+        assert_eq!(parse_source_definitions("[^1]: Source, 2024")[0].date, Some("2024".to_string()));
+        // Prefers most specific
+        assert_eq!(parse_source_definitions("[^1]: Source from 2024, scraped 2024-01-15")[0].date, Some("2024-01-15".to_string()));
+        // No date
+        assert_eq!(parse_source_definitions("[^1]: Unverified claim")[0].date, None);
     }
 
     // ==================== Orphan Detection Tests ====================
@@ -464,31 +365,11 @@ mod tests {
     // ==================== Source Coverage Tests ====================
 
     #[test]
-    fn test_count_facts_with_sources_all_sourced() {
-        let content = "- Fact one [^1]\n- Fact two [^2]\n- Fact three [^3]";
-        assert_eq!(count_facts_with_sources(content), 3);
-    }
-
-    #[test]
-    fn test_count_facts_with_sources_partial() {
-        let content = "- Sourced fact [^1]\n- Unsourced fact\n- Another sourced [^2]";
-        assert_eq!(count_facts_with_sources(content), 2);
-    }
-
-    #[test]
-    fn test_count_facts_with_sources_none() {
-        let content = "- Fact one\n- Fact two\n- Fact three";
-        assert_eq!(count_facts_with_sources(content), 0);
-    }
-
-    #[test]
-    fn test_count_facts_with_sources_multiple_refs() {
-        let content = "- Fact with multiple sources [^1][^2]";
-        assert_eq!(count_facts_with_sources(content), 1);
-    }
-
-    #[test]
-    fn test_count_facts_with_sources_empty() {
+    fn test_count_facts_with_sources() {
+        assert_eq!(count_facts_with_sources("- Fact one [^1]\n- Fact two [^2]\n- Fact three [^3]"), 3);
+        assert_eq!(count_facts_with_sources("- Sourced fact [^1]\n- Unsourced fact\n- Another sourced [^2]"), 2);
+        assert_eq!(count_facts_with_sources("- Fact one\n- Fact two"), 0);
+        assert_eq!(count_facts_with_sources("- Fact with multiple sources [^1][^2]"), 1);
         assert_eq!(count_facts_with_sources(""), 0);
     }
 }

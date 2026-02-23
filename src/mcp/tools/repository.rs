@@ -127,7 +127,7 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     let default_id = abs_path
         .file_name()
-        .map_or_else(|| "main".into(), |s| s.to_string_lossy().to_string());
+        .map_or_else(|| crate::DEFAULT_REPO_ID.into(), |s| s.to_string_lossy().to_string());
     let repo_id = id.unwrap_or(&default_id);
     let repo_name = name.unwrap_or(repo_id);
 
@@ -137,7 +137,7 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         .map_err(|e| FactbaseError::internal(format!("Cannot create .factbase dir: {e}")))?;
     let perspective_path = abs_path.join("perspective.yaml");
     if !perspective_path.exists() {
-        let _ = std::fs::write(&perspective_path, "# Factbase perspective\n");
+        let _ = std::fs::write(&perspective_path, crate::models::PERSPECTIVE_TEMPLATE);
     }
 
     let repo = crate::models::Repository {
@@ -163,4 +163,60 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         "path": abs_path.to_string_lossy(),
         "message": format!("Repository '{}' initialized. Call scan_repository to index documents.", repo_id)
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    fn test_db() -> (Database, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = Database::new(&tmp.path().join("test.db")).unwrap();
+        (db, tmp)
+    }
+
+    #[test]
+    fn test_init_repository_tolerates_preexisting_config() {
+        let tmp = TempDir::new().unwrap();
+        let factbase_dir = tmp.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        std::fs::write(
+            factbase_dir.join("config.yaml"),
+            "embedding:\n  provider: bedrock\n",
+        )
+        .unwrap();
+
+        let (db, _db_dir) = test_db();
+        let result = init_repository(
+            &db,
+            &json!({"path": tmp.path().to_string_lossy()}),
+        )
+        .unwrap();
+
+        assert!(result.get("id").is_some());
+        assert!(result.get("already_exists").is_none());
+        // Config preserved
+        assert!(factbase_dir.join("config.yaml").exists());
+    }
+
+    #[test]
+    fn test_init_repository_already_registered() {
+        let tmp = TempDir::new().unwrap();
+        let (db, _db_dir) = test_db();
+        let args = json!({"path": tmp.path().to_string_lossy()});
+
+        init_repository(&db, &args).unwrap();
+        let result = init_repository(&db, &args).unwrap();
+
+        assert_eq!(result["already_exists"], true);
+    }
+
+    #[test]
+    fn test_init_repository_nonexistent_dir() {
+        let (db, _db_dir) = test_db();
+        let result = init_repository(&db, &json!({"path": "/nonexistent/path/xyz"}));
+        assert!(result.is_err());
+    }
 }

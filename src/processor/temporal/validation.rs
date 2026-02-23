@@ -1,8 +1,9 @@
 //! Temporal tag validation and conflict detection.
 
 use crate::models::{TemporalTag, TemporalTagType};
-use crate::patterns::normalize_date_for_comparison;
+use crate::patterns::{date_cmp, normalize_date_for_comparison};
 use chrono::{DateTime, Duration, Utc};
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use super::date::validate_date;
@@ -85,7 +86,7 @@ pub fn detect_illogical_sequences(content: &str) -> Vec<TemporalSequenceError> {
         if let (Some(ref start), Some(ref end)) = (&tag.start_date, &tag.end_date) {
             let start_norm = normalize_date_for_comparison(start);
             let end_norm = normalize_date_for_comparison(end);
-            if end_norm < start_norm {
+            if date_cmp(&end_norm, &start_norm) == Ordering::Less {
                 tag_errors.push(format!("end date {end} is before start date {start}"));
             }
         }
@@ -121,6 +122,10 @@ pub fn detect_illogical_sequences(content: &str) -> Vec<TemporalSequenceError> {
 }
 
 fn check_future_date(date: &str, one_year_from_now: &DateTime<Utc>) -> Option<String> {
+    // BCE dates are never in the future
+    if date.starts_with('-') {
+        return None;
+    }
     let normalized = normalize_date_for_comparison(date);
     let future_limit = one_year_from_now.format("%Y-%m-%d").to_string();
     if normalized > future_limit {
@@ -267,6 +272,79 @@ mod tests {
     fn test_detect_illogical_valid_range() {
         let content = "- Fact @t[2020..2022]";
         let errors = detect_illogical_sequences(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_detect_illogical_bce_valid_range() {
+        let content = "- Greco-Persian Wars @t[-0490..-0479]";
+        let errors = detect_illogical_sequences(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_detect_illogical_bce_to_ce_valid_range() {
+        let content = "- Augustus reign @t[-0031..0014]";
+        let errors = detect_illogical_sequences(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_detect_illogical_bce_reversed_range() {
+        let content = "- Bad range @t[-0479..-0490]";
+        let errors = detect_illogical_sequences(content);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("before start date"));
+    }
+
+    #[test]
+    fn test_bce_date_not_flagged_as_future() {
+        let content = "- Ancient event @t[=-0031]";
+        let errors = detect_illogical_sequences(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_bce_temporal_tags() {
+        let content = "- Battle @t[=-0490-03]";
+        let errors = validate_temporal_tags(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_validate_unpadded_bce_tags() {
+        let content = "- Battle @t[=-330]";
+        let errors = validate_temporal_tags(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_detect_illogical_unpadded_bce_range() {
+        // Valid: -490 before -479
+        let content = "- Wars @t[-490..-479]";
+        let errors = detect_illogical_sequences(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_detect_illogical_unpadded_bce_reversed() {
+        let content = "- Bad @t[-479..-490]";
+        let errors = detect_illogical_sequences(content);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].message.contains("before start date"));
+    }
+
+    #[test]
+    fn test_bce_notation_validates() {
+        let content = "- Battle @t[=331 BCE]";
+        let errors = validate_temporal_tags(content);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_bce_notation_range_validates() {
+        let content = "- Wars @t[490 BCE..479 BCE]";
+        let errors = validate_temporal_tags(content);
         assert!(errors.is_empty());
     }
 }

@@ -34,9 +34,9 @@ pub fn create_temp_repo(name: &str) -> TempDir {
     let factbase_dir = temp.path().join(".factbase");
     std::fs::create_dir_all(&factbase_dir).expect("Failed to create .factbase dir");
 
-    // Create minimal perspective.yaml
+    // Create minimal perspective.yaml in repo root
     let perspective = format!("type: test\norganization: Test\nfocus: {}\n", name);
-    std::fs::write(factbase_dir.join("perspective.yaml"), perspective)
+    std::fs::write(temp.path().join("perspective.yaml"), perspective)
         .expect("Failed to write perspective.yaml");
 
     temp
@@ -98,7 +98,7 @@ mod tests {
     fn test_create_temp_repo() {
         let temp = create_temp_repo("test-repo");
         assert!(temp.path().join(".factbase").exists());
-        assert!(temp.path().join(".factbase/perspective.yaml").exists());
+        assert!(temp.path().join("perspective.yaml").exists());
     }
 
     #[test]

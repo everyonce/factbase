@@ -1,7 +1,8 @@
 //! Date range operations and overlap detection.
 
 use crate::models::{TemporalTag, TemporalTagType};
-use crate::patterns::{normalize_date_for_comparison, normalize_date_to_end};
+use crate::patterns::{date_cmp, normalize_date_for_comparison, normalize_date_to_end};
+use std::cmp::Ordering;
 
 /// Check if a temporal tag overlaps with a specific point in time.
 pub fn overlaps_point(tag: &TemporalTag, query_date: &str) -> bool {
@@ -22,7 +23,7 @@ pub fn overlaps_point(tag: &TemporalTag, query_date: &str) -> bool {
         TemporalTagType::LastSeen => {
             if let Some(ref date) = tag.start_date {
                 let date_norm = normalize_date_for_comparison(date);
-                query_norm <= date_norm
+                date_cmp(&query_norm, &date_norm) != Ordering::Greater
             } else {
                 false
             }
@@ -32,7 +33,8 @@ pub fn overlaps_point(tag: &TemporalTag, query_date: &str) -> bool {
             (Some(start), Some(end)) => {
                 let start_norm = normalize_date_for_comparison(start);
                 let end_norm = normalize_date_to_end(end);
-                query_norm >= start_norm && query_norm <= end_norm
+                date_cmp(&query_norm, &start_norm) != Ordering::Less
+                    && date_cmp(&query_norm, &end_norm) != Ordering::Greater
             }
             _ => false,
         },
@@ -40,7 +42,7 @@ pub fn overlaps_point(tag: &TemporalTag, query_date: &str) -> bool {
         TemporalTagType::Ongoing => {
             if let Some(ref start) = tag.start_date {
                 let start_norm = normalize_date_for_comparison(start);
-                query_norm >= start_norm
+                date_cmp(&query_norm, &start_norm) != Ordering::Less
             } else {
                 false
             }
@@ -49,7 +51,7 @@ pub fn overlaps_point(tag: &TemporalTag, query_date: &str) -> bool {
         TemporalTagType::Historical => {
             if let Some(ref end) = tag.end_date {
                 let end_norm = normalize_date_to_end(end);
-                query_norm <= end_norm
+                date_cmp(&query_norm, &end_norm) != Ordering::Greater
             } else {
                 false
             }
@@ -68,7 +70,8 @@ pub fn overlaps_range(tag: &TemporalTag, query_start: &str, query_end: &str) -> 
         TemporalTagType::PointInTime => {
             if let Some(ref date) = tag.start_date {
                 let date_norm = normalize_date_for_comparison(date);
-                date_norm >= query_start_norm && date_norm <= query_end_norm
+                date_cmp(&date_norm, &query_start_norm) != Ordering::Less
+                    && date_cmp(&date_norm, &query_end_norm) != Ordering::Greater
             } else {
                 false
             }
@@ -77,7 +80,7 @@ pub fn overlaps_range(tag: &TemporalTag, query_start: &str, query_end: &str) -> 
         TemporalTagType::LastSeen => {
             if let Some(ref date) = tag.start_date {
                 let date_norm = normalize_date_for_comparison(date);
-                query_start_norm <= date_norm
+                date_cmp(&query_start_norm, &date_norm) != Ordering::Greater
             } else {
                 false
             }
@@ -87,7 +90,8 @@ pub fn overlaps_range(tag: &TemporalTag, query_start: &str, query_end: &str) -> 
             (Some(start), Some(end)) => {
                 let tag_start_norm = normalize_date_for_comparison(start);
                 let tag_end_norm = normalize_date_to_end(end);
-                tag_start_norm <= query_end_norm && query_start_norm <= tag_end_norm
+                date_cmp(&tag_start_norm, &query_end_norm) != Ordering::Greater
+                    && date_cmp(&query_start_norm, &tag_end_norm) != Ordering::Greater
             }
             _ => false,
         },
@@ -95,7 +99,7 @@ pub fn overlaps_range(tag: &TemporalTag, query_start: &str, query_end: &str) -> 
         TemporalTagType::Ongoing => {
             if let Some(ref start) = tag.start_date {
                 let start_norm = normalize_date_for_comparison(start);
-                query_end_norm >= start_norm
+                date_cmp(&query_end_norm, &start_norm) != Ordering::Less
             } else {
                 false
             }
@@ -104,7 +108,7 @@ pub fn overlaps_range(tag: &TemporalTag, query_start: &str, query_end: &str) -> 
         TemporalTagType::Historical => {
             if let Some(ref end) = tag.end_date {
                 let end_norm = normalize_date_to_end(end);
-                query_start_norm <= end_norm
+                date_cmp(&query_start_norm, &end_norm) != Ordering::Greater
             } else {
                 false
             }
@@ -122,7 +126,7 @@ pub(crate) fn ranges_overlap(start1: &str, end1: &str, start2: &str, end2: &str)
     let e1 = normalize_date_for_comparison(end1);
     let s2 = normalize_date_for_comparison(start2);
     let e2 = normalize_date_for_comparison(end2);
-    s1 <= e2 && s2 <= e1
+    date_cmp(&s1, &e2) != Ordering::Greater && date_cmp(&s2, &e1) != Ordering::Greater
 }
 
 /// Calculate recency boost for a document based on its LastSeen temporal tags.
@@ -230,5 +234,43 @@ mod tests {
             raw_text: "@t[~2025-01]".to_string(),
         }];
         assert_eq!(calculate_recency_boost(&tags, 0, 0.2), 1.0);
+    }
+
+    #[test]
+    fn test_bce_range_overlaps_point() {
+        let tag = TemporalTag {
+            tag_type: TemporalTagType::Range,
+            start_date: Some("-0490".to_string()),
+            end_date: Some("-0479".to_string()),
+            line_number: 1,
+            raw_text: "@t[-0490..-0479]".to_string(),
+        };
+        assert!(overlaps_point(&tag, "-0485"));
+        assert!(!overlaps_point(&tag, "-0500"));
+        assert!(!overlaps_point(&tag, "-0470"));
+        assert!(!overlaps_point(&tag, "2024"));
+    }
+
+    #[test]
+    fn test_bce_to_ce_range_overlaps_point() {
+        let tag = TemporalTag {
+            tag_type: TemporalTagType::Range,
+            start_date: Some("-0031".to_string()),
+            end_date: Some("0014".to_string()),
+            line_number: 1,
+            raw_text: "@t[-0031..0014]".to_string(),
+        };
+        assert!(overlaps_point(&tag, "-0010"));
+        assert!(overlaps_point(&tag, "0001"));
+        assert!(!overlaps_point(&tag, "-0050"));
+        assert!(!overlaps_point(&tag, "0020"));
+    }
+
+    #[test]
+    fn test_bce_ranges_overlap() {
+        assert!(ranges_overlap("-0490", "-0479", "-0485", "-0470"));
+        assert!(!ranges_overlap("-0490", "-0479", "-0470", "-0460"));
+        // BCE to CE overlap
+        assert!(ranges_overlap("-0031", "0014", "-0010", "0020"));
     }
 }

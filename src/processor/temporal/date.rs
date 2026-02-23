@@ -1,26 +1,39 @@
 //! Date validation and utility functions.
 
+use crate::patterns::pad_negative_year;
+
 /// Validate a date string for semantic correctness.
-/// Accepts formats: YYYY, YYYY-QN, YYYY-MM, YYYY-MM-DD
+/// Accepts formats: YYYY, YYYY-QN, YYYY-MM, YYYY-MM-DD (with optional leading `-` for BCE).
+/// Negative years may be 1-4 digits (e.g., `-330`, `-0330`); they are zero-padded internally.
 /// Returns None if valid, Some(error_message) if invalid.
 pub fn validate_date(date: &str) -> Option<String> {
-    if date.len() == 4 {
-        if let Ok(year) = date.parse::<u32>() {
-            if !(1900..=2100).contains(&year) {
+    let date = pad_negative_year(date);
+    let (is_negative, rest) = if date.starts_with('-') {
+        (true, &date[1..])
+    } else {
+        (false, date.as_str())
+    };
+
+    if rest.len() == 4 {
+        if let Ok(year) = rest.parse::<u32>() {
+            if !is_negative && !(1900..=2100).contains(&year) {
                 return Some(format!(
                     "year {year} is outside reasonable range (1900-2100)"
                 ));
+            }
+            if is_negative && year == 0 {
+                return Some("year -0000 is not valid".to_string());
             }
             return None;
         }
         return Some(format!("invalid year format: {date}"));
     }
 
-    if date.len() == 7 && date.chars().nth(5) == Some('Q') {
-        let year_str = &date[0..4];
-        let quarter_str = &date[6..7];
+    if rest.len() == 7 && rest.chars().nth(5) == Some('Q') {
+        let year_str = &rest[0..4];
+        let quarter_str = &rest[6..7];
         if let Ok(year) = year_str.parse::<u32>() {
-            if !(1900..=2100).contains(&year) {
+            if !is_negative && !(1900..=2100).contains(&year) {
                 return Some(format!(
                     "year {year} is outside reasonable range (1900-2100)"
                 ));
@@ -35,11 +48,11 @@ pub fn validate_date(date: &str) -> Option<String> {
         return Some(format!("invalid quarter format: {date}"));
     }
 
-    if date.len() == 7 {
-        let year_str = &date[0..4];
-        let month_str = &date[5..7];
+    if rest.len() == 7 {
+        let year_str = &rest[0..4];
+        let month_str = &rest[5..7];
         if let (Ok(year), Ok(month)) = (year_str.parse::<u32>(), month_str.parse::<u32>()) {
-            if !(1900..=2100).contains(&year) {
+            if !is_negative && !(1900..=2100).contains(&year) {
                 return Some(format!(
                     "year {year} is outside reasonable range (1900-2100)"
                 ));
@@ -52,16 +65,16 @@ pub fn validate_date(date: &str) -> Option<String> {
         return Some(format!("invalid year-month format: {date}"));
     }
 
-    if date.len() == 10 {
-        let year_str = &date[0..4];
-        let month_str = &date[5..7];
-        let day_str = &date[8..10];
+    if rest.len() == 10 {
+        let year_str = &rest[0..4];
+        let month_str = &rest[5..7];
+        let day_str = &rest[8..10];
         if let (Ok(year), Ok(month), Ok(day)) = (
             year_str.parse::<u32>(),
             month_str.parse::<u32>(),
             day_str.parse::<u32>(),
         ) {
-            if !(1900..=2100).contains(&year) {
+            if !is_negative && !(1900..=2100).contains(&year) {
                 return Some(format!(
                     "year {year} is outside reasonable range (1900-2100)"
                 ));
@@ -147,5 +160,45 @@ mod tests {
     fn test_validate_date_day_invalid() {
         assert!(validate_date("2024-01-32").is_some());
         assert!(validate_date("2023-02-29").is_some()); // Not a leap year
+    }
+
+    #[test]
+    fn test_validate_date_bce_year() {
+        assert!(validate_date("-0031").is_none());
+        assert!(validate_date("-0490").is_none());
+        assert!(validate_date("-9999").is_none());
+        assert!(validate_date("-0000").is_some()); // -0000 is not valid
+    }
+
+    #[test]
+    fn test_validate_date_bce_month() {
+        assert!(validate_date("-0490-03").is_none());
+        assert!(validate_date("-0490-00").is_some());
+        assert!(validate_date("-0490-13").is_some());
+    }
+
+    #[test]
+    fn test_validate_date_bce_quarter() {
+        assert!(validate_date("-0490-Q1").is_none());
+        assert!(validate_date("-0490-Q4").is_none());
+    }
+
+    #[test]
+    fn test_validate_date_bce_day() {
+        assert!(validate_date("-0490-03-15").is_none());
+        assert!(validate_date("-0490-02-30").is_some());
+    }
+
+    #[test]
+    fn test_validate_date_unpadded_bce_year() {
+        assert!(validate_date("-330").is_none());
+        assert!(validate_date("-31").is_none());
+        assert!(validate_date("-5").is_none());
+    }
+
+    #[test]
+    fn test_validate_date_unpadded_bce_with_month() {
+        assert!(validate_date("-490-03").is_none());
+        assert!(validate_date("-31-06").is_none());
     }
 }

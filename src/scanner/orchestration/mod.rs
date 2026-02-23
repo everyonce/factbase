@@ -49,6 +49,18 @@ pub async fn full_scan(
     db: &Database,
     ctx: &ScanContext<'_>,
 ) -> anyhow::Result<ScanResult> {
+    // Reload perspective.yaml from disk and update DB if changed
+    let repo = {
+        let mut r = repo.clone();
+        let disk_perspective = crate::models::load_perspective_from_file(&r.path);
+        if disk_perspective != r.perspective {
+            r.perspective = disk_perspective;
+            db.upsert_repository(&r)?;
+        }
+        r
+    };
+    let repo = &repo;
+
     let scan_start = Instant::now();
     let file_discovery_start = Instant::now();
 

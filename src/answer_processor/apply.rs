@@ -620,82 +620,32 @@ mod tests {
                 instruction: ChangeInstruction::Dismiss,
             },
         ];
-
         let result = format_changes_for_llm(&instructions);
-        assert!(result.contains("VP at BigCo"));
-        assert!(result.contains("@t[2022..]"));
-        assert!(result.contains("@t[2022..2024-03]"));
-        // Dismiss should be skipped
+        assert!(result.contains("VP at BigCo") && result.contains("@t[2022..2024-03]"));
         assert!(!result.contains("Dismiss"));
+
+        // Empty and all-dismiss
+        assert!(format_changes_for_llm(&[]).is_empty());
+        assert!(format_changes_for_llm(&[make_answer(ChangeInstruction::Dismiss), make_answer(ChangeInstruction::Dismiss)]).is_empty());
     }
 
     #[test]
-    fn test_format_changes_for_llm_empty() {
-        let instructions: Vec<InterpretedAnswer> = vec![];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_format_changes_for_llm_all_dismiss() {
-        let instructions = vec![
-            make_answer(ChangeInstruction::Dismiss),
-            make_answer(ChangeInstruction::Dismiss),
-        ];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_format_changes_for_llm_delete() {
-        let instructions = vec![make_answer(ChangeInstruction::Delete {
-            line_text: "Old fact to remove".to_string(),
-        })];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.contains("Delete line"));
-        assert!(result.contains("Old fact to remove"));
-    }
-
-    #[test]
-    fn test_format_changes_for_llm_split() {
-        let instructions = vec![make_answer(ChangeInstruction::Split {
-            line_text: "Combined fact".to_string(),
-            instruction: "separate into two items".to_string(),
-        })];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.contains("Split line"));
-        assert!(result.contains("Combined fact"));
-        assert!(result.contains("separate into two items"));
-    }
-
-    #[test]
-    fn test_format_changes_for_llm_add_temporal() {
-        let instructions = vec![make_answer(ChangeInstruction::AddTemporal {
-            line_text: "Fact without date".to_string(),
-            tag: "@t[2023]".to_string(),
-        })];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.contains("add @t[2023] at end"));
-    }
-
-    #[test]
-    fn test_format_changes_for_llm_add_source() {
-        let instructions = vec![make_answer(ChangeInstruction::AddSource {
-            line_text: "Unsourced fact".to_string(),
-            source_info: "LinkedIn profile".to_string(),
-        })];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.contains("add source reference"));
-        assert!(result.contains("LinkedIn profile"));
-    }
-
-    #[test]
-    fn test_format_changes_for_llm_generic() {
-        let instructions = vec![make_answer(ChangeInstruction::Generic {
-            description: "Custom change instruction".to_string(),
-        })];
-        let result = format_changes_for_llm(&instructions);
-        assert!(result.contains("Custom change instruction"));
+    fn test_format_changes_for_llm_instruction_types() {
+        // Delete
+        let r1 = format_changes_for_llm(&[make_answer(ChangeInstruction::Delete { line_text: "Old fact".to_string() })]);
+        assert!(r1.contains("Delete line") && r1.contains("Old fact"));
+        // Split
+        let r2 = format_changes_for_llm(&[make_answer(ChangeInstruction::Split { line_text: "Combined".to_string(), instruction: "separate".to_string() })]);
+        assert!(r2.contains("Split line") && r2.contains("separate"));
+        // AddTemporal
+        let r3 = format_changes_for_llm(&[make_answer(ChangeInstruction::AddTemporal { line_text: "Fact".to_string(), tag: "@t[2023]".to_string() })]);
+        assert!(r3.contains("add @t[2023] at end"));
+        // AddSource
+        let r4 = format_changes_for_llm(&[make_answer(ChangeInstruction::AddSource { line_text: "Fact".to_string(), source_info: "LinkedIn".to_string() })]);
+        assert!(r4.contains("add source reference") && r4.contains("LinkedIn"));
+        // Generic
+        let r5 = format_changes_for_llm(&[make_answer(ChangeInstruction::Generic { description: "Custom change".to_string() })]);
+        assert!(r5.contains("Custom change"));
     }
 
     // ==================== build_rewrite_prompt tests ====================
@@ -763,34 +713,10 @@ mod tests {
 
     #[test]
     fn test_replace_section() {
-        let content = "Line 1\nLine 2\nLine 3\nLine 4";
-        let new_section = "New Line 2\nNew Line 3";
-        let result = replace_section(content, 2, 3, new_section);
-        assert_eq!(result, "Line 1\nNew Line 2\nNew Line 3\nLine 4");
-    }
-
-    #[test]
-    fn test_replace_section_at_start() {
-        let content = "Line 1\nLine 2\nLine 3";
-        let new_section = "New Line 1";
-        let result = replace_section(content, 1, 1, new_section);
-        assert_eq!(result, "New Line 1\nLine 2\nLine 3");
-    }
-
-    #[test]
-    fn test_replace_section_at_end() {
-        let content = "Line 1\nLine 2\nLine 3";
-        let new_section = "New Line 3";
-        let result = replace_section(content, 3, 3, new_section);
-        assert_eq!(result, "Line 1\nLine 2\nNew Line 3");
-    }
-
-    #[test]
-    fn test_replace_section_entire_content() {
-        let content = "Line 1\nLine 2";
-        let new_section = "Completely new";
-        let result = replace_section(content, 1, 2, new_section);
-        assert_eq!(result, "Completely new");
+        assert_eq!(replace_section("Line 1\nLine 2\nLine 3\nLine 4", 2, 3, "New Line 2\nNew Line 3"), "Line 1\nNew Line 2\nNew Line 3\nLine 4");
+        assert_eq!(replace_section("Line 1\nLine 2\nLine 3", 1, 1, "New Line 1"), "New Line 1\nLine 2\nLine 3");
+        assert_eq!(replace_section("Line 1\nLine 2\nLine 3", 3, 3, "New Line 3"), "Line 1\nLine 2\nNew Line 3");
+        assert_eq!(replace_section("Line 1\nLine 2", 1, 2, "Completely new"), "Completely new");
     }
 
     // ==================== remove_processed_questions tests ====================
@@ -998,50 +924,22 @@ Content here
     // ==================== uncheck_deferred_questions tests ====================
 
     #[test]
-    fn test_uncheck_deferred_single() {
-        let content = r#"# Doc
+    fn test_uncheck_deferred() {
+        // Single deferred
+        let c1 = "# Doc\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Question 0\n> defer";
+        let r1 = uncheck_deferred_questions(c1, &[0]);
+        assert!(r1.contains("- [ ] `@q[temporal]` Question 0") && !r1.contains("> defer"));
 
-<!-- factbase:review -->
-- [x] `@q[temporal]` Question 0
-> defer"#;
-        let result = uncheck_deferred_questions(content, &[0]);
-        assert!(result.contains("- [ ] `@q[temporal]` Question 0"));
-        assert!(!result.contains("> defer"));
-    }
+        // Preserves others
+        let c2 = "# Doc\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Question 0\n> dismiss\n- [x] `@q[stale]` Question 1\n> defer\n- [ ] `@q[missing]` Question 2";
+        let r2 = uncheck_deferred_questions(c2, &[1]);
+        assert!(r2.contains("- [x] `@q[temporal]` Question 0"));
+        assert!(r2.contains("- [ ] `@q[stale]` Question 1"));
+        assert!(!r2.contains("> defer"));
 
-    #[test]
-    fn test_uncheck_deferred_preserves_others() {
-        let content = r#"# Doc
-
-<!-- factbase:review -->
-- [x] `@q[temporal]` Question 0
-> dismiss
-- [x] `@q[stale]` Question 1
-> defer
-- [ ] `@q[missing]` Question 2"#;
-        let result = uncheck_deferred_questions(content, &[1]);
-        // Question 0 unchanged (still checked)
-        assert!(result.contains("- [x] `@q[temporal]` Question 0"));
-        assert!(result.contains("> dismiss"));
-        // Question 1 unchecked, answer removed
-        assert!(result.contains("- [ ] `@q[stale]` Question 1"));
-        assert!(!result.contains("> defer"));
-        // Question 2 unchanged
-        assert!(result.contains("- [ ] `@q[missing]` Question 2"));
-    }
-
-    #[test]
-    fn test_uncheck_deferred_empty_indices() {
-        let content = "# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer";
-        let result = uncheck_deferred_questions(content, &[]);
-        assert_eq!(result, content);
-    }
-
-    #[test]
-    fn test_uncheck_deferred_no_marker() {
-        let content = "# Doc\n\nNo review queue";
-        let result = uncheck_deferred_questions(content, &[0]);
-        assert_eq!(result, content);
+        // Empty indices / no marker
+        assert_eq!(uncheck_deferred_questions("# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer", &[]), "# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer");
+        assert_eq!(uncheck_deferred_questions("# Doc\n\nNo review queue", &[0]), "# Doc\n\nNo review queue");
     }
 
     // ==================== apply_source_citations tests ====================

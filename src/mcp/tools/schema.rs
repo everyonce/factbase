@@ -84,7 +84,7 @@ pub fn tools_list() -> Value {
                         "repo": { "type": "string", "description": "Repository ID" },
                         "path": { "type": "string", "description": "Relative file path" },
                         "title": { "type": "string", "description": "Document title" },
-                        "content": { "type": "string", "description": "Document content" }
+                        "content": { "type": "string", "description": "Document body (do NOT include # Title heading — it is added automatically from the title field)" }
                     },
                     "required": ["repo", "path", "title"]
                 }
@@ -128,7 +128,7 @@ pub fn tools_list() -> Value {
                                 "properties": {
                                     "path": { "type": "string", "description": "Relative file path" },
                                     "title": { "type": "string", "description": "Document title" },
-                                    "content": { "type": "string", "description": "Document content" }
+                                    "content": { "type": "string", "description": "Document body (do NOT include # Title heading — it is added automatically)" }
                                 },
                                 "required": ["path", "title"]
                             }

@@ -291,6 +291,18 @@ Facts without dates become unreliable quickly. Use `@t[...]` tags on all dynamic
 | `@t[..2020]` | Historical, ended | `Advisor role @t[..2020]` |
 | `@t[?]` | Unknown | `Has PhD @t[?]` |
 
+### BCE / Historical Dates
+
+For dates before the Common Era, use either BCE suffix or negative years:
+
+```markdown
+- Battle of Gaugamela @t[=331 BCE]
+- Greco-Persian Wars @t[490 BCE..479 BCE]
+- Augustus reign @t[-31..14]
+```
+
+Both `331 BCE` and `-331` are accepted; they are stored as `-0331` internally.
+
 ### Employment & Roles
 ```markdown
 ## Role

@@ -42,23 +42,40 @@ pub fn get_authoring_guide() -> Value {
             "id_header": "<!-- factbase:XXXXXX --> is auto-injected on first scan — never create or modify this",
             "length": "Minimum 100 chars, optimal 500-5000 chars",
             "filenames": "lowercase-with-hyphens.md (e.g., amanita-muscaria.md, battle-of-thermopylae.md, platform-api.md)",
+            "reorganization": "If a file is in the wrong folder or has a poor name, rename or move it freely using file tools. Just run scan_repository afterward to re-index. The factbase ID in the <!-- factbase:XXXXXX --> header is stable across renames.",
             "archive": "Documents in archive/ folders are indexed and searchable but skipped by quality checks. Use for stable/historical documents: species/archive/reclassified.md, events/archive/superseded.md"
         },
         "temporal_tags": {
-            "description": "Every dynamic fact MUST have a temporal tag. Static facts (mathematical constants, chemical formulas) do not need one.",
+            "description": "Every dynamic fact MUST have a temporal tag. Static facts (mathematical constants, chemical formulas) do not need one. CRITICAL: Only dates/years go inside @t[...] — NEVER put descriptive text inside the brackets.",
             "syntax": {
-                "@t[=2024-03]": "Event — happened at this date (discovery, founding, eruption)",
-                "@t[~2024-03]": "State — true as of this date, may have changed (population, classification, status)",
-                "@t[2020..2022]": "Date range (started and ended)",
+                "@t[=2024-03]": "Event — happened at this exact date",
+                "@t[~2024-03]": "State — true as of this date, may change",
+                "@t[2020..2022]": "Date range — started and ended",
                 "@t[2021..]": "Started, still ongoing",
-                "@t[..2020]": "Historical, ended",
-                "@t[?]": "Unknown / unverified"
+                "@t[..2020]": "Historical, ended at this date",
+                "@t[?]": "Date unknown / unverified — use this when you cannot determine the date",
+                "@t[=331 BCE]": "BCE event — human-readable BCE suffix (→ -0331)",
+                "@t[=-330]": "BCE event — negative year, auto-padded to -0330",
+                "@t[=-0031]": "BCE event — use negative 4-digit year for pre-CE dates",
+                "@t[-0490..-0479]": "BCE date range",
+                "@t[-0031..0014]": "Range spanning BCE to CE"
+            },
+            "valid_content": "ONLY these go inside @t[...]: years (2024 or -0490 for BCE), quarters (2024-Q2), months (2024-03), days (2024-03-15), ranges with dates (2020..2023 or -0490..-0479), or ? for unknown",
+            "common_errors": {
+                "❌ WRONG — text inside tag": "@t[bright red when young] @t[seasonal] @t[since ancient times] @t[traditional..modern] @t[varies by region]",
+                "✅ CORRECT — dates only": "@t[=2024] @t[~2024] @t[1753..] @t[2020..2023] @t[?]",
+                "rule": "If it's not a year, month, day, quarter, or ?, it does NOT go inside @t[...]"
             },
             "granularity": "Year (2024), Quarter (2024-Q2), Month (2024-03), Day (2024-03-15)",
+            "placement": "Place the @t[...] tag AFTER the fact text, BEFORE the source footnote: `- Fact description @t[~2024] [^1]`",
             "examples": [
                 "- Population: ~12,000 @t[~2024-01] [^1]",
                 "- Reclassified to family Omphalotaceae @t[=2006] [^2]",
-                "- Director of Operations at Acme Corp @t[2022..] [^3]"
+                "- Director of Operations at Acme Corp @t[2022..] [^3]",
+                "- Cap color: bright red to orange @t[~2024] [^1]  ← description is in the text, date is in the tag",
+                "- Fruiting season: summer to autumn @t[~2024] [^2]  ← 'summer to autumn' goes in the text, NOT in the tag",
+                "- Battle of Thermopylae @t[=-0480] [^4]  ← BCE date using negative year",
+                "- Greco-Persian Wars @t[-0499..-0449] [^5]  ← BCE date range"
             ]
         },
         "sources": {
@@ -81,6 +98,7 @@ pub fn get_authoring_guide() -> Value {
             "processing": "Integrated by apply_review_answers or `factbase review --apply`, then the block is removed"
         },
         "common_mistakes": [
+            "Putting text/descriptions inside @t[...] instead of dates — WRONG: @t[seasonal], RIGHT: @t[~2024]",
             "Missing temporal tags on dynamic facts (status, classification, population, roles)",
             "Vague entity references ('the species', 'the project') instead of exact names ('Amanita muscaria', 'Platform API')",
             "Duplicate content across documents — link instead with [[id]]",
@@ -101,7 +119,7 @@ pub fn get_authoring_guide() -> Value {
         },
         "templates": {
             "natural_science": "# Amanita muscaria\n\n## Classification\n- Kingdom: Fungi @t[=1753] [^1]\n- Family: Amanitaceae\n- Common name: Fly agaric\n\n## Habitat & Distribution\n- Found in temperate forests across Northern Hemisphere @t[~2024] [^2]\n- Mycorrhizal association with birch, pine, spruce\n\n## Edibility & Toxicity\n- Contains ibotenic acid and muscimol [^3]\n- Classified as poisonous @t[~2024]\n\n---\n[^1]: Linnaeus, Species Plantarum, 1753\n[^2]: MycoBank database, accessed 2024-01\n[^3]: Michelot & Melendez-Howell, Mycological Research, 2003",
-            "historical_entity": "# Battle of Thermopylae\n\n## Overview\n- Date: @t[=480-08] (August 480 BCE) [^1]\n- Location: Thermopylae pass, Greece\n- Outcome: Persian victory\n\n## Participants\n- Greek alliance led by Leonidas I of Sparta [^1]\n- Persian forces led by Xerxes I [^1]\n\n## Significance\n- Delayed Persian advance, enabled Greek naval preparation @t[480..479] [^2]\n\n---\n[^1]: Herodotus, Histories, Book VII\n[^2]: Holland, Persian Fire, pp. 255-280, 2005",
+            "historical_entity": "# Battle of Thermopylae\n\n## Overview\n- Date: @t[=480 BCE] [^1]\n- Location: Thermopylae pass, Greece\n- Outcome: Persian victory\n\n## Participants\n- Greek alliance led by Leonidas I of Sparta [^1]\n- Persian forces led by Xerxes I [^1]\n\n## Significance\n- Delayed Persian advance, enabled Greek naval preparation @t[480 BCE..479 BCE] [^2]\n\n---\n[^1]: Herodotus, Histories, Book VII\n[^2]: Holland, Persian Fire, pp. 255-280, 2005",
             "person": "# Full Name\n\n**Role:** Title at Organization @t[2023..]\n**Location:** City, Country @t[~2024-01]\n\n## Career History\n- Current role @t[2023..] [^1]\n\n## Current Focus\n- Key project or activity @t[2024..]\n\n---\n[^1]: Source, date",
             "organization": "# Organization Name\n\n## Overview\nWhat the organization does.\n\n## Key Facts\n- Founded @t[=2015] [^1]\n- Size: ~500 members @t[~2024-01]\n\n## Leadership\n- Director: Name @t[2020..]\n\n---\n[^1]: Source, date",
             "project": "# Project Name\n\n## Overview\nPurpose and goals.\n\n## Status\nCurrent phase @t[2024-Q1..]\n\n## Team\n- Name - Role @t[2024..]\n\n---\n[^1]: Source, date",

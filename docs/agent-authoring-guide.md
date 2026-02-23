@@ -90,6 +90,10 @@ More content...
 - Quarter: `2024-Q2`
 - Month: `2024-03`
 - Day: `2024-03-15`
+- BCE (suffix): `331 BCE`
+- BCE (negative): `-330` or `-0330`
+
+BCE dates are normalized to zero-padded negative years internally (e.g., `331 BCE` → `-0331`).
 
 ### Static vs Dynamic Facts
 

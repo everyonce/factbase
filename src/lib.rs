@@ -45,6 +45,9 @@ pub mod watcher;
 #[cfg(feature = "web")]
 pub mod web;
 
+/// Default repository ID used when no explicit ID is provided.
+pub const DEFAULT_REPO_ID: &str = "default";
+
 /// Boxed future type alias for async trait methods (no async-trait crate).
 pub(crate) type BoxFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
@@ -72,9 +75,9 @@ pub use llm::{DetectedLink, LinkDetector, LlmProvider, OllamaLlm, ReviewLlm};
 #[cfg(feature = "mcp")]
 pub use mcp::McpServer;
 pub use models::{
-    normalize_pair, ContentMatch, ContentSearchResult, DetailedStats, Document, Link, PoolStats,
-    QuestionType, RepoStats, Repository, ReviewQuestion, ScanResult, ScanStats, SearchResult,
-    SourceStats, TemporalStats, TemporalTagType,
+    load_perspective_from_file, normalize_pair, ContentMatch, ContentSearchResult, DetailedStats,
+    Document, Link, PoolStats, QuestionType, RepoStats, Repository, ReviewQuestion, ScanResult,
+    ScanStats, SearchResult, SourceStats, TemporalStats, TemporalTagType, PERSPECTIVE_TEMPLATE,
 };
 pub use ollama::create_http_client;
 pub use organize::{

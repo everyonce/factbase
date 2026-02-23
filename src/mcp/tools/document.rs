@@ -138,6 +138,27 @@ fn validate_content(content: &str) -> Result<(), FactbaseError> {
     Ok(())
 }
 
+/// Strip a leading `# Title` from content if the agent included it redundantly.
+/// create_document already prepends `# {title}`, so if content starts with the
+/// same heading, strip it to avoid duplication.
+fn strip_leading_title<'a>(content: &'a str, title: &str) -> &'a str {
+    let trimmed = content.trim_start();
+    // Check for `# Title` possibly followed by newlines
+    if let Some(rest) = trimmed.strip_prefix('#') {
+        let rest = rest.trim_start_matches('#'); // handle ## or ### too
+        let rest = rest.trim_start();
+        // Compare case-insensitively and strip if it matches the title
+        let first_line_end = rest.find('\n').unwrap_or(rest.len());
+        let first_line = rest[..first_line_end].trim();
+        if first_line.eq_ignore_ascii_case(title.trim()) {
+            let after_title = &rest[first_line_end..];
+            // Skip leading blank lines after the stripped title
+            return after_title.trim_start_matches('\n').trim_start_matches('\r');
+        }
+    }
+    content
+}
+
 /// Creates a new document in a repository.
 ///
 /// Writes a markdown file with factbase header and title to the specified path.
@@ -170,8 +191,11 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let processor = DocumentProcessor::new();
     let id = processor.generate_unique_id(db);
 
+    // Strip duplicate title from content if the agent included it
+    let content_trimmed = strip_leading_title(content, &title);
+
     // Build document content with header and title
-    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{content}");
+    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{content_trimmed}");
 
     // Construct full file path
     let file_path: PathBuf = repo.path.join(&path);
@@ -445,9 +469,10 @@ pub fn bulk_create_documents(
     let total = validated_docs.len();
     for (i, validated) in validated_docs.iter().enumerate() {
         let id = processor.generate_unique_id(db);
+        let content_trimmed = strip_leading_title(validated.content, validated.title);
         let doc_content = format!(
             "<!-- factbase:{} -->\n# {}\n\n{}",
-            id, validated.title, validated.content
+            id, validated.title, content_trimmed
         );
         let file_path: PathBuf = repo.path.join(validated.path);
 
@@ -895,5 +920,56 @@ mod tests {
         let created = result["created"].as_array().unwrap();
         assert!(created[0].get("warning").is_some());
         assert!(created[1].get("warning").is_none());
+    }
+
+    #[test]
+    fn test_strip_leading_title_exact_match() {
+        let content = "# Amanita muscaria\n\n## Classification\n- Kingdom: Fungi";
+        let result = strip_leading_title(content, "Amanita muscaria");
+        assert_eq!(result, "## Classification\n- Kingdom: Fungi");
+    }
+
+    #[test]
+    fn test_strip_leading_title_case_insensitive() {
+        let content = "# amanita muscaria\n\nSome content";
+        let result = strip_leading_title(content, "Amanita muscaria");
+        assert_eq!(result, "Some content");
+    }
+
+    #[test]
+    fn test_strip_leading_title_no_match() {
+        let content = "# Different Title\n\nSome content";
+        let result = strip_leading_title(content, "Amanita muscaria");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_leading_title_no_heading() {
+        let content = "Just some content without a heading";
+        let result = strip_leading_title(content, "Amanita muscaria");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_leading_title_with_leading_whitespace() {
+        let content = "\n\n# Amanita muscaria\n\n## Habitat";
+        let result = strip_leading_title(content, "Amanita muscaria");
+        assert_eq!(result, "## Habitat");
+    }
+
+    #[test]
+    fn test_strip_leading_title_empty_content() {
+        let result = strip_leading_title("", "Title");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_strip_leading_title_with_factbase_header() {
+        // If content includes the factbase header + title, it should NOT strip
+        // because the first # line would be the factbase comment, not a heading
+        let content = "<!-- factbase:abc123 -->\n# Amanita muscaria\n\nContent";
+        let result = strip_leading_title(content, "Amanita muscaria");
+        // Should not strip — the first non-whitespace is a comment, not a heading
+        assert_eq!(result, content);
     }
 }

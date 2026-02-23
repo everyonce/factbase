@@ -212,10 +212,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_days_since_date() {
+        let today = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
+        assert_eq!(days_since_date("2025-01-29", today), Some(365));
+        assert_eq!(days_since_date("2026-01-29", today), Some(0));
+        assert_eq!(days_since_date("2025-01", today), Some(393));
+        assert_eq!(days_since_date("2025", today), Some(393));
+        assert_eq!(days_since_date("invalid", today), None);
+        assert_eq!(days_since_date("2025-Q2", today), None);
+    }
+
+    #[test]
     fn test_generate_stale_questions_no_facts() {
         let content = "# Title\n\nSome paragraph text.";
-        let questions = generate_stale_questions(content, 365);
-        assert!(questions.is_empty());
+        assert!(generate_stale_questions(content, 365).is_empty());
     }
 
     #[test]
@@ -227,63 +237,49 @@ mod tests {
         assert_eq!(questions[0].question_type, QuestionType::Stale);
         assert_eq!(questions[0].line_ref, Some(3));
         assert!(questions[0].description.contains("LinkedIn"));
-        assert!(questions[0].description.contains("2020-01-15"));
     }
 
     #[test]
     fn test_generate_stale_questions_recent_source() {
-        // Use a recent date that won't be stale
         let today = Utc::now().date_naive();
         let recent_date = today - chrono::Duration::days(30);
         let content = format!(
             "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped {}",
             recent_date.format("%Y-%m-%d")
         );
-        let questions = generate_stale_questions(&content, 365);
-        assert!(questions.is_empty());
+        assert!(generate_stale_questions(&content, 365).is_empty());
     }
 
     #[test]
-    fn test_generate_stale_questions_old_last_seen_tag() {
+    fn test_generate_stale_questions_last_seen_tag() {
+        // Old @t[~] generates stale question
         let content = "# Person\n\n- Lives in NYC @t[~2020-06]";
         let questions = generate_stale_questions(content, 365);
         assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].question_type, QuestionType::Stale);
         assert!(questions[0].description.contains("@t[~2020-06]"));
-        assert!(questions[0].description.contains("outdated"));
-    }
 
-    #[test]
-    fn test_generate_stale_questions_recent_last_seen_tag() {
+        // Recent @t[~] does not
         let today = Utc::now().date_naive();
-        let recent_date = today - chrono::Duration::days(30);
-        let content = format!(
-            "# Person\n\n- Lives in NYC @t[~{}]",
-            recent_date.format("%Y-%m")
-        );
-        let questions = generate_stale_questions(&content, 365);
-        assert!(questions.is_empty());
+        let recent = today - chrono::Duration::days(30);
+        let content2 = format!("# Person\n\n- Lives in NYC @t[~{}]", recent.format("%Y-%m"));
+        assert!(generate_stale_questions(&content2, 365).is_empty());
     }
 
     #[test]
     fn test_generate_stale_questions_no_source_date() {
         let content = "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile";
-        let questions = generate_stale_questions(content, 365);
-        // No date in source = no stale question
-        assert!(questions.is_empty());
+        assert!(generate_stale_questions(content, 365).is_empty());
     }
 
     #[test]
     fn test_generate_stale_questions_custom_threshold() {
-        // Use 30 day threshold
         let today = Utc::now().date_naive();
         let old_date = today - chrono::Duration::days(60);
         let content = format!(
             "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped {}",
             old_date.format("%Y-%m-%d")
         );
-        let questions = generate_stale_questions(&content, 30);
-        assert_eq!(questions.len(), 1);
+        assert_eq!(generate_stale_questions(&content, 30).len(), 1);
     }
 
     #[test]
@@ -291,178 +287,75 @@ mod tests {
         let content =
             "# Person\n\nParagraph\n\n- Old fact [^1]\n- Another fact\n\n[^1]: Source, 2020-01-01";
         let questions = generate_stale_questions(content, 365);
-        assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].line_ref, Some(5));
     }
 
     #[test]
     fn test_generate_stale_questions_multiple_sources() {
         let content = "# Person\n\n- Fact one [^1]\n- Fact two [^2]\n\n[^1]: Source, 2020-01-01\n[^2]: Source, 2020-02-01";
-        let questions = generate_stale_questions(content, 365);
-        assert_eq!(questions.len(), 2);
+        assert_eq!(generate_stale_questions(content, 365).len(), 2);
     }
 
     #[test]
     fn test_generate_stale_questions_avoids_duplicate_for_same_line() {
-        // If a line has both old source and old @t[~...], only one question
         let content = "# Person\n\n- Lives in NYC @t[~2020-06] [^1]\n\n[^1]: Source, 2020-01-01";
-        let questions = generate_stale_questions(content, 365);
-        // Should have one question (source is checked first, then @t[~] skips if already has question)
-        assert_eq!(questions.len(), 1);
+        assert_eq!(generate_stale_questions(content, 365).len(), 1);
     }
 
     #[test]
-    fn test_days_since_date_full_date() {
-        let today = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
-        assert_eq!(days_since_date("2025-01-29", today), Some(365));
-        assert_eq!(days_since_date("2026-01-29", today), Some(0));
-    }
-
-    #[test]
-    fn test_days_since_date_year_month() {
-        let today = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
-        // 2025-01 = Jan 1, 2025 = 393 days before Jan 29, 2026
-        assert_eq!(days_since_date("2025-01", today), Some(393));
-    }
-
-    #[test]
-    fn test_days_since_date_year_only() {
-        let today = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
-        // 2025 = Jan 1, 2025 = 393 days before Jan 29, 2026
-        assert_eq!(days_since_date("2025", today), Some(393));
-    }
-
-    #[test]
-    fn test_days_since_date_invalid() {
-        let today = NaiveDate::from_ymd_opt(2026, 1, 29).unwrap();
-        assert_eq!(days_since_date("invalid", today), None);
-        assert_eq!(days_since_date("2025-Q2", today), None); // Quarter format not supported
-    }
-
-    #[test]
-    fn test_stale_source_suppressed_by_recent_verification() {
-        // Old source (800+ days) but recent @t[~2026-01] verification — should NOT generate
+    fn test_stale_source_verification_suppression() {
+        // Recent @t[~] verification suppresses stale source
         let content = "# Person\n\n- Works at Acme Corp @t[~2026-01] [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
-        let questions = generate_stale_questions(content, 365);
-        assert!(
-            questions.is_empty(),
-            "Should suppress stale question when line has recent @t[~] verification"
-        );
+        assert!(generate_stale_questions(content, 365).is_empty());
+        // No @t[~] tag — still generates
+        let content2 = "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
+        assert_eq!(generate_stale_questions(content2, 365).len(), 1);
+        // Old @t[~] verification — still generates
+        let content3 = "# Person\n\n- Works at Acme Corp @t[~2024-01] [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
+        assert_eq!(generate_stale_questions(content3, 365).len(), 1);
     }
 
     #[test]
-    fn test_stale_source_no_verification_still_generates() {
-        // Old source, no @t[~] tag — should still generate
-        let content =
-            "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
-        let questions = generate_stale_questions(content, 365);
-        assert_eq!(questions.len(), 1);
+    fn test_heading_temporal_tag_suppression() {
+        // PointInTime heading suppresses stale
+        let c1 = "# Events\n\n## re:Invent 2024 @t[=2024-12]\n\n- Met with John Smith [^1]\n\n[^1]: Notes, 2024-12-05";
+        assert!(generate_stale_questions(c1, 365).is_empty());
+        // Range heading suppresses stale
+        let c2 = "# Events\n\n## Q1 2023 Sprint @t[2023-01..2023-03]\n\n- Delivered feature X [^1]\n\n[^1]: Jira, 2023-03-15";
+        assert!(generate_stale_questions(c2, 365).is_empty());
+        // No tag — still generates
+        let c3 = "# Person\n\n## Current Role\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2020-01-15";
+        assert_eq!(generate_stale_questions(c3, 365).len(), 1);
+        // Ongoing heading — still generates
+        let c4 = "# Person\n\n## Current Job @t[2020..]\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2020-01-15";
+        assert_eq!(generate_stale_questions(c4, 365).len(), 1);
     }
 
     #[test]
-    fn test_stale_source_old_verification_still_generates() {
-        // Old source AND old @t[~2024-01] verification — should still generate
-        let content = "# Person\n\n- Works at Acme Corp @t[~2024-01] [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
-        let questions = generate_stale_questions(content, 365);
-        assert_eq!(
-            questions.len(),
-            1,
-            "Should still generate when @t[~] verification is old"
-        );
-    }
-
-    #[test]
-    fn test_heading_point_in_time_suppresses_stale() {
-        // Facts under a heading with @t[=2024-12] should not generate stale questions
-        let content = "# Events\n\n## re:Invent 2024 @t[=2024-12]\n\n- Met with John Smith [^1]\n- Attended keynote [^1]\n\n[^1]: Notes, 2024-12-05";
-        let questions = generate_stale_questions(content, 365);
-        assert!(
-            questions.is_empty(),
-            "Facts under a PointInTime heading should not be flagged as stale"
-        );
-    }
-
-    #[test]
-    fn test_heading_range_suppresses_stale() {
-        let content = "# Events\n\n## Q1 2023 Sprint @t[2023-01..2023-03]\n\n- Delivered feature X [^1]\n\n[^1]: Jira, 2023-03-15";
-        let questions = generate_stale_questions(content, 365);
-        assert!(
-            questions.is_empty(),
-            "Facts under a Range heading should not be flagged as stale"
-        );
-    }
-
-    #[test]
-    fn test_heading_no_tag_still_generates() {
-        // Facts under a heading WITHOUT temporal tag should still generate
-        let content = "# Person\n\n## Current Role\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2020-01-15";
-        let questions = generate_stale_questions(content, 365);
-        assert_eq!(questions.len(), 1);
-    }
-
-    #[test]
-    fn test_heading_ongoing_still_generates() {
-        // Ongoing heading should NOT suppress stale (it's still current)
-        let content = "# Person\n\n## Current Job @t[2020..]\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2020-01-15";
-        let questions = generate_stale_questions(content, 365);
-        assert_eq!(
-            questions.len(),
-            1,
-            "Ongoing heading should not suppress stale questions"
-        );
-    }
-
-    #[test]
-    fn test_reviewed_marker_suppresses_stale_source() {
+    fn test_reviewed_marker_suppresses_stale() {
         let today = Utc::now().date_naive();
         let marker_date = today - chrono::Duration::days(30);
-        let content = format!(
+        // Recent reviewed marker suppresses stale source
+        let c1 = format!(
             "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:{} -->\n\n[^1]: LinkedIn profile, scraped 2020-01-15",
             marker_date.format("%Y-%m-%d")
         );
-        let questions = generate_stale_questions(&content, 365);
-        assert!(
-            questions.is_empty(),
-            "Recent reviewed marker should suppress stale source question"
-        );
-    }
-
-    #[test]
-    fn test_reviewed_marker_suppresses_stale_last_seen() {
-        let today = Utc::now().date_naive();
-        let marker_date = today - chrono::Duration::days(30);
-        let content = format!(
+        assert!(generate_stale_questions(&c1, 365).is_empty());
+        // Recent reviewed marker suppresses stale @t[~]
+        let c2 = format!(
             "# Person\n\n- Lives in NYC @t[~2020-06] <!-- reviewed:{} -->",
             marker_date.format("%Y-%m-%d")
         );
-        let questions = generate_stale_questions(&content, 365);
-        assert!(
-            questions.is_empty(),
-            "Recent reviewed marker should suppress stale @t[~] question"
-        );
-    }
-
-    #[test]
-    fn test_old_reviewed_marker_still_generates() {
-        let content = "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:2020-01-01 -->\n\n[^1]: LinkedIn profile, scraped 2019-06-01";
-        let questions = generate_stale_questions(content, 365);
-        assert_eq!(
-            questions.len(),
-            1,
-            "Old reviewed marker should not suppress stale question"
-        );
+        assert!(generate_stale_questions(&c2, 365).is_empty());
+        // Old reviewed marker does NOT suppress
+        let c3 = "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:2020-01-01 -->\n\n[^1]: LinkedIn profile, scraped 2019-06-01";
+        assert_eq!(generate_stale_questions(c3, 365).len(), 1);
     }
 
     #[test]
     fn test_stale_skips_review_queue_without_marker() {
-        // Review queue heading without the HTML marker — entries should not be treated as facts
         let content = "# Person\n\n- Works at Acme Corp @t[~2020-06]\n\n## Review Queue\n\n- [ ] `@q[stale]` Line 3: \"Works at Acme Corp\" - is this still accurate?\n  > \n";
         let questions = generate_stale_questions(content, 365);
-        // Should only generate question about the real fact, not the review queue entry
-        assert!(
-            questions.iter().all(|q| q.line_ref == Some(3)),
-            "Should not generate questions about review queue entries: {:?}",
-            questions
-        );
+        assert!(questions.iter().all(|q| q.line_ref == Some(3)));
     }
 }

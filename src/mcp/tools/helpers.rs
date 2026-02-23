@@ -240,6 +240,20 @@ pub(crate) fn detect_weak_identification(
     best
 }
 
+/// Load perspective for a repository (first repo if repo_id is None).
+pub(crate) fn load_perspective(
+    db: &Database,
+    repo_id: Option<&str>,
+) -> Option<crate::models::Perspective> {
+    let repos = db.list_repositories().ok()?;
+    let repo = if let Some(id) = repo_id {
+        repos.into_iter().find(|r| r.id == id)
+    } else {
+        repos.into_iter().next()
+    };
+    repo.and_then(|r| r.perspective)
+}
+
 /// Resolve a document's absolute file path by joining the repository root with
 /// the document's relative `file_path`.
 ///

@@ -81,16 +81,12 @@ pub fn export_embeddings<W: Write>(
 
     serde_json::to_writer(&mut *writer, &header)
         .map_err(|e| FactbaseError::internal(format!("Failed to write header: {e}")))?;
-    writer
-        .write_all(b"\n")
-        .map_err(|e| FactbaseError::Io(e))?;
+    writer.write_all(b"\n")?;
 
     for record in &records {
         serde_json::to_writer(&mut *writer, record)
             .map_err(|e| FactbaseError::internal(format!("Failed to write record: {e}")))?;
-        writer
-            .write_all(b"\n")
-            .map_err(|e| FactbaseError::Io(e))?;
+        writer.write_all(b"\n")?;
     }
 
     Ok(records.len())
@@ -106,9 +102,7 @@ pub fn export_embeddings_to_file(
     let file = std::fs::File::create(path)?;
     let mut writer = std::io::BufWriter::new(file);
     let count = export_embeddings(db, repo_id, model, &mut writer)?;
-    writer
-        .flush()
-        .map_err(|e| FactbaseError::Io(e))?;
+    writer.flush()?;
     Ok(count)
 }
 
@@ -119,9 +113,7 @@ pub fn import_embeddings<R: BufRead>(
     force: bool,
 ) -> Result<ImportResult, FactbaseError> {
     let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|e| FactbaseError::Io(e))?;
+    reader.read_line(&mut line)?;
 
     let header: EmbeddingExportHeader = serde_json::from_str(line.trim()).map_err(|e| {
         FactbaseError::internal(format!("Invalid embedding export header: {e}"))
@@ -151,7 +143,7 @@ pub fn import_embeddings<R: BufRead>(
     let existing_docs = db.get_all_document_ids()?;
 
     for line_result in reader.lines() {
-        let line = line_result.map_err(|e| FactbaseError::Io(e))?;
+        let line = line_result?;
         if line.trim().is_empty() {
             continue;
         }

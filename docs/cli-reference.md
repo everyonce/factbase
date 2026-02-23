@@ -7,7 +7,7 @@ Complete command reference for factbase. See also the [README](../README.md) for
 Initialize a new repository at the given path.
 
 - `--name` - Repository display name (default: directory name)
-- `--id` - Repository ID (default: "main")
+- `--id` - Repository ID (default: "default")
 - `-j, --json` - Output as JSON
 
 ```bash
