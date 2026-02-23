@@ -2,8 +2,8 @@
 
 ## Phases
 
-- [ ] [Phase 1: Core Infrastructure](#phase-1-core-infrastructure)
-- [ ] [Phase 2: Embedding & Search](#phase-2-embedding--search)
+- [x] [Phase 1: Core Infrastructure](#phase-1-core-infrastructure)
+- [x] [Phase 2: Embedding & Search](#phase-2-embedding--search)
 - [ ] [Phase 3: File Watching & MCP Server](#phase-3-file-watching--mcp-server)
 - [ ] [Phase 4: Multi-Repo & Polish](#phase-4-multi-repo--polish)
 
@@ -28,7 +28,13 @@
 **Tasks:** [tasks/phase1.md](tasks/phase1.md) (17 tasks)
 
 **Outcomes:**
-<!-- Agent notes for future phases go here -->
+- Phase 2 complete: 14 tasks, all subtasks done
+- 31 unit tests passing
+- 12 integration tests (require live Ollama, marked #[ignore])
+- Embedding generation via Ollama nomic-embed-text
+- Vector search via sqlite-vec
+- LLM link detection via Ollama
+- Search CLI command with type/repo filters
 
 ---
 

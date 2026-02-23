@@ -1,0 +1,21 @@
+pub mod config;
+pub mod database;
+pub mod embedding;
+pub mod error;
+pub mod llm;
+pub mod mcp;
+pub mod models;
+pub mod processor;
+pub mod scanner;
+pub mod watcher;
+
+pub use config::Config;
+pub use database::Database;
+pub use embedding::{EmbeddingProvider, OllamaEmbedding};
+pub use error::FactbaseError;
+pub use llm::{DetectedLink, LinkDetector, LlmProvider, OllamaLlm};
+pub use mcp::McpServer;
+pub use models::{Document, Repository, ScanResult};
+pub use processor::DocumentProcessor;
+pub use scanner::Scanner;
+pub use watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
