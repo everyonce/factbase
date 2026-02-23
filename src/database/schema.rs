@@ -15,13 +15,13 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 7;
+pub(super) const SCHEMA_VERSION: i32 = 8;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
 /// Version 1 is the baseline schema (created by init_schema).
 pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
-    // Version 2: Add last_check_at column for incremental checking
+    // Version 2: Add last_lint_at column (renamed to last_check_at in v8)
     (
         2,
         "Add last_check_at to repositories",
@@ -56,6 +56,12 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         7,
         "Add FTS5 full-text search index",
         "CREATE VIRTUAL TABLE IF NOT EXISTS document_content_fts USING fts5(doc_id UNINDEXED, content);",
+    ),
+    // Version 8: Rename last_lint_at → last_check_at
+    (
+        8,
+        "Rename last_lint_at to last_check_at",
+        "ALTER TABLE repositories RENAME COLUMN last_lint_at TO last_check_at;",
     ),
 ];
 

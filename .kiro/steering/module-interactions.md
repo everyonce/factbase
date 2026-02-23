@@ -143,7 +143,7 @@ src/
 │   ├── fields.rs        # Field extraction
 │   ├── facts.rs         # Fact extraction for cross-validation
 │   ├── cross_validate.rs # Cross-document fact validation
-│   └── lint.rs          # Shared lint-all-documents loop (MCP + CLI)
+│   └── check.rs          # Shared check-all-documents loop (MCP + CLI)
 │
 ├── answer_processor/    # Review answer processing
 │   ├── mod.rs           # Main processor
@@ -400,12 +400,12 @@ web/
 - Three methods: `report(current, total, message)`, `phase(name)`, `log(message)`
 - CLI variant writes to stderr; MCP variant sends JSON via unbounded channel + eprintln; Silent is no-op
 - `ProgressSender` type alias (`UnboundedSender<Value>`) for MCP channel
-- Used by: scanner, lint, review apply, search_content, organize, export/import, bulk MCP operations
+- Used by: scanner, check, review apply, search_content, organize, export/import, bulk MCP operations
 
 ### `question_generator.rs`
 - Generates review questions for documents
 - Analyzes temporal coverage, source citations
-- Used by: lint --review, MCP generate_questions
+- Used by: check, MCP generate_questions
 
 ### `answer_processor.rs`
 - Processes answered review questions

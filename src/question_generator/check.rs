@@ -56,7 +56,20 @@ pub async fn check_all_documents(
     let total = docs.len();
     let rf_ref = &config.required_fields;
 
-    // Build title → doc IDs map for duplicate title detection
+    // Filter out archived documents — they're indexed for search/links but not checked
+    let active_docs: Vec<_> = docs
+        .iter()
+        .filter(|d| !is_archived(&d.file_path))
+        .collect();
+    let total_active = active_docs.len();
+    if total_active < total {
+        progress.log(&format!(
+            "Skipping {} archived document(s)",
+            total - total_active
+        ));
+    }
+
+    // Build title → doc IDs map for duplicate title detection (all docs, not just active)
     let mut title_map: HashMap<String, Vec<(&str, &str)>> = HashMap::new();
     for doc in docs {
         title_map
@@ -68,9 +81,9 @@ pub async fn check_all_documents(
     let title_map_ref = &title_map;
 
     let mut all_results = Vec::new();
-    for chunk_start in (0..total).step_by(config.concurrency) {
-        let chunk_end = (chunk_start + config.concurrency).min(total);
-        let chunk = &docs[chunk_start..chunk_end];
+    for chunk_start in (0..total_active).step_by(config.concurrency) {
+        let chunk_end = (chunk_start + config.concurrency).min(total_active);
+        let chunk = &active_docs[chunk_start..chunk_end];
 
         let futs: Vec<_> = chunk
             .iter()
@@ -78,7 +91,7 @@ pub async fn check_all_documents(
             .map(|(ci, doc)| {
                 let idx = chunk_start + ci;
                 async move {
-                    progress.report(idx + 1, total, &format!("Linting {}", doc.title));
+                    progress.report(idx + 1, total_active, &format!("Checking {}", doc.title));
 
                     let mut questions = generate_temporal_questions(&doc.content);
                     questions.extend(generate_conflict_questions(&doc.content));
@@ -132,11 +145,11 @@ pub async fn check_all_documents(
                         questions.iter().map(|q| q.description.clone()).collect();
 
                     // Prune stale unanswered questions from the document
-                    let had_cross_check = llm.is_some();
+                    let had_deep_check = llm.is_some();
                     let pruned_content = prune_stale_questions(
                         &doc.content,
                         &valid_descriptions,
-                        had_cross_check,
+                        had_deep_check,
                     );
                     let pruned_count = existing_unanswered
                         - parse_review_queue(&pruned_content)
@@ -217,6 +230,12 @@ pub async fn check_all_documents(
     }
 
     Ok(results)
+}
+
+/// Check if a document path is in an archive folder.
+/// Matches paths containing `/archive/` or starting with `archive/`.
+fn is_archived(file_path: &str) -> bool {
+    file_path.contains("/archive/") || file_path.starts_with("archive/")
 }
 
 #[cfg(test)]
@@ -325,5 +344,15 @@ mod tests {
         assert!(!results.is_empty());
         assert_eq!(results[0].pruned_questions, 1, "Should prune the stale temporal question");
         assert_eq!(results[0].existing_unanswered, 0, "No unanswered after pruning");
+    }
+
+    #[test]
+    fn test_is_archived() {
+        assert!(is_archived("archive/old-doc.md"));
+        assert!(is_archived("people/archive/jane.md"));
+        assert!(is_archived("companies/xsolis/archive/old-project.md"));
+        assert!(!is_archived("people/jane.md"));
+        assert!(!is_archived("companies/xsolis/xsolis.md"));
+        assert!(!is_archived("archival-notes/doc.md")); // not "archive/"
     }
 }

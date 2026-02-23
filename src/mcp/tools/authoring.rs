@@ -11,7 +11,8 @@ pub fn get_authoring_guide() -> Value {
             "type": "Derived from parent folder: people/ → 'person', companies/ → 'company'. Entity folder convention: if filename matches parent folder (e.g., companies/xsolis/xsolis.md), type comes from grandparent ('company')",
             "id_header": "<!-- factbase:XXXXXX --> is auto-injected on first scan — never create or modify this",
             "length": "Minimum 100 chars, optimal 500-5000 chars",
-            "filenames": "lowercase-with-hyphens.md (e.g., alice-chen.md, platform-api.md)"
+            "filenames": "lowercase-with-hyphens.md (e.g., alice-chen.md, platform-api.md)",
+            "archive": "Documents in archive/ folders are indexed and searchable but skipped by quality checks. Use for stable/historical documents: people/archive/former-employee.md, projects/archive/completed.md"
         },
         "temporal_tags": {
             "description": "Every dynamic fact MUST have a temporal tag. Static facts (historical events, awards) do not need one. Education degrees are static but graduation years should use @t[=YYYY].",

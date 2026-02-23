@@ -103,7 +103,7 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
 
 fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
     let ctx = perspective_context(perspective);
-    let total = 4;
+    let total = 3;
     match step {
         1 => serde_json::json!({
             "workflow": "update",
@@ -115,21 +115,14 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": "Run a deep quality check across all documents. Call check_repository — this performs local checks (temporal tags, sources, stale facts) AND cross-document validation using the LLM, so it may take several minutes on large knowledge bases. Tell the user this step takes a while before calling it.",
+            "instruction": "Run quality checks across all documents. Before calling check_repository, ask the user if they want a deep check (cross-document validation). Deep check finds conflicts between documents but takes significantly longer — minutes vs seconds on large knowledge bases.\n\nIf the user says yes (or specified deep_check when starting the workflow), call check_repository with deep_check=true. Otherwise call it without deep_check for a fast local-only check.\n\nAfter check_repository completes, also call get_duplicate_entries to find entity entries duplicated across documents.",
             "next_tool": "check_repository",
             "suggested_args": {"dry_run": false},
-            "when_done": "Call workflow with workflow='update', step=3"
+            "when_done": "Call get_duplicate_entries, then call workflow with workflow='update', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
-            "instruction": "Check for duplicate entity entries across documents. Call get_duplicate_entries to find entities mentioned in multiple places that may be stale or redundant.",
-            "next_tool": "get_duplicate_entries",
-            "when_done": "Call workflow with workflow='update', step=4"
-        }),
-        4 => serde_json::json!({
-            "workflow": "update",
-            "step": 4, "total_steps": total,
             "instruction": "Summarize what you found: how many documents were scanned, how many quality issues were identified, how many duplicates were detected. If there are issues to fix, suggest the user run the 'resolve' workflow next.",
             "complete": true
         }),

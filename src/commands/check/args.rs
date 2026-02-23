@@ -12,7 +12,7 @@ EXAMPLES:
     factbase check
     factbase check --repo myrepo
     factbase check --dry-run
-    factbase check --cross-check
+    factbase check --deep-check
     factbase check --check-duplicates --min-similarity 0.9
     factbase check --max-age 365 --fix
 "
@@ -100,9 +100,14 @@ pub struct CheckArgs {
     pub incremental: bool,
     #[arg(
         long,
-        help = "Cross-check facts against other documents for conflicts and staleness (requires inference backend)"
+        help = "Deep check: cross-validate facts against other documents for conflicts and staleness (requires inference backend, significantly slower)"
     )]
-    pub cross_check: bool,
+    pub deep_check: bool,
+    #[arg(
+        long,
+        help = "Run checks without generating review questions (basic validation only)"
+    )]
+    pub no_questions: bool,
     #[arg(
         long,
         help = "Timeout in seconds for API calls (default: from config, max: 300)"

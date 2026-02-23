@@ -27,11 +27,18 @@ pub async fn check_repository(
         .get("dry_run")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let deep_check = args
+        .get("deep_check")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     // If doc_id is provided, check just that one document (replaces generate_questions)
     if doc_id.is_some() {
         return super::generate_questions(db, embedding, llm, args).await;
     }
+
+    // Only pass LLM for cross-validation when deep_check is requested
+    let effective_llm: Option<&dyn LlmProvider> = if deep_check { llm } else { None };
 
     let check_concurrency = crate::Config::load(None)
         .map(|c| c.processor.check_concurrency)
@@ -79,7 +86,7 @@ pub async fn check_repository(
         concurrency: check_concurrency,
     };
 
-    let results = check_all_documents(&docs, db, embedding, llm, &config, progress).await?;
+    let results = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();

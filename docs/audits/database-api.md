@@ -38,7 +38,7 @@
 #### Repository Metadata (1)
 | Method | Line | Description | Used By |
 |--------|------|-------------|---------|
-| `update_last_lint_at()` | 489 | Update lint timestamp | lint.rs |
+| `update_last_check_at()` | 489 | Update check timestamp | check.rs |
 
 #### Document Operations (9)
 | Method | Line | Description | Used By |
@@ -48,7 +48,7 @@
 | `needs_update()` | 588 | Check if doc needs re-indexing | scanner.rs |
 | `get_document()` | 623 | Get document by ID | show.rs, links.rs, mcp/tools |
 | `get_document_by_path()` | 643 | Get document by file path | scanner.rs |
-| `get_documents_for_repo()` | 664 | Get all docs in repository | lint.rs, export.rs |
+| `get_documents_for_repo()` | 664 | Get all docs in repository | check.rs, export.rs |
 | `mark_deleted()` | 735 | Mark document as deleted | scanner.rs |
 | `hard_delete_document()` | 756 | Permanent delete | scan.rs |
 
@@ -64,8 +64,8 @@
 | `get_stats()` | 788 | Basic repo stats | stats.rs, status.rs |
 | `get_detailed_stats()` | 807 | Extended stats | status.rs |
 | `invalidate_stats_cache()` | 820 | Clear cached stats | scanner.rs |
-| `compute_temporal_stats()` | 1073 | Temporal tag statistics | status.rs, lint.rs |
-| `compute_source_stats()` | 1153 | Source reference statistics | status.rs, lint.rs |
+| `compute_temporal_stats()` | 1073 | Temporal tag statistics | status.rs, check.rs |
+| `compute_source_stats()` | 1153 | Source reference statistics | status.rs, check.rs |
 | `health_check()` | 2138 | Verify DB connectivity | doctor.rs |
 
 #### Embedding Operations (6)
@@ -81,7 +81,7 @@
 #### Search Operations (6)
 | Method | Line | Description | Used By |
 |--------|------|-------------|---------|
-| `find_similar_documents()` | 1414 | Find duplicates by similarity | lint.rs |
+| `find_similar_documents()` | 1414 | Find duplicates by similarity | check.rs |
 | `search_semantic()` | 1482 | Vector similarity search | search.rs, mcp/tools/search.rs |
 | `search_by_title()` | 1505 | Title-based search | search.rs |
 | `search_content()` | 1583 | Full-text grep search | grep.rs, mcp/tools/search.rs |
@@ -121,7 +121,7 @@
 │ - delete_*  │           │ - grep.rs    │             │ - document.rs│
 │ - links     │           │ - init.rs    │             │ - mod.rs     │
 │ - embed     │           │ - links.rs   │             │              │
-│             │           │ - lint.rs    │             │              │
+│             │           │ - check.rs    │             │              │
 │             │           │ - mod.rs     │             │              │
 │             │           │ - repo.rs    │             │              │
 │             │           │ - review.rs  │             │              │

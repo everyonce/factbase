@@ -194,13 +194,14 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Lints all documents, or a single document if doc_id is provided.",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
-                        "doc_id": { "type": "string", "description": "Check a single document (optional, lints all if omitted)" },
-                        "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" }
+                        "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
+                        "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
+                        "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, significantly slower)" }
                     }
                 }
             },

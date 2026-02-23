@@ -206,7 +206,7 @@ Place these in an `author-knowledge/` folder (type: "author-knowledge"). Other d
 
 ## Definitions Files
 
-When you encounter undefined acronyms, jargon, or domain-specific terms (flagged as `@q[ambiguous]` by lint), create or update a definitions file rather than only answering the question inline. This builds a reusable glossary for the knowledge base.
+When you encounter undefined acronyms, jargon, or domain-specific terms (flagged as `@q[ambiguous]` by check), create or update a definitions file rather than only answering the question inline. This builds a reusable glossary for the knowledge base.
 
 ### Structure
 
@@ -405,10 +405,29 @@ knowledge-base/
 ├── meetings/            → type: "meeting"
 ├── definitions/         → type: "definition" (glossaries, acronyms)
 ├── author-knowledge/    → type: "author-knowledge" (human-only facts)
-└── notes/               → type: "note"
+├── notes/               → type: "note"
+└── archive/             → skipped by check (see below)
 ```
 
 Folder names are automatically singularized: `people/` → "person"
+
+### Archiving Documents
+
+Documents in `archive/` folders are **indexed and searchable** but **skipped by quality checks**. Use this for stable documents that don't need ongoing review — former employees, completed projects, historical records.
+
+Archive folders work at any level:
+```
+archive/old-notes.md                     ← archived
+people/archive/former-employee.md        ← archived
+companies/xsolis/archive/old-project.md  ← archived
+```
+
+Archived documents:
+- ✅ Scanned and indexed (appear in search results)
+- ✅ Part of the link graph (references to/from them work)
+- ✅ Visible in `list_entities`
+- ❌ Skipped by `factbase check` and `check_repository` (no review questions generated)
+- ❌ Not included in cross-document validation
 
 ---
 

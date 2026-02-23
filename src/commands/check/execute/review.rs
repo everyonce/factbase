@@ -21,6 +21,7 @@ pub fn generate_review_questions(
     repo: &Repository,
     db: &Database,
     opts: &ReviewQuestionOptions,
+    title_duplicates: &[(&str, &str)], // (id, title) of docs with same title
 ) -> anyhow::Result<(usize, Option<ExportedDocQuestions>)> {
     // Check if file should be skipped based on ignore_patterns
     let should_skip = repo
@@ -92,9 +93,20 @@ pub fn generate_review_questions(
     let (mut questions_to_add, pruned_content, pruned_count) =
         generate_and_prune(&doc.content, doc.doc_type.as_deref(), &review_config);
 
-    // Add duplicate questions
+    // Add duplicate questions (embedding-based)
     if let Ok(similar_docs) = db.find_similar_documents(&doc.id, opts.min_similarity) {
         add_duplicate_questions(&mut questions_to_add, &similar_docs);
+    }
+
+    // Add title-based duplicate questions
+    for (other_id, other_title) in title_duplicates {
+        if *other_id != doc.id {
+            questions_to_add.push(factbase::ReviewQuestion::new(
+                factbase::QuestionType::Duplicate,
+                None,
+                format!("Same title as \"{other_title}\" [{other_id}] — are these the same entity?"),
+            ));
+        }
     }
 
     if questions_to_add.is_empty() && pruned_count == 0 {

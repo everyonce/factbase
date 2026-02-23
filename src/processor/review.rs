@@ -121,12 +121,12 @@ fn extract_line_ref(description: &str) -> Option<usize> {
 /// Any unanswered question whose description is NOT in `valid_descriptions`
 /// is removed. Answered and deferred questions are always kept.
 ///
-/// If `had_cross_check` is false, questions starting with "Cross-check" are
+/// If `had_deep_check` is false, questions starting with "Cross-check" are
 /// preserved regardless (they require LLM to regenerate).
 pub fn prune_stale_questions(
     content: &str,
     valid_descriptions: &HashSet<String>,
-    had_cross_check: bool,
+    had_deep_check: bool,
 ) -> String {
     let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
         return content.to_string();
@@ -149,7 +149,7 @@ pub fn prune_stale_questions(
 
             // Keep answered questions, cross-check questions (when no LLM), and valid questions
             if is_answered
-                || (!had_cross_check && is_cross_check)
+                || (!had_deep_check && is_cross_check)
                 || question_description_matches(trimmed, valid_descriptions)
             {
                 result_lines.push(line);

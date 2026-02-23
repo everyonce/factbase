@@ -95,7 +95,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
     };
 
     // Initialize embedding + LLM providers when --cross-check is used
-    let cross_check_providers = if args.cross_check {
+    let deep_check_providers = if args.deep_check {
         let embedding = setup_embedding_with_timeout(&config, args.timeout).await;
         let llm = setup_llm_with_timeout(&config, args.timeout).await;
         info!("Cross-check providers initialized");
@@ -144,7 +144,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
 
     for repo in &repos_to_check {
         if is_table_format {
-            println!("Linting repository: {} ({})", repo.name, repo.id);
+            println!("Checking repository: {} ({})", repo.name, repo.id);
         }
 
         let all_docs = db.list_documents(None, Some(&repo.id), None, 10000)?;
@@ -158,6 +158,22 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         } else {
             all_docs
         };
+
+        // Filter out archived documents (indexed for search/links, but not checked)
+        let archived_count = docs.iter().filter(|d| d.file_path.contains("/archive/") || d.file_path.starts_with("archive/")).count();
+        let docs: Vec<_> = docs.into_iter().filter(|d| !d.file_path.contains("/archive/") && !d.file_path.starts_with("archive/")).collect();
+        if archived_count > 0 && is_table_format && !args.quiet {
+            println!("  Skipping {archived_count} archived document(s)");
+        }
+
+        // Build title → doc IDs map for duplicate title detection
+        let mut title_map: std::collections::HashMap<String, Vec<(&str, &str)>> = std::collections::HashMap::new();
+        for doc in &docs {
+            title_map
+                .entry(doc.title.to_lowercase())
+                .or_default()
+                .push((&doc.id, &doc.title));
+        }
 
         if is_table_format && effective_since.is_some() {
             println!(
@@ -352,8 +368,8 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     errors += src_errors;
                 }
 
-                // Generate review questions
-                {
+                // Generate review questions (unless --no-questions)
+                if !args.no_questions {
                     // Count existing questions and reviewed markers for summary
                     let existing = factbase::parse_review_queue(&doc.content).unwrap_or_default();
                     review_already_in_queue += existing.len();
@@ -366,8 +382,11 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                         is_table_format,
                         max_age: args.max_age,
                     };
+                    let title_dupes = title_map
+                        .get(&doc.title.to_lowercase())
+                        .map_or(&[][..], |v| v.as_slice());
                     let (new_count, exported) =
-                        execute::generate_review_questions(doc, repo, &db, &opts)?;
+                        execute::generate_review_questions(doc, repo, &db, &opts, title_dupes)?;
                     review_new_total += new_count;
                     if let Some(e) = exported {
                         exported_questions.push(e);
@@ -376,8 +395,9 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
             }
         } // End of batch loop
 
-        // Cross-document fact validation pass (--cross-check)
-        if let Some((ref embedding, ref llm)) = cross_check_providers {
+        // Cross-document fact validation pass (--deep-check, skipped with --no-questions)
+        if !args.no_questions {
+        if let Some((ref embedding, ref llm)) = deep_check_providers {
             progress.phase("Cross-document validation");
             if is_table_format && !args.quiet {
                 println!("  Cross-checking {} documents...", docs.len());
@@ -450,6 +470,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                 }
             }
         }
+        } // end --no-questions guard
 
         if is_table_format && !type_counts.is_empty() {
             println!("  Type distribution:");

@@ -42,7 +42,7 @@
 - `factbase stats` - Quick aggregate stats
 - `factbase doctor` - Check inference backend connectivity
 - `factbase check [--repo <id>]` - Quality checks
-- `factbase check --cross-check` - Cross-document fact validation (requires inference backend)
+- `factbase check --deep-check` - Cross-document fact validation (requires inference backend)
 - `factbase grep <pattern>` - Content search (like grep)
 - `factbase export <repo> <output>` - Backup documents
 - `factbase import <repo> <input>` - Restore documents
@@ -169,9 +169,9 @@ The codebase has been modularized into focused submodules. See `.kiro/steering/m
 | `llm/` | ollama, link_detector, review, test_helpers |
 | `scanner/` | options, progress, orchestration/ |
 | `organize/` | types, extract, links, orphans, review, audit, snapshot, verify, detect/, plan/, execute/ |
-| `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, fields, facts, cross_validate, lint |
+| `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, fields, facts, cross_validate, check |
 | `answer_processor/` | mod, interpret, apply, temporal, inbox, apply_all |
-| `commands/` | scan/, search/, grep/, status/, lint/, review/, export/, import/, doctor/, organize/, mcp |
+| `commands/` | scan/, search/, grep/, status/, check/, review/, export/, import/, doctor/, organize/, mcp |
 | `mcp/` | protocol, stdio, server, tools/ |
 | `mcp/tools/` | schema, helpers, search, entity, document, organize, review/ |
 | `web/` (feature-gated) | server, assets, api/ |
