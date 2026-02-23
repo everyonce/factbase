@@ -515,6 +515,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scan_emits_embedding_and_indexing_progress() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        // Create enough files to trigger progress
+        for i in 0..5 {
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("# Doc {i}\nContent {i}."),
+            )
+            .unwrap();
+        }
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
+
+        let args = serde_json::json!({});
+        scan_repository(&db, &embedding, None, &args, &reporter)
+            .await
+            .unwrap();
+
+        let mut messages = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            messages.push(msg);
+        }
+
+        // Should have numeric progress reports (progress/total fields)
+        let has_numeric_progress = messages
+            .iter()
+            .any(|m| m.get("progress").is_some() && m.get("total").is_some());
+        assert!(
+            has_numeric_progress,
+            "expected numeric progress reports (progress/total) from scan phases, got: {messages:?}"
+        );
+
+        // Should have embedding progress
+        let has_embedding = messages.iter().any(|m| {
+            m.get("message")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("embedded"))
+        });
+        assert!(
+            has_embedding,
+            "expected embedding progress messages, got: {messages:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn test_scan_repository_includes_coverage_in_response() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -563,5 +619,55 @@ mod tests {
         let summary = result["summary"].as_str().unwrap();
         assert!(summary.contains("temporal coverage:"));
         assert!(summary.contains("source coverage:"));
+    }
+
+    #[tokio::test]
+    async fn test_check_repository_emits_progress() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        for i in 0..3 {
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("<!-- factbase:{i:06x} -->\n# Doc {i}\n\n- Fact without date\n"),
+            )
+            .unwrap();
+        }
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        // Scan first so documents exist in DB
+        let embedding = MockEmbedding::new(1024);
+        let silent = crate::ProgressReporter::Silent;
+        scan_repository(&db, &embedding, None, &serde_json::json!({}), &silent)
+            .await
+            .unwrap();
+
+        // Now check with progress tracking
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
+
+        let args = serde_json::json!({});
+        check_repository(&db, &embedding, None, &args, &reporter)
+            .await
+            .unwrap();
+
+        let mut messages = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            messages.push(msg);
+        }
+
+        // Should have phase and numeric progress
+        let has_phase = messages.iter().any(|m| m.get("phase").is_some());
+        let has_progress = messages
+            .iter()
+            .any(|m| m.get("progress").is_some() && m.get("total").is_some());
+        assert!(has_phase, "expected phase messages from check, got: {messages:?}");
+        assert!(has_progress, "expected numeric progress from check, got: {messages:?}");
     }
 }

@@ -6,7 +6,6 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Initialize a new repository",
     after_help = "\
 EXAMPLES:

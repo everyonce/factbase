@@ -4,7 +4,8 @@
 //! including temporal coverage and source attribution.
 
 use crate::models::FactStats;
-use crate::patterns::{FACT_LINE_REGEX, TEMPORAL_TAG_FULL_REGEX};
+use crate::patterns::FACT_LINE_REGEX;
+use super::temporal::line_has_temporal_tag;
 
 /// Count total facts (list items) in document content.
 /// A fact is defined as a list item starting with `-`, `*`, or a number followed by `.` or `)`.
@@ -19,7 +20,7 @@ pub fn count_facts(content: &str) -> usize {
 pub fn count_facts_with_temporal_tags(content: &str) -> usize {
     content
         .lines()
-        .filter(|line| FACT_LINE_REGEX.is_match(line) && TEMPORAL_TAG_FULL_REGEX.is_match(line))
+        .filter(|line| FACT_LINE_REGEX.is_match(line) && line_has_temporal_tag(line))
         .count()
 }
 
@@ -155,5 +156,30 @@ mod tests {
         let stats = calculate_fact_stats(content);
         assert_eq!(stats.total_facts, 4);
         assert_eq!(stats.facts_with_tags, 1, "Only valid @t[2024] should count");
+    }
+
+    #[test]
+    fn test_bce_tags_counted_as_temporal() {
+        let content = "- Battle @t[=331 BCE]\n- Reign @t[336 BCE..323 BCE]\n- No tag";
+        let stats = calculate_fact_stats(content);
+        assert_eq!(stats.total_facts, 3);
+        assert_eq!(stats.facts_with_tags, 2);
+    }
+
+    #[test]
+    fn test_bce_negative_year_tags_counted() {
+        let content = "- Event @t[=-0490]\n- Range @t[-490..-479]\n- No tag";
+        let stats = calculate_fact_stats(content);
+        assert_eq!(stats.total_facts, 3);
+        assert_eq!(stats.facts_with_tags, 2);
+    }
+
+    #[test]
+    fn test_mixed_bce_and_ce_tags_counted() {
+        let content =
+            "- Ancient @t[=331 BCE]\n- Modern @t[=2024]\n- Unknown @t[?]\n- Bare fact";
+        let stats = calculate_fact_stats(content);
+        assert_eq!(stats.total_facts, 4);
+        assert_eq!(stats.facts_with_tags, 3);
     }
 }

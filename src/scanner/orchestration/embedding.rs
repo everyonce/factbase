@@ -7,6 +7,7 @@ use std::mem;
 use std::time::Instant;
 
 use crate::{chunk_document, Database, Document, EmbeddingProvider};
+use crate::progress::ProgressReporter;
 
 use super::types::{ChunkInfo, PendingDoc};
 use crate::scanner::progress::OptionalProgress;
@@ -23,6 +24,7 @@ pub struct EmbeddingPhaseInput<'a> {
     pub show_progress: bool,
     pub verbose: bool,
     pub collect_stats: bool,
+    pub progress: &'a ProgressReporter,
 }
 
 /// Output from the embedding phase
@@ -54,8 +56,9 @@ pub async fn run_embedding_phase(
     }
 
     // Chunk documents and collect all chunks for batch embedding
-    let mut all_chunks: Vec<ChunkInfo> = Vec::with_capacity(input.pending.len() * 2);
-    let mut chunks_per_doc: Vec<usize> = vec![0; input.pending.len()];
+    let total_docs = input.pending.len();
+    let mut all_chunks: Vec<ChunkInfo> = Vec::with_capacity(total_docs * 2);
+    let mut chunks_per_doc: Vec<usize> = vec![0; total_docs];
 
     for (doc_idx, doc) in input.pending.iter().enumerate() {
         let chunks = chunk_document(&doc.content, input.chunk_size, input.chunk_overlap);
@@ -157,6 +160,11 @@ pub async fn run_embedding_phase(
                 db_write_ms += db_start.elapsed().as_millis() as u64;
 
                 saved_doc_ids.insert(chunk_info.doc_idx, id);
+                input.progress.report(
+                    saved_doc_ids.len(),
+                    total_docs,
+                    "documents embedded",
+                );
                 saved_doc_ids
                     .get(&chunk_info.doc_idx)
                     .expect("just inserted")

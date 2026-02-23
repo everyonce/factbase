@@ -98,12 +98,13 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         return Err(FactbaseError::parse("answer cannot be empty"));
     }
 
-    // Detect defer prefix
-    let (defer, answer_text) = if let Some(rest) = answer
+    // Detect defer prefix (case-insensitive)
+    let lower_answer = answer.to_lowercase();
+    let (defer, answer_text) = if let Some(rest_pos) = lower_answer
         .strip_prefix("defer:")
-        .or_else(|| answer.strip_prefix("DEFER:"))
+        .map(|_| "defer:".len())
     {
-        let note = rest.trim();
+        let note = answer[rest_pos..].trim();
         if note.is_empty() {
             return Err(FactbaseError::parse(
                 "defer: requires a note explaining why (e.g., 'defer: no matching records in Salesforce')",
@@ -354,13 +355,9 @@ pub fn bulk_answer_questions(
             let (before_marker, after_marker) = content.split_at(marker_pos);
             let queue_content = &after_marker[marker.len()..];
 
-            let defer = answer_text.starts_with("defer:") || answer_text.starts_with("DEFER:");
+            let defer = answer_text.to_lowercase().starts_with("defer:");
             let text = if defer {
-                answer_text
-                    .strip_prefix("defer:")
-                    .or_else(|| answer_text.strip_prefix("DEFER:"))
-                    .unwrap_or(answer_text)
-                    .trim()
+                answer_text["defer:".len()..].trim()
             } else {
                 answer_text
             };

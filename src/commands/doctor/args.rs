@@ -4,7 +4,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Check inference backend connectivity and models",
     after_help = "\
 EXAMPLES:

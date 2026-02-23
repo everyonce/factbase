@@ -29,6 +29,7 @@
 //! ## Functions
 //! - Core: [`DocumentProcessor::new`], [`content_hash`], etc.
 //! - Temporal: [`parse_temporal_tags`], [`validate_temporal_tags`], [`detect_temporal_conflicts`]
+//! - Temporal: [`line_has_temporal_tag`], [`normalize_temporal_tags`]
 //! - Sources: [`parse_source_references`], [`parse_source_definitions`]
 //! - Review: [`parse_review_queue`], [`append_review_questions`]
 //! - Chunks: [`chunk_document`]
@@ -53,6 +54,7 @@ pub use temporal::{
     find_malformed_tags, overlaps_point, overlaps_range, parse_temporal_tags, validate_date,
     validate_temporal_tags, TemporalConflict, TemporalSequenceError, TemporalValidationError,
 };
+pub(crate) use temporal::{line_has_temporal_tag, normalize_temporal_tags};
 
 // Re-export source types and functions
 pub use sources::{

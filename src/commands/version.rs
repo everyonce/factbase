@@ -3,7 +3,6 @@ use factbase::{format_json, Config};
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Show version and configuration info",
     after_help = "\
 EXAMPLES:

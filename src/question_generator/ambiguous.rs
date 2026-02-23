@@ -193,6 +193,20 @@ fn detect_ambiguous_relationship(text: &str) -> Option<&'static str> {
     None
 }
 
+/// Check if a word is a valid Roman numeral (I through MMMCMXCIX / 1-3999).
+///
+/// Standard ordinal suffixes like II, III, IV, VIII, XIV etc. appear in proper
+/// nouns across many domains (monarchs, popes, ship classes, sequels) and should
+/// not be flagged as undefined acronyms.
+fn is_roman_numeral(s: &str) -> bool {
+    use std::sync::LazyLock;
+    static RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"^M{0,3}(CM|CD|D?C{0,3})(XC|XL|L?X{0,3})(IX|IV|V?I{0,3})$")
+            .expect("roman numeral regex should compile")
+    });
+    !s.is_empty() && RE.is_match(s)
+}
+
 /// Detect undefined acronyms/abbreviations that could have multiple meanings.
 ///
 /// Flags uppercase sequences (2-5 chars) that aren't preceded by their expansion
@@ -257,6 +271,10 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
             continue;
         }
         if KNOWN.iter().any(|k| k.eq_ignore_ascii_case(trimmed)) {
+            continue;
+        }
+        // Skip valid Roman numerals (ordinal suffixes in proper nouns)
+        if is_roman_numeral(trimmed) {
             continue;
         }
         // Skip terms defined in the repo's definitions files
@@ -418,5 +436,33 @@ mod tests {
         // Undefined term still flagged
         let q3 = generate_ambiguous_questions_with_type("# Company\n\n- Uses ABCD for analytics", None, &defined);
         assert_eq!(q3.iter().filter(|q| q.description.contains("ABCD")).count(), 1);
+    }
+
+    #[test]
+    fn test_is_roman_numeral() {
+        // Valid Roman numerals
+        for s in ["II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII", "XIV", "XV", "XX", "XXI", "XL", "CD", "CM", "MM", "MCMX"] {
+            assert!(is_roman_numeral(s), "{s} should be a Roman numeral");
+        }
+        // Not Roman numerals
+        for s in ["", "A", "AB", "CEO", "AWS", "XYZQ", "IC", "VIP", "DM"] {
+            assert!(!is_roman_numeral(s), "{s} should NOT be a Roman numeral");
+        }
+    }
+
+    #[test]
+    fn test_roman_numerals_not_flagged_as_acronyms() {
+        // Roman numeral ordinals in proper nouns should not generate questions
+        for name in ["Sargon II", "Tiglath-Pileser III", "Nebuchadnezzar II", "Henry VIII", "Louis XIV", "Elizabeth II", "Pope Pius XII"] {
+            let content = format!("# Entity\n\n- {name} ruled the empire");
+            let q = generate_ambiguous_questions(&content);
+            assert!(
+                q.iter().all(|q| !q.description.contains("what does")),
+                "Roman numeral in '{name}' should not be flagged"
+            );
+        }
+        // Non-Roman-numeral acronyms still flagged
+        let q = generate_ambiguous_questions("# Entity\n\n- Joined XYZQ in 2020");
+        assert!(q.iter().any(|q| q.description.contains("XYZQ")));
     }
 }

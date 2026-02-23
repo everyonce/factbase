@@ -139,14 +139,18 @@ pub async fn check_all_documents(
                     let disk_content = std::fs::read_to_string(&doc.file_path).ok();
                     let content = disk_content.as_deref().unwrap_or(&doc.content);
 
-                    let mut questions = generate_temporal_questions(content);
-                    questions.extend(generate_conflict_questions(content));
-                    questions.extend(generate_duplicate_entry_questions(content));
-                    questions.extend(generate_missing_questions(content));
-                    questions.extend(generate_source_quality_questions(content));
-                    questions.extend(generate_ambiguous_questions_with_type(content, doc.doc_type.as_deref(), defined_terms_ref));
-                    questions.extend(generate_stale_questions(content, config.stale_days));
-                    questions.extend(generate_corruption_questions(content));
+                    // Strip the review queue section so generators never
+                    // treat review entries as document facts.
+                    let body = crate::patterns::content_body(content);
+
+                    let mut questions = generate_temporal_questions(body);
+                    questions.extend(generate_conflict_questions(body));
+                    questions.extend(generate_duplicate_entry_questions(body));
+                    questions.extend(generate_missing_questions(body));
+                    questions.extend(generate_source_quality_questions(body));
+                    questions.extend(generate_ambiguous_questions_with_type(body, doc.doc_type.as_deref(), defined_terms_ref));
+                    questions.extend(generate_stale_questions(body, config.stale_days));
+                    questions.extend(generate_corruption_questions(body));
 
                     // Check for duplicate titles
                     if let Some(dupes) = title_map_ref.get(&doc.title.to_lowercase()) {
@@ -238,8 +242,8 @@ pub async fn check_all_documents(
                         .count();
 
                     // Count questions suppressed by reviewed markers.
-                    // Strip reviewed markers from content and re-generate to measure the delta.
-                    let stripped = crate::patterns::strip_reviewed_markers(content);
+                    // Strip reviewed markers from body and re-generate to measure the delta.
+                    let stripped = crate::patterns::strip_reviewed_markers(body);
                     let mut unrestricted = generate_temporal_questions(&stripped);
                     unrestricted.extend(generate_conflict_questions(&stripped));
                     unrestricted.extend(generate_missing_questions(&stripped));
@@ -270,7 +274,7 @@ pub async fn check_all_documents(
     if llm.is_some() {
         progress.phase("Cross-document validation");
         for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
-            if i % 25 == 0 && total_active >= 50 {
+            if i % 5 == 0 {
                 progress.report(i + 1, total_active, "Cross-validating");
             }
             if let Some(llm) = llm {

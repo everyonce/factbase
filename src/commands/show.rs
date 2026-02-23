@@ -5,7 +5,6 @@ use serde::Serialize;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Show document details",
     after_help = "\
 EXAMPLES:

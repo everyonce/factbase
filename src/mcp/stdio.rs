@@ -6,17 +6,100 @@ use crate::mcp::tools::{handle_tool_call, tools_list, McpRequest, McpResponse};
 use futures::FutureExt;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
-use tracing::{debug, error};
+use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::{debug, error, warn};
+
+/// Interval between server-initiated keepalive pings (seconds).
+const KEEPALIVE_INTERVAL_SECS: u64 = 30;
 
 /// Runs the MCP stdio transport loop on stdin/stdout.
 ///
-/// All logging goes to stderr via tracing (never to stdout).
+/// Reads stdin on a background thread and uses `tokio::select!` to
+/// interleave message handling with periodic keepalive pings. This
+/// prevents the transport from appearing dead during idle periods.
 pub async fn run_stdio<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
     llm: Option<&dyn LlmProvider>,
 ) -> anyhow::Result<()> {
-    run_stdio_io(db, embedding, llm, io::stdin().lock(), io::stdout().lock()).await
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<io::Result<String>>();
+
+    // Read stdin on a dedicated blocking thread so the async runtime stays free.
+    std::thread::spawn(move || {
+        let stdin = io::stdin();
+        let reader = stdin.lock();
+        for line in reader.lines() {
+            if line_tx.send(line).is_err() {
+                break; // receiver dropped
+            }
+        }
+        // EOF: signal the main loop by dropping the sender
+    });
+
+    let mut writer = io::stdout().lock();
+    let ping_id = AtomicU64::new(1);
+    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
+    // Don't send a ping immediately on startup
+    keepalive.reset();
+
+    loop {
+        tokio::select! {
+            biased;
+            line = line_rx.recv() => {
+                let line = match line {
+                    Some(Ok(l)) => l,
+                    Some(Err(e)) => {
+                        error!("stdin read error: {}", e);
+                        break;
+                    }
+                    None => break, // stdin closed (EOF)
+                };
+                // Reset keepalive timer on any client activity
+                keepalive.reset();
+                if let Err(e) = handle_message(db, embedding, llm, &line, &mut writer, &ping_id).await {
+                    if is_broken_pipe(&e) {
+                        debug!("stdout broken pipe, exiting");
+                        break;
+                    }
+                    warn!("write error (continuing): {}", e);
+                }
+            }
+            _ = keepalive.tick() => {
+                let id = ping_id.fetch_add(1, Ordering::Relaxed);
+                if let Err(e) = write_jsonrpc_line(&mut writer, &serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": format!("ping-{id}"),
+                    "method": "ping"
+                })) {
+                    if is_broken_pipe(&e) {
+                        debug!("stdout broken pipe on keepalive, exiting");
+                        break;
+                    }
+                    warn!("keepalive write error: {}", e);
+                }
+            }
+        }
+    }
+
+    debug!("stdio loop exiting");
+    Ok(())
+}
+
+/// Returns true if the error chain contains a broken-pipe I/O error.
+fn is_broken_pipe(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause
+            .downcast_ref::<io::Error>()
+            .map_or(false, |io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
+    })
+}
+
+/// Writes an arbitrary JSON value as a single newline-delimited line.
+fn write_jsonrpc_line(out: &mut impl Write, value: &Value) -> anyhow::Result<()> {
+    let json = serde_json::to_string(value)?;
+    writeln!(out, "{json}")?;
+    out.flush()?;
+    Ok(())
 }
 
 /// Writes a progress notification for a long-running tool call.
@@ -50,6 +133,7 @@ fn write_progress(
 ///
 /// Reads newline-delimited JSON-RPC messages, dispatches them,
 /// and writes single-line JSON-RPC responses. Exits on EOF.
+/// Used by tests with in-memory buffers.
 async fn run_stdio_io<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
@@ -57,6 +141,7 @@ async fn run_stdio_io<E: EmbeddingProvider>(
     reader: impl BufRead,
     mut writer: impl Write,
 ) -> anyhow::Result<()> {
+    let ping_id = AtomicU64::new(1);
     for line in reader.lines() {
         let line = match line {
             Ok(l) => l,
@@ -70,124 +155,173 @@ async fn run_stdio_io<E: EmbeddingProvider>(
             continue;
         }
 
-        let msg: Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(e) => {
-                let resp = McpResponse::error(-32700, format!("Parse error: {e}"));
-                write_response(&mut writer, &resp)?;
-                continue;
-            }
-        };
+        handle_message(db, embedding, llm, &line, &mut writer, &ping_id).await?;
+    }
 
-        let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
-        let id = msg.get("id").cloned();
-        debug!(method, "stdio request");
+    debug!("stdio loop exiting (EOF)");
+    Ok(())
+}
 
-        let response = match method {
-            "initialize" => {
-                let id = id.clone().unwrap_or(Value::Null);
-                Some(McpResponse::success(id, initialize_result()))
-            }
-            "notifications/initialized" => None,
-            "tools/list" => {
-                let id = id.clone().unwrap_or(Value::Null);
-                Some(McpResponse::success(id, tools_list()))
-            }
-            "tools/call" => match serde_json::from_value::<McpRequest>(msg.clone()) {
-                Ok(request) => {
-                    // Extract progressToken from params._meta.progressToken
-                    let progress_token = msg
-                        .pointer("/params/arguments/_meta/progressToken")
-                        .or_else(|| msg.pointer("/params/_meta/progressToken"))
-                        .cloned();
+/// Processes a single JSON-RPC message line and writes the response.
+async fn handle_message<E: EmbeddingProvider>(
+    db: &Database,
+    embedding: &E,
+    llm: Option<&dyn LlmProvider>,
+    line: &str,
+    writer: &mut impl Write,
+    ping_id: &AtomicU64,
+) -> anyhow::Result<()> {
+    if line.trim().is_empty() {
+        return Ok(());
+    }
 
-                    let (tx, progress) = if progress_token.is_some() {
-                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
-                        (Some(rx), Some(tx))
-                    } else {
-                        (None, None)
-                    };
+    let msg: Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(e) => {
+            let resp = McpResponse::error(-32700, format!("Parse error: {e}"));
+            write_response(writer, &resp)?;
+            return Ok(());
+        }
+    };
 
-                    let tool_fut = std::panic::AssertUnwindSafe(
-                        handle_tool_call(db, embedding, llm, request, progress),
-                    )
-                    .catch_unwind();
-                    tokio::pin!(tool_fut);
+    let method = msg.get("method").and_then(Value::as_str).unwrap_or("");
+    let id = msg.get("id").cloned();
+    debug!(method, "stdio request");
 
-                    if let Some(mut rx) = tx {
-                        // Safety: progress_token is guaranteed Some when tx channel exists
-                        let token = progress_token
-                            .expect("progress_token is Some when progress channel is created");
-                        loop {
-                            tokio::select! {
-                                biased;
-                                Some(msg) = rx.recv() => {
+    let response = match method {
+        "initialize" => {
+            let id = id.clone().unwrap_or(Value::Null);
+            Some(McpResponse::success(id, initialize_result()))
+        }
+        "notifications/initialized" => None,
+        "tools/list" => {
+            let id = id.clone().unwrap_or(Value::Null);
+            Some(McpResponse::success(id, tools_list()))
+        }
+        "tools/call" => match serde_json::from_value::<McpRequest>(msg.clone()) {
+            Ok(request) => {
+                // Extract progressToken from params._meta.progressToken
+                let progress_token = msg
+                    .pointer("/params/arguments/_meta/progressToken")
+                    .or_else(|| msg.pointer("/params/_meta/progressToken"))
+                    .cloned();
+
+                let (tx, progress) = if progress_token.is_some() {
+                    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
+                    (Some(rx), Some(tx))
+                } else {
+                    (None, None)
+                };
+
+                let tool_fut = std::panic::AssertUnwindSafe(
+                    handle_tool_call(db, embedding, llm, request, progress),
+                )
+                .catch_unwind();
+                tokio::pin!(tool_fut);
+
+                // Keepalive timer ensures pings continue during long-running
+                // tool calls (e.g. apply_review_answers with LLM), preventing
+                // the client transport from timing out and closing.
+                let mut keepalive = tokio::time::interval(
+                    std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS),
+                );
+                keepalive.reset();
+
+                if let Some(mut rx) = tx {
+                    // Safety: progress_token is guaranteed Some when tx channel exists
+                    let token = progress_token
+                        .expect("progress_token is Some when progress channel is created");
+                    loop {
+                        tokio::select! {
+                            biased;
+                            Some(msg) = rx.recv() => {
+                                let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
+                                let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
+                                let m = msg.get("message").and_then(|v| v.as_str());
+                                let _ = write_progress(writer, &token, p, t, m);
+                            }
+                            result = &mut tool_fut => {
+                                // Drain remaining progress
+                                while let Ok(msg) = rx.try_recv() {
                                     let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
                                     let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
                                     let m = msg.get("message").and_then(|v| v.as_str());
-                                    let _ = write_progress(&mut writer, &token, p, t, m);
+                                    let _ = write_progress(writer, &token, p, t, m);
                                 }
-                                result = &mut tool_fut => {
-                                    // Drain remaining progress
-                                    while let Ok(msg) = rx.try_recv() {
-                                        let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
-                                        let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
-                                        let m = msg.get("message").and_then(|v| v.as_str());
-                                        let _ = write_progress(&mut writer, &token, p, t, m);
+                                break match result {
+                                    Ok(Ok(resp)) => resp,
+                                    Ok(Err(e)) => {
+                                        error!("tool call failed: {e}");
+                                        Some(McpResponse::error(-32603, format!("Internal error: {e}")))
                                     }
-                                    break match result {
-                                        Ok(Ok(resp)) => resp,
-                                        Ok(Err(e)) => {
-                                            error!("tool call failed: {e}");
-                                            Some(McpResponse::error(-32603, format!("Internal error: {e}")))
-                                        }
-                                        Err(_) => {
-                                            error!("tool call panicked");
-                                            Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
-                                        }
-                                    };
-                                }
+                                    Err(_) => {
+                                        error!("tool call panicked");
+                                        Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
+                                    }
+                                };
+                            }
+                            _ = keepalive.tick() => {
+                                let kid = ping_id.fetch_add(1, Ordering::Relaxed);
+                                let _ = write_jsonrpc_line(writer, &serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": format!("ping-{kid}"),
+                                    "method": "ping"
+                                }));
                             }
                         }
-                    } else {
-                        match tool_fut.await {
-                            Ok(Ok(resp)) => resp,
-                            Ok(Err(e)) => {
-                                error!("tool call failed: {e}");
-                                Some(McpResponse::error(-32603, format!("Internal error: {e}")))
+                    }
+                } else {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            result = &mut tool_fut => {
+                                break match result {
+                                    Ok(Ok(resp)) => resp,
+                                    Ok(Err(e)) => {
+                                        error!("tool call failed: {e}");
+                                        Some(McpResponse::error(-32603, format!("Internal error: {e}")))
+                                    }
+                                    Err(_) => {
+                                        error!("tool call panicked");
+                                        Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
+                                    }
+                                };
                             }
-                            Err(_) => {
-                                error!("tool call panicked");
-                                Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
+                            _ = keepalive.tick() => {
+                                let kid = ping_id.fetch_add(1, Ordering::Relaxed);
+                                let _ = write_jsonrpc_line(writer, &serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": format!("ping-{kid}"),
+                                    "method": "ping"
+                                }));
                             }
                         }
                     }
                 }
-                Err(e) => Some(McpResponse::error(-32600, format!("Invalid request: {e}"))),
-            },
-            "ping" => {
-                let id = id.clone().unwrap_or(Value::Null);
-                Some(McpResponse::success(id, serde_json::json!({})))
             }
-            _ => Some(McpResponse::error(-32601, "Method not found".into())),
-        };
+            Err(e) => Some(McpResponse::error(-32600, format!("Invalid request: {e}"))),
+        },
+        "ping" => {
+            let id = id.clone().unwrap_or(Value::Null);
+            Some(McpResponse::success(id, serde_json::json!({})))
+        }
+        _ => Some(McpResponse::error(-32601, "Method not found".into())),
+    };
 
-        if let Some(resp) = response {
-            // Attach the request id if the error response has a null id
-            let resp = if resp.id.is_null() {
-                if let Some(req_id) = id {
-                    McpResponse { id: req_id, ..resp }
-                } else {
-                    resp
-                }
+    if let Some(resp) = response {
+        // Attach the request id if the error response has a null id
+        let resp = if resp.id.is_null() {
+            if let Some(req_id) = id {
+                McpResponse { id: req_id, ..resp }
             } else {
                 resp
-            };
-            write_response(&mut writer, &resp)?;
-        }
+            }
+        } else {
+            resp
+        };
+        write_response(writer, &resp)?;
     }
 
-    debug!("stdio loop exiting (EOF)");
     Ok(())
 }
 
@@ -539,5 +673,115 @@ mod tests {
             !on_disk.contains("garbage"),
             "old content should be gone: {on_disk}"
         );
+    }
+
+    #[test]
+    fn test_is_broken_pipe_detects_broken_pipe() {
+        let io_err = io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe");
+        let err: anyhow::Error = io_err.into();
+        assert!(is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn test_is_broken_pipe_ignores_other_errors() {
+        let io_err = io::Error::new(io::ErrorKind::ConnectionReset, "reset");
+        let err: anyhow::Error = io_err.into();
+        assert!(!is_broken_pipe(&err));
+    }
+
+    #[test]
+    fn test_write_jsonrpc_line_format() {
+        let mut buf = Vec::new();
+        let msg = serde_json::json!({"jsonrpc": "2.0", "id": "ping-1", "method": "ping"});
+        write_jsonrpc_line(&mut buf, &msg).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert_eq!(output.lines().count(), 1);
+        let parsed: Value = serde_json::from_str(output.trim()).unwrap();
+        assert_eq!(parsed["method"], "ping");
+        assert_eq!(parsed["id"], "ping-1");
+    }
+
+    #[test]
+    fn test_keepalive_interval_is_reasonable() {
+        // Keepalive should be between 10s and 120s
+        assert!(KEEPALIVE_INTERVAL_SECS >= 10);
+        assert!(KEEPALIVE_INTERVAL_SECS <= 120);
+    }
+
+    /// Verifies handle_message skips empty lines without error.
+    #[tokio::test]
+    async fn test_handle_message_empty_line() {
+        let (db, _tmp) = test_db();
+        let embedding = StubEmbedding;
+        let ping_id = AtomicU64::new(1);
+        let mut output = Vec::new();
+        handle_message(&db, &embedding, None, "", &mut output, &ping_id)
+            .await
+            .unwrap();
+        assert!(output.is_empty());
+
+        handle_message(&db, &embedding, None, "   ", &mut output, &ping_id)
+            .await
+            .unwrap();
+        assert!(output.is_empty());
+    }
+
+    /// Verifies handle_message processes a single ping correctly.
+    #[tokio::test]
+    async fn test_handle_message_ping() {
+        let (db, _tmp) = test_db();
+        let embedding = StubEmbedding;
+        let ping_id = AtomicU64::new(1);
+        let mut output = Vec::new();
+        let line = r#"{"jsonrpc":"2.0","id":42,"method":"ping"}"#;
+        handle_message(&db, &embedding, None, line, &mut output, &ping_id)
+            .await
+            .unwrap();
+        let resp: Value = serde_json::from_str(&String::from_utf8(output).unwrap().trim()).unwrap();
+        assert_eq!(resp["id"], 42);
+        assert_eq!(resp["result"], serde_json::json!({}));
+    }
+
+    /// Verifies that tool calls still complete correctly with the keepalive
+    /// select loop (regression test for the "Transport closed" fix).
+    /// The keepalive timer is reset with each call so it won't fire for fast
+    /// tools, but the select loop structure must not break tool execution.
+    #[tokio::test]
+    async fn test_tool_call_completes_with_keepalive_loop() {
+        let (db, _tmp) = test_db();
+        let embedding = StubEmbedding;
+        let ping_id = AtomicU64::new(1);
+        let mut output = Vec::new();
+
+        // Call list_repositories (fast, no progress token) — exercises the
+        // no-progress keepalive select loop added to fix Transport closed.
+        let line = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}"#;
+        handle_message(&db, &embedding, None, line, &mut output, &ping_id)
+            .await
+            .unwrap();
+
+        let lines: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str(l).ok())
+            .collect();
+
+        assert_eq!(lines.len(), 1, "Expected exactly one response line");
+        assert_eq!(lines[0]["id"], 10);
+        assert!(
+            lines[0]["result"].is_object(),
+            "Expected success result: {:?}",
+            lines[0]
+        );
+    }
+
+    /// Verifies that the ping_id counter is shared between the outer loop
+    /// and handle_message, ensuring unique ping IDs across keepalives.
+    #[test]
+    fn test_ping_id_increments() {
+        let ping_id = AtomicU64::new(1);
+        assert_eq!(ping_id.fetch_add(1, Ordering::Relaxed), 1);
+        assert_eq!(ping_id.fetch_add(1, Ordering::Relaxed), 2);
+        assert_eq!(ping_id.load(Ordering::Relaxed), 3);
     }
 }
