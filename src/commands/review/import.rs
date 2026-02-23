@@ -56,11 +56,11 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
 
     // Read and parse the import file
     let content = fs::read_to_string(import_path)
-        .with_context(|| format!("Failed to read import file '{}'", import_path))?;
+        .with_context(|| format!("Failed to read import file '{import_path}'"))?;
 
     // Determine format from file extension
     let imported: Vec<ImportedDocQuestions> =
-        if import_path.ends_with(".yaml") || import_path.ends_with(".yml") {
+        if crate::commands::utils::ends_with_ext(import_path, ".yaml") || crate::commands::utils::ends_with_ext(import_path, ".yml") {
             serde_yaml_ng::from_str(&content).context("Failed to parse YAML")?
         } else {
             serde_json::from_str(&content).context("Failed to parse JSON")?
@@ -81,16 +81,13 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
 
     for doc_questions in &imported {
         // Look up document in database
-        let doc = match db.get_document(&doc_questions.doc_id)? {
-            Some(d) => d,
-            None => {
-                errors.push(format!(
-                    "Document '{}' not found in database",
-                    doc_questions.doc_id
-                ));
-                docs_skipped += 1;
-                continue;
-            }
+        let Some(doc) = db.get_document(&doc_questions.doc_id)? else {
+            errors.push(format!(
+                "Document '{}' not found in database",
+                doc_questions.doc_id
+            ));
+            docs_skipped += 1;
+            continue;
         };
 
         // Warn if imported metadata doesn't match database
@@ -120,16 +117,13 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
         // Find the repository for this document
         let repos = db.list_repositories()?;
         let repo = repos.iter().find(|r| r.id == doc.repo_id);
-        let repo = match repo {
-            Some(r) => r,
-            None => {
-                errors.push(format!(
-                    "Repository '{}' not found for document '{}'",
-                    doc.repo_id, doc_questions.doc_id
-                ));
-                docs_skipped += 1;
-                continue;
-            }
+        let Some(repo) = repo else {
+            errors.push(format!(
+                "Repository '{}' not found for document '{}'",
+                doc.repo_id, doc_questions.doc_id
+            ));
+            docs_skipped += 1;
+            continue;
         };
 
         // Filter by repo if specified
@@ -164,7 +158,7 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
                 for q in &questions {
                     let line_ref = q
                         .line_ref
-                        .map(|n| format!("Line {}: ", n))
+                        .map(|n| format!("Line {n}: "))
                         .unwrap_or_default();
                     println!("  @q[{:?}] {}{}", q.question_type, line_ref, q.description);
                 }
@@ -218,26 +212,20 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
     if !args.quiet {
         println!();
         if args.dry_run {
-            println!(
-                "Would import {} question(s) to {} document(s)",
-                total_imported, docs_updated
-            );
+            println!("Would import {total_imported} question(s) to {docs_updated} document(s)");
         } else {
-            println!(
-                "Imported {} question(s) to {} document(s)",
-                total_imported, docs_updated
-            );
+            println!("Imported {total_imported} question(s) to {docs_updated} document(s)");
         }
 
         if docs_skipped > 0 {
-            println!("Skipped {} document(s)", docs_skipped);
+            println!("Skipped {docs_skipped} document(s)");
         }
 
         if !errors.is_empty() {
             println!();
             println!("Errors:");
             for err in &errors {
-                println!("  {}", err);
+                println!("  {err}");
             }
         }
     }

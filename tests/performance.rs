@@ -5,14 +5,8 @@ mod common;
 
 use common::ollama_helpers::require_ollama;
 use factbase::{
-    config::Config,
-    database::Database,
-    embedding::OllamaEmbedding,
-    mcp::McpServer,
-    models::{Document, Repository},
-    processor::DocumentProcessor,
-    scanner::Scanner,
-    watcher::FileWatcher,
+    config::Config, database::Database, embedding::OllamaEmbedding, mcp::McpServer,
+    models::Document, processor::DocumentProcessor, scanner::Scanner, watcher::FileWatcher,
     EmbeddingProvider,
 };
 use reqwest::Client;
@@ -28,9 +22,9 @@ use tokio::sync::oneshot;
 async fn test_scan_1000_documents() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("large-repo");
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Generate 1000 test files
     println!("Generating 1000 test files...");
@@ -40,24 +34,15 @@ async fn test_scan_1000_documents() {
             "# Document {}\n\nThis is test document number {}. It contains content about topic {} for testing embedding generation and search functionality.\n\nKeywords: test, document, performance, benchmark",
             i, i, i % 50
         );
-        fs::write(repo_path.join(format!("docs/doc{:04}.md", i)), content)
-            .expect("operation should succeed");
+        fs::write(repo_path.join(format!("docs/doc{:04}.md", i)), content).unwrap();
     }
     println!("Generated 1000 files in {:?}", gen_start.elapsed());
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "large".into(),
-        name: "Large Repo".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("large", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -76,10 +61,8 @@ async fn test_scan_1000_documents() {
 
     let mut indexed = 0;
     for file in &files {
-        let content = fs::read_to_string(file).expect("operation should succeed");
-        let rel_path = file
-            .strip_prefix(&repo_path)
-            .expect("operation should succeed");
+        let content = fs::read_to_string(file).unwrap();
+        let rel_path = file.strip_prefix(&repo_path).unwrap();
         let id = processor
             .extract_id(&content)
             .unwrap_or_else(|| processor.generate_id());
@@ -98,13 +81,9 @@ async fn test_scan_1000_documents() {
             indexed_at: chrono::Utc::now(),
             is_deleted: false,
         };
-        db.upsert_document(&doc).expect("operation should succeed");
-        let emb = embedding
-            .generate(&content)
-            .await
-            .expect("operation should succeed");
-        db.upsert_embedding(&id, &emb)
-            .expect("operation should succeed");
+        db.upsert_document(&doc).unwrap();
+        let emb = embedding.generate(&content).await.unwrap();
+        db.upsert_embedding(&id, &emb).unwrap();
 
         indexed += 1;
         if indexed % 100 == 0 {
@@ -124,16 +103,13 @@ async fn test_scan_1000_documents() {
     let queries = ["document test", "topic performance", "benchmark keywords"];
     for query in queries {
         let search_start = Instant::now();
-        let query_emb = embedding
-            .generate(query)
-            .await
-            .expect("operation should succeed");
+        let query_emb = embedding.generate(query).await.unwrap();
         let emb_time = search_start.elapsed();
 
         let db_start = Instant::now();
         let results = db
             .search_semantic_with_query(&query_emb, 10, None, None, None)
-            .expect("operation should succeed");
+            .unwrap();
         let db_time = db_start.elapsed();
 
         println!(
@@ -159,9 +135,9 @@ async fn test_scan_1000_documents() {
 async fn test_concurrent_mcp_requests() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     // Create some test documents
     for i in 0..20 {
@@ -169,22 +145,14 @@ async fn test_concurrent_mcp_requests() {
             repo_path.join(format!("doc{}.md", i)),
             format!("# Document {}\nContent for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -197,10 +165,8 @@ async fn test_concurrent_mcp_requests() {
 
     // Index documents
     for file in scanner.find_markdown_files(&repo_path) {
-        let content = fs::read_to_string(&file).expect("operation should succeed");
-        let rel_path = file
-            .strip_prefix(&repo_path)
-            .expect("operation should succeed");
+        let content = fs::read_to_string(&file).unwrap();
+        let rel_path = file.strip_prefix(&repo_path).unwrap();
         let id = processor
             .extract_id(&content)
             .unwrap_or_else(|| processor.generate_id());
@@ -219,13 +185,9 @@ async fn test_concurrent_mcp_requests() {
             indexed_at: chrono::Utc::now(),
             is_deleted: false,
         };
-        db.upsert_document(&doc).expect("operation should succeed");
-        let emb = embedding
-            .generate(&content)
-            .await
-            .expect("operation should succeed");
-        db.upsert_embedding(&id, &emb)
-            .expect("operation should succeed");
+        db.upsert_document(&doc).unwrap();
+        let emb = embedding.generate(&content).await.unwrap();
+        db.upsert_embedding(&id, &emb).unwrap();
     }
 
     // Start MCP server
@@ -237,6 +199,7 @@ async fn test_concurrent_mcp_requests() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -251,7 +214,7 @@ async fn test_concurrent_mcp_requests() {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .expect("operation should succeed");
+        .unwrap();
 
     let start = Instant::now();
     let mut handles = Vec::new();
@@ -278,7 +241,7 @@ async fn test_concurrent_mcp_requests() {
     let mut latencies = Vec::new();
     let mut failures = 0;
     for handle in handles {
-        let (i, latency, success) = handle.await.expect("operation should succeed");
+        let (i, latency, success) = handle.await.unwrap();
         if success {
             latencies.push(latency);
         } else {
@@ -315,13 +278,11 @@ async fn test_concurrent_mcp_requests() {
 
 #[tokio::test]
 async fn test_rapid_file_changes() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let watch_path = temp_dir.path().to_path_buf();
 
-    let mut watcher = FileWatcher::new(500, &["*.swp".into()]).expect("operation should succeed");
-    watcher
-        .watch_directory(&watch_path)
-        .expect("operation should succeed");
+    let mut watcher = FileWatcher::new(500, &["*.swp".into()]).unwrap();
+    watcher.watch_directory(&watch_path).unwrap();
 
     // Small delay to ensure watcher is ready
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -331,7 +292,7 @@ async fn test_rapid_file_changes() {
     let start = Instant::now();
     for i in 0..50 {
         let file_path = watch_path.join(format!("file{}.md", i));
-        fs::write(&file_path, format!("# File {}\nContent", i)).expect("operation should succeed");
+        fs::write(&file_path, format!("# File {}\nContent", i)).unwrap();
     }
     println!("Created 50 files in {:?}", start.elapsed());
 
@@ -371,20 +332,12 @@ async fn test_rapid_file_changes() {
 async fn test_memory_stability_basic() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: temp_dir.path().to_path_buf(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", temp_dir.path().to_path_buf());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -397,10 +350,7 @@ async fn test_memory_stability_basic() {
     println!("Performing 100 embedding generations...");
     for i in 0..100 {
         let text = format!("Test content number {} for memory stability testing", i);
-        let _ = embedding
-            .generate(&text)
-            .await
-            .expect("operation should succeed");
+        let _ = embedding.generate(&text).await.unwrap();
         if i % 25 == 0 {
             println!("Completed {}/100 embeddings", i);
         }
@@ -421,13 +371,11 @@ async fn test_memory_stability_basic() {
             indexed_at: chrono::Utc::now(),
             is_deleted: false,
         };
-        db.upsert_document(&doc).expect("operation should succeed");
+        db.upsert_document(&doc).unwrap();
     }
 
     // Verify all documents accessible
-    let docs = db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("test").unwrap();
     assert_eq!(docs.len(), 100);
 
     println!("Memory stability test completed successfully");

@@ -32,7 +32,7 @@ pub fn print_repo_status_text(
     if !stats.by_type.is_empty() {
         println!("By type:");
         for (t, c) in &stats.by_type {
-            println!("  {}: {}", t, c);
+            println!("  {t}: {c}");
         }
     }
     if let Some(d) = detailed {
@@ -102,14 +102,14 @@ fn print_detailed_stats(
         println!();
         println!("Most linked documents:");
         for (id, title, count) in &d.most_linked {
-            println!("  {} ({}) - {} incoming links", title, id, count);
+            println!("  {title} ({id}) - {count} incoming links");
         }
     }
     if !d.orphans.is_empty() {
         println!();
         println!("Orphan documents (no links):");
         for (id, title) in &d.orphans {
-            println!("  {} ({})", title, id);
+            println!("  {title} ({id})");
         }
     }
 }
@@ -132,15 +132,15 @@ fn format_temporal_stats(ts: &TemporalStats) -> String {
         let types: Vec<_> = ts
             .by_type
             .iter()
-            .map(|(t, c)| format!("{}: {}", t, c))
+            .map(|(t, c)| format!("{t}: {c}"))
             .collect();
         lines.push(format!("  Tag types: {}", types.join(", ")));
     }
     if let Some(oldest) = &ts.oldest_date {
         if let Some(newest) = &ts.newest_date {
-            lines.push(format!("  Date range: {} to {}", oldest, newest));
+            lines.push(format!("  Date range: {oldest} to {newest}"));
         } else {
-            lines.push(format!("  Date range: {}", oldest));
+            lines.push(format!("  Date range: {oldest}"));
         }
     }
     lines.join("\n") + "\n"
@@ -170,15 +170,15 @@ fn format_source_stats(ss: &SourceStats) -> String {
         let types: Vec<_> = ss
             .by_type
             .iter()
-            .map(|(t, c)| format!("{}: {}", t, c))
+            .map(|(t, c)| format!("{t}: {c}"))
             .collect();
         lines.push(format!("  Source types: {}", types.join(", ")));
     }
     if let Some(oldest) = &ss.oldest_source_date {
         if let Some(newest) = &ss.newest_source_date {
-            lines.push(format!("  Date range: {} to {}", oldest, newest));
+            lines.push(format!("  Date range: {oldest} to {newest}"));
         } else {
-            lines.push(format!("  Date range: {}", oldest));
+            lines.push(format!("  Date range: {oldest}"));
         }
     }
     lines.join("\n") + "\n"

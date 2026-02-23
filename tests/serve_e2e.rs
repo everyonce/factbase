@@ -28,14 +28,11 @@ async fn test_serve_starts_both_components() {
     let server = TestServer::start_with_data().await;
 
     // Verify MCP server is accepting connections
-    let resp = server.health().await.expect("operation should succeed");
+    let resp = server.health().await.unwrap();
     assert_eq!(resp.status(), 200);
 
     // Verify we can query entities
-    let resp = server
-        .call_tool("list_entities", json!({}))
-        .await
-        .expect("operation should succeed");
+    let resp = server.call_tool("list_entities", json!({})).await.unwrap();
     assert!(resp["result"]["entities"].is_array());
 }
 
@@ -47,7 +44,7 @@ async fn test_initial_document_accessible() {
     let resp = server
         .call_tool("get_entity", json!({"id": "doc1"}))
         .await
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(resp["result"]["id"], "doc1");
     assert_eq!(resp["result"]["title"], "Alice Smith");
 }
@@ -59,7 +56,7 @@ async fn test_get_perspective_returns_repo_info() {
     let resp = server
         .call_tool("get_perspective", json!({}))
         .await
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(resp["result"]["id"], "test-repo");
     assert_eq!(resp["result"]["name"], "Test Repo");
     assert!(resp["result"]["perspective"].is_object());
@@ -74,35 +71,28 @@ async fn test_mcp_client_workflow() {
     let perspective = server
         .call_tool("get_perspective", json!({}))
         .await
-        .expect("operation should succeed");
+        .unwrap();
     assert!(perspective["result"]["id"].is_string());
 
     // Step 2: List available entities
-    let list = server
-        .call_tool("list_entities", json!({}))
-        .await
-        .expect("operation should succeed");
-    let entities = list["result"]["entities"]
-        .as_array()
-        .expect("operation should succeed");
+    let list = server.call_tool("list_entities", json!({})).await.unwrap();
+    let entities = list["result"]["entities"].as_array().unwrap();
     assert!(!entities.is_empty());
 
     // Step 3: Get details of first entity
-    let first_id = entities[0]["id"]
-        .as_str()
-        .expect("operation should succeed");
+    let first_id = entities[0]["id"].as_str().unwrap();
     let entity = server
         .call_tool("get_entity", json!({"id": first_id}))
         .await
-        .expect("operation should succeed");
+        .unwrap();
     assert!(entity["result"]["content"].is_string());
 }
 
 #[tokio::test]
 async fn test_graceful_shutdown() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -119,6 +109,7 @@ async fn test_graceful_shutdown() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -142,20 +133,18 @@ async fn test_graceful_shutdown() {
 
 #[tokio::test]
 async fn test_watcher_detects_new_file() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let watch_path = temp_dir.path().to_path_buf();
 
-    let mut watcher = FileWatcher::new(100, &["*.swp".into()]).expect("operation should succeed");
-    watcher
-        .watch_directory(&watch_path)
-        .expect("operation should succeed");
+    let mut watcher = FileWatcher::new(100, &["*.swp".into()]).unwrap();
+    watcher.watch_directory(&watch_path).unwrap();
 
     // Small delay to ensure watcher is ready
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     // Create a new markdown file
     let file_path = watch_path.join("test.md");
-    fs::write(&file_path, "# Test\nContent").expect("operation should succeed");
+    fs::write(&file_path, "# Test\nContent").unwrap();
 
     // Wait for debounce + some buffer for filesystem events
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -184,41 +173,33 @@ async fn test_new_user_workflow() {
     use factbase::{processor::DocumentProcessor, scanner::Scanner, EmbeddingProvider};
 
     // Start with fresh temp directory (simulating new user)
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("my-notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     // Create some markdown files
-    fs::create_dir_all(repo_path.join("people")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("people")).unwrap();
     fs::write(
         repo_path.join("people/alice.md"),
         "# Alice\nAlice is a software engineer.",
     )
-    .expect("operation should succeed");
+    .unwrap();
     fs::write(
         repo_path.join("notes.md"),
         "# Meeting Notes\nDiscussed project with Alice.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     // Initialize database (simulating `factbase init`)
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
     // Add repository (simulating `factbase repo add`)
-    let repo = Repository {
-        id: "notes".into(),
-        name: "My Notes".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("notes", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     // Verify repo added
-    let repos = db.list_repositories().expect("operation should succeed");
+    let repos = db.list_repositories().unwrap();
     assert_eq!(repos.len(), 1);
     assert_eq!(repos[0].id, "notes");
 
@@ -236,10 +217,8 @@ async fn test_new_user_workflow() {
     assert_eq!(files.len(), 2);
 
     for file in &files {
-        let content = fs::read_to_string(file).expect("operation should succeed");
-        let rel_path = file
-            .strip_prefix(&repo_path)
-            .expect("operation should succeed");
+        let content = fs::read_to_string(file).unwrap();
+        let rel_path = file.strip_prefix(&repo_path).unwrap();
         let id = processor
             .extract_id(&content)
             .unwrap_or_else(|| processor.generate_id());
@@ -258,29 +237,20 @@ async fn test_new_user_workflow() {
             indexed_at: Utc::now(),
             is_deleted: false,
         };
-        db.upsert_document(&doc).expect("operation should succeed");
-        let emb = embedding
-            .generate(&content)
-            .await
-            .expect("operation should succeed");
-        db.upsert_embedding(&id, &emb)
-            .expect("operation should succeed");
+        db.upsert_document(&doc).unwrap();
+        let emb = embedding.generate(&content).await.unwrap();
+        db.upsert_embedding(&id, &emb).unwrap();
     }
 
     // Verify documents indexed
-    let docs = db
-        .get_documents_for_repo("notes")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("notes").unwrap();
     assert_eq!(docs.len(), 2);
 
     // Search (simulating `factbase search`)
-    let query_emb = embedding
-        .generate("software engineer")
-        .await
-        .expect("operation should succeed");
+    let query_emb = embedding.generate("software engineer").await.unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, 10, None, None, None)
-        .expect("operation should succeed");
+        .unwrap();
     assert!(!results.is_empty());
     // Alice should be in results since she's a software engineer
     assert!(results.iter().any(|r| r.title.contains("Alice")));
@@ -294,24 +264,24 @@ async fn test_agent_workflow_via_mcp() {
     use factbase::EmbeddingProvider;
 
     // Setup test environment with indexed documents
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("kb");
-    fs::create_dir_all(repo_path.join("projects")).expect("operation should succeed");
-    fs::create_dir_all(repo_path.join("people")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("projects")).unwrap();
+    fs::create_dir_all(repo_path.join("people")).unwrap();
 
     fs::write(
         repo_path.join("projects/api.md"),
         "# API Project\nBuilding REST API with authentication.",
     )
-    .expect("operation should succeed");
+    .unwrap();
     fs::write(
         repo_path.join("people/bob.md"),
         "# Bob\nBob leads the API Project team.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
     let repo = Repository {
         id: "kb".into(),
@@ -328,7 +298,7 @@ async fn test_agent_workflow_via_mcp() {
         last_indexed_at: None,
         last_lint_at: None,
     };
-    db.add_repository(&repo).expect("operation should succeed");
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -343,10 +313,8 @@ async fn test_agent_workflow_via_mcp() {
     let processor = DocumentProcessor::new();
 
     for file in scanner.find_markdown_files(&repo_path) {
-        let content = fs::read_to_string(&file).expect("operation should succeed");
-        let rel_path = file
-            .strip_prefix(&repo_path)
-            .expect("operation should succeed");
+        let content = fs::read_to_string(&file).unwrap();
+        let rel_path = file.strip_prefix(&repo_path).unwrap();
         let id = processor
             .extract_id(&content)
             .unwrap_or_else(|| processor.generate_id());
@@ -365,13 +333,9 @@ async fn test_agent_workflow_via_mcp() {
             indexed_at: Utc::now(),
             is_deleted: false,
         };
-        db.upsert_document(&doc).expect("operation should succeed");
-        let emb = embedding
-            .generate(&content)
-            .await
-            .expect("operation should succeed");
-        db.upsert_embedding(&id, &emb)
-            .expect("operation should succeed");
+        db.upsert_document(&doc).unwrap();
+        let emb = embedding.generate(&content).await.unwrap();
+        db.upsert_embedding(&id, &emb).unwrap();
     }
 
     // Start MCP server
@@ -383,6 +347,7 @@ async fn test_agent_workflow_via_mcp() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -395,7 +360,7 @@ async fn test_agent_workflow_via_mcp() {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .expect("operation should succeed");
+        .unwrap();
 
     // Agent workflow:
     // 1. Get perspective to understand the knowledge base
@@ -409,10 +374,10 @@ async fn test_agent_workflow_via_mcp() {
         }))
         .send()
         .await
-        .expect("operation should succeed")
+        .unwrap()
         .json::<Value>()
         .await
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(resp["result"]["name"], "Knowledge Base");
 
     // 2. Search for relevant information
@@ -426,17 +391,15 @@ async fn test_agent_workflow_via_mcp() {
         }))
         .send()
         .await
-        .expect("operation should succeed")
+        .unwrap()
         .json::<Value>()
         .await
-        .expect("operation should succeed");
-    let results = resp["result"]["results"]
-        .as_array()
-        .expect("operation should succeed");
+        .unwrap();
+    let results = resp["result"]["results"].as_array().unwrap();
     assert!(!results.is_empty());
 
     // 3. Get entity details
-    let first_id = results[0]["id"].as_str().expect("operation should succeed");
+    let first_id = results[0]["id"].as_str().unwrap();
     let resp = client
         .post(format!("{}/mcp", base_url))
         .json(&json!({
@@ -447,10 +410,10 @@ async fn test_agent_workflow_via_mcp() {
         }))
         .send()
         .await
-        .expect("operation should succeed")
+        .unwrap()
         .json::<Value>()
         .await
-        .expect("operation should succeed");
+        .unwrap();
     assert!(resp["result"]["content"].is_string());
 
     // 4. List entities by type
@@ -464,17 +427,14 @@ async fn test_agent_workflow_via_mcp() {
         }))
         .send()
         .await
-        .expect("operation should succeed")
+        .unwrap()
         .json::<Value>()
         .await
-        .expect("operation should succeed");
-    let people = resp["result"]["entities"]
-        .as_array()
-        .expect("operation should succeed");
-    assert!(people.iter().any(|p| p["title"]
-        .as_str()
-        .expect("operation should succeed")
-        .contains("Bob")));
+        .unwrap();
+    let people = resp["result"]["entities"].as_array().unwrap();
+    assert!(people
+        .iter()
+        .any(|p| p["title"].as_str().unwrap().contains("Bob")));
 
     // Cleanup
     shutdown_tx.send(()).ok();
@@ -490,14 +450,11 @@ async fn test_repeated_operations_stability() {
     // Perform repeated operations
     for i in 0..10 {
         // Health check
-        let resp = server.health().await.expect("operation should succeed");
+        let resp = server.health().await.unwrap();
         assert_eq!(resp.status(), 200, "Health check failed at iteration {}", i);
 
         // List entities
-        let resp = server
-            .call_tool("list_entities", json!({}))
-            .await
-            .expect("operation should succeed");
+        let resp = server.call_tool("list_entities", json!({})).await.unwrap();
         assert!(
             resp["result"]["entities"].is_array(),
             "List entities failed at iteration {}",
@@ -508,7 +465,7 @@ async fn test_repeated_operations_stability() {
         let resp = server
             .call_tool("get_perspective", json!({}))
             .await
-            .expect("operation should succeed");
+            .unwrap();
         assert!(
             resp["result"]["id"].is_string(),
             "Get perspective failed at iteration {}",

@@ -229,7 +229,7 @@ fn print_result(result: &SplitResultOutput) {
     println!("  Orphans:           {}", result.orphan_count);
 
     if let Some(ref path) = result.orphan_path {
-        println!("\nOrphans written to: {}", path);
+        println!("\nOrphans written to: {path}");
     }
 }
 

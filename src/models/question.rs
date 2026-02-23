@@ -49,7 +49,7 @@ impl std::str::FromStr for QuestionType {
             "ambiguous" => Ok(QuestionType::Ambiguous),
             "stale" => Ok(QuestionType::Stale),
             "duplicate" => Ok(QuestionType::Duplicate),
-            _ => Err(format!("Unknown question type: {}", s)),
+            _ => Err(format!("Unknown question type: {s}")),
         }
     }
 }

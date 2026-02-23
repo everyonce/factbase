@@ -9,6 +9,11 @@ use getrandom::getrandom;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+/// Compute SHA256 hash of content, returning lowercase hex string.
+pub fn content_hash(content: &str) -> String {
+    hex::encode(Sha256::digest(content.as_bytes()))
+}
+
 /// Core document processor for ID extraction/injection, title, type, and hash operations.
 pub struct DocumentProcessor;
 
@@ -16,11 +21,6 @@ impl DocumentProcessor {
     /// Create a new DocumentProcessor.
     pub fn new() -> Self {
         Self
-    }
-
-    /// Compute SHA256 hash of content, returning lowercase hex string.
-    pub fn compute_hash(content: &str) -> String {
-        hex::encode(Sha256::digest(content.as_bytes()))
     }
 
     /// Extract the factbase ID from document content, if present.
@@ -59,7 +59,7 @@ impl DocumentProcessor {
 
     /// Inject the factbase ID header comment at the top of content.
     pub fn inject_header(&self, content: &str, id: &str) -> String {
-        format!("<!-- factbase:{} -->\n{}", id, content)
+        format!("<!-- factbase:{id} -->\n{content}")
     }
 
     /// Extract the document title from the first H1 heading, falling back to filename.
@@ -215,22 +215,22 @@ mod tests {
 
     #[test]
     fn test_compute_hash() {
-        let hash = DocumentProcessor::compute_hash("test content");
+        let hash = content_hash("test content");
         assert_eq!(hash.len(), 64); // SHA256 = 32 bytes = 64 hex chars
         assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
     fn test_compute_hash_deterministic() {
-        let hash1 = DocumentProcessor::compute_hash("same content");
-        let hash2 = DocumentProcessor::compute_hash("same content");
+        let hash1 = content_hash("same content");
+        let hash2 = content_hash("same content");
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_compute_hash_different_content() {
-        let hash1 = DocumentProcessor::compute_hash("content a");
-        let hash2 = DocumentProcessor::compute_hash("content b");
+        let hash1 = content_hash("content a");
+        let hash2 = content_hash("content b");
         assert_ne!(hash1, hash2);
     }
 

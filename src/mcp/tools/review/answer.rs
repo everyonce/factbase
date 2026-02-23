@@ -3,30 +3,24 @@
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::mcp::tools::{get_str_arg_required, get_u64_arg_required};
-use crate::processor::parse_review_queue;
+use crate::processor::{content_hash, parse_review_queue};
+use crate::ProgressReporter;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
 
-/// Modifies a question in the review queue content to mark it as answered.
+/// Modifies a question in the review queue content.
 ///
-/// Takes the content after the review marker and modifies the question at the
-/// given index by changing `[ ]` to `[x]` and adding the answer as a blockquote.
-///
-/// # Arguments
-/// * `queue_content` - Content after `<!-- factbase:review -->` marker
-/// * `question_index` - Zero-based index of the question to answer
-/// * `answer` - Answer text to add as blockquote
-///
-/// # Returns
-/// Modified queue content with the question marked as answered, or None if
-/// the question was not found.
+/// When `defer` is false, marks the question as answered by changing `[ ]` to `[x]`.
+/// When `defer` is true, keeps `[ ]` unchecked but writes the note as a blockquote,
+/// so the question remains unanswered but carries context for the next reviewer.
 fn modify_question_in_queue(
     queue_content: &str,
     question_index: usize,
     answer: &str,
+    defer: bool,
 ) -> Option<String> {
     let mut new_queue_lines: Vec<String> = Vec::new();
     let mut current_question_idx = 0;
@@ -37,9 +31,13 @@ fn modify_question_in_queue(
         // Check if this is a question line
         if line.trim().starts_with("- [") && line.contains("`@q[") {
             if current_question_idx == question_index {
-                // This is the question to answer - change [ ] to [x]
-                let modified_line = line.replacen("- [ ]", "- [x]", 1);
-                new_queue_lines.push(modified_line);
+                if defer {
+                    // Keep checkbox unchecked for deferred questions
+                    new_queue_lines.push(line.to_string());
+                } else {
+                    let modified_line = line.replacen("- [ ]", "- [x]", 1);
+                    new_queue_lines.push(modified_line);
+                }
 
                 // Skip any existing empty lines or blockquotes after this question
                 while let Some(&next) = lines.peek() {
@@ -51,8 +49,8 @@ fn modify_question_in_queue(
                     }
                 }
 
-                // Add the answer as a blockquote
-                new_queue_lines.push(format!("> {}", answer));
+                // Add the answer/note as a blockquote
+                new_queue_lines.push(format!("> {answer}"));
                 modified = true;
             } else {
                 new_queue_lines.push(line.to_string());
@@ -99,12 +97,28 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         return Err(FactbaseError::parse("answer cannot be empty"));
     }
 
+    // Detect defer prefix
+    let (defer, answer_text) = if let Some(rest) = answer
+        .strip_prefix("defer:")
+        .or_else(|| answer.strip_prefix("DEFER:"))
+    {
+        let note = rest.trim();
+        if note.is_empty() {
+            return Err(FactbaseError::parse(
+                "defer: requires a note explaining why (e.g., 'defer: no matching records in Salesforce')",
+            ));
+        }
+        (true, note)
+    } else {
+        (false, answer)
+    };
+
     // Get the document
     let doc = db.require_document(&doc_id)?;
 
     // Parse the review queue
     let questions = parse_review_queue(&doc.content).ok_or_else(|| {
-        FactbaseError::not_found(format!("No Review Queue found in document: {}", doc_id))
+        FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
     })?;
 
     // Validate question index
@@ -118,11 +132,10 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     let question = &questions[question_index];
 
-    // Check if already answered
+    // Check if already answered (deferred questions can be re-answered or re-deferred)
     if question.answered {
         return Err(FactbaseError::parse(format!(
-            "Question {} is already answered",
-            question_index
+            "Question {question_index} is already answered"
         )));
     }
 
@@ -137,11 +150,12 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let queue_content = &after_marker[marker.len()..];
 
     // Modify the question using the extracted helper
-    let modified_queue = modify_question_in_queue(queue_content, question_index, answer)
-        .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
+    let modified_queue =
+        modify_question_in_queue(queue_content, question_index, answer_text, defer)
+            .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
     // Reconstruct the document
-    let new_content = format!("{}{}{}", before_marker, marker, modified_queue);
+    let new_content = format!("{before_marker}{marker}{modified_queue}");
 
     // Write to file
     let file_path = PathBuf::from(&doc.file_path);
@@ -153,17 +167,34 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
     fs::write(&file_path, &new_content)?;
 
+    // Sync updated content back to database so subsequent queries see the answer
+    let new_hash = content_hash(&new_content);
+    db.update_document_content(&doc_id, &new_content, &new_hash)?;
+
     let type_str = question.question_type.as_str();
 
-    Ok(serde_json::json!({
-        "success": true,
-        "doc_id": doc_id,
-        "question_index": question_index,
-        "question_type": type_str,
-        "description": question.description,
-        "answer": answer,
-        "message": "Question answered. Run `factbase review --apply` to process."
-    }))
+    if defer {
+        Ok(serde_json::json!({
+            "success": true,
+            "doc_id": doc_id,
+            "question_index": question_index,
+            "question_type": type_str,
+            "description": question.description,
+            "deferred": true,
+            "note": answer_text,
+            "message": "Question deferred with note. It remains in the review queue for future resolution."
+        }))
+    } else {
+        Ok(serde_json::json!({
+            "success": true,
+            "doc_id": doc_id,
+            "question_index": question_index,
+            "question_type": type_str,
+            "description": question.description,
+            "answer": answer_text,
+            "message": "Question answered. Call apply_review_answers to apply changes to the document."
+        }))
+    }
 }
 
 /// Answers multiple review questions atomically.
@@ -183,8 +214,12 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 /// # Errors
 /// - `FactbaseError::NotFound` if any document doesn't exist
 /// - `FactbaseError::Parse` if any question already answered or index invalid
-#[instrument(name = "mcp_bulk_answer_questions", skip(db, args))]
-pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+#[instrument(name = "mcp_bulk_answer_questions", skip(db, args, progress))]
+pub fn bulk_answer_questions(
+    db: &Database,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
     let answers = args
         .get("answers")
         .and_then(|v| v.as_array())
@@ -209,23 +244,22 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
         let doc_id = answer
             .get("doc_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| FactbaseError::parse(format!("answers[{}]: doc_id is required", i)))?;
+            .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: doc_id is required")))?;
         let question_index = answer
             .get("question_index")
-            .and_then(|v| v.as_u64())
+            .and_then(Value::as_u64)
             .ok_or_else(|| {
-                FactbaseError::parse(format!("answers[{}]: question_index is required", i))
+                FactbaseError::parse(format!("answers[{i}]: question_index is required"))
             })? as usize;
         let answer_text = answer
             .get("answer")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| FactbaseError::parse(format!("answers[{}]: answer is required", i)))?
+            .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: answer is required")))?
             .trim();
 
         if answer_text.is_empty() {
             return Err(FactbaseError::parse(format!(
-                "answers[{}]: answer cannot be empty",
-                i
+                "answers[{i}]: answer cannot be empty"
             )));
         }
 
@@ -247,7 +281,7 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
         let doc = db.require_document(doc_id)?;
 
         let questions = parse_review_queue(&doc.content).ok_or_else(|| {
-            FactbaseError::not_found(format!("No Review Queue found in document: {}", doc_id))
+            FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
         })?;
 
         // Validate all question indices
@@ -262,8 +296,7 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
             }
             if questions[*question_index].answered {
                 return Err(FactbaseError::parse(format!(
-                    "Question {} in document {} is already answered",
-                    question_index, doc_id
+                    "Question {question_index} in document {doc_id} is already answered"
                 )));
             }
         }
@@ -273,10 +306,21 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
 
     // Now apply all changes
     let mut results: Vec<Value> = Vec::new();
-    for (doc_id, answers_for_doc) in &by_doc {
+    let total_docs = by_doc.len();
+    for (i, (doc_id, answers_for_doc)) in by_doc.iter().enumerate() {
         let (doc, _) = doc_contents
             .get(doc_id)
             .ok_or_else(|| FactbaseError::internal(format!("missing doc_contents for {doc_id}")))?;
+
+        progress.report(
+            i + 1,
+            total_docs,
+            &format!(
+                "Answering {} question(s) in {}",
+                answers_for_doc.len(),
+                doc_id
+            ),
+        );
 
         // Sort answers by question index in descending order to avoid index shifting
         let mut sorted_answers = answers_for_doc.clone();
@@ -293,12 +337,23 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
             let (before_marker, after_marker) = content.split_at(marker_pos);
             let queue_content = &after_marker[marker.len()..];
 
+            let defer = answer_text.starts_with("defer:") || answer_text.starts_with("DEFER:");
+            let text = if defer {
+                answer_text
+                    .strip_prefix("defer:")
+                    .or_else(|| answer_text.strip_prefix("DEFER:"))
+                    .unwrap_or(answer_text)
+                    .trim()
+            } else {
+                answer_text
+            };
+
             // Use the extracted helper
             let modified_queue =
-                modify_question_in_queue(queue_content, *question_index, answer_text)
+                modify_question_in_queue(queue_content, *question_index, text, defer)
                     .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
-            content = format!("{}{}{}", before_marker, marker, modified_queue);
+            content = format!("{before_marker}{marker}{modified_queue}");
         }
 
         // Write to file
@@ -310,6 +365,10 @@ pub fn bulk_answer_questions(db: &Database, args: &Value) -> Result<Value, Factb
             )));
         }
         fs::write(&file_path, &content)?;
+
+        // Sync updated content back to database
+        let new_hash = content_hash(&content);
+        db.update_document_content(doc_id, &content, &new_hash)?;
 
         for (question_index, answer_text) in answers_for_doc {
             results.push(serde_json::json!({
@@ -342,7 +401,7 @@ mod tests {
 - [ ] `@q[missing]` Line 8: What is the source?
   > 
 "#;
-        let result = modify_question_in_queue(queue_content, 0, "Started 2020, ended 2022");
+        let result = modify_question_in_queue(queue_content, 0, "Started 2020, ended 2022", false);
         assert!(result.is_some());
         let modified = result.unwrap();
         assert!(modified.contains("- [x] `@q[temporal]`"));
@@ -361,7 +420,7 @@ mod tests {
 - [ ] `@q[missing]` Line 8: What is the source?
   > 
 "#;
-        let result = modify_question_in_queue(queue_content, 1, "LinkedIn profile");
+        let result = modify_question_in_queue(queue_content, 1, "LinkedIn profile", false);
         assert!(result.is_some());
         let modified = result.unwrap();
         // First question should remain unchanged
@@ -380,7 +439,7 @@ mod tests {
   > old placeholder text
 - [ ] `@q[missing]` Line 8: What is the source?
 "#;
-        let result = modify_question_in_queue(queue_content, 0, "New answer");
+        let result = modify_question_in_queue(queue_content, 0, "New answer", false);
         assert!(result.is_some());
         let modified = result.unwrap();
         assert!(modified.contains("> New answer"));
@@ -394,7 +453,7 @@ mod tests {
 
 - [ ] `@q[temporal]` Line 5: When was this role held?
 "#;
-        let result = modify_question_in_queue(queue_content, 5, "Answer");
+        let result = modify_question_in_queue(queue_content, 5, "Answer", false);
         assert!(result.is_none());
     }
 
@@ -405,7 +464,7 @@ mod tests {
 
 No questions here.
 "#;
-        let result = modify_question_in_queue(queue_content, 0, "Answer");
+        let result = modify_question_in_queue(queue_content, 0, "Answer", false);
         assert!(result.is_none());
     }
 
@@ -421,11 +480,31 @@ Some intro text here.
 
 Some footer text.
 "#;
-        let result = modify_question_in_queue(queue_content, 0, "2020-2022");
+        let result = modify_question_in_queue(queue_content, 0, "2020-2022", false);
         assert!(result.is_some());
         let modified = result.unwrap();
         assert!(modified.contains("Some intro text here."));
         assert!(modified.contains("Some footer text."));
         assert!(modified.contains("> 2020-2022"));
+    }
+
+    #[test]
+    fn test_modify_question_defer_keeps_unchecked() {
+        let queue_content = r#"
+## Review Queue
+
+- [ ] `@q[conflict]` Line 42: CEO conflict
+  > 
+"#;
+        let result = modify_question_in_queue(
+            queue_content,
+            0,
+            "Searched Salesforce, no matching records",
+            true,
+        );
+        assert!(result.is_some());
+        let modified = result.unwrap();
+        assert!(modified.contains("- [ ] `@q[conflict]`"));
+        assert!(modified.contains("> Searched Salesforce, no matching records"));
     }
 }

@@ -1687,3 +1687,396 @@ Key Features:
 **Phase 45 fully complete (6 tasks, all subtasks done).** Cross-document fact validation is now available via CLI (`lint --cross-check`), MCP (`generate_questions`), and workflow guidance (`resolve` workflow).
 
 ---
+
+---
+
+## Phase 46: Cross-Document Entity Deduplication (6/6 Complete - 2026-02-14)
+
+**Goal:** Detect the same entity appearing as an entry within multiple parent documents (e.g., Jane Smith listed under both `companies/acme.md` and `companies/globex.md`), determine staleness, and surface via organize analyze, MCP, and web UI.
+
+| Task | Subtasks | Summary |
+|------|----------|---------|
+| 1. Entity entry extraction | 3/3 | `extract_entity_entries()` in `organize/detect/entity_entries.rs` — H3+ headings under H2 sections and bold-name list items |
+| 2. Cross-document entry matching | 3/3 | `detect_duplicate_entries()` with exact name grouping + 0.85 cosine similarity fuzzy matching; cross-ref/self-mention/authoritative doc filtering |
+| 3. Staleness determination | 2/2 | `assess_staleness()` using temporal tags or `file_modified_at` fallback; `generate_stale_entry_questions()` for `@q[stale]` questions |
+| 4. Integration into organize | 3/3 | Wired into `organize analyze` CLI, `get_duplicate_entries` MCP tool (21st tool), web UI types |
+| 5. Post-phase cleanup | 3/3 | Clippy fixes, `normalize_type` consolidation, `EmbeddingProvider` test mock consolidation |
+| 6. Further deduplication | 3/3 | Single `BoxFuture` type alias in `lib.rs`, shared `MockLlm` in `llm::test_helpers`, dead_code audit |
+
+**Key Learnings:**
+- Two extraction patterns for entity entries: H3+ headings under H2 sections, and bold-name list items (`- **Name** - desc`)
+- Entries without child facts are filtered out (headings alone don't constitute an entity entry)
+- Consecutive bold-name list items: must finalize previous entry before starting new one
+- Two-phase matching: (1) exact normalized name grouping, (2) embedding-based fuzzy matching with 0.85 cosine similarity threshold
+- Only flag entries appearing in 2+ different documents — same-document entries are not duplicates
+- Three-layer filtering: cross-reference-only entries (`[[id]]`), self-mentions (entry name = doc title), authoritative doc exclusion
+- Staleness: Ongoing tags → today, LastSeen/PointInTime → start_date, Range/Historical → end_date; fall back to `file_modified_at`
+- `generate_stale_entry_questions()` returns `HashMap<doc_id, Vec<ReviewQuestion>>` for downstream injection
+- Single `pub(crate) type BoxFuture` in `lib.rs` replaces 6 identical definitions across modules
+- Shared `MockLlm` in `llm::test_helpers` with `MockLlm::new(response)` and `MockLlm::default()` for `"[]"`
+- `upsert_document()` hardcodes `is_deleted = FALSE` — to test deleted docs, upsert first then `mark_deleted()`
+
+**Test counts at Phase 46 completion:** 950 lib + 348 binary (without web); 1011 lib + 355 binary (with all features). Zero clippy warnings.
+
+---
+
+## Phase 47 Task 1: ProgressReporter Abstraction (3/3 Complete - 2026-02-14)
+
+**Summary:** Created `src/progress.rs` with unified `ProgressReporter` enum for both MCP and CLI code paths. Three variants: `Cli { quiet }`, `Mcp { sender }`, `Silent`. Three methods: `report()`, `phase()`, `log()`. Moved `ProgressSender` type alias from `mcp/tools/mod.rs` to `progress.rs`. 5 unit tests.
+
+**Key considerations:**
+- CLI variant writes to stderr (not stdout) to preserve JSON output
+- MCP variant sends JSON via channel AND writes to stderr
+- `ProgressSender` re-exported from `mcp/tools/mod.rs` for backward compatibility
+- Also fixed pre-existing web build error: added missing `answer_question` and `bulk_answer_questions` re-exports
+
+**Test counts:** 1024 lib + 355 binary = 1379 (with all features). Zero new clippy warnings.
+
+## Phase 47 Task 2: Wire ProgressReporter into scan (4/4 Complete - 2026-02-14)
+
+**Summary:** Added `progress: &ProgressReporter` parameter to `full_scan()` and `scan_all_repositories()`. Replaced inline `info!("Progress: {}/{}", ...)` with `progress.report()` (fires every 25 files when ≥50 total). Added phase reporting before pass 1 ("Indexing documents") and pass 2 ("Detecting links"). Per-repo phase reporting in `scan_all_repositories()`.
+
+**Key considerations:**
+- MCP `scan_repository`: constructs `ProgressReporter::Mcp { sender: progress }`, removed `tokio::select!` 10-second timer loop — progress now comes directly from `full_scan`
+- CLI `cmd_scan`: constructs `ProgressReporter::Cli { quiet }` — existing `OptionalProgress` indicatif bar remains for TTY
+- `serve.rs` watcher: uses `ProgressReporter::Silent` (background rescans don't need user feedback)
+- All 22 integration test `full_scan` calls updated with `&factbase::ProgressReporter::Silent`
+- `#[allow(clippy::too_many_arguments)]` on `full_scan` (8 params)
+
+**Test counts:** 1024 lib + 355 binary = 1379 (with all features). Zero clippy warnings. Commit: 0dd6f41.
+
+### Task 3.1+3.2+3.3+3.4 — Wire ProgressReporter into lint (commit 4ebc5ad)
+- 3.1: Changed `lint_repository` MCP tool signature from `Option<ProgressSender>` to `&ProgressReporter`; replaced `eprintln!` + manual `tx.send()` with `progress.report()`
+- 3.2: Extracted core lint-all-documents loop into `src/question_generator/lint.rs` with `lint_all_documents()` function and `LintConfig` struct; MCP `lint_repository` now delegates to this shared function
+- 3.3: CLI `cmd_lint` constructs `ProgressReporter::Cli { quiet }` and uses `progress.report()` for per-document feedback in review mode; removed `indicatif` ProgressBar dependency from lint module entirely
+- 3.4: Added `progress.phase("Generating review questions")` before question generation pass; added `progress.phase("Cross-document validation")` before cross-check pass in CLI
+- MCP dispatch updated: constructs `ProgressReporter::Mcp { sender: progress }` before calling `lint_repository` (same pattern as `scan_repository`)
+- CLI cross-check loop also reports per-document progress via `progress.report()`
+- 1024 lib + 355 bin tests passing, zero new clippy warnings
+- No difficulties encountered
+
+### Task 4.1+4.2+4.3+4.4 — Wire ProgressReporter into review apply (commit 2627359)
+- 4.1: Created `src/answer_processor/apply_all.rs` with `apply_all_review_answers()` shared function and `ApplyConfig` struct (doc_id_filter, repo_filter, dry_run, since). Returns `ApplyResult` with per-document `ApplyDocResult` (doc_id, doc_title, questions_applied, status, error)
+- 4.2: MCP `apply_review_answers` now takes `&ProgressReporter` parameter; constructs `ApplyConfig` from args and delegates to shared function; MCP dispatch constructs `ProgressReporter::Mcp { sender: progress }`
+- 4.3: CLI `cmd_review_apply` calls shared function with `ProgressReporter::Cli { quiet }`; removed `AnsweredQuestion`, `collect_answered_questions()`, `process_document()` — all replaced by shared function. Kept inbox block processing and `--detailed` output as CLI-specific concerns. `--since` filter now uses `Document.file_modified_at` from DB instead of filesystem stat
+- 4.4: Shared function reports `progress.report(i+1, total, "Applying N question(s) to Title")` per document
+- Net reduction: 352 insertions, 486 deletions (134 lines removed)
+- 1024 lib + 355 bin tests passing, zero new clippy warnings
+- No difficulties encountered
+
+### Task 6.1+6.2 — Wire ProgressReporter into search_content/grep (commit def1111)
+- 6.1: Added `progress: &ProgressReporter` parameter to `Database::search_content()` in `database/search/content.rs`; calls `progress.log("Searching document content...")` before query execution
+- 6.2: MCP `search_content` tool now accepts `&ProgressReporter`; dispatch in `handle_tool_call` constructs `ProgressReporter::Mcp { sender: progress }` (replaced `blocking_tool!` macro with explicit dispatch). CLI `run_single_grep` constructs `ProgressReporter::Cli { quiet: args.quiet }`
+- Updated all test call sites: 9 lib tests + 5 integration tests pass `&ProgressReporter::Silent`
+- 1024 lib + 355 bin tests passing, zero new clippy warnings
+- No difficulties encountered
+
+### Task 6.3 — FTS5 virtual table for content search (commit befd620)
+- Created `document_content_fts` FTS5 virtual table with `doc_id UNINDEXED` + `content` columns
+- Schema version bumped to 7; migration creates table and backfills from existing documents via `backfill_fts5()`
+- Fresh databases create FTS5 table in `init_schema()` alongside other tables
+- `search_content()` now dispatches: `is_fts_compatible()` checks if pattern is simple (alphanumeric, spaces, hyphens, underscores, apostrophes); if yes, uses FTS5 MATCH via `search_content_fts5()`; falls back to LIKE via `search_content_like()` for regex/special chars or on FTS5 error
+- `fts5_phrase()` wraps pattern in double quotes for safe FTS5 phrase matching
+- FTS5 query joins `document_content_fts` with `documents` table, applies same type/repo/since filters with `d.` column prefix
+- `upsert_document()` and `update_document_content()` now keep FTS5 in sync (DELETE + INSERT on each write) — done here since "populate during scan" requires it; Task 6.4 reduced to delete-side sync only (`mark_deleted`, `hard_delete_document`)
+- 6 new tests: `is_fts_compatible` (10 assertions), `fts5_phrase`, FTS5 search path, LIKE fallback for regex, content update sync, FTS5 table existence
+- Key consideration: FTS5 does word-level matching (not substring like LIKE), so searching "OD" won't match "TODO" — this is an intentional trade-off for O(log N) vs O(N) performance
+- 1030 lib + 355 bin tests passing, zero new clippy warnings
+- No difficulties encountered
+
+### Task 7.1+7.2+7.3+7.4+7.5+7.6 — Wire ProgressReporter into organize analyze (commits 9b7eb3a, 017011c, 0e92812)
+- 7.1: Added `progress: &ProgressReporter` to `detect_merge_candidates()` — phase at start, per-doc `progress.report(i+1, total, &doc.title)` in the similarity loop
+- 7.2: Added `progress: &ProgressReporter` to `detect_split_candidates()` — phase at start, per-doc progress (this is the slowest due to per-section embedding generation)
+- 7.3: Added `progress: &ProgressReporter` to `detect_misplaced()` — phase at start, per-doc progress during centroid comparison
+- 7.4: Added `progress: &ProgressReporter` to `detect_duplicate_entries()` — phase at start, per-doc progress during extraction, `progress.log("Matching N entries...")` before fuzzy matching phase
+- 7.5: CLI `organize analyze` constructs `ProgressReporter::Cli { quiet: false }` and passes to all four detect functions. MCP `get_duplicate_entries` accepts `&ProgressReporter`, dispatch constructs `ProgressReporter::Mcp { sender: progress }`. Web API callers use `ProgressReporter::Silent`
+- 7.6: Top-level phase reporting in CLI: `"Analysis 1/4: Merge candidates"`, `"Analysis 2/4: Split candidates"`, `"Analysis 3/4: Misplaced documents"`, `"Analysis 4/4: Duplicate entries"`
+- Web API callers (organize.rs, stats.rs) use `crate::ProgressReporter::Silent` (lib crate), CLI uses `factbase::ProgressReporter` (bin crate)
+- 1030 lib + 355 bin tests passing, zero new clippy warnings
+
+### Task 8.1+8.2+8.3 — Wire ProgressReporter into export/import (commit 6499e5e)
+- 8.1: Added `progress: &ProgressReporter` to all export functions. All report `progress.report(i+1, total, &doc.title)` per document
+- 8.2: Added `progress: &ProgressReporter` to all import functions. JSON and directory imports use `progress.report()` with known totals. Tar archive uses `progress.log()` per file (streaming, unknown total)
+- 8.3: `cmd_export` and `cmd_import` construct `ProgressReporter::Cli { quiet: false }` (no quiet flag on these commands)
+- 1030 lib + 355 bin tests passing, zero new clippy warnings
+
+### Task 9.1+9.2 — Wire ProgressReporter into bulk MCP operations (commit 6efa403)
+- 9.1: Added `progress: &ProgressReporter` to `bulk_create_documents()`. Reports per-document progress during the write loop
+- 9.2: Added `progress: &ProgressReporter` to `bulk_answer_questions()`. Reports per-document progress during the apply loop. `answer_questions()` wrapper forwards progress to `bulk_answer_questions` (single `answer_question` doesn't need progress)
+- MCP dispatch: replaced `blocking_tool!` macro with explicit `run_blocking` dispatch for both tools, constructing `ProgressReporter::Mcp { sender: progress }`
+- Web API: `bulk_answer_questions` call passes `&crate::ProgressReporter::Silent`
+- 1030 lib + 355 bin tests passing, zero new clippy warnings
+
+### Task 10.1+10.2 — Update handle_tool_call dispatch (commit d53dac2)
+- 10.1: Construct `ProgressReporter::Mcp { sender: progress }` once at top of `tools/call` branch instead of per-tool. Async tools (`lint_repository`, `scan_repository`, `apply_review_answers`, `get_duplicate_entries`) pass `&reporter` directly. `get_review_queue` (sync, non-blocking) also passes `&reporter` directly
+- 10.2: Added 3-arg `blocking_tool!` macro variant `($db, $args, $reporter, $fn)` that clones all three and moves into `run_blocking` closure. Replaced manual `run_blocking` dispatch for `bulk_create_documents`, `search_content`, and `answer_questions` with the new macro variant. Simple tools without progress (`get_entity`, `list_entities`, etc.) remain on the 2-arg macro — they don't accept `&ProgressReporter`
+- Added `#[derive(Clone)]` to `ProgressReporter` — `UnboundedSender` is Clone, so all variants are cloneable
+- Net reduction: 12 insertions, 20 deletions (8 lines removed)
+- 1030 lib + 355 bin tests passing, zero new clippy warnings
+- No difficulties encountered
+
+### Task 11.1+11.2+11.3+11.4 — Cleanup and tests (commits d32a26f, 192348a)
+- 11.1: Removed `pub use crate::progress::ProgressSender` backward-compatibility re-export from `mcp/tools/mod.rs` — no consumers imported from that path. Changed to private `use` import. Added explicit `Value` type annotation on `unbounded_channel()` in `stdio.rs` since type inference no longer flows through the re-export
+- 11.2: Added `test_scan_repository_sends_progress_via_mcp_channel` async test in `mcp/tools/mod.rs` — creates temp repo with 2 markdown files, runs `scan_repository` with `MockEmbedding` and an unbounded channel, asserts progress messages (phase/log) are received
+- 11.3: Verified all tests pass: 1031 lib + 355 bin = 1386 total. Zero new clippy warnings
+- 11.4: Updated `current-state.md`: project status to "Phases 1-47 complete", removed active work section, updated test counts. Updated `module-interactions.md`: added `progress.rs` to file structure and Module Responsibilities section
+- No difficulties encountered
+
+**Phase 47 Tasks 1-11 complete.** Remaining: Tasks 12 (ContentSearchParams struct), 13 (ScanContext struct), 14 (clippy fix). These are cleanup/optimization tasks.
+
+**Test counts at Task 11 completion:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 12: Introduce ContentSearchParams struct (1/1 Complete - 2026-02-14)
+
+**Summary:** Created `ContentSearchParams<'a>` struct in `database/search/content.rs` bundling 7 parameters (pattern, limit, doc_type, repo_id, context_lines, since, progress). Updated `search_content()`, `search_content_fts5()`, and `search_content_like()` to accept `&ContentSearchParams`. Eliminates all three `clippy::too_many_arguments` warnings. Re-exported via `database/search/mod.rs` → `database/mod.rs` → `lib.rs`. Updated all callers: MCP tool, CLI grep, 10 lib tests, 5 integration tests, 2 bench call sites.
+
+**Key considerations:**
+- `params()` test helper with struct update syntax for clean test defaults
+- Renamed local `params` variable to `db_params` in FTS5/LIKE functions to avoid shadowing the struct parameter
+- Pattern: bundle related function parameters into a struct when count exceeds 7 (clippy threshold)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 13: Introduce ScanContext struct (1/1 Complete - 2026-02-14)
+
+**Summary:** Created `ScanContext<'a>` struct in `scanner/orchestration/mod.rs` bundling 6 fields (scanner, processor, embedding, link_detector, opts, progress). Updated `full_scan()` from 8 params to 3 (repo, db, &ScanContext). Updated `scan_all_repositories()` from 7 params to 2. Re-exported via `scanner/mod.rs` → `lib.rs`. Updated all callers including 17 integration test call sites.
+
+**Key considerations:**
+- All fields are borrowed references with lifetime `'a`
+- Removed `#[allow(clippy::too_many_arguments)]` from `full_scan`
+- Same bundling pattern as `ContentSearchParams` (Task 12) for dependency injection
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 14: Fix remaining clippy suggestions (1/1 Complete - 2026-02-14)
+
+**Summary:** Replaced `global_idx % 25 == 0` with `global_idx.is_multiple_of(25)` in `scanner/orchestration/mod.rs`. Only one instance in codebase — the other `% N == 0` in `patterns.rs` is a leap year check (not a "multiple of" pattern).
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+### Task 15.1+15.2+15.3+15.4 — Fix integration test compilation errors (commit b0d9f3b)
+- 15.1: Added `link_batch_size: 5,` to all `ScanOptions { ... }` initializers in 6 test files
+- 15.2: Added `None,` (llm parameter) to all 15 `McpServer::new()` calls across 7 test files
+- 15.3: Added `&factbase::ProgressReporter::Silent` to `detect_split_candidates()` and `detect_misplaced()` calls in `tests/ollama_integration.rs`
+- 15.4: All 20 integration test binaries compile successfully with `cargo test --test '*' --no-run` — zero errors
+- 1031 lib + 355 bin = 1386 tests passing, zero clippy warnings
+- No difficulties encountered
+
+**Phase 47 Tasks 1-15 complete.** Remaining: Tasks 16 (cosine_similarity consolidation), 17 (compute_hash consolidation). These are cleanup/deduplication tasks.
+
+## Phase 47 Task 16: Consolidate duplicate cosine_similarity implementations (1/1 Complete - 2026-02-14)
+
+**Summary:** Changed `cosine_similarity` in `organize/detect/mod.rs` from `pub(crate)` to `pub`. Added re-export through `organize/mod.rs` → `lib.rs`. Removed duplicate from `tests/common/mod.rs`. Updated integration test imports.
+
+**Key considerations:**
+- The lib crate version has proper empty/mismatched/zero-norm guards; the test version was simpler
+- Re-export path: `organize/detect/mod.rs` → `organize/mod.rs` → `lib.rs` (alphabetical order in existing re-export lists)
+- Net: 12 insertions, 20 deletions across 6 files
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: d509f5a.
+
+## Phase 47 Task 17: Consolidate duplicate compute_hash / SHA256 helpers (1/1 Complete - 2026-02-15)
+
+**Summary:** Extracted `content_hash()` as a `pub` free function in `processor/core.rs`. `DocumentProcessor::compute_hash()` now delegates to it. Replaced duplicate SHA256 implementation in `tests/common/mod.rs` with `factbase::content_hash()` call, removing the `sha2` dependency from tests. Re-exported from `processor/mod.rs` → `lib.rs`.
+
+**Key considerations:**
+- Same pattern as Task 16 (cosine_similarity): promote internal helper to pub, re-export through lib.rs, remove test duplicate
+- `content_hash()` is a free function (not a method) since it operates on raw `&str`, not a `DocumentProcessor` instance
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: cf70553.
+
+## Phase 47 Task 18: Migrate callers from DocumentProcessor::compute_hash to content_hash (3/3 Complete - 2026-02-15)
+
+**Summary:** Migrated all call sites from verbose `DocumentProcessor::compute_hash()` to the shorter `content_hash()` free function (extracted in Task 17). Added `#[deprecated]` annotation to the old method.
+
+**Key considerations:**
+- 6 production code calls replaced across 4 files, 12 test code calls across 3 files
+- `#[deprecated(note = "use content_hash() free function instead")]` keeps old method as thin wrapper during migration
+- Integration tests' `common::compute_hash` already delegated to `factbase::content_hash()` from Task 17
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 19: Remove remaining .unwrap() calls from production code (1/1 Complete - 2026-02-15)
+
+**Summary:** Replaced 3 production `.unwrap()` calls with descriptive `.expect()` messages in `mcp/stdio.rs`, `mcp/tools/review/mod.rs`, and `mcp/tools/review/apply.rs`.
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 20: Reduce verbose crate:: paths in database stats test modules (1/1 Complete - 2026-02-15)
+
+**Summary:** Replaced verbose `crate::` paths in database stats test modules with shorter imports via `use` statements. Pure style cleanup, no behavior change.
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 21: Remove deprecated DocumentProcessor::compute_hash method (1/1 Complete - 2026-02-15)
+
+**Summary:** Removed the `#[deprecated]` `compute_hash` method from `DocumentProcessor` in `processor/core.rs` (7 lines). Zero production callers remained — all had been migrated to `content_hash()` free function in Task 18. Existing tests already used the free function.
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: a6f3d60.
+
+## Phase 47 Task 22: Fix redundant closures flagged by clippy pedantic (1/1 Complete - 2026-02-15)
+
+**Summary:** Replaced 26 redundant closures across 17 files (17 lib-crate + 9 bin-crate). The actual lint is `clippy::redundant_closure_for_method_calls` (pedantic), not `clippy::redundant_closure` (which had zero hits). `cargo clippy --fix` auto-applied 9 bin-crate fixes but could not auto-fix the 17 lib-crate instances — those required manual replacement.
+
+**Common patterns replaced:** `|v| v.as_u64()` → `Value::as_u64`, `|s| s.to_rfc3339()` → `DateTime::to_rfc3339`, `|entry| entry.ok()` → `Result::ok`, `|s| s.to_string()` → `ToString::to_string`, `|r| r.to_json()` → `ContentSearchResult::to_json`
+
+**Key considerations:**
+- `cargo clippy --fix` can auto-fix bin-crate closures but not lib-crate ones — manual replacement needed for lib crate
+- One import fix needed: `ContentSearchResult` was imported via private `crate::models::search::` path — changed to `crate::models::ContentSearchResult` (the re-exported path)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 9bd7225.
+
+## Phase 47 Task 23: Use write!/writeln! instead of push_str(format!(...)) (1/1 Complete - 2026-02-15)
+
+**Summary:** Replaced 24 instances of `push_str(&format!(...))` with `write!()` or `writeln!()` using `std::fmt::Write` across 10 files. Used `writeln!` where format string ended with `\n`, `write!` otherwise. `.expect("write to String")` on all calls since writing to `String` is infallible in practice but `fmt::Write` returns `Result`.
+
+**Key considerations:**
+- `use std::fmt::Write;` imported at narrowest scope (function body or block) to avoid polluting module namespace — conflicts with `std::io::Write` if both in scope
+- Files: `database/documents.rs` (4), `database/search/content.rs` (2), `database/search/title.rs` (1), `organize/plan/merge.rs` (3), `organize/plan/split.rs` (2), `organize/orphans.rs` (2), `organize/review.rs` (1), `processor/review.rs` (1), `commands/export/markdown.rs` (5), `question_generator/cross_validate.rs` (3)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 9aa04cf.
+
+## Phase 47 Task 24: Introduce write_str!/writeln_str! macros (1/1 Complete - 2026-02-15)
+
+**Summary:** Created `write_str!` and `writeln_str!` macros at the top of `src/lib.rs` (before module declarations so they're available crate-wide via `#[macro_export]`). Each macro wraps `write!`/`writeln!` with `use std::fmt::Write as _;` and `.expect("write to String infallible")`. Replaced all 28 `.expect("write to String")` call sites across 11 source files. Removed 12 scattered `use std::fmt::Write;` imports.
+
+**Key considerations:**
+- `#[macro_export]` macros defined before module declarations are automatically available in the lib crate
+- Bin-crate files need explicit `use factbase::writeln_str;` import since `#[macro_export]` macros need to be imported in the bin crate
+- Net: 55 insertions, 53 deletions (12 files changed)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: c7118f7.
+
+## Phase 47 Task 25: Reduce unnecessary .clone() calls in database search hot paths (1/1 Complete - 2026-02-15)
+
+**Summary:** Audited all 16 `.clone()` calls in `database/` module. Eliminated 3 unnecessary allocations in the two most impactful hot paths: `upsert_document` (avoided cloning large document content when compression is off), `update_document_content` (same pattern), and `search_semantic_paginated` (avoided redundant String allocation per search result by passing pre-read `doc_id`).
+
+**Key considerations:**
+- Pattern: `let compressed; let content_to_store: &str = if self.compression { compressed = B64.encode(...); &compressed } else { &doc.content };` — the `compressed` variable outlives the reference
+- Remaining 13 clones are structurally necessary: HashMap key+value dual ownership, cache+return dual ownership, reference-to-owned conversion for date tracking, HashSet+Vec dual ownership
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 26: Split database/documents.rs into focused submodules (1/1 Complete - 2026-02-15)
+
+**Summary:** Split 877-line `database/documents.rs` into a directory module with three focused submodules:
+- `documents/mod.rs` (68 lines): module doc, submodule declarations, `DOCUMENT_COLUMNS` constant, `repo_id_for_doc` helper, `row_to_document` shared method
+- `documents/crud.rs` (373 lines): upsert, get, update, delete, mark_deleted + 7 tests
+- `documents/list.rs` (218 lines): list_documents, get_documents_for_repo, get_documents_with_review_queue + 4 tests
+- `documents/batch.rs` (265 lines): needs_cross_check, set_cross_check_hash, clear_cross_check_hashes, backfill_word_counts + 7 tests
+
+**Key considerations:**
+- Follows the same pattern used by `database/search/` and `database/stats/` submodules
+- `super::super::` paths used in submodules to reach `Database`, `compress_content`, `decode_content`, `B64` from `database/mod.rs`
+- No import changes needed in any external callers — all methods remain on `Database` impl
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+## Phase 47 Task 27: Use captured identifiers in format strings (1/1 Complete - 2026-02-15)
+
+**Summary:** Replaced 291 instances of `format!("{}", x)` with `format!("{x}")` (Rust 2021 captured identifiers) across 85 files (41 lib-crate + 44 bin-crate). Used `cargo clippy --fix` with `-W clippy::uninlined_format_args` which auto-fixed both crates cleanly.
+
+**Key considerations:**
+- `cargo clippy --fix --allow-dirty --allow-staged --bin factbase --all-features -- -W clippy::uninlined_format_args` auto-fixed bin crate
+- `cargo clippy --fix --allow-dirty --allow-staged --lib --all-features -- -W clippy::uninlined_format_args` auto-fixed lib crate (contrary to prior expectation that lib crate needed manual fixes)
+- Net: 300 insertions, 357 deletions (-57 lines across 85 files)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 3a1d2c1.
+
+## Phase 47 Task 28: Replace map().unwrap_or() with map_or() and let...else patterns (1/1 Complete - 2026-02-15)
+
+**Summary:** Replaced 29 `map().unwrap_or()`/`unwrap_or_else()` instances with `map_or()`/`map_or_else()` across 17 files. Further simplified 3 boolean cases to `is_some_and()`/`is_ok_and()`/`is_none_or()`. Replaced 11 `match` with `continue`/`return` patterns with `let...else` across 11 files.
+
+**Key considerations:**
+- `cargo clippy --fix` auto-fixed 15 instances (lib+bin), 14 remaining bin-crate instances required manual fixes
+- `map_or(false, ..)` → `is_some_and()`, `map_or(true, ..)` → `is_none_or()` for cleaner boolean checks
+- `let...else` replaces `match` with early `continue`/`return` patterns for cleaner control flow
+- Net: -52 lines across 28 files
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: e81de4b.
+
+## Phase 47 Task 30: Extract compression helpers from database/mod.rs (1/1 Complete - 2026-02-15)
+
+**Summary:** Created `database/compression.rs` with 5 items: `ZSTD_PREFIX` constant (cfg-gated), `compress_content()` (two cfg variants), `decompress_content()` (cfg-gated), `decode_content()`, `decode_content_lossy()`. Re-exported all items from `database/mod.rs` via `pub(crate) use compression::{...}` — no import changes needed in any submodules since they all resolve through `super::` paths to mod.rs re-exports. Moved 5 compression-specific unit tests to the new module. `database/mod.rs`: 553 → 444 lines (-109).
+
+**Key considerations:**
+- Re-export via `pub(crate) use` from mod.rs so submodule `super::` paths continue to work unchanged
+- Kept `test_database_with_compression` in mod.rs since it tests the full Database roundtrip (not just compression functions)
+- Removed unused `use base64::Engine;` from mod.rs (now only needed in compression.rs)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: abb1686.
+
+## Phase 47 Task 31: Deduplicate to_json() / response building in MCP entity tools (1/1 Complete - 2026-02-15)
+
+**Summary:** Extracted 4 helper functions from `get_document_stats()` into `mcp/tools/helpers.rs`: `build_temporal_stats_json(content)`, `build_source_stats_json(content)`, `build_link_stats_json(outgoing, incoming)`, `build_review_stats_json(content)`. `get_document_stats()` reduced from ~100 lines of inline computation+JSON to 15 lines of helper calls. Removed 6 unused imports from `entity.rs`.
+
+**Key considerations:**
+- Helpers return `serde_json::Value` for direct embedding in JSON responses
+- Each helper encapsulates both computation (parsing, counting) and JSON serialization
+- Net: -10 lines (83 insertions, 93 deletions across 2 files)
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 008dddd.
+
+## Phase 47 Task 32: Consolidate repeated ScanOptions::default() in integration tests (1/1 Complete - 2026-02-15)
+
+**Summary:** Added `test_scan_options()` and `test_scan_options_skip_links()` helpers to `tests/common/mod.rs`. Replaced 12 verbose `ScanOptions { ... }` initializers across 5 integration test files with the shared helper. Net -146 lines.
+
+**Key considerations:**
+- `test_scan_options()` returns `ScanOptions::default()` — all verbose initializers already matched the Default impl exactly
+- `cli/scan_tests.rs` uses struct update syntax: `ScanOptions { dry_run: true, ..test_scan_options() }` for its unique override
+- `chunking_integration.rs` already used `..Default::default()` with custom chunk_size — left unchanged
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 7ce6517.
+
+## Phase 47 Task 33: Consolidate repeated full-scan setup into TestScanSetup struct (1/1 Complete - 2026-02-15)
+
+**Summary:** Added `TestScanSetup` struct to `tests/common/mod.rs` owning Config, Scanner, DocumentProcessor, OllamaEmbedding, LinkDetector, and ScanOptions. `new()` constructor creates all components from `Config::default()`; `with_options(opts)` allows custom ScanOptions. `context(&self) -> ScanContext<'_>` borrows all fields with `ProgressReporter::Silent`. Replaced ~17 setup blocks + ~5 ScanContext rebuilds across 5 files. Net -252 lines.
+
+**Key considerations:**
+- `cli/scan_tests.rs` uses `TestScanSetup::with_options(ScanOptions { dry_run: true, .. })` for its unique override
+- `mcp_e2e.rs` `setup_indexed_repo()` moves `setup.embedding` and `setup.config` out of the struct for return (OllamaEmbedding is Clone)
+- `chunking_integration.rs` left unchanged — uses `Config::load(None)` and `Scanner::new(&[])` which differ from the standard pattern
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 2d54e5c.
+
+## Phase 47 Task 34: Consolidate repeated Repository construction into test_repo() helper (1/1 Complete - 2026-02-15)
+
+**Summary:** Added `test_repo(id: &str, path: PathBuf) -> Repository` helper to `tests/common/mod.rs`. Capitalizes first letter of `id` for name, fills standard defaults. Replaced ~60 verbose `Repository { ... }` initializers across 18 integration test files. Net -464 lines.
+
+**Key considerations:**
+- Cases with custom perspectives left as-is (mcp_e2e.rs, serve_e2e.rs, compression_roundtrip.rs, cli/scan_tests.rs, common/mod.rs TestServer)
+- Simplified `create_test_repo()` and `TestContext::new_with_perspective()` to use `test_repo()` internally
+- Fixed `common::` → `super::common::` for cli subdirectory test files
+- Cleaned up unused imports from 12 files
+
+**Test counts:** 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings. Commit: 6ea1d56.
+
+---
+
+## Phase 47: Long-Running Operation Progress & Optimization (Tasks 1-35 Complete - 2026-02-15)
+
+**Goal:** Unified `ProgressReporter` abstraction for both MCP and CLI code paths, wired into every document-iterating operation, plus search optimization and code cleanup.
+
+### Key Deliverables
+- **ProgressReporter abstraction** (Task 1): `src/progress.rs` with `Cli`/`Mcp`/`Silent` variants. Three methods: `report()`, `phase()`, `log()`. CLI writes to stderr, MCP sends JSON via channel
+- **Wired into all operations** (Tasks 2-9): scan, lint, review apply, review queue, search_content/grep, organize analyze, export/import, bulk MCP operations
+- **Shared functions extracted** (Tasks 3-4): `lint_all_documents()` with `LintConfig`, `apply_all_review_answers()` with `ApplyConfig` — both MCP and CLI delegate to shared functions
+- **FTS5 full-text search** (Task 6.3): `document_content_fts` virtual table for O(log N) content search; falls back to LIKE for regex patterns
+- **ContentSearchParams struct** (Task 12): Bundles 7 search parameters to fix `clippy::too_many_arguments`
+- **ScanContext struct** (Task 13): Bundles 6 scan dependencies, reduces `full_scan` from 8 params to 3
+- **Integration test cleanup** (Tasks 15, 32-35): Fixed compilation errors, extracted `TestScanSetup`, `test_scan_options()`, `test_repo()` helpers, replaced 641 generic `.expect()` with `.unwrap()`
+- **Code quality** (Tasks 16-31): Consolidated duplicate `cosine_similarity`/`content_hash`, removed deprecated methods, replaced redundant closures, introduced `write_str!`/`writeln_str!` macros, split `database/documents.rs` into submodules, extracted `database/compression.rs`, used captured format identifiers, replaced `map().unwrap_or()` with `map_or()`
+
+### Summary Statistics
+- Tasks 1-35 complete, Tasks 36-38 remaining (clippy pedantic cleanup)
+- Test counts at Task 35: 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings
+- Net line reductions: ~1000+ lines removed across integration tests via shared helpers
+
+### Key Patterns Established
+- `ProgressReporter` enum with `Cli`/`Mcp`/`Silent` variants for unified progress reporting
+- `LintConfig`/`ApplyConfig` structs for bundling parameters when extracting shared functions from MCP tools
+- `ContentSearchParams<'a>`/`ScanContext<'a>` structs for reducing function parameter counts
+- `blocking_tool!` macro with 2-arg and 3-arg variants for MCP tool dispatch
+- `write_str!`/`writeln_str!` macros for infallible String formatting
+- `TestScanSetup` struct with `context()` method for integration test setup deduplication
+- `test_scan_options()`, `test_repo()` helpers for integration test construction

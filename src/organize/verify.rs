@@ -105,8 +105,7 @@ pub fn verify_merge(
         ))
     } else {
         let details = format!(
-            "Merge verification failed: expected {} document facts (got {}), {} orphans (got {})",
-            expected_doc_facts, actual_doc_facts, expected_orphans, actual_orphans
+            "Merge verification failed: expected {expected_doc_facts} document facts (got {actual_doc_facts}), {expected_orphans} orphans (got {actual_orphans})"
         );
         Ok(VerificationResult::failure(
             expected_doc_facts,
@@ -166,8 +165,7 @@ pub fn verify_split(
         ))
     } else {
         let details = format!(
-            "Split verification failed: expected {} document facts (got {}), {} orphans (got {})",
-            expected_doc_facts, actual_doc_facts, expected_orphans, actual_orphans
+            "Split verification failed: expected {expected_doc_facts} document facts (got {actual_doc_facts}), {expected_orphans} orphans (got {actual_orphans})"
         );
         Ok(VerificationResult::failure(
             expected_doc_facts,

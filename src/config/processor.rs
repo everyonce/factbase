@@ -48,12 +48,24 @@ pub struct ProcessorConfig {
     pub chunk_overlap: usize,
     #[serde(default = "default_embedding_batch_size")]
     pub embedding_batch_size: usize,
+    #[serde(default = "default_link_batch_size")]
+    pub link_batch_size: usize,
+    #[serde(default = "default_lint_concurrency")]
+    pub lint_concurrency: usize,
     #[serde(default = "default_metadata_cache_size")]
     pub metadata_cache_size: usize,
 }
 
 pub(crate) fn default_embedding_batch_size() -> usize {
-    10 // Default batch size for embedding generation
+    10
+}
+
+pub(crate) fn default_link_batch_size() -> usize {
+    5
+}
+
+pub(crate) fn default_lint_concurrency() -> usize {
+    5
 }
 
 fn default_max_file_size() -> usize {
@@ -72,6 +84,8 @@ impl Default for ProcessorConfig {
             chunk_size: default_chunk_size(),
             chunk_overlap: default_chunk_overlap(),
             embedding_batch_size: default_embedding_batch_size(),
+            link_batch_size: default_link_batch_size(),
+            lint_concurrency: default_lint_concurrency(),
             metadata_cache_size: default_metadata_cache_size(),
         }
     }

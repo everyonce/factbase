@@ -10,6 +10,9 @@ pub struct EmbeddingConfig {
     /// Preferred field for Bedrock: AWS region (e.g. "us-east-1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// AWS profile name (e.g. "poc"). Optional, uses default credentials if omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     /// For Ollama: HTTP URL. For Bedrock: deprecated alias for `region`.
     #[serde(default = "default_base_url")]
     pub base_url: String,
@@ -49,7 +52,7 @@ fn default_base_url() -> String {
 
 fn default_embedding_model() -> String {
     if cfg!(feature = "bedrock") {
-        "amazon.titan-embed-text-v2:0".into()
+        "amazon.nova-2-multimodal-embeddings-v1:0".into()
     } else {
         "qwen3-embedding:0.6b".into()
     }
@@ -61,7 +64,7 @@ fn default_dimension() -> usize {
 
 fn default_llm_model() -> String {
     if cfg!(feature = "bedrock") {
-        "us.anthropic.claude-3-5-haiku-20241022-v1:0".into()
+        "us.anthropic.claude-haiku-4-5-20251001-v1:0".into()
     } else {
         "rnj-1-extended".into()
     }
@@ -72,6 +75,7 @@ impl Default for EmbeddingConfig {
         Self {
             provider: default_provider(),
             region: None,
+            profile: None,
             base_url: default_base_url(),
             model: default_embedding_model(),
             dimension: 1024,
@@ -97,6 +101,9 @@ pub struct LlmConfig {
     /// Preferred field for Bedrock: AWS region (e.g. "us-east-1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<String>,
+    /// AWS profile name (e.g. "poc"). Optional, uses default credentials if omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
     /// For Ollama: HTTP URL. For Bedrock: deprecated alias for `region`.
     #[serde(default = "default_base_url")]
     pub base_url: String,
@@ -111,6 +118,7 @@ impl Default for LlmConfig {
         Self {
             provider: default_provider(),
             region: None,
+            profile: None,
             base_url: default_base_url(),
             model: default_llm_model(),
             timeout_secs: default_timeout_secs(),
@@ -164,7 +172,7 @@ mod tests {
             assert_eq!(config.provider, "bedrock");
             assert_eq!(config.base_url, "us-east-1");
             assert_eq!(config.effective_base_url(), "us-east-1");
-            assert_eq!(config.model, "amazon.titan-embed-text-v2:0");
+            assert_eq!(config.model, "amazon.nova-2-multimodal-embeddings-v1:0");
         } else {
             assert_eq!(config.provider, "ollama");
             assert_eq!(config.base_url, "http://localhost:11434");
@@ -184,7 +192,7 @@ mod tests {
             assert_eq!(config.provider, "bedrock");
             assert_eq!(config.base_url, "us-east-1");
             assert_eq!(config.effective_base_url(), "us-east-1");
-            assert_eq!(config.model, "us.anthropic.claude-3-5-haiku-20241022-v1:0");
+            assert_eq!(config.model, "us.anthropic.claude-haiku-4-5-20251001-v1:0");
         } else {
             assert_eq!(config.provider, "ollama");
             assert_eq!(config.base_url, "http://localhost:11434");

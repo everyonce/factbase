@@ -53,8 +53,7 @@ pub async fn generate_questions(
     // Skip deleted documents
     if doc.is_deleted {
         return Err(FactbaseError::not_found(format!(
-            "Document has been deleted: {}",
-            doc_id
+            "Document has been deleted: {doc_id}"
         )));
     }
 

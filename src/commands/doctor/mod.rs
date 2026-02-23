@@ -55,7 +55,7 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
                     config
                 }
             } else {
-                let err_msg = format!("Config error: {}", e);
+                let err_msg = format!("Config error: {e}");
                 if args.json {
                     let output = DoctorOutput {
                         database: CheckStatus::err(&err_msg),
@@ -68,7 +68,7 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
                     bail!("health check failed");
                 }
                 if !args.quiet {
-                    bail!("{}. Run with --fix to create default config.", err_msg);
+                    bail!("{err_msg}. Run with --fix to create default config.");
                 }
                 bail!("health check failed");
             }
@@ -259,7 +259,7 @@ fn check_and_fix_model(
             }
             Err(e) => {
                 qprintln!("  ✗ Failed to pull {}: {}", model_name, e);
-                return (false, CheckStatus::err(format!("failed to pull: {}", e)));
+                return (false, CheckStatus::err(format!("failed to pull: {e}")));
             }
         }
     }

@@ -3,19 +3,10 @@
 
 mod common;
 
-use common::cosine_similarity;
 use common::fixtures::copy_fixture_repo;
 use common::ollama_helpers::require_ollama;
-use factbase::{
-    config::Config,
-    database::Database,
-    embedding::OllamaEmbedding,
-    llm::{LinkDetector, OllamaLlm},
-    models::Repository,
-    processor::DocumentProcessor,
-    scanner::{full_scan, ScanOptions, Scanner},
-    EmbeddingProvider,
-};
+use common::TestScanSetup;
+use factbase::{cosine_similarity, database::Database, scanner::full_scan, EmbeddingProvider};
 
 /// Task 3.1: Test complete scan workflow with real Ollama
 #[tokio::test]
@@ -28,61 +19,20 @@ async fn test_full_scan_with_real_ollama() {
 
     // Create database
     let db_path = repo_path.join(".factbase/factbase.db");
-    std::fs::create_dir_all(repo_path.join(".factbase")).expect("operation should succeed");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    std::fs::create_dir_all(repo_path.join(".factbase")).unwrap();
+    let db = Database::new(&db_path).unwrap();
 
     // Create repository
-    let repo = Repository {
-        id: "test".to_string(),
-        name: "Test Repo".to_string(),
-        path: repo_path.to_path_buf(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.upsert_repository(&repo)
-        .expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.to_path_buf());
+    db.upsert_repository(&repo).unwrap();
 
     // Set up components
-    let config = Config::default();
-    let scanner = Scanner::new(&config.watcher.ignore_patterns);
-    let processor = DocumentProcessor::new();
-    let embedding = OllamaEmbedding::new(
-        &config.embedding.base_url,
-        &config.embedding.model,
-        config.embedding.dimension,
-    );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
-
-    let opts = ScanOptions {
-        chunk_size: 100_000,
-        chunk_overlap: 2_000,
-        verbose: false,
-        dry_run: false,
-        show_progress: false,
-        check_duplicates: false,
-        collect_stats: false,
-        since: None,
-        min_coverage: 0.8,
-        embedding_batch_size: 10,
-        force_reindex: false,
-        skip_links: false,
-    };
+    let setup = TestScanSetup::new();
 
     // Run full scan
-    let result = full_scan(
-        &repo,
-        &db,
-        &scanner,
-        &processor,
-        &embedding,
-        &link_detector,
-        &opts,
-    )
-    .await
-    .expect("Full scan should succeed");
+    let result = full_scan(&repo, &db, &setup.context())
+        .await
+        .expect("Full scan should succeed");
 
     // Verify documents indexed (28 total: 10 people + 8 projects + 5 concepts + 5 notes)
     assert!(
@@ -96,16 +46,11 @@ async fn test_full_scan_with_real_ollama() {
     );
 
     // Verify all documents have embeddings by searching
-    let docs = db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
-    let query_emb = embedding
-        .generate("test")
-        .await
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("test").unwrap();
+    let query_emb = setup.embedding.generate("test").await.unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, docs.len(), None, None, None)
-        .expect("operation should succeed");
+        .unwrap();
 
     // Search should return results for all indexed docs with embeddings
     assert!(
@@ -139,64 +84,19 @@ async fn test_embedding_quality() {
     let repo_path = temp.path();
 
     let db_path = repo_path.join(".factbase/factbase.db");
-    std::fs::create_dir_all(repo_path.join(".factbase")).expect("operation should succeed");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    std::fs::create_dir_all(repo_path.join(".factbase")).unwrap();
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".to_string(),
-        name: "Test Repo".to_string(),
-        path: repo_path.to_path_buf(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.upsert_repository(&repo)
-        .expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.to_path_buf());
+    db.upsert_repository(&repo).unwrap();
 
-    let config = Config::default();
-    let scanner = Scanner::new(&config.watcher.ignore_patterns);
-    let processor = DocumentProcessor::new();
-    let embedding = OllamaEmbedding::new(
-        &config.embedding.base_url,
-        &config.embedding.model,
-        config.embedding.dimension,
-    );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
-
-    let opts = ScanOptions {
-        chunk_size: 100_000,
-        chunk_overlap: 2_000,
-        verbose: false,
-        dry_run: false,
-        show_progress: false,
-        check_duplicates: false,
-        collect_stats: false,
-        since: None,
-        min_coverage: 0.8,
-        embedding_batch_size: 10,
-        force_reindex: false,
-        skip_links: false,
-    };
-
-    full_scan(
-        &repo,
-        &db,
-        &scanner,
-        &processor,
-        &embedding,
-        &link_detector,
-        &opts,
-    )
-    .await
-    .expect("Scan should succeed");
+    let setup = TestScanSetup::new();
+    full_scan(&repo, &db, &setup.context())
+        .await
+        .expect("Scan should succeed");
 
     // Verify embedding dimensions by generating a test embedding
-    let test_emb = embedding
-        .generate("test query")
-        .await
-        .expect("operation should succeed");
+    let test_emb = setup.embedding.generate("test query").await.unwrap();
     assert_eq!(test_emb.len(), 1024, "Embedding dimension should be 1024");
 
     // Check values in reasonable range
@@ -205,18 +105,21 @@ async fn test_embedding_quality() {
     }
 
     // Test semantic similarity: similar queries should return similar results
-    let emb_person = embedding
+    let emb_person = setup
+        .embedding
         .generate("software engineer developer")
         .await
-        .expect("operation should succeed");
-    let emb_project = embedding
+        .unwrap();
+    let emb_project = setup
+        .embedding
         .generate("project management timeline")
         .await
-        .expect("operation should succeed");
-    let emb_person2 = embedding
+        .unwrap();
+    let emb_person2 = setup
+        .embedding
         .generate("programmer coder developer")
         .await
-        .expect("operation should succeed");
+        .unwrap();
 
     let sim_person_person2 = cosine_similarity(&emb_person, &emb_person2);
     let sim_person_project = cosine_similarity(&emb_person, &emb_project);
@@ -246,62 +149,18 @@ async fn test_link_detection_accuracy() {
     let repo_path = temp.path();
 
     let db_path = repo_path.join(".factbase/factbase.db");
-    std::fs::create_dir_all(repo_path.join(".factbase")).expect("operation should succeed");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    std::fs::create_dir_all(repo_path.join(".factbase")).unwrap();
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".to_string(),
-        name: "Test Repo".to_string(),
-        path: repo_path.to_path_buf(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.upsert_repository(&repo)
-        .expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.to_path_buf());
+    db.upsert_repository(&repo).unwrap();
 
-    let config = Config::default();
-    let scanner = Scanner::new(&config.watcher.ignore_patterns);
-    let processor = DocumentProcessor::new();
-    let embedding = OllamaEmbedding::new(
-        &config.embedding.base_url,
-        &config.embedding.model,
-        config.embedding.dimension,
-    );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
+    let setup = TestScanSetup::new();
+    full_scan(&repo, &db, &setup.context())
+        .await
+        .expect("Scan should succeed");
 
-    let opts = ScanOptions {
-        chunk_size: 100_000,
-        chunk_overlap: 2_000,
-        verbose: false,
-        dry_run: false,
-        show_progress: false,
-        check_duplicates: false,
-        collect_stats: false,
-        since: None,
-        min_coverage: 0.8,
-        embedding_batch_size: 10,
-        force_reindex: false,
-        skip_links: false,
-    };
-
-    full_scan(
-        &repo,
-        &db,
-        &scanner,
-        &processor,
-        &embedding,
-        &link_detector,
-        &opts,
-    )
-    .await
-    .expect("Scan should succeed");
-
-    let docs = db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("test").unwrap();
 
     // Check that project documents have links to people (team members)
     let projects: Vec<_> = docs
@@ -350,67 +209,22 @@ async fn test_semantic_search_works() {
     let repo_path = temp.path();
 
     let db_path = repo_path.join(".factbase/factbase.db");
-    std::fs::create_dir_all(repo_path.join(".factbase")).expect("operation should succeed");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    std::fs::create_dir_all(repo_path.join(".factbase")).unwrap();
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".to_string(),
-        name: "Test Repo".to_string(),
-        path: repo_path.to_path_buf(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.upsert_repository(&repo)
-        .expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.to_path_buf());
+    db.upsert_repository(&repo).unwrap();
 
-    let config = Config::default();
-    let scanner = Scanner::new(&config.watcher.ignore_patterns);
-    let processor = DocumentProcessor::new();
-    let embedding = OllamaEmbedding::new(
-        &config.embedding.base_url,
-        &config.embedding.model,
-        config.embedding.dimension,
-    );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
-
-    let opts = ScanOptions {
-        chunk_size: 100_000,
-        chunk_overlap: 2_000,
-        verbose: false,
-        dry_run: false,
-        show_progress: false,
-        check_duplicates: false,
-        collect_stats: false,
-        since: None,
-        min_coverage: 0.8,
-        embedding_batch_size: 10,
-        force_reindex: false,
-        skip_links: false,
-    };
-
-    full_scan(
-        &repo,
-        &db,
-        &scanner,
-        &processor,
-        &embedding,
-        &link_detector,
-        &opts,
-    )
-    .await
-    .expect("Scan should succeed");
+    let setup = TestScanSetup::new();
+    full_scan(&repo, &db, &setup.context())
+        .await
+        .expect("Scan should succeed");
 
     // Search for "backend engineer"
-    let query_emb = embedding
-        .generate("backend engineer")
-        .await
-        .expect("operation should succeed");
+    let query_emb = setup.embedding.generate("backend engineer").await.unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, 5, None, None, None)
-        .expect("operation should succeed");
+        .unwrap();
 
     assert!(!results.is_empty(), "Search should return results");
     println!("Search 'backend engineer' results:");
@@ -425,13 +239,14 @@ async fn test_semantic_search_works() {
     }
 
     // Search for "API design"
-    let query_emb = embedding
+    let query_emb = setup
+        .embedding
         .generate("API design patterns")
         .await
-        .expect("operation should succeed");
+        .unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, 5, None, None, None)
-        .expect("operation should succeed");
+        .unwrap();
 
     assert!(!results.is_empty(), "Search should return results");
     println!("\nSearch 'API design patterns' results:");
@@ -446,13 +261,14 @@ async fn test_semantic_search_works() {
     }
 
     // Search with type filter
-    let query_emb = embedding
+    let query_emb = setup
+        .embedding
         .generate("software development")
         .await
-        .expect("operation should succeed");
+        .unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, 5, Some("person"), None, None)
-        .expect("operation should succeed");
+        .unwrap();
 
     println!("\nSearch 'software development' (type=person) results:");
     for (i, r) in results.iter().enumerate() {

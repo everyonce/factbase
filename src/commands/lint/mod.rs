@@ -47,10 +47,8 @@ use super::{
     setup_llm_with_timeout, setup_review_llm_with_timeout, OutputFormat,
 };
 use chrono::Utc;
-use factbase::{config::validate_timeout, format_json, format_yaml};
+use factbase::{config::validate_timeout, format_json, format_yaml, ProgressReporter};
 use incremental::{filter_documents_by_time, get_effective_since, update_lint_timestamps};
-#[cfg(feature = "progress")]
-use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -110,6 +108,9 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
     };
 
     let repos_to_lint = resolve_repos(repos, args.repo.as_deref())?;
+
+    // Unified progress reporter for both review and cross-check passes
+    let progress = ProgressReporter::Cli { quiet: args.quiet };
 
     let mut warnings = 0;
     let mut errors = 0;
@@ -196,23 +197,10 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             .as_ref()
             .and_then(|p| p.allowed_types.as_ref());
 
-        // Create progress bar for --review mode when processing >10 documents
-        #[cfg(feature = "progress")]
-        let progress_bar = if args.review && !args.quiet && docs.len() > 10 {
-            let pb = ProgressBar::new(docs.len() as u64);
-            let template =
-                "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}";
-            pb.set_style(
-                ProgressStyle::default_bar()
-                    .template(template)
-                    .expect("progress bar template should be valid")
-                    .progress_chars("##-"),
-            );
-            pb.set_message("Generating questions...");
-            Some(pb)
-        } else {
-            None
-        };
+        // Report review phase via ProgressReporter
+        if args.review {
+            progress.phase("Generating review questions");
+        }
 
         // Process documents in batches if batch_size > 0, otherwise process all at once
         let doc_batches: Vec<&[factbase::Document]> = if batch_size > 0 {
@@ -269,7 +257,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                     // Print messages
                     if is_table_format {
                         for msg in &doc_result.messages {
-                            println!("{}", msg);
+                            println!("{msg}");
                         }
                     }
                     errors += doc_result.errors;
@@ -308,24 +296,22 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             let batch_links = db.get_links_for_documents(&batch_doc_ids)?;
 
             for (doc_idx, doc) in batch_docs.iter().enumerate() {
-                // Update progress bar with global index
+                // Report progress via ProgressReporter
                 let global_idx = if batch_size > 0 {
                     batch_base_idx + doc_idx
                 } else {
                     doc_idx
                 };
-                #[cfg(feature = "progress")]
-                if let Some(ref pb) = progress_bar {
-                    pb.set_position(global_idx as u64);
+                if args.review {
+                    progress.report(global_idx + 1, docs.len(), &doc.title);
                 }
-                // Suppress unused variable warning when progress feature is disabled
-                let _ = global_idx;
 
                 // Get pre-fetched links for this document
                 let (links_from, links_to) = batch_links
                     .get(&doc.id)
-                    .map(|(out, inc)| (out.as_slice(), inc.as_slice()))
-                    .unwrap_or((&[], &[]));
+                    .map_or((&[][..], &[][..]), |(out, inc)| {
+                        (out.as_slice(), inc.as_slice())
+                    });
 
                 // Check for broken links using helper (also handles orphan detection)
                 let link_result = execute::check_document_links(
@@ -386,14 +372,9 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             }
         } // End of batch loop
 
-        // Finish progress bar
-        #[cfg(feature = "progress")]
-        if let Some(ref pb) = progress_bar {
-            pb.finish_and_clear();
-        }
-
         // Cross-document fact validation pass (--cross-check)
         if let Some((ref embedding, ref llm)) = cross_check_providers {
+            progress.phase("Cross-document validation");
             if is_table_format && !args.quiet {
                 println!("  Cross-checking {} documents...", docs.len());
             }
@@ -407,6 +388,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                 if is_table_format && !args.quiet {
                     eprint!("\r  Cross-checking document {} of {}...", i + 1, docs.len());
                 }
+                progress.report(i + 1, docs.len(), &format!("Cross-checking {}", doc.title));
                 match factbase::cross_validate_document(
                     &doc.content,
                     &doc.id,
@@ -460,7 +442,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             if is_table_format && !args.quiet {
                 eprintln!("\r  Cross-check complete.                    ");
                 if skipped > 0 {
-                    println!("  Skipped {} unchanged document(s).", skipped);
+                    println!("  Skipped {skipped} unchanged document(s).");
                 }
             }
         }
@@ -479,7 +461,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                 } else {
                     " "
                 };
-                println!("    {} {}: {}", marker, doc_type, count);
+                println!("    {marker} {doc_type}: {count}");
             }
         }
 
@@ -519,7 +501,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
         let total_docs = exported_questions.len();
 
         // Determine format from file extension
-        let output = if export_path.ends_with(".yaml") || export_path.ends_with(".yml") {
+        let output = if super::utils::ends_with_ext(export_path, ".yaml") || super::utils::ends_with_ext(export_path, ".yml") {
             format_yaml(&exported_questions)?
         } else {
             // Default to JSON
@@ -530,8 +512,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
 
         if is_table_format {
             println!(
-                "\nExported {} question(s) from {} document(s) to {}",
-                total_questions, total_docs, export_path
+                "\nExported {total_questions} question(s) from {total_docs} document(s) to {export_path}"
             );
         }
     }

@@ -147,10 +147,15 @@ pub async fn list_suggestions(
         // Fetch based on type filter or all
         match suggestion_type.as_deref() {
             Some("merge") => {
-                merge = detect_merge_candidates(&db, threshold, repo_ref)?;
+                merge = detect_merge_candidates(
+                    &db,
+                    threshold,
+                    repo_ref,
+                    &crate::ProgressReporter::Silent,
+                )?;
             }
             Some("misplaced") => {
-                misplaced = detect_misplaced(&db, repo_ref)?;
+                misplaced = detect_misplaced(&db, repo_ref, &crate::ProgressReporter::Silent)?;
             }
             Some("split") | Some("duplicate") => {
                 // Split/duplicate detection requires embedding provider - not available via web API
@@ -158,8 +163,13 @@ pub async fn list_suggestions(
             }
             _ => {
                 // Fetch all types (except split which requires embedding)
-                merge = detect_merge_candidates(&db, threshold, repo_ref)?;
-                misplaced = detect_misplaced(&db, repo_ref)?;
+                merge = detect_merge_candidates(
+                    &db,
+                    threshold,
+                    repo_ref,
+                    &crate::ProgressReporter::Silent,
+                )?;
+                misplaced = detect_misplaced(&db, repo_ref, &crate::ProgressReporter::Silent)?;
             }
         }
 
@@ -186,8 +196,8 @@ pub async fn get_document_suggestions(
 
     let result = super::run_blocking_web(move || {
         // Get all suggestions and filter to those involving this document
-        let all_merge = detect_merge_candidates(&db, 0.95, None)?;
-        let all_misplaced = detect_misplaced(&db, None)?;
+        let all_merge = detect_merge_candidates(&db, 0.95, None, &crate::ProgressReporter::Silent)?;
+        let all_misplaced = detect_misplaced(&db, None, &crate::ProgressReporter::Silent)?;
 
         let merge: Vec<_> = all_merge
             .into_iter()
@@ -325,8 +335,7 @@ pub async fn assign_orphan(
 
         if line_idx >= lines.len() {
             return Err(FactbaseError::not_found(format!(
-                "Line {} not found in orphan file",
-                line_number
+                "Line {line_number} not found in orphan file"
             )));
         }
 
@@ -337,15 +346,14 @@ pub async fn assign_orphan(
             // Simple format: `- content @r[orphan] <!-- from doc line N -->`
             // Convert to: `- [x] content @r[orphan] <!-- from doc line N --> → answer`
             let new_line = line.replacen("- ", "- [x] ", 1);
-            lines[line_idx] = format!("{} → {}", new_line, target);
+            lines[line_idx] = format!("{new_line} → {target}");
         } else if line.contains("[ ]") {
             // Checkbox format unchecked: mark as checked and add answer
             let new_line = line.replace("[ ]", "[x]");
-            lines[line_idx] = format!("{} → {}", new_line, target);
+            lines[line_idx] = format!("{new_line} → {target}");
         } else {
             return Err(FactbaseError::parse(format!(
-                "Line {} is not a valid orphan entry",
-                line_number
+                "Line {line_number} is not a valid orphan entry"
             )));
         }
 

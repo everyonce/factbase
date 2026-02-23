@@ -8,13 +8,12 @@ pub fn validate_date(date: &str) -> Option<String> {
         if let Ok(year) = date.parse::<u32>() {
             if !(1900..=2100).contains(&year) {
                 return Some(format!(
-                    "year {} is outside reasonable range (1900-2100)",
-                    year
+                    "year {year} is outside reasonable range (1900-2100)"
                 ));
             }
             return None;
         }
-        return Some(format!("invalid year format: {}", date));
+        return Some(format!("invalid year format: {date}"));
     }
 
     if date.len() == 7 && date.chars().nth(5) == Some('Q') {
@@ -23,18 +22,17 @@ pub fn validate_date(date: &str) -> Option<String> {
         if let Ok(year) = year_str.parse::<u32>() {
             if !(1900..=2100).contains(&year) {
                 return Some(format!(
-                    "year {} is outside reasonable range (1900-2100)",
-                    year
+                    "year {year} is outside reasonable range (1900-2100)"
                 ));
             }
             if let Ok(quarter) = quarter_str.parse::<u32>() {
                 if !(1..=4).contains(&quarter) {
-                    return Some(format!("invalid quarter Q{} (must be Q1-Q4)", quarter));
+                    return Some(format!("invalid quarter Q{quarter} (must be Q1-Q4)"));
                 }
                 return None;
             }
         }
-        return Some(format!("invalid quarter format: {}", date));
+        return Some(format!("invalid quarter format: {date}"));
     }
 
     if date.len() == 7 {
@@ -43,16 +41,15 @@ pub fn validate_date(date: &str) -> Option<String> {
         if let (Ok(year), Ok(month)) = (year_str.parse::<u32>(), month_str.parse::<u32>()) {
             if !(1900..=2100).contains(&year) {
                 return Some(format!(
-                    "year {} is outside reasonable range (1900-2100)",
-                    year
+                    "year {year} is outside reasonable range (1900-2100)"
                 ));
             }
             if !(1..=12).contains(&month) {
-                return Some(format!("invalid month {} (must be 01-12)", month));
+                return Some(format!("invalid month {month} (must be 01-12)"));
             }
             return None;
         }
-        return Some(format!("invalid year-month format: {}", date));
+        return Some(format!("invalid year-month format: {date}"));
     }
 
     if date.len() == 10 {
@@ -66,26 +63,24 @@ pub fn validate_date(date: &str) -> Option<String> {
         ) {
             if !(1900..=2100).contains(&year) {
                 return Some(format!(
-                    "year {} is outside reasonable range (1900-2100)",
-                    year
+                    "year {year} is outside reasonable range (1900-2100)"
                 ));
             }
             if !(1..=12).contains(&month) {
-                return Some(format!("invalid month {} (must be 01-12)", month));
+                return Some(format!("invalid month {month} (must be 01-12)"));
             }
             let max_day = days_in_month(year, month);
             if day < 1 || day > max_day {
                 return Some(format!(
-                    "invalid day {} for month {} (must be 01-{})",
-                    day, month, max_day
+                    "invalid day {day} for month {month} (must be 01-{max_day})"
                 ));
             }
             return None;
         }
-        return Some(format!("invalid date format: {}", date));
+        return Some(format!("invalid date format: {date}"));
     }
 
-    Some(format!("unrecognized date format: {}", date))
+    Some(format!("unrecognized date format: {date}"))
 }
 
 pub(crate) fn days_in_month(year: u32, month: u32) -> u32 {

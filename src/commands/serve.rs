@@ -1,6 +1,6 @@
 use super::{
-    find_repo_with_config, setup_cached_embedding, setup_embedding, setup_link_detector,
-    setup_llm_with_timeout,
+    auto_init_repo, find_repo_with_config, setup_cached_embedding, setup_embedding,
+    setup_link_detector, setup_llm_with_timeout,
 };
 use crate::commands::utils::resolve_repos;
 use anyhow::Context;
@@ -9,7 +9,7 @@ use clap::Parser;
 use factbase::start_web_server;
 use factbase::{
     find_repo_for_path, full_scan, Config, DocumentProcessor, FileWatcher, McpServer,
-    ScanCoordinator, ScanOptions, Scanner,
+    ProgressReporter, ScanContext, ScanCoordinator, ScanOptions, Scanner,
 };
 use std::time::Duration;
 use tokio::sync::oneshot;
@@ -42,7 +42,10 @@ pub struct ServeArgs {
 }
 
 pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
-    let (config, db, _) = find_repo_with_config(None)?;
+    let (config, db, _) = match find_repo_with_config(None) {
+        Ok(tuple) => tuple,
+        Err(_) => auto_init_repo(&std::env::current_dir()?)?,
+    };
 
     // Health check mode: just check and exit
     if args.health_check {
@@ -96,8 +99,8 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
     println!("╔════════════════════════════════════════╗");
     println!("║         Factbase MCP Server            ║");
     println!("╠════════════════════════════════════════╣");
-    println!("║ MCP endpoint: http://{}:{}/mcp", host, port);
-    println!("║ Health check: http://{}:{}/health", host, port);
+    println!("║ MCP endpoint: http://{host}:{port}/mcp");
+    println!("║ Health check: http://{host}:{port}/health");
     #[cfg(feature = "web")]
     if config.web.enabled {
         println!("║ Web UI:       http://127.0.0.1:{}", config.web.port);
@@ -132,17 +135,15 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
                 if let Some(repo) = find_repo_for_path(path, &repos) {
                     if scan_coordinator.try_start() {
                         info!("Rescanning repository: {}", repo.id);
-                        match full_scan(
-                            repo,
-                            &db,
-                            &scanner,
-                            &processor,
-                            &scan_embedding,
-                            &link_detector,
-                            &watcher_opts,
-                        )
-                        .await
-                        {
+                        let ctx = ScanContext {
+                            scanner: &scanner,
+                            processor: &processor,
+                            embedding: &scan_embedding,
+                            link_detector: &link_detector,
+                            opts: &watcher_opts,
+                            progress: &ProgressReporter::Silent,
+                        };
+                        match full_scan(repo, &db, &ctx).await {
                             Ok(result) => info!("Scan complete: {}", result),
                             Err(e) => error!("Scan error: {}", e),
                         }
@@ -180,7 +181,7 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
 async fn run_health_check(config: &Config) -> anyhow::Result<()> {
     let host = &config.server.host;
     let port = config.server.port;
-    let url = format!("http://{}:{}/health", host, port);
+    let url = format!("http://{host}:{port}/health");
 
     let client = factbase::create_http_client(Duration::from_secs(5));
 
@@ -208,25 +209,28 @@ async fn run_health_check(config: &Config) -> anyhow::Result<()> {
         .and_then(|v| v.as_str())
         .unwrap_or("unknown");
 
-    println!("Health check: {}", url);
-    println!("  Status: {}", status);
+    println!("Health check: {url}");
+    println!("  Status: {status}");
     if let Some(version) = body.get("version").and_then(|v| v.as_str()) {
-        println!("  Version: {}", version);
+        println!("  Version: {version}");
     }
-    if let Some(uptime) = body.get("uptime_seconds").and_then(|v| v.as_u64()) {
-        println!("  Uptime: {}s", uptime);
+    if let Some(uptime) = body
+        .get("uptime_seconds")
+        .and_then(serde_json::Value::as_u64)
+    {
+        println!("  Uptime: {uptime}s");
     }
     if let Some(db) = body.get("database").and_then(|v| v.as_str()) {
-        println!("  Database: {}", db);
+        println!("  Database: {db}");
     }
     if let Some(ollama) = body.get("ollama").and_then(|v| v.as_str()) {
-        println!("  Ollama: {}", ollama);
+        println!("  Ollama: {ollama}");
     }
 
     if status == "ok" {
         Ok(())
     } else {
-        anyhow::bail!("Health check: server status is '{}'", status)
+        anyhow::bail!("Health check: server status is '{status}'")
     }
 }
 

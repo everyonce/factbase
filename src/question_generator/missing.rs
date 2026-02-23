@@ -19,7 +19,7 @@ pub fn generate_missing_questions(content: &str) -> Vec<ReviewQuestion> {
             ReviewQuestion::new(
                 QuestionType::Missing,
                 Some(line_number),
-                format!("\"{}\" - what is the source?", fact_text),
+                format!("\"{fact_text}\" - what is the source?"),
             )
         })
         .collect()

@@ -1,6 +1,6 @@
 //! Compressed archive export handler.
 
-use factbase::{Database, Document};
+use factbase::{Database, Document, ProgressReporter};
 use std::fs;
 use std::path::Path;
 
@@ -12,12 +12,15 @@ pub fn export_archive(
     output: &Path,
     repo_path: &Path,
     with_metadata: bool,
+    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
     let file = fs::File::create(output)?;
     let encoder = zstd::Encoder::new(file, 3)?;
     let mut archive = tar::Builder::new(encoder);
 
-    for doc in docs {
+    let total = docs.len();
+    for (i, doc) in docs.iter().enumerate() {
+        progress.report(i + 1, total, &doc.title);
         let rel_path = Path::new(&doc.file_path)
             .strip_prefix(repo_path)
             .unwrap_or(Path::new(&doc.file_path));

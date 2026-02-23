@@ -1,22 +1,18 @@
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
 use std::num::NonZeroUsize;
-use std::pin::Pin;
 use std::sync::Mutex;
 use tracing::debug;
 
 use crate::error::FactbaseError;
 use crate::ollama::OllamaClient;
+use crate::BoxFuture;
 
 /// Default cache size for embedding cache (100 entries)
 const DEFAULT_CACHE_SIZE: NonZeroUsize = match NonZeroUsize::new(100) {
     Some(n) => n,
     None => unreachable!(),
 };
-
-/// Boxed future type alias for async trait methods.
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Trait for generating text embeddings via an inference backend.
 pub trait EmbeddingProvider: Send + Sync {
