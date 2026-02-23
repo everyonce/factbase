@@ -94,6 +94,23 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
     Some(questions)
 }
 
+/// Strip trailing `(line:N)` and `[pattern:...]` from a conflict question
+/// description so that descriptions remain stable when line numbers shift due
+/// to document edits or pattern classification changes.
+pub fn normalize_conflict_desc(desc: &str) -> &str {
+    // Strip trailing [pattern:...] tag first
+    let desc = desc
+        .rfind(" [pattern:")
+        .map_or(desc, |idx| &desc[..idx]);
+    // Then strip (line:N)
+    if let Some(idx) = desc.rfind(" (line:") {
+        if desc[idx..].ends_with(')') {
+            return &desc[..idx];
+        }
+    }
+    desc
+}
+
 /// Extract line reference from question description and strip the prefix.
 /// Returns `(line_ref, stripped_description)`.
 /// If a "Line N:" prefix is found, it's removed from the description so that
@@ -219,7 +236,16 @@ fn question_description_matches(line: &str, valid: &HashSet<String>) -> bool {
         let raw_desc = &line[pos + 3..];
         // Strip "Line N: " prefix to match generator descriptions
         let (_, stripped) = extract_line_ref_and_strip(raw_desc);
-        return valid.contains(&stripped);
+        if valid.contains(&stripped) {
+            return true;
+        }
+        // For conflict questions whose line numbers may have shifted,
+        // also try matching with the trailing (line:N) stripped.
+        let normalized = normalize_conflict_desc(&stripped);
+        if normalized != stripped {
+            return valid.iter().any(|v| normalize_conflict_desc(v) == normalized);
+        }
+        return false;
     }
     // If we can't parse it, keep it (conservative)
     true
@@ -829,5 +855,44 @@ Line 3
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_normalize_conflict_desc_strips_line_ref() {
+        assert_eq!(
+            normalize_conflict_desc("\"Role A\" overlaps with \"Role B\" (line:5)"),
+            "\"Role A\" overlaps with \"Role B\""
+        );
+    }
+
+    #[test]
+    fn test_normalize_conflict_desc_no_line_ref() {
+        let desc = "\"Role A\" overlaps with \"Role B\"";
+        assert_eq!(normalize_conflict_desc(desc), desc);
+    }
+
+    #[test]
+    fn test_normalize_conflict_desc_line_ref_at_end_only() {
+        // Should only strip the trailing (line:N), not other parenthesized content
+        let desc = "some (note) text (line:10)";
+        assert_eq!(normalize_conflict_desc(desc), "some (note) text");
+    }
+
+    #[test]
+    fn test_normalize_conflict_desc_strips_pattern_tag() {
+        assert_eq!(
+            normalize_conflict_desc(
+                "\"Role A\" overlaps with \"Role B\" (line:5) [pattern:concurrent_roles]"
+            ),
+            "\"Role A\" overlaps with \"Role B\""
+        );
+    }
+
+    #[test]
+    fn test_normalize_conflict_desc_pattern_tag_without_line_ref() {
+        assert_eq!(
+            normalize_conflict_desc("\"Role A\" overlaps with \"Role B\" [pattern:promotion]"),
+            "\"Role A\" overlaps with \"Role B\""
+        );
     }
 }

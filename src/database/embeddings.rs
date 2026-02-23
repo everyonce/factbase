@@ -161,6 +161,80 @@ impl Database {
         })
     }
 
+    /// Export all embeddings with chunk metadata, optionally filtered by repo.
+    pub fn export_all_embeddings(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<Vec<crate::embeddings_io::EmbeddingRecord>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(rid) =
+            repo_id
+        {
+            (
+                "SELECT c.document_id, c.chunk_index, c.chunk_start, c.chunk_end, e.embedding
+                 FROM embedding_chunks c
+                 JOIN document_embeddings e ON c.id = e.id
+                 JOIN documents d ON c.document_id = d.id
+                 WHERE d.repo_id = ?1 AND d.is_deleted = FALSE
+                 ORDER BY c.document_id, c.chunk_index"
+                    .to_string(),
+                vec![Box::new(rid.to_string())],
+            )
+        } else {
+            (
+                "SELECT c.document_id, c.chunk_index, c.chunk_start, c.chunk_end, e.embedding
+                 FROM embedding_chunks c
+                 JOIN document_embeddings e ON c.id = e.id
+                 ORDER BY c.document_id, c.chunk_index"
+                    .to_string(),
+                vec![],
+            )
+        };
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(&params))?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            let doc_id: String = row.get(0)?;
+            let chunk_index: i64 = row.get(1)?;
+            let chunk_start: i64 = row.get(2)?;
+            let chunk_end: i64 = row.get(3)?;
+            let bytes: Vec<u8> = row.get(4)?;
+            let embedding: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+
+            records.push(crate::embeddings_io::EmbeddingRecord {
+                doc_id,
+                chunk_index: chunk_index as usize,
+                chunk_start: chunk_start as usize,
+                chunk_end: chunk_end as usize,
+                embedding,
+            });
+        }
+        Ok(records)
+    }
+
+    /// Count total embedding chunks in the database.
+    pub fn count_embedding_chunks(&self) -> Result<usize, FactbaseError> {
+        let conn = self.get_conn()?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM embedding_chunks", [], |row| row.get(0))?;
+        Ok(count as usize)
+    }
+
+    /// Get all non-deleted document IDs.
+    pub fn get_all_document_ids(&self) -> Result<std::collections::HashSet<String>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let mut stmt =
+            conn.prepare("SELECT id FROM documents WHERE is_deleted = FALSE")?;
+        let ids = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<std::collections::HashSet<String>, _>>()?;
+        Ok(ids)
+    }
+
     /// Get embedding dimension from a sample embedding
     pub fn get_embedding_dimension(&self) -> Result<Option<usize>, FactbaseError> {
         let conn = self.get_conn()?;

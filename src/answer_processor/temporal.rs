@@ -44,6 +44,11 @@ pub(crate) fn extract_dates_from_answer(answer: &str) -> Option<DateInfo> {
             } else if info.end_date.is_none() {
                 info.end_date = Some(date);
             }
+        } else if info.is_ongoing {
+            // If answer confirms ongoing, treat extracted dates as context, not end dates
+            if info.start_date.is_none() {
+                info.start_date = Some(date);
+            }
         } else if info.end_date.is_none() {
             info.end_date = Some(date);
         }
@@ -111,24 +116,30 @@ pub(crate) fn format_temporal_tag(dates: &DateInfo, old_tag: &str) -> String {
         .unwrap_or("");
 
     // If old tag is ongoing (ends with ..) and we have an end date, close it
-    if old_content.ends_with("..") {
+    // But NOT if the answer indicates the role is still ongoing
+    if old_content.ends_with("..") && !dates.is_ongoing {
         if let Some(end) = &dates.end_date {
             let start = old_content.strip_suffix("..").unwrap_or("");
             return format!("@t[{start}..{end}]");
         }
     }
 
-    // If we have both dates, create a range
+    // If we have both dates, create a range (but not if ongoing with open-ended old tag)
     if let (Some(start), Some(end)) = (&dates.start_date, &dates.end_date) {
-        return format!("@t[{start}..{end}]");
+        if !(dates.is_ongoing && old_content.ends_with("..")) {
+            return format!("@t[{start}..{end}]");
+        }
     }
 
     // If ongoing, keep or make it ongoing
     if dates.is_ongoing {
+        // Preserve existing open-ended range as-is
+        if old_content.ends_with("..") {
+            return old_tag.to_string();
+        }
         if let Some(start) = &dates.start_date {
             return format!("@t[{start}..]");
         }
-        // Keep existing start if we're just confirming ongoing
         if old_content.contains("..") {
             return old_tag.to_string();
         }
@@ -191,5 +202,50 @@ mod tests {
             format_temporal_tag(&dates, "@t[2022..]"),
             "@t[2022..2024-03]"
         );
+    }
+
+    #[test]
+    fn test_format_temporal_tag_ongoing_not_closed() {
+        // Bug fix: confirming "still current" should NOT close an open-ended range
+        let dates = DateInfo {
+            start_date: None,
+            end_date: Some("2026".to_string()),
+            is_ongoing: true,
+        };
+        assert_eq!(
+            format_temporal_tag(&dates, "@t[2024-12..]"),
+            "@t[2024-12..]"
+        );
+    }
+
+    #[test]
+    fn test_format_temporal_tag_ongoing_with_both_dates_not_closed() {
+        let dates = DateInfo {
+            start_date: Some("2024".to_string()),
+            end_date: Some("2026".to_string()),
+            is_ongoing: true,
+        };
+        // is_ongoing + open-ended old tag → preserve open-ended
+        assert_eq!(
+            format_temporal_tag(&dates, "@t[2024-12..]"),
+            "@t[2024-12..]"
+        );
+    }
+
+    #[test]
+    fn test_extract_dates_ongoing_with_month_year() {
+        // "Yes, still current as of February 2026" should NOT set end_date
+        let dates = extract_dates_from_answer("Yes, still current as of February 2026").unwrap();
+        assert!(dates.is_ongoing);
+        assert_eq!(dates.start_date, Some("2026-02".to_string()));
+        assert_eq!(dates.end_date, None);
+    }
+
+    #[test]
+    fn test_extract_dates_ended_with_month_year() {
+        // "No, left in March 2024" should still set end_date
+        let dates = extract_dates_from_answer("No, left in March 2024").unwrap();
+        assert!(!dates.is_ongoing);
+        assert_eq!(dates.end_date, Some("2024-03".to_string()));
     }
 }

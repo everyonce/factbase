@@ -4,19 +4,19 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
+use crate::mcp::tools::helpers::resolve_doc_path;
 use crate::mcp::tools::{get_bool_arg, get_str_arg_required};
 use crate::patterns::has_corruption_artifacts;
-use crate::processor::{append_review_questions, parse_review_queue};
+use crate::processor::{append_review_questions, content_hash, parse_review_queue};
 use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
-    generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_duplicate_role_questions, generate_missing_questions, generate_stale_questions,
-    generate_temporal_questions,
+    filter_sequential_conflicts, generate_ambiguous_questions, generate_conflict_questions,
+    generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
+    generate_stale_questions, generate_temporal_questions,
 };
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
 use tracing::{instrument, warn};
 
 use super::format_question_json;
@@ -72,13 +72,20 @@ pub async fn generate_questions(
         }));
     }
 
+    // Prefer fresh content from disk over potentially stale database content.
+    // apply_review_answers writes reviewed markers to files but doesn't always
+    // update the database, so the DB content may lack those markers.
+    let file_path = resolve_doc_path(db, &doc)?;
+    let disk_content = fs::read_to_string(&file_path).ok();
+    let content = disk_content.as_deref().unwrap_or(&doc.content);
+
     // Generate all question types
-    let mut new_questions = generate_temporal_questions(&doc.content);
-    new_questions.extend(generate_conflict_questions(&doc.content));
-    new_questions.extend(generate_duplicate_role_questions(&doc.content));
-    new_questions.extend(generate_missing_questions(&doc.content));
-    new_questions.extend(generate_ambiguous_questions(&doc.content));
-    new_questions.extend(generate_stale_questions(&doc.content, 365)); // Default 365 days
+    let mut new_questions = generate_temporal_questions(content);
+    new_questions.extend(generate_conflict_questions(content));
+    new_questions.extend(generate_duplicate_entry_questions(content));
+    new_questions.extend(generate_missing_questions(content));
+    new_questions.extend(generate_ambiguous_questions(content));
+    new_questions.extend(generate_stale_questions(content, 365)); // Default 365 days
 
     // Generate duplicate questions
     if let Ok(similar_docs) = db.find_similar_documents(&doc.id, 0.95) {
@@ -87,19 +94,31 @@ pub async fn generate_questions(
 
     // Cross-document fact validation (when LLM is available)
     if let Some(llm) = llm {
-        match cross_validate_document(&doc.content, &doc.id, db, embedding, llm).await {
+        match cross_validate_document(content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm).await {
             Ok(cross_questions) => new_questions.extend(cross_questions),
             Err(e) => warn!("Cross-validation failed for {}: {e}", doc_id),
         }
     }
 
+    // Post-filter: remove conflict questions for boundary-month sequential entries
+    filter_sequential_conflicts(content, &mut new_questions);
+
     // Check for existing review queue to avoid duplicates
-    let existing_questions = parse_review_queue(&doc.content).unwrap_or_default();
+    let existing_questions = parse_review_queue(content).unwrap_or_default();
     let existing_descriptions: HashSet<_> =
         existing_questions.iter().map(|q| &q.description).collect();
+    let existing_conflict_normalized: HashSet<_> = existing_questions
+        .iter()
+        .filter(|q| q.question_type == crate::models::QuestionType::Conflict)
+        .map(|q| crate::processor::normalize_conflict_desc(&q.description))
+        .collect();
 
     // Filter out questions that already exist
-    let questions_to_add = filter_duplicate_questions(new_questions, &existing_descriptions);
+    let questions_to_add = filter_duplicate_questions(
+        new_questions,
+        &existing_descriptions,
+        &existing_conflict_normalized,
+    );
 
     // Format questions for response
     let questions_json: Vec<Value> = questions_to_add
@@ -107,17 +126,12 @@ pub async fn generate_questions(
         .map(|q| format_question_json(q, None))
         .collect();
 
-    // If not dry_run, write questions to file
+    // If not dry_run, write questions to file and sync DB
     if !dry_run && !questions_to_add.is_empty() {
-        let updated_content = append_review_questions(&doc.content, &questions_to_add);
-        let file_path = PathBuf::from(&doc.file_path);
-        if !file_path.exists() {
-            return Err(FactbaseError::not_found(format!(
-                "File not found: {}",
-                file_path.display()
-            )));
-        }
+        let updated_content = append_review_questions(content, &questions_to_add);
         fs::write(&file_path, &updated_content)?;
+        let new_hash = content_hash(&updated_content);
+        db.update_document_content(&doc_id, &updated_content, &new_hash)?;
     }
 
     Ok(serde_json::json!({
@@ -141,10 +155,23 @@ pub async fn generate_questions(
 fn filter_duplicate_questions(
     new_questions: impl IntoIterator<Item = crate::models::ReviewQuestion>,
     existing_descriptions: &HashSet<&String>,
+    existing_conflict_normalized: &HashSet<&str>,
 ) -> Vec<crate::models::ReviewQuestion> {
     new_questions
         .into_iter()
-        .filter(|q| !existing_descriptions.contains(&q.description))
+        .filter(|q| {
+            if existing_descriptions.contains(&q.description) {
+                return false;
+            }
+            if q.question_type == crate::models::QuestionType::Conflict
+                && existing_conflict_normalized.contains(
+                    crate::processor::normalize_conflict_desc(&q.description),
+                )
+            {
+                return false;
+            }
+            true
+        })
         .collect()
 }
 
@@ -180,7 +207,7 @@ mod tests {
             },
         ];
 
-        let filtered = filter_duplicate_questions(new_questions, &existing_set);
+        let filtered = filter_duplicate_questions(new_questions, &existing_set, &HashSet::new());
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].description, "New question here");
     }
@@ -208,7 +235,7 @@ mod tests {
             },
         ];
 
-        let filtered = filter_duplicate_questions(new_questions, &existing_set);
+        let filtered = filter_duplicate_questions(new_questions, &existing_set, &HashSet::new());
         assert_eq!(filtered.len(), 2);
     }
 

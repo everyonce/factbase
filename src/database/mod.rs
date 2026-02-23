@@ -106,6 +106,7 @@ mod compression;
 mod documents;
 mod embeddings;
 mod links;
+mod query_cache;
 mod repositories;
 mod schema;
 mod search;

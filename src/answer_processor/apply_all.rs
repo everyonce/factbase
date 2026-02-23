@@ -5,13 +5,15 @@
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
+use crate::models::QuestionType;
 use crate::organize::fs_helpers::write_file;
 use crate::processor::{content_hash, normalize_review_section, parse_review_queue};
 use crate::progress::ProgressReporter;
 use crate::{
     apply_changes_to_section, apply_confirmations, apply_source_citations,
     identify_affected_section, interpret_answer, remove_processed_questions, replace_section,
-    stamp_reviewed_lines, stamp_reviewed_markers, uncheck_deferred_questions, InterpretedAnswer,
+    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
+    stamp_sequential_lines, uncheck_deferred_questions, InterpretedAnswer,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -87,7 +89,10 @@ pub async fn apply_all_review_answers(
         }
         let abs_path = match repo_paths.get(doc.repo_id.as_str()) {
             Some(repo_path) => repo_path.join(&doc.file_path),
-            None => continue,
+            None => {
+                warn!(doc_id = %doc.id, repo_id = %doc.repo_id, "Skipping document: repository not found");
+                continue;
+            }
         };
         // Parse questions from the file on disk (not the database) so that
         // line_ref values match the current file content.  If the document was
@@ -96,9 +101,13 @@ pub async fn apply_all_review_answers(
         // section and drop recently-added content.
         let disk_content = match fs::read_to_string(&abs_path) {
             Ok(c) => c,
-            Err(_) => continue,
+            Err(e) => {
+                warn!(doc_id = %doc.id, path = %abs_path.display(), error = %e, "Skipping document: cannot read file");
+                continue;
+            }
         };
         let Some(questions) = parse_review_queue(&disk_content) else {
+            warn!(doc_id = %doc.id, "Skipping document: no review queue marker in file on disk");
             continue;
         };
         let answered: Vec<_> = questions
@@ -107,6 +116,7 @@ pub async fn apply_all_review_answers(
             .filter(|(_, q)| q.answered && q.answer.is_some())
             .collect();
         if answered.is_empty() {
+            warn!(doc_id = %doc.id, "Skipping document: review queue found but no answered questions");
             continue;
         }
         work.push((doc, answered, abs_path));
@@ -236,9 +246,30 @@ async fn apply_one_document(
             let dismissed_line_refs: Vec<usize> = interpreted
                 .iter()
                 .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-                .filter_map(|ia| ia.question.line_ref)
+                .flat_map(|ia| conflict_line_refs(ia))
                 .collect();
-            let mut new_content = stamp_reviewed_lines(&content, &dismissed_line_refs, &today);
+            // Stamp <!-- sequential --> on conflict-dismissed lines for permanent suppression
+            let conflict_dismissed_refs: Vec<usize> = interpreted
+                .iter()
+                .filter(|ia| {
+                    matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
+                        && ia.question.question_type == QuestionType::Conflict
+                })
+                .flat_map(|ia| conflict_line_refs(ia))
+                .collect();
+            let mut new_content = stamp_sequential_lines(&content, &conflict_dismissed_refs);
+            // Fallback: also stamp by matching fact text in case line numbers are stale
+            let conflict_texts: Vec<String> = interpreted
+                .iter()
+                .filter(|ia| {
+                    matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
+                        && ia.question.question_type == QuestionType::Conflict
+                })
+                .flat_map(|ia| conflict_fact_texts(ia))
+                .collect();
+            let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
+            new_content = stamp_sequential_by_text(&new_content, &text_refs);
+            new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
             new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
             new_content = remove_processed_questions(&new_content, &dismissed_indices);
             new_content = normalize_review_section(&new_content);
@@ -365,8 +396,33 @@ async fn apply_one_document(
     let dismissed_line_refs: Vec<usize> = interpreted
         .iter()
         .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-        .filter_map(|ia| ia.question.line_ref)
+        .flat_map(|ia| conflict_line_refs(ia))
         .collect();
+    // Stamp <!-- sequential --> on conflict-dismissed lines for permanent suppression
+    let conflict_dismissed_refs: Vec<usize> = interpreted
+        .iter()
+        .filter(|ia| {
+            matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
+                && ia.question.question_type == QuestionType::Conflict
+        })
+        .flat_map(|ia| conflict_line_refs(ia))
+        .collect();
+    if !conflict_dismissed_refs.is_empty() {
+        new_content = stamp_sequential_lines(&new_content, &conflict_dismissed_refs);
+    }
+    // Fallback: also stamp by matching fact text in case line numbers are stale
+    let conflict_texts: Vec<String> = interpreted
+        .iter()
+        .filter(|ia| {
+            matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
+                && ia.question.question_type == QuestionType::Conflict
+        })
+        .flat_map(|ia| conflict_fact_texts(ia))
+        .collect();
+    if !conflict_texts.is_empty() {
+        let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
+        new_content = stamp_sequential_by_text(&new_content, &text_refs);
+    }
     if !dismissed_line_refs.is_empty() {
         new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
     }
@@ -392,4 +448,132 @@ async fn apply_one_document(
     new_content = normalize_review_section(&new_content);
     write_file(file_path, &new_content)?;
     Ok(review_questions.len())
+}
+
+/// Collect line refs to stamp as reviewed for a dismissed question.
+///
+/// For conflict questions the description encodes the second fact's line number
+/// as a `(line:N)` suffix.  Both facts in the pair need a reviewed marker so
+/// the conflict is not regenerated on the next check run.
+fn conflict_line_refs(ia: &InterpretedAnswer) -> Vec<usize> {
+    let mut refs = Vec::new();
+    if let Some(lr) = ia.question.line_ref {
+        refs.push(lr);
+    }
+    if ia.question.question_type == QuestionType::Conflict {
+        if let Some(n) = ia
+            .question
+            .description
+            .rsplit("(line:")
+            .next()
+            .and_then(|s| s.strip_suffix(')'))
+            .and_then(|s| s.parse::<usize>().ok())
+        {
+            refs.push(n);
+        }
+    }
+    refs
+}
+
+/// Extract quoted fact texts from a conflict question description.
+/// Conflict descriptions look like: `"fact1" @t[...] overlaps with "fact2" @t[...] (line:N)`
+fn conflict_fact_texts(ia: &InterpretedAnswer) -> Vec<String> {
+    if ia.question.question_type != QuestionType::Conflict {
+        return Vec::new();
+    }
+    crate::patterns::QUOTED_TEXT_REGEX
+        .captures_iter(&ia.question.description)
+        .map(|c| c[1].to_string())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ReviewQuestion;
+
+    #[test]
+    fn test_conflict_line_refs_extracts_both_lines() {
+        let ia = InterpretedAnswer {
+            question: ReviewQuestion {
+                question_type: QuestionType::Conflict,
+                line_ref: Some(5),
+                description: r#""VP at Acme" @t[2020..2023] overlaps with "CEO at BigCo" @t[2022..2024] - were both true simultaneously? (line:7)"#.to_string(),
+                answered: true,
+                answer: Some("dismiss".to_string()),
+                line_number: 10,
+            },
+            instruction: crate::ChangeInstruction::Dismiss,
+        };
+        let refs = conflict_line_refs(&ia);
+        assert_eq!(refs, vec![5, 7]);
+    }
+
+    #[test]
+    fn test_conflict_line_refs_non_conflict_single_line() {
+        let ia = InterpretedAnswer {
+            question: ReviewQuestion {
+                question_type: QuestionType::Temporal,
+                line_ref: Some(3),
+                description: "some temporal question".to_string(),
+                answered: true,
+                answer: Some("dismiss".to_string()),
+                line_number: 10,
+            },
+            instruction: crate::ChangeInstruction::Dismiss,
+        };
+        let refs = conflict_line_refs(&ia);
+        assert_eq!(refs, vec![3]);
+    }
+
+    #[test]
+    fn test_conflict_line_refs_no_line_ref() {
+        let ia = InterpretedAnswer {
+            question: ReviewQuestion {
+                question_type: QuestionType::Conflict,
+                line_ref: None,
+                description: "conflict without line ref".to_string(),
+                answered: true,
+                answer: Some("dismiss".to_string()),
+                line_number: 10,
+            },
+            instruction: crate::ChangeInstruction::Dismiss,
+        };
+        let refs = conflict_line_refs(&ia);
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn test_conflict_fact_texts_extracts_both_quotes() {
+        let ia = InterpretedAnswer {
+            question: ReviewQuestion {
+                question_type: QuestionType::Conflict,
+                line_ref: Some(5),
+                description: r#""VP at Acme" @t[2020..2023] overlaps with "CEO at BigCo" @t[2022..2024] (line:7)"#.to_string(),
+                answered: true,
+                answer: Some("dismiss".to_string()),
+                line_number: 10,
+            },
+            instruction: crate::ChangeInstruction::Dismiss,
+        };
+        let texts = conflict_fact_texts(&ia);
+        assert_eq!(texts, vec!["VP at Acme", "CEO at BigCo"]);
+    }
+
+    #[test]
+    fn test_conflict_fact_texts_non_conflict_returns_empty() {
+        let ia = InterpretedAnswer {
+            question: ReviewQuestion {
+                question_type: QuestionType::Temporal,
+                line_ref: Some(3),
+                description: r#""Some fact" - when?"#.to_string(),
+                answered: true,
+                answer: Some("dismiss".to_string()),
+                line_number: 10,
+            },
+            instruction: crate::ChangeInstruction::Dismiss,
+        };
+        let texts = conflict_fact_texts(&ia);
+        assert!(texts.is_empty());
+    }
 }

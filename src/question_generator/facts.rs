@@ -4,7 +4,7 @@
 //! not just temporally-tagged ones. Used by cross-validation to search
 //! each fact against the rest of the factbase.
 
-use crate::patterns::{FACT_LINE_REGEX, SOURCE_REF_CAPTURE_REGEX};
+use crate::patterns::{extract_reviewed_date, FACT_LINE_REGEX, SOURCE_REF_CAPTURE_REGEX};
 
 /// A single fact line extracted from a document.
 #[derive(Debug, Clone, PartialEq)]
@@ -25,14 +25,17 @@ pub(crate) struct FactLine {
 /// Tracks `## H2` section headings so each fact knows which section it belongs to.
 /// Reuses `FACT_LINE_REGEX` for list-item detection and strips markdown bullets,
 /// numbered markers, and checkbox markers (`[ ]`, `[x]`, `[X]`).
+///
+/// Skips lines with recent `<!-- reviewed:YYYY-MM-DD -->` markers (within 180 days)
+/// to avoid re-validating facts that have already been reviewed.
 pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
     let mut facts = Vec::new();
     let mut current_section: Option<String> = None;
+    let today = chrono::Local::now().date_naive();
+    const REVIEWED_SKIP_DAYS: i64 = 180;
 
     // Stop before the review queue section
-    let end = content
-        .find(crate::patterns::REVIEW_QUEUE_MARKER)
-        .unwrap_or(content.len());
+    let end = crate::patterns::body_end_offset(content);
 
     for (line_idx, line) in content[..end].lines().enumerate() {
         // Track section headings
@@ -42,6 +45,13 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
         }
 
         if !FACT_LINE_REGEX.is_match(line) {
+            continue;
+        }
+
+        // Skip facts with a recent reviewed marker
+        if extract_reviewed_date(line)
+            .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        {
             continue;
         }
 
@@ -296,5 +306,30 @@ mod tests {
         let facts = extract_all_facts(content);
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].source_refs, vec![2]);
+    }
+
+    // --- reviewed marker skip tests ---
+
+    #[test]
+    fn test_extract_skips_recently_reviewed_lines() {
+        let today = chrono::Local::now().format("%Y-%m-%d");
+        let content = format!(
+            "- Reviewed fact <!-- reviewed:{today} -->\n- Unreviewed fact"
+        );
+        let facts = extract_all_facts(&content);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].text, "Unreviewed fact");
+    }
+
+    #[test]
+    fn test_extract_includes_old_reviewed_lines() {
+        // 200 days ago exceeds the 180-day skip window
+        let old_date = (chrono::Local::now().date_naive() - chrono::Duration::days(200))
+            .format("%Y-%m-%d");
+        let content = format!(
+            "- Old reviewed fact <!-- reviewed:{old_date} -->\n- Unreviewed fact"
+        );
+        let facts = extract_all_facts(&content);
+        assert_eq!(facts.len(), 2);
     }
 }

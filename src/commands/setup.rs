@@ -27,7 +27,7 @@
 use super::errors::db_not_found_error;
 use factbase::{
     CachedEmbedding, Config, Database, EmbeddingProvider, LinkDetector, LlmProvider,
-    OllamaEmbedding, OllamaLlm, Repository, ReviewLlm,
+    OllamaEmbedding, OllamaLlm, PersistentCachedEmbedding, Repository, ReviewLlm,
 };
 use std::path::PathBuf;
 
@@ -254,13 +254,20 @@ pub async fn setup_embedding(config: &Config) -> Box<dyn EmbeddingProvider> {
     setup_embedding_with_timeout(config, None).await
 }
 
-/// Create embedding provider wrapped in LRU cache.
+/// Create embedding provider wrapped in LRU cache with optional persistent SQLite cache.
 pub async fn setup_cached_embedding(
     config: &Config,
     timeout_override: Option<u64>,
-) -> CachedEmbedding<Box<dyn EmbeddingProvider>> {
+    db: &Database,
+) -> CachedEmbedding<PersistentCachedEmbedding<Box<dyn EmbeddingProvider>>> {
     let embedding = setup_embedding_with_timeout(config, timeout_override).await;
-    CachedEmbedding::new(embedding, config.embedding.cache_size)
+    let persistent = PersistentCachedEmbedding::new(
+        embedding,
+        db.clone(),
+        config.embedding.model.clone(),
+        config.embedding.persistent_cache_size,
+    );
+    CachedEmbedding::new(persistent, config.embedding.cache_size)
 }
 
 /// Create an LLM provider for the given model name using config settings.

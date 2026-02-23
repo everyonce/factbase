@@ -22,6 +22,7 @@
 
 mod authoring;
 mod document;
+mod embeddings;
 mod entity;
 mod helpers;
 mod organize;
@@ -42,6 +43,7 @@ use serde_json::Value;
 // Re-export tool implementations
 pub use authoring::get_authoring_guide;
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
+pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_tool};
 pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
 pub use organize::{organize, organize_analyze};
 pub use repository::{init_repository, scan_repository};
@@ -237,6 +239,9 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 }
                 "workflow" => blocking_tool!(db, args, workflow::workflow),
                 "get_authoring_guide" => get_authoring_guide(),
+                "embeddings_export" => blocking_tool!(db, args, embeddings_export),
+                "embeddings_import" => blocking_tool!(db, args, embeddings_import),
+                "embeddings_status" => blocking_tool!(db, embeddings_status_tool),
                 _ => {
                     return Ok(Some(McpResponse::error(
                         -32602,
@@ -375,6 +380,9 @@ mod tests {
             "workflow",
             "organize_analyze",
             "organize",
+            "embeddings_export",
+            "embeddings_import",
+            "embeddings_status",
         ]
         .iter()
         .map(|s| s.to_string())

@@ -2,9 +2,9 @@ mod commands;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    cmd_completions, cmd_db_vacuum, cmd_doctor, cmd_export, cmd_grep, cmd_import, cmd_init,
-    cmd_links, cmd_check, cmd_organize, cmd_repo_add, cmd_repo_list, cmd_repo_remove, cmd_review,
-    cmd_scan, cmd_search, cmd_show, cmd_stats, cmd_status, cmd_version, StatsArgs,
+    cmd_completions, cmd_db_vacuum, cmd_doctor, cmd_embeddings, cmd_export, cmd_grep, cmd_import,
+    cmd_init, cmd_links, cmd_check, cmd_organize, cmd_repo_add, cmd_repo_list, cmd_repo_remove,
+    cmd_review, cmd_scan, cmd_search, cmd_show, cmd_stats, cmd_status, cmd_version, StatsArgs,
 };
 #[cfg(feature = "mcp")]
 use commands::{cmd_mcp, cmd_serve};
@@ -106,6 +106,9 @@ enum Commands {
     Export(commands::export::ExportArgs),
     /// Import documents into a repository
     Import(commands::import::ImportArgs),
+    /// Manage vector embeddings (export, import, status)
+    #[command(subcommand)]
+    Embeddings(commands::embeddings::EmbeddingsCommands),
     /// Check connectivity and model availability
     Doctor(commands::doctor::DoctorArgs),
     /// Database operations
@@ -228,6 +231,7 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Completions(args) => cmd_completions(args),
         Commands::Export(args) => cmd_export(args)?,
         Commands::Import(args) => cmd_import(args)?,
+        Commands::Embeddings(cmd) => cmd_embeddings(commands::embeddings::EmbeddingsArgs { command: cmd })?,
         Commands::Doctor(args) => cmd_doctor(args).await?,
         Commands::Check(args) => cmd_check(args).await?,
         Commands::Review(args) => cmd_review(args).await?,

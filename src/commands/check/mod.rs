@@ -416,6 +416,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                 match factbase::cross_validate_document(
                     &doc.content,
                     &doc.id,
+                    doc.doc_type.as_deref(),
                     &db,
                     embedding.as_ref(),
                     llm.as_ref(),

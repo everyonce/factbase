@@ -5,14 +5,13 @@
 //! based on various quality checks (temporal tags, sources, duplicates, etc.).
 
 use factbase::{
-    generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_duplicate_role_questions, generate_missing_questions,
+    filter_sequential_conflicts, generate_ambiguous_questions, generate_conflict_questions,
+    generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
-    parse_review_queue, prune_stale_questions, ReviewQuestion,
+    normalize_conflict_desc, parse_review_queue, prune_stale_questions, QuestionType,
+    ReviewQuestion,
 };
-#[cfg(test)]
-use factbase::QuestionType;
 use std::collections::{HashMap, HashSet};
 
 /// Configuration for review question generation
@@ -63,8 +62,8 @@ pub fn generate_questions_for_content(
     // Generate conflict questions (overlapping dates)
     new_questions.extend(generate_conflict_questions(content));
 
-    // Generate duplicate role questions (same role appearing multiple times)
-    new_questions.extend(generate_duplicate_role_questions(content));
+    // Generate duplicate entry questions (same fact appearing multiple times)
+    new_questions.extend(generate_duplicate_entry_questions(content));
 
     // Generate missing source questions
     new_questions.extend(generate_missing_questions(content));
@@ -98,6 +97,9 @@ pub fn generate_questions_for_content(
         ));
     }
 
+    // Post-filter: remove conflict questions for boundary-month sequential entries
+    filter_sequential_conflicts(content, &mut new_questions);
+
     // Filter out questions that already exist in the document
     filter_existing_questions(content, new_questions)
 }
@@ -114,7 +116,7 @@ pub fn generate_and_prune(
     // Generate all questions (before dedup) to get the "valid" set
     let mut all_generated = generate_temporal_questions(content);
     all_generated.extend(generate_conflict_questions(content));
-    all_generated.extend(generate_duplicate_role_questions(content));
+    all_generated.extend(generate_duplicate_entry_questions(content));
     all_generated.extend(generate_missing_questions(content));
     all_generated.extend(generate_source_quality_questions(content));
     all_generated.extend(generate_ambiguous_questions(content));
@@ -126,6 +128,9 @@ pub fn generate_and_prune(
             required_fields,
         ));
     }
+
+    // Post-filter: remove conflict questions for boundary-month sequential entries
+    filter_sequential_conflicts(content, &mut all_generated);
 
     let valid_descriptions: HashSet<_> =
         all_generated.iter().map(|q| q.description.clone()).collect();
@@ -183,10 +188,28 @@ pub fn filter_existing_questions(
     let existing_questions = parse_review_queue(content).unwrap_or_default();
     let existing_descriptions: HashSet<_> =
         existing_questions.iter().map(|q| &q.description).collect();
+    // Build a set of normalized conflict descriptions so that line-number
+    // shifts (from footnote additions etc.) don't cause duplicate conflicts.
+    let existing_conflict_normalized: HashSet<_> = existing_questions
+        .iter()
+        .filter(|q| q.question_type == QuestionType::Conflict)
+        .map(|q| normalize_conflict_desc(&q.description))
+        .collect();
 
     questions
         .into_iter()
-        .filter(|q| !existing_descriptions.contains(&q.description))
+        .filter(|q| {
+            if existing_descriptions.contains(&q.description) {
+                return false;
+            }
+            // For conflict questions, also check normalized (line-number-stripped) match
+            if q.question_type == QuestionType::Conflict
+                && existing_conflict_normalized.contains(normalize_conflict_desc(&q.description))
+            {
+                return false;
+            }
+            true
+        })
         .collect()
 }
 
@@ -286,5 +309,58 @@ mod tests {
     fn test_count_reviewed_facts_none() {
         let content = "- Fact one\n- Fact two\n";
         assert_eq!(count_reviewed_facts(content), 0);
+    }
+
+    #[test]
+    fn test_generate_and_prune_suppresses_boundary_month_conflicts() {
+        // LinkedIn pattern: sequential roles with shared boundary dates
+        let content = "# Person\n\n## Career\n\
+            - Engineer at Acme @t[2018..2020-06]\n\
+            - CTO at BigCo @t[2020-06..2023]\n";
+        let config = ReviewConfig::default();
+        let (questions, _, _) = generate_and_prune(content, Some("person"), &config);
+        let conflict_questions: Vec<_> = questions
+            .iter()
+            .filter(|q| q.question_type == QuestionType::Conflict)
+            .collect();
+        assert!(
+            conflict_questions.is_empty(),
+            "Boundary-month sequential roles should not generate conflict questions via generate_and_prune, got {}",
+            conflict_questions.len()
+        );
+    }
+
+    #[test]
+    fn test_filter_existing_conflict_with_shifted_line_numbers() {
+        // Existing conflict question has (line:5) but new one has (line:7) due to
+        // footnotes being added. The normalized description should still match.
+        let content = r#"
+# Person
+
+## Career
+- Role A @t[2018..2022]
+- Role B @t[2020..2024]
+
+<!-- factbase:review -->
+## Review Queue
+
+- [ ] `@q[conflict]` "Role A" @t[2018..2022] overlaps with "Role B" @t[2020..2024] - were both true simultaneously? (line:5)
+  > 
+"#;
+        let questions = vec![ReviewQuestion {
+            question_type: QuestionType::Conflict,
+            line_ref: Some(4),
+            // Same conflict but line number shifted from 5 to 7
+            description: "\"Role A\" @t[2018..2022] overlaps with \"Role B\" @t[2020..2024] - were both true simultaneously? (line:7)".to_string(),
+            answered: false,
+            answer: None,
+            line_number: 0,
+        }];
+
+        let filtered = filter_existing_questions(content, questions);
+        assert!(
+            filtered.is_empty(),
+            "Conflict question with shifted line number should be filtered as duplicate"
+        );
     }
 }

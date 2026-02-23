@@ -1,9 +1,11 @@
 use lru::LruCache;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::num::NonZeroUsize;
 use std::sync::Mutex;
 use tracing::debug;
 
+use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::ollama::OllamaClient;
 use crate::BoxFuture;
@@ -243,6 +245,83 @@ impl<E: EmbeddingProvider> EmbeddingProvider for CachedEmbedding<E> {
     }
 }
 
+/// Compute SHA256 hex hash of text for cache keying.
+fn text_hash(text: &str) -> String {
+    hex::encode(Sha256::digest(text.as_bytes()))
+}
+
+/// Wrapper that persists query embeddings in SQLite for cross-run caching.
+/// Sits between the in-memory LRU cache and the actual provider:
+/// `CachedEmbedding` → `PersistentCachedEmbedding` → provider.
+pub struct PersistentCachedEmbedding<E: EmbeddingProvider> {
+    inner: E,
+    db: Database,
+    model: String,
+    max_entries: usize,
+}
+
+impl<E: EmbeddingProvider> PersistentCachedEmbedding<E> {
+    /// Create a new persistent cache layer. Runs eviction on creation.
+    pub fn new(inner: E, db: Database, model: String, max_entries: usize) -> Self {
+        // Best-effort eviction on startup
+        if let Err(e) = db.evict_query_cache(max_entries) {
+            tracing::warn!("Failed to evict query cache on startup: {e}");
+        }
+        Self {
+            inner,
+            db,
+            model,
+            max_entries,
+        }
+    }
+}
+
+impl<E: EmbeddingProvider> EmbeddingProvider for PersistentCachedEmbedding<E> {
+    fn generate<'a>(&'a self, text: &'a str) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
+        Box::pin(async move {
+            let hash = text_hash(text);
+
+            // Check SQLite cache
+            if let Ok(Some(embedding)) = self.db.get_cached_query_embedding(&hash, &self.model) {
+                debug!("Persistent embedding cache hit");
+                return Ok(embedding);
+            }
+
+            // Cache miss — call provider
+            let embedding = self.inner.generate(text).await?;
+
+            // Store in SQLite (best-effort)
+            if let Err(e) = self.db.put_cached_query_embedding(
+                &hash,
+                text,
+                &self.model,
+                self.inner.dimension(),
+                &embedding,
+            ) {
+                tracing::warn!("Failed to persist query embedding: {e}");
+            }
+
+            // Periodic eviction (best-effort)
+            let _ = self.db.evict_query_cache(self.max_entries);
+
+            debug!("Persistent embedding cache miss, generated and stored");
+            Ok(embedding)
+        })
+    }
+
+    fn generate_batch<'a>(
+        &'a self,
+        texts: &'a [&'a str],
+    ) -> BoxFuture<'a, Result<Vec<Vec<f32>>, FactbaseError>> {
+        // Batch operations bypass persistent cache (used for document indexing)
+        self.inner.generate_batch(texts)
+    }
+
+    fn dimension(&self) -> usize {
+        self.inner.dimension()
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use super::*;
@@ -406,5 +485,69 @@ mod tests {
         let mock = MockEmbedding::new(768);
         let cached = CachedEmbedding::new(mock, 10);
         assert_eq!(cached.dimension(), 768);
+    }
+
+    #[tokio::test]
+    async fn test_persistent_cached_embedding_hit() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let mock = MockEmbedding::new(4);
+        let persistent =
+            PersistentCachedEmbedding::new(mock, db.clone(), "test-model".into(), 100);
+
+        // First call: miss, stores in SQLite
+        let result1 = persistent.generate("hello").await.unwrap();
+        assert_eq!(result1.len(), 4);
+        assert_eq!(db.count_query_cache().unwrap(), 1);
+
+        // Second call: hit from SQLite
+        let result2 = persistent.generate("hello").await.unwrap();
+        assert_eq!(result2, result1);
+        assert_eq!(db.count_query_cache().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_persistent_cached_embedding_survives_new_instance() {
+        let (db, _tmp) = crate::database::tests::test_db();
+
+        // First instance generates and caches
+        {
+            let mock = MockEmbedding::new(4);
+            let persistent =
+                PersistentCachedEmbedding::new(mock, db.clone(), "test-model".into(), 100);
+            persistent.generate("hello").await.unwrap();
+        }
+
+        // Second instance should find it in SQLite
+        assert_eq!(db.count_query_cache().unwrap(), 1);
+        let hash = text_hash("hello");
+        let cached = db
+            .get_cached_query_embedding(&hash, "test-model")
+            .unwrap();
+        assert!(cached.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_persistent_cached_embedding_model_isolation() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let mock = MockEmbedding::new(4);
+        let persistent =
+            PersistentCachedEmbedding::new(mock, db.clone(), "model-a".into(), 100);
+        persistent.generate("hello").await.unwrap();
+
+        // Different model should not find the cached entry
+        let hash = text_hash("hello");
+        assert!(db
+            .get_cached_query_embedding(&hash, "model-b")
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_persistent_cached_embedding_dimension() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let mock = MockEmbedding::new(512);
+        let persistent =
+            PersistentCachedEmbedding::new(mock, db, "test-model".into(), 100);
+        assert_eq!(persistent.dimension(), 512);
     }
 }

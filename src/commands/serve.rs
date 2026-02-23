@@ -57,7 +57,7 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
     let host = args.host.unwrap_or_else(|| config.server.host.clone());
     let port = args.port.unwrap_or(config.server.port);
 
-    let cached_embedding = setup_cached_embedding(&config, None).await;
+    let cached_embedding = setup_cached_embedding(&config, None, &db).await;
     let scan_embedding = setup_embedding(&config).await;
     let link_detector = setup_link_detector(&config).await;
     let llm = setup_llm_with_timeout(&config, None).await;

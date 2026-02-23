@@ -2,6 +2,7 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
+use crate::mcp::tools::helpers::resolve_doc_path;
 use crate::mcp::tools::{get_str_arg_required, get_u64_arg_required};
 use crate::processor::{content_hash, parse_review_queue};
 use crate::ProgressReporter;
@@ -116,9 +117,9 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Get the document (for file_path metadata)
     let doc = db.require_document(&doc_id)?;
 
-    // Read content from disk (source of truth) to avoid reverting edits made
-    // since the last scan/DB sync.
-    let file_path = PathBuf::from(&doc.file_path);
+    // Resolve absolute path via repo root so we read/write the same file
+    // that apply_review_answers will later read.
+    let file_path = resolve_doc_path(db, &doc)?;
     if !file_path.exists() {
         return Err(FactbaseError::not_found(format!(
             "File not found: {}",
@@ -129,7 +130,9 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // Parse the review queue
     let questions = parse_review_queue(&content).ok_or_else(|| {
-        FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
+        FactbaseError::not_found(format!(
+            "No review queue in document {doc_id} — it may have been cleaned up or not yet generated. Run check_repository to regenerate."
+        ))
     })?;
 
     // Validate question index
@@ -278,12 +281,12 @@ pub fn bulk_answer_questions(
     }
 
     // Validate all documents and questions exist before making any changes.
-    // Read content from disk (source of truth) to avoid reverting edits made
-    // since the last scan/DB sync.
+    // Resolve absolute paths via repo root so we read/write the same files
+    // that apply_review_answers will later read.
     let mut doc_disk_content: HashMap<String, (PathBuf, String)> = HashMap::new();
     for (doc_id, answers_for_doc) in &by_doc {
         let doc = db.require_document(doc_id)?;
-        let file_path = PathBuf::from(&doc.file_path);
+        let file_path = resolve_doc_path(db, &doc)?;
         if !file_path.exists() {
             return Err(FactbaseError::not_found(format!(
                 "File not found: {}",
@@ -293,7 +296,9 @@ pub fn bulk_answer_questions(
         let disk_content = fs::read_to_string(&file_path)?;
 
         let questions = parse_review_queue(&disk_content).ok_or_else(|| {
-            FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
+            FactbaseError::not_found(format!(
+                "No review queue in document {doc_id} — it may have been cleaned up or not yet generated. Run check_repository to regenerate."
+            ))
         })?;
 
         // Validate all question indices
@@ -491,6 +496,88 @@ Some footer text.
         assert!(modified.contains("Some intro text here."));
         assert!(modified.contains("Some footer text."));
         assert!(modified.contains("> 2020-2022"));
+    }
+
+    /// Roundtrip test: modify two questions, then parse — both should be recognized as answered.
+    /// Reproduces the bug where apply_review_answers finds 0 answered questions after
+    /// answer_questions succeeds.
+    #[test]
+    fn test_modify_then_parse_roundtrip_two_answers() {
+        use crate::processor::parse_review_queue;
+
+        // Simulate a document with a review queue (exact format from append_review_questions)
+        let original_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Person\n\
+\n\
+- CEO at Acme Corp\n\
+- CTO at Acme Corp\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[conflict]` Line 4: CEO vs CTO — which role is current?\n\
+  > \n\
+- [ ] `@q[conflict]` Line 5: Overlapping roles at same company\n\
+  > \n";
+
+        let marker = "<!-- factbase:review -->";
+
+        // Simulate bulk_answer_questions: process in descending index order
+        let mut content = original_content.to_string();
+        for &(idx, answer) in &[(1usize, "CTO is current, CEO was 2018-2020"), (0, "CEO ended 2020, CTO started 2020")] {
+            let marker_pos = content.find(marker).unwrap();
+            let (before_marker, after_marker) = content.split_at(marker_pos);
+            let queue_content = &after_marker[marker.len()..];
+            let modified_queue = modify_question_in_queue(queue_content, idx, answer, false)
+                .expect("modify should succeed");
+            content = format!("{before_marker}{marker}{modified_queue}");
+        }
+
+        // Now parse the modified content — both questions should be answered
+        let questions = parse_review_queue(&content)
+            .expect("should have review queue");
+        assert_eq!(questions.len(), 2, "should have 2 questions");
+        assert!(questions[0].answered, "question 0 should be answered");
+        assert!(questions[0].answer.is_some(), "question 0 should have answer text");
+        assert!(questions[1].answered, "question 1 should be answered");
+        assert!(questions[1].answer.is_some(), "question 1 should have answer text");
+    }
+
+    /// Verify resolve_doc_path joins repo root with relative file_path.
+    #[test]
+    fn test_resolve_doc_path_uses_repo_root() {
+        use crate::mcp::tools::helpers::resolve_doc_path;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(repo_dir.join("people")).unwrap();
+        let doc_file = repo_dir.join("people/test.md");
+        std::fs::write(&doc_file, "# Test").unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            repo_id: "r1".into(),
+            file_path: "people/test.md".into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let abs = resolve_doc_path(&db, &doc).unwrap();
+        assert_eq!(abs, doc_file);
     }
 
     #[test]

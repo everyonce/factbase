@@ -1,5 +1,6 @@
 //! Document CRUD MCP tools: create_document, update_document, delete_document, bulk_create_documents
 
+use super::helpers::resolve_doc_path;
 use super::{get_str_arg, get_str_arg_required};
 use crate::database::Database;
 use crate::error::FactbaseError;
@@ -13,6 +14,36 @@ use tracing::instrument;
 
 const MAX_TITLE_LENGTH: usize = 200;
 const MAX_CONTENT_SIZE: usize = 1_048_576; // 1MB
+
+/// Extract the `# Title` from content, skipping any factbase header first.
+/// Returns `None` if no title line is found.
+fn extract_title_from_content(content: &str) -> Option<String> {
+    let mut lines = content.lines().peekable();
+
+    // Skip factbase header if present
+    if let Some(first) = lines.peek() {
+        if ID_REGEX.is_match(first) {
+            lines.next();
+        }
+    }
+
+    // Skip blank lines between header and title
+    while let Some(line) = lines.peek() {
+        if !line.trim().is_empty() {
+            break;
+        }
+        lines.next();
+    }
+
+    // Extract title if present
+    if let Some(line) = lines.peek() {
+        if line.starts_with("# ") {
+            return Some(line[2..].trim().to_string());
+        }
+    }
+
+    None
+}
 
 /// Strip the `<!-- factbase:ID -->` header and first `# Title` line from content,
 /// returning only the body. Handles content with or without the header.
@@ -173,7 +204,7 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     let doc = db.require_document(&id)?;
 
-    let file_path = PathBuf::from(&doc.file_path);
+    let file_path = resolve_doc_path(db, &doc)?;
     if !file_path.exists() {
         return Err(FactbaseError::not_found(format!(
             "File not found: {}",
@@ -181,7 +212,18 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         )));
     }
 
-    let title = new_title.unwrap_or(&doc.title);
+    // When content includes a # Title line and no explicit title param was given,
+    // extract the title from the content so it isn't silently reverted to the stale DB value.
+    let extracted_title = if new_title.is_none() && new_content.is_some() {
+        extract_title_from_content(new_content.unwrap())
+    } else {
+        None
+    };
+    let title = new_title
+        .map(|t| t.to_string())
+        .or(extracted_title)
+        .unwrap_or_else(|| doc.title.clone());
+
     let content = new_content.unwrap_or(&doc.content);
 
     // Strip existing factbase header and title from content to avoid duplication
@@ -225,7 +267,7 @@ pub fn delete_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     let doc = db.require_document(&id)?;
 
-    let file_path = PathBuf::from(&doc.file_path);
+    let file_path = resolve_doc_path(db, &doc)?;
     if file_path.exists() {
         fs::remove_file(&file_path)?;
     }
@@ -470,5 +512,204 @@ mod tests {
             strip_factbase_header(content),
             "<!-- not a factbase header -->\n# Title\n\n- fact 1"
         );
+    }
+
+    #[test]
+    fn test_extract_title_from_content_with_header() {
+        let content = "<!-- factbase:a1cb2b -->\n# My Title\n\n- fact";
+        assert_eq!(
+            extract_title_from_content(content),
+            Some("My Title".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_title_from_content_without_header() {
+        let content = "# My Title\n\n- fact";
+        assert_eq!(
+            extract_title_from_content(content),
+            Some("My Title".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_title_from_content_no_title() {
+        let content = "- fact 1\n- fact 2";
+        assert_eq!(extract_title_from_content(content), None);
+    }
+
+    #[test]
+    fn test_update_document_content_writes_to_disk() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Old Title\n\nOld body").unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Old Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Old Title\n\nOld body".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({"id": "abc123", "content": "New body here"});
+        let result = update_document(&db, &args).unwrap();
+        assert_eq!(result["title"], "Old Title");
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("New body here"), "file should have new body: {on_disk}");
+        assert!(on_disk.contains("# Old Title"), "title preserved when not in content");
+    }
+
+    #[test]
+    fn test_update_document_extracts_title_from_content() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Old Title\n\nOld body").unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Old Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Old Title\n\nOld body".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Pass content with a new title embedded — no separate title param
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "<!-- factbase:abc123 -->\n# Fixed Title\n\nCleaned body"
+        });
+        let result = update_document(&db, &args).unwrap();
+        assert_eq!(result["title"], "Fixed Title");
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("# Fixed Title"), "title should be extracted from content: {on_disk}");
+        assert!(on_disk.contains("Cleaned body"), "body should be updated: {on_disk}");
+        assert!(!on_disk.contains("Old body"), "old body should be gone: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_explicit_title_overrides_content_title() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Old\n\nBody").unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Old".into(),
+            content: "<!-- factbase:abc123 -->\n# Old\n\nBody".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Explicit title param should win over title in content
+        let args = serde_json::json!({
+            "id": "abc123",
+            "title": "Explicit Title",
+            "content": "# Content Title\n\nNew body"
+        });
+        let result = update_document(&db, &args).unwrap();
+        assert_eq!(result["title"], "Explicit Title");
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("# Explicit Title"), "explicit title wins: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_syncs_to_database() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\nOld").unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\nOld".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({"id": "abc123", "content": "New content"});
+        update_document(&db, &args).unwrap();
+
+        let updated = db.get_document("abc123").unwrap().unwrap();
+        assert!(updated.content.contains("New content"), "DB should have new content");
     }
 }

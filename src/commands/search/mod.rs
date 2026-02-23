@@ -101,7 +101,7 @@ pub(crate) async fn run_single_search(args: &SearchArgs) -> anyhow::Result<()> {
         if let Some(timeout) = args.timeout {
             validate_timeout(timeout)?;
         }
-        let cached_embedding = setup_cached_embedding(&config, args.timeout).await;
+        let cached_embedding = setup_cached_embedding(&config, args.timeout, &db).await;
         let query_embedding = cached_embedding.generate(&args.query).await?;
         db.search_semantic_with_query(
             &query_embedding,

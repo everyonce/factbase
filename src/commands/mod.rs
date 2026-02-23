@@ -12,6 +12,7 @@
 pub mod completions;
 pub mod db;
 pub mod doctor;
+pub mod embeddings;
 pub mod errors;
 pub mod export;
 pub mod filters;
@@ -65,6 +66,7 @@ impl OutputFormat {
 pub use completions::cmd_completions;
 pub use db::cmd_db_vacuum;
 pub use doctor::cmd_doctor;
+pub use embeddings::cmd_embeddings;
 pub use export::cmd_export;
 pub use grep::cmd_grep;
 pub use import::cmd_import;

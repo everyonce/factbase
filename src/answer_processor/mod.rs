@@ -36,7 +36,8 @@ use crate::ReviewQuestion;
 pub use apply::{
     apply_changes_to_section, apply_confirmations, apply_source_citations, build_rewrite_prompt,
     format_changes_for_llm, identify_affected_section, remove_processed_questions, replace_section,
-    stamp_reviewed_lines, stamp_reviewed_markers, uncheck_deferred_questions,
+    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
+    stamp_sequential_lines, uncheck_deferred_questions,
 };
 pub use interpret::{classify_answer, interpret_answer};
 

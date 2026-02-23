@@ -16,7 +16,7 @@ pub async fn cmd_mcp() -> anyhow::Result<()> {
         Ok(tuple) => tuple,
         Err(_) => auto_init_repo(&std::env::current_dir()?)?,
     };
-    let cached_embedding = setup_cached_embedding(&config, None).await;
+    let cached_embedding = setup_cached_embedding(&config, None, &db).await;
     let llm = setup_llm_with_timeout(&config, None).await;
     run_stdio(&db, &cached_embedding, Some(llm.as_ref())).await
 }

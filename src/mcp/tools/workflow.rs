@@ -169,8 +169,14 @@ fn resolve_step(
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Determine which is current. This includes cross-document conflicts where a fact in one document contradicts another document. Check both documents and resolve. Answer: '[fact A] is current, [fact B] ended [date] per [source]'\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nCross-document conflict questions include the source document ID in their description — use get_entity to read that document for context.\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
+            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:concurrent_roles] — Two positions at different entities overlapping. This is normal for advisory/board roles alongside primary employment. If both are legitimate parallel roles, answer: 'Not a conflict: concurrent roles' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:promotion] — Two roles at the same entity overlapping. Usually a promotion or role change where date sources lack precise transition dates. Answer: 'Not a conflict: promotion/role change — [earlier role] ended when [later role] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
             "next_tool": "answer_question",
+            "conflict_patterns": {
+                "concurrent_roles": "Two positions at different entities overlapping — likely legitimate parallel roles (advisory/board + primary). Answer: 'Not a conflict: concurrent roles'.",
+                "promotion": "Two roles at the same entity overlapping — likely a promotion or role change. Adjust the earlier entry's end date.",
+                "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
+                "unknown": "No recognized pattern — investigate which fact is current."
+            },
             "when_done": "After resolving questions, call workflow with workflow='resolve', step=3"
         }),
         3 => serde_json::json!({
@@ -398,5 +404,21 @@ mod tests {
         let instruction = step["instruction"].as_str().unwrap();
         assert!(!instruction.contains("deferred"));
         assert_eq!(step["deferred_count"], 0);
+    }
+
+    #[test]
+    fn test_resolve_step2_includes_conflict_patterns() {
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("[pattern:concurrent_roles]"));
+        assert!(instruction.contains("[pattern:promotion]"));
+        assert!(instruction.contains("[pattern:date_imprecision]"));
+        assert!(instruction.contains("[pattern:unknown]"));
+        // Structured conflict_patterns field should also be present
+        let patterns = &step["conflict_patterns"];
+        assert!(patterns["concurrent_roles"].is_string());
+        assert!(patterns["promotion"].is_string());
+        assert!(patterns["date_imprecision"].is_string());
+        assert!(patterns["unknown"].is_string());
     }
 }

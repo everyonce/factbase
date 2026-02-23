@@ -26,6 +26,7 @@ pub(crate) mod cache;
 pub mod config;
 pub mod database;
 pub mod embedding;
+pub mod embeddings_io;
 pub mod error;
 pub mod llm;
 #[cfg(feature = "mcp")]
@@ -54,12 +55,18 @@ pub use answer_processor::{
     identify_affected_section,
     inbox::{apply_inbox_integration, extract_inbox_blocks},
     interpret_answer, remove_processed_questions, replace_section, stamp_reviewed_lines,
-    stamp_reviewed_markers, uncheck_deferred_questions, AnswerType, ChangeInstruction,
-    InterpretedAnswer,
+    stamp_reviewed_markers, stamp_sequential_by_text, stamp_sequential_lines,
+    uncheck_deferred_questions, AnswerType,
+    ChangeInstruction, InterpretedAnswer,
 };
 pub use config::Config;
 pub use database::{ContentSearchParams, Database};
-pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding};
+pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding};
+pub use embeddings_io::{
+    embeddings_status, export_embeddings, export_embeddings_to_file, import_embeddings,
+    import_embeddings_from_file, EmbeddingExportHeader, EmbeddingRecord, EmbeddingsStatusInfo,
+    ImportResult, FORMAT_VERSION as EMBEDDING_FORMAT_VERSION,
+};
 pub use error::{format_user_error, format_warning, repo_not_found, FactbaseError};
 pub use llm::{DetectedLink, LinkDetector, LlmProvider, OllamaLlm, ReviewLlm};
 #[cfg(feature = "mcp")]
@@ -84,16 +91,17 @@ pub use patterns::{extract_reviewed_date, FACT_LINE_REGEX, MANUAL_LINK_REGEX};
 pub use processor::{
     append_review_questions, calculate_fact_stats, calculate_recency_boost, chunk_document,
     content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
-    normalize_review_section, overlaps_point, overlaps_range, parse_review_queue,
-    prune_stale_questions,
+    normalize_conflict_desc, normalize_review_section, overlaps_point, overlaps_range,
+    parse_review_queue, prune_stale_questions,
     parse_source_definitions, parse_source_references, parse_temporal_tags, validate_temporal_tags,
     DocumentProcessor,
 };
 pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::cross_validate::cross_validate_document;
 pub use question_generator::{
-    generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_duplicate_role_questions, generate_missing_questions,
+    extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions,
+    generate_conflict_questions,
+    generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };

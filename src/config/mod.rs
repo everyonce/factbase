@@ -169,6 +169,12 @@ impl Config {
         // Embedding settings
         require_positive(self.embedding.dimension as u64, "embedding.dimension")?;
         require_range(self.embedding.cache_size, 1, 10000, "embedding.cache_size")?;
+        require_range(
+            self.embedding.persistent_cache_size,
+            0,
+            100000,
+            "embedding.persistent_cache_size",
+        )?;
 
         // Processor settings
         require_positive(
