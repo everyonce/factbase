@@ -96,6 +96,7 @@ pub async fn check_repository(
         .map(|r| r.existing_unanswered + r.existing_answered)
         .sum();
     let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
+    let total_suppressed: usize = results.iter().map(|r| r.suppressed_by_review).sum();
     let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
     let details: Vec<Value> = results
         .iter()
@@ -118,6 +119,7 @@ pub async fn check_repository(
         "already_in_queue": total_existing,
         "pruned_stale": total_pruned,
         "skipped_reviewed": total_skipped,
+        "suppressed_by_prior_answers": total_suppressed,
         "deferred_count": deferred_count,
         "dry_run": dry_run,
         "details": details,

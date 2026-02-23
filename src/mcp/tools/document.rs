@@ -15,6 +15,39 @@ use tracing::instrument;
 const MAX_TITLE_LENGTH: usize = 200;
 const MAX_CONTENT_SIZE: usize = 1_048_576; // 1MB
 
+/// Analyze content for temporal tag and source footnote coverage on fact lines.
+/// Returns a warning string if coverage is below 50%, or None if adequate.
+fn content_coverage_warning(content: &str) -> Option<String> {
+    let mut facts = 0u32;
+    let mut temporal = 0u32;
+    let mut sourced = 0u32;
+    for line in content.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('-') {
+            facts += 1;
+            if trimmed.contains("@t[") {
+                temporal += 1;
+            }
+            if trimmed.contains("[^") {
+                sourced += 1;
+            }
+        }
+    }
+    if facts == 0 {
+        return None;
+    }
+    let temporal_pct = temporal as f64 / facts as f64;
+    let source_pct = sourced as f64 / facts as f64;
+    if temporal_pct < 0.5 || source_pct < 0.5 {
+        Some(format!(
+            "⚠️ {temporal}/{facts} facts have temporal tags, {sourced}/{facts} have sources. \
+             Call get_authoring_guide for format requirements."
+        ))
+    } else {
+        None
+    }
+}
+
 /// Extract the `# Title` from content, skipping any factbase header first.
 /// Returns `None` if no title line is found.
 fn extract_title_from_content(content: &str) -> Option<String> {
@@ -38,7 +71,7 @@ fn extract_title_from_content(content: &str) -> Option<String> {
     // Extract title if present
     if let Some(line) = lines.peek() {
         if line.starts_with("# ") {
-            return Some(line[2..].trim().to_string());
+            return Some(crate::patterns::clean_title(&line[2..]));
         }
     }
 
@@ -159,12 +192,17 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Write the file
     fs::write(&file_path, &doc_content)?;
 
-    Ok(serde_json::json!({
+    let mut response = serde_json::json!({
         "id": id,
         "title": title,
         "file_path": file_path.to_string_lossy(),
         "message": "Document created. Run scan to index."
-    }))
+    });
+    if let Some(warning) = content_coverage_warning(content) {
+        response["warning"] = Value::String(warning);
+    }
+
+    Ok(response)
 }
 
 /// Updates an existing document's title and/or content.
@@ -236,10 +274,11 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{body}");
     fs::write(&file_path, &doc_content)?;
 
-    // Sync content to database so subsequent tools (answer_questions, apply_review_answers)
-    // see the current content instead of stale pre-edit data.
+    // Sync content and title to database so subsequent tools (answer_questions,
+    // apply_review_answers, get_entity) see the current data instead of stale pre-edit values.
     let new_hash = crate::processor::content_hash(&doc_content);
     db.update_document_content(&id, &doc_content, &new_hash)?;
+    db.update_document_title(&id, &title)?;
 
     Ok(serde_json::json!({
         "id": id,
@@ -420,11 +459,15 @@ pub fn bulk_create_documents(
 
         progress.report(i + 1, total, validated.title);
 
-        created.push(serde_json::json!({
+        let mut entry = serde_json::json!({
             "id": id,
             "title": validated.title,
             "file_path": file_path.to_string_lossy()
-        }));
+        });
+        if let Some(warning) = content_coverage_warning(validated.content) {
+            entry["warning"] = Value::String(warning);
+        }
+        created.push(entry);
     }
 
     Ok(serde_json::json!({
@@ -438,6 +481,47 @@ pub fn bulk_create_documents(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_coverage_warning_no_facts() {
+        assert!(content_coverage_warning("Just a paragraph").is_none());
+    }
+
+    #[test]
+    fn test_coverage_warning_all_covered() {
+        let content = "- fact @t[2024] [^1]\n- another @t[2023] [^2]";
+        assert!(content_coverage_warning(content).is_none());
+    }
+
+    #[test]
+    fn test_coverage_warning_no_tags() {
+        let content = "- fact one\n- fact two\n- fact three";
+        let w = content_coverage_warning(content).unwrap();
+        assert!(w.contains("0/3 facts have temporal tags"));
+        assert!(w.contains("0/3 have sources"));
+        assert!(w.contains("get_authoring_guide"));
+    }
+
+    #[test]
+    fn test_coverage_warning_partial_below_threshold() {
+        // 1/3 = 33% temporal, 0/3 sources → both below 50%
+        let content = "- fact @t[2024]\n- bare fact\n- another bare";
+        assert!(content_coverage_warning(content).is_some());
+    }
+
+    #[test]
+    fn test_coverage_warning_exactly_half() {
+        // 1/2 = 50% temporal, 1/2 = 50% source → not below 50%, no warning
+        let content = "- fact @t[2024] [^1]\n- bare fact";
+        assert!(content_coverage_warning(content).is_none());
+    }
+
+    #[test]
+    fn test_coverage_warning_indented_facts() {
+        let content = "  - indented fact\n    - nested fact";
+        let w = content_coverage_warning(content).unwrap();
+        assert!(w.contains("0/2 facts have temporal tags"));
+    }
 
     #[test]
     fn test_validate_title_empty() {
@@ -536,6 +620,15 @@ mod tests {
     fn test_extract_title_from_content_no_title() {
         let content = "- fact 1\n- fact 2";
         assert_eq!(extract_title_from_content(content), None);
+    }
+
+    #[test]
+    fn test_extract_title_from_content_strips_footnote_refs() {
+        let content = "<!-- factbase:a1cb2b -->\n# Joan Butters [^7]\n\n- fact";
+        assert_eq!(
+            extract_title_from_content(content),
+            Some("Joan Butters".to_string())
+        );
     }
 
     #[test]
@@ -711,5 +804,96 @@ mod tests {
 
         let updated = db.get_document("abc123").unwrap().unwrap();
         assert!(updated.content.contains("New content"), "DB should have new content");
+    }
+
+    #[test]
+    fn test_create_document_warns_on_missing_tags() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "test.md",
+            "title": "Test",
+            "content": "- bare fact\n- another bare fact"
+        });
+        let result = create_document(&db, &args).unwrap();
+        assert!(result.get("warning").is_some());
+        assert!(result["warning"].as_str().unwrap().contains("0/2 facts have temporal tags"));
+    }
+
+    #[test]
+    fn test_create_document_no_warning_when_covered() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "test.md",
+            "title": "Test",
+            "content": "- fact @t[2024] [^1]\n- another @t[2023] [^2]"
+        });
+        let result = create_document(&db, &args).unwrap();
+        assert!(result.get("warning").is_none());
+    }
+
+    #[test]
+    fn test_bulk_create_documents_warns_per_document() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "documents": [
+                {"path": "a.md", "title": "A", "content": "- bare fact"},
+                {"path": "b.md", "title": "B", "content": "- fact @t[2024] [^1]"}
+            ]
+        });
+        let result = bulk_create_documents(&db, &args, &ProgressReporter::Silent).unwrap();
+        let created = result["created"].as_array().unwrap();
+        assert!(created[0].get("warning").is_some());
+        assert!(created[1].get("warning").is_none());
     }
 }

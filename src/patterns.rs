@@ -80,6 +80,15 @@ pub(crate) static SOURCE_DEF_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // =============================================================================
+// Title cleaning
+// =============================================================================
+
+/// Strip footnote references (`[^N]`) from an extracted title and trim whitespace.
+pub fn clean_title(title: &str) -> String {
+    SOURCE_REF_DETECT_REGEX.replace_all(title, "").trim().to_string()
+}
+
+// =============================================================================
 // Fact/list item patterns
 // =============================================================================
 
@@ -272,6 +281,18 @@ pub(crate) fn add_or_update_reviewed_marker(line: &str, date: &chrono::NaiveDate
     }
 }
 
+/// Strip all `<!-- reviewed:YYYY-MM-DD ... -->` and `<!-- sequential ... -->` markers from content.
+/// Used to measure how many questions would be generated without suppression.
+pub fn strip_reviewed_markers(content: &str) -> String {
+    let stripped = REVIEWED_MARKER_REGEX.replace_all(content, "");
+    SEQUENTIAL_MARKER_REGEX.replace_all(&stripped, "").to_string()
+}
+
+/// Matches `<!-- sequential ... -->` markers on fact lines.
+static SEQUENTIAL_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"<!-- sequential\b.*?-->").expect("sequential marker regex should be valid")
+});
+
 // =============================================================================
 // Date normalization functions
 // =============================================================================
@@ -355,6 +376,15 @@ pub(crate) fn normalize_date_to_end(date: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_clean_title_strips_footnote_refs() {
+        assert_eq!(clean_title("Joan Butters [^8] [^9]"), "Joan Butters");
+        assert_eq!(clean_title("Title [^1]"), "Title");
+        assert_eq!(clean_title("No refs here"), "No refs here");
+        assert_eq!(clean_title("  Spaced [^3]  "), "Spaced");
+        assert_eq!(clean_title("[^1] Leading ref"), "Leading ref");
+    }
 
     #[test]
     fn test_id_regex() {
@@ -552,6 +582,37 @@ mod tests {
         let line = "- CTO @t[2020..] <!-- reviewed:2026-02-21 Not a conflict: advisory role -->";
         let date = extract_reviewed_date(line).unwrap();
         assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap());
+    }
+
+    // =========================================================================
+    // strip_reviewed_markers tests
+    // =========================================================================
+
+    #[test]
+    fn test_strip_reviewed_markers_removes_markers() {
+        let content = "- Fact one <!-- reviewed:2026-01-15 -->\n- Fact two";
+        let result = strip_reviewed_markers(content);
+        assert!(!result.contains("reviewed"));
+        assert!(result.contains("- Fact one"));
+        assert!(result.contains("- Fact two"));
+    }
+
+    #[test]
+    fn test_strip_reviewed_markers_removes_sequential() {
+        let content = "- Fact one <!-- sequential -->\n- Fact two <!-- reviewed:2026-01-15 -->";
+        let result = strip_reviewed_markers(content);
+        assert!(!result.contains("sequential"));
+        assert!(!result.contains("reviewed"));
+        assert!(result.contains("- Fact one"));
+        assert!(result.contains("- Fact two"));
+    }
+
+    #[test]
+    fn test_strip_reviewed_markers_preserves_other_comments() {
+        let content = "- Fact <!-- factbase:abc123 -->\n- Other <!-- reviewed:2026-01-15 -->";
+        let result = strip_reviewed_markers(content);
+        assert!(result.contains("<!-- factbase:abc123 -->"));
+        assert!(!result.contains("reviewed"));
     }
 
     // =========================================================================

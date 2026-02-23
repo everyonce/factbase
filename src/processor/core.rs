@@ -70,7 +70,7 @@ impl DocumentProcessor {
                 continue;
             }
             if let Some(title) = trimmed.strip_prefix("# ") {
-                return title.trim().to_string();
+                return crate::patterns::clean_title(title);
             }
             if !trimmed.is_empty() {
                 break;
@@ -201,6 +201,14 @@ mod tests {
         let content = "<!-- factbase:abc123 -->\n\n# Actual Title";
         let path = PathBuf::from("/test/doc.md");
         assert_eq!(processor.extract_title(content, &path), "Actual Title");
+    }
+
+    #[test]
+    fn test_extract_title_strips_footnote_refs() {
+        let processor = DocumentProcessor::new();
+        let content = "<!-- factbase:abc123 -->\n# Joan Butters [^8] [^9]\nContent";
+        let path = PathBuf::from("/test/doc.md");
+        assert_eq!(processor.extract_title(content, &path), "Joan Butters");
     }
 
     #[test]

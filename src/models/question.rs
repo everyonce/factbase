@@ -16,6 +16,8 @@ pub enum QuestionType {
     Stale,
     /// Possible duplicate entity
     Duplicate,
+    /// Document corruption detected (garbage footnotes, corrupted titles, etc.)
+    Corruption,
 }
 
 impl QuestionType {
@@ -28,6 +30,7 @@ impl QuestionType {
             QuestionType::Ambiguous => "ambiguous",
             QuestionType::Stale => "stale",
             QuestionType::Duplicate => "duplicate",
+            QuestionType::Corruption => "corruption",
         }
     }
 }
@@ -49,6 +52,7 @@ impl std::str::FromStr for QuestionType {
             "ambiguous" => Ok(QuestionType::Ambiguous),
             "stale" => Ok(QuestionType::Stale),
             "duplicate" => Ok(QuestionType::Duplicate),
+            "corruption" => Ok(QuestionType::Corruption),
             _ => Err(format!("Unknown question type: {s}")),
         }
     }
@@ -137,6 +141,10 @@ mod tests {
             "duplicate".parse::<QuestionType>().unwrap(),
             QuestionType::Duplicate
         );
+        assert_eq!(
+            "corruption".parse::<QuestionType>().unwrap(),
+            QuestionType::Corruption
+        );
     }
 
     #[test]
@@ -154,6 +162,7 @@ mod tests {
         assert_eq!(QuestionType::Ambiguous.as_str(), "ambiguous");
         assert_eq!(QuestionType::Stale.as_str(), "stale");
         assert_eq!(QuestionType::Duplicate.as_str(), "duplicate");
+        assert_eq!(QuestionType::Corruption.as_str(), "corruption");
     }
 
     #[test]
@@ -164,6 +173,7 @@ mod tests {
         assert_eq!(QuestionType::Ambiguous.to_string(), "ambiguous");
         assert_eq!(QuestionType::Stale.to_string(), "stale");
         assert_eq!(QuestionType::Duplicate.to_string(), "duplicate");
+        assert_eq!(QuestionType::Corruption.to_string(), "corruption");
     }
 
     #[test]
@@ -175,6 +185,7 @@ mod tests {
             QuestionType::Ambiguous,
             QuestionType::Stale,
             QuestionType::Duplicate,
+            QuestionType::Corruption,
         ] {
             let s = qt.to_string();
             let parsed: QuestionType = s.parse().unwrap();

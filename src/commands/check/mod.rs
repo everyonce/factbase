@@ -138,6 +138,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
     let mut review_new_total: usize = 0;
     let mut review_already_in_queue: usize = 0;
     let mut review_skipped_reviewed: usize = 0;
+    let mut review_suppressed: usize = 0;
 
     // Track lint start time for updating last_check_at
     let check_start_time = Utc::now();
@@ -374,6 +375,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     let existing = factbase::parse_review_queue(&doc.content).unwrap_or_default();
                     review_already_in_queue += existing.len();
                     review_skipped_reviewed += review::count_reviewed_facts(&doc.content);
+                    review_suppressed += review::count_suppressed_questions(&doc.content, args.max_age);
 
                     let opts = execute::ReviewQuestionOptions {
                         min_similarity: args.min_similarity,
@@ -551,7 +553,8 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         println!(
             "\nReview: Generated {total_generated} total, {review_new_total} new \
              ({review_already_in_queue} already in queue, \
-             {review_skipped_reviewed} skipped as recently reviewed)"
+             {review_suppressed} suppressed by prior answers, \
+             {review_skipped_reviewed} reviewed facts)"
         );
     }
 

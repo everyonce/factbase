@@ -151,6 +151,16 @@ impl Database {
         Ok(())
     }
 
+    /// Update only the document title.
+    pub fn update_document_title(&self, id: &str, title: &str) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "UPDATE documents SET title = ?1 WHERE id = ?2 AND is_deleted = FALSE",
+            rusqlite::params![title, id],
+        )?;
+        Ok(())
+    }
+
     /// Update only the document type (used by organize retype)
     pub fn update_document_type(&self, id: &str, new_type: &str) -> Result<(), FactbaseError> {
         let conn = self.get_conn()?;

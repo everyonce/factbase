@@ -226,6 +226,23 @@ pub fn count_reviewed_facts(content: &str) -> usize {
         .count()
 }
 
+/// Count questions suppressed by reviewed/sequential markers.
+///
+/// Strips all suppression markers, re-generates questions, and compares
+/// with the normal (marker-respecting) generation to measure the delta.
+pub fn count_suppressed_questions(content: &str, max_age: Option<i64>) -> usize {
+    let stale_threshold = max_age.unwrap_or(365);
+    let config = ReviewConfig {
+        stale_threshold,
+        required_fields: None,
+    };
+
+    let (normal, _, _) = generate_and_prune(content, None, &config);
+    let stripped = factbase::strip_reviewed_markers(content);
+    let (unrestricted, _, _) = generate_and_prune(&stripped, None, &config);
+    unrestricted.len().saturating_sub(normal.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,5 +379,27 @@ mod tests {
             filtered.is_empty(),
             "Conflict question with shifted line number should be filtered as duplicate"
         );
+    }
+
+    #[test]
+    fn test_count_suppressed_questions_with_reviewed_markers() {
+        let today = chrono::Utc::now().format("%Y-%m-%d");
+        // Two facts: one with reviewed marker (suppressed), one without (generates question)
+        let content = format!(
+            "- Fact one without temporal tag <!-- reviewed:{today} -->\n- Fact two without temporal tag"
+        );
+        let suppressed = count_suppressed_questions(&content, None);
+        // The reviewed fact would generate a temporal question if the marker were stripped
+        assert!(
+            suppressed >= 1,
+            "Should count at least 1 suppressed question, got {suppressed}"
+        );
+    }
+
+    #[test]
+    fn test_count_suppressed_questions_no_markers() {
+        let content = "- Fact one @t[2020..2022]\n- Fact two @t[2022..]";
+        let suppressed = count_suppressed_questions(content, None);
+        assert_eq!(suppressed, 0, "No markers means no suppression");
     }
 }

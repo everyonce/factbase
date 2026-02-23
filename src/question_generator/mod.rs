@@ -7,6 +7,7 @@
 //! - `@q[ambiguous]` for unclear phrasing that needs clarification
 //! - `@q[stale]` for facts with old sources or old `@t[~...]` dates
 //! - `@q[duplicate]` for documents with high similarity to other documents
+//! - `@q[corruption]` for document corruption (garbage footnotes, corrupted titles, etc.)
 //!
 //! # Module Organization
 //!
@@ -36,6 +37,7 @@
 mod ambiguous;
 mod conflict;
 pub mod cross_validate;
+pub(crate) mod corruption;
 mod duplicate;
 pub(crate) mod facts;
 mod fields;
@@ -52,6 +54,7 @@ pub use conflict::{
     classify_conflict_pattern, filter_sequential_conflicts, generate_conflict_questions,
     generate_duplicate_entry_questions, ConflictPattern,
 };
+pub use corruption::generate_corruption_questions;
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};

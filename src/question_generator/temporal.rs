@@ -7,7 +7,7 @@ use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
-    extract_reviewed_date, ONGOING_TAG_REGEX, TEMPORAL_TAG_DETECT_REGEX, TEMPORAL_TAG_FULL_REGEX,
+    extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, TEMPORAL_TAG_FULL_REGEX,
 };
 use crate::processor::find_malformed_tags;
 
@@ -35,7 +35,11 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
             continue;
         }
 
-        if !TEMPORAL_TAG_DETECT_REGEX.is_match(line) {
+        if !TEMPORAL_TAG_FULL_REGEX.is_match(line) {
+            if MALFORMED_TAG_REGEX.is_match(line) {
+                // Has a malformed tag — find_malformed_tags will flag it below
+                continue;
+            }
             // No temporal tag at all
             questions.push(ReviewQuestion::new(
                 QuestionType::Temporal,
@@ -357,5 +361,49 @@ mod tests {
             stale.is_empty(),
             "Recent reviewed marker should suppress stale ongoing question"
         );
+    }
+
+    #[test]
+    fn test_malformed_nondate_tags_flagged() {
+        // Non-date content inside @t[...] should produce malformed tag questions
+        let cases = [
+            "- Domesticated @t[traditional..modern]",
+            "- Used since @t[domestication..present]",
+            "- Status @t[static]",
+            "- Method @t[traditional]",
+        ];
+        for case in cases {
+            let content = format!("# Doc\n\n{case}");
+            let questions = generate_temporal_questions(&content);
+            let malformed: Vec<_> = questions
+                .iter()
+                .filter(|q| q.description.contains("Malformed"))
+                .collect();
+            assert_eq!(
+                malformed.len(),
+                1,
+                "Expected malformed question for: {case}"
+            );
+            // Should NOT also generate "when was this true?" (malformed is sufficient)
+            let missing: Vec<_> = questions
+                .iter()
+                .filter(|q| q.description.contains("when was this true?"))
+                .collect();
+            assert!(
+                missing.is_empty(),
+                "Should not generate 'when was this true?' for malformed tag: {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_valid_tags_not_flagged_malformed() {
+        let content = "# Doc\n\n- Fact @t[2024]\n- Range @t[2020..2023]\n- Unknown @t[?]";
+        let questions = generate_temporal_questions(content);
+        let malformed: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("Malformed"))
+            .collect();
+        assert!(malformed.is_empty(), "Valid tags should not be flagged");
     }
 }

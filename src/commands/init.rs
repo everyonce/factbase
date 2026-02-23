@@ -58,7 +58,7 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
 
     let perspective_path = path.join("perspective.yaml");
     if !perspective_path.exists() {
-        fs::write(&perspective_path, "# Factbase perspective — tells agents what this knowledge base is about\n\n# Your organization name (helps agents understand context)\n# organization: Acme Corp\n\n# What this knowledge base focuses on\n# focus: Customer relationship intelligence for AWS solutions architects\n\n# Allowed document types (derived from folder names)\n# allowed_types:\n#   - person\n#   - company\n#   - project\n\n# Review quality settings\n# review:\n#   stale_days: 180\n#   required_fields:\n#     person: [current_role, location, company]\n#     company: [industry, headquarters]\n")?;
+        fs::write(&perspective_path, "# Factbase perspective — tells agents what this knowledge base is about\n\n# What this knowledge base focuses on\n# Examples:\n#   focus: Mycology field research and species identification\n#   focus: Ancient Mediterranean civilizations and trade routes\n#   focus: Customer relationship intelligence for solutions architects\n\n# Allowed document types (derived from folder names)\n# Examples for different domains:\n#   allowed_types: [species, habitat, region]           # biology\n#   allowed_types: [civilization, event, artifact]       # history\n#   allowed_types: [person, company, project]            # business\n\n# Review quality settings\n# review:\n#   stale_days: 180\n#   required_fields:\n#     species: [classification, habitat, edibility]\n#     civilization: [period, region, key_figures]\n#     person: [current_role, location]\n")?;
     }
 
     let db_path = factbase_dir.join("factbase.db");
@@ -219,5 +219,38 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Already initialized"));
+    }
+
+    #[test]
+    fn test_init_perspective_template_is_domain_neutral() {
+        let tmp = TempDir::new().unwrap();
+        let args = InitArgs {
+            path: tmp.path().to_path_buf(),
+            name: None,
+            id: None,
+            json: false,
+            config: false,
+        };
+        cmd_init(args).unwrap();
+        let content = fs::read_to_string(tmp.path().join("perspective.yaml")).unwrap();
+
+        // Must show multiple domain examples, not just business
+        assert!(content.contains("Mycology") || content.contains("biology"));
+        assert!(content.contains("civilization") || content.contains("history"));
+
+        // Must not hardcode a single organization
+        assert!(!content.contains("organization: Acme"));
+
+        // All domain-specific lines should be commented out
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            assert!(
+                trimmed.starts_with('#'),
+                "Non-comment line in template: {trimmed}"
+            );
+        }
     }
 }

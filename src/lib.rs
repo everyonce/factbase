@@ -54,9 +54,9 @@ pub use answer_processor::{
     apply_changes_to_section, apply_confirmations, apply_source_citations, classify_answer,
     identify_affected_section,
     inbox::{apply_inbox_integration, extract_inbox_blocks},
-    interpret_answer, remove_processed_questions, replace_section, stamp_reviewed_lines,
-    stamp_reviewed_markers, stamp_sequential_by_text, stamp_sequential_lines,
-    uncheck_deferred_questions, AnswerType,
+    interpret_answer, remove_processed_questions, replace_section, stamp_reviewed_by_text,
+    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
+    stamp_sequential_lines, uncheck_deferred_questions, AnswerType,
     ChangeInstruction, InterpretedAnswer,
 };
 pub use config::Config;
@@ -87,7 +87,9 @@ pub use organize::{
     StaleDuplicate, VerificationResult,
 };
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
-pub use patterns::{extract_reviewed_date, FACT_LINE_REGEX, MANUAL_LINK_REGEX};
+pub use patterns::{
+    extract_reviewed_date, strip_reviewed_markers, FACT_LINE_REGEX, MANUAL_LINK_REGEX,
+};
 pub use processor::{
     append_review_questions, calculate_fact_stats, calculate_recency_boost, chunk_document,
     content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
@@ -100,7 +102,7 @@ pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::cross_validate::cross_validate_document;
 pub use question_generator::{
     extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions,
-    generate_conflict_questions,
+    generate_conflict_questions, generate_corruption_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,

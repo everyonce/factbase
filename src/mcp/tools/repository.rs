@@ -54,6 +54,17 @@ pub async fn scan_repository(
         .await
         .map_err(|e| FactbaseError::Internal(e.to_string()))?;
 
+    let temporal_coverage = result
+        .temporal_stats
+        .as_ref()
+        .map(|s| (s.coverage * 100.0).round())
+        .unwrap_or(0.0);
+    let source_coverage = result
+        .temporal_stats
+        .as_ref()
+        .map(|s| (s.source_coverage * 100.0).round())
+        .unwrap_or(0.0);
+
     info!(
         "Scan complete: {} added, {} updated, {} unchanged",
         result.added, result.updated, result.unchanged
@@ -66,6 +77,12 @@ pub async fn scan_repository(
         "deleted": result.deleted,
         "links_detected": result.links_detected,
         "total": result.total,
+        "temporal_coverage_percent": temporal_coverage,
+        "source_coverage_percent": source_coverage,
+        "summary": format!(
+            "{} added, {} updated (temporal coverage: {:.0}%, source coverage: {:.0}%)",
+            result.added, result.updated, temporal_coverage, source_coverage
+        ),
     }))
 }
 

@@ -3,8 +3,9 @@ mod commands;
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
     cmd_completions, cmd_db_vacuum, cmd_doctor, cmd_embeddings, cmd_export, cmd_grep, cmd_import,
-    cmd_init, cmd_links, cmd_check, cmd_organize, cmd_repo_add, cmd_repo_list, cmd_repo_remove,
-    cmd_review, cmd_scan, cmd_search, cmd_show, cmd_stats, cmd_status, cmd_version, StatsArgs,
+    cmd_init, cmd_links, cmd_check, cmd_organize, cmd_repair, cmd_repo_add, cmd_repo_list,
+    cmd_repo_remove, cmd_review, cmd_scan, cmd_search, cmd_show, cmd_stats, cmd_status,
+    cmd_version, StatsArgs,
 };
 #[cfg(feature = "mcp")]
 use commands::{cmd_mcp, cmd_serve};
@@ -98,6 +99,8 @@ enum Commands {
     /// Reorganize knowledge base
     #[command(subcommand)]
     Organize(commands::organize::OrganizeCommands),
+    /// Auto-fix document corruption
+    Repair(commands::repair::RepairArgs),
 
     /// Manage repositories
     #[command(subcommand)]
@@ -228,6 +231,7 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Organize(cmd) => {
             cmd_organize(commands::organize::OrganizeArgs { command: cmd }).await?
         }
+        Commands::Repair(args) => cmd_repair(args)?,
         Commands::Completions(args) => cmd_completions(args),
         Commands::Export(args) => cmd_export(args)?,
         Commands::Import(args) => cmd_import(args)?,

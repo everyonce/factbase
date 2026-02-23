@@ -15,6 +15,7 @@
 //! - [`cmd_scan`] - Main scan command entry point
 
 mod args;
+mod assess;
 mod prune;
 mod stats;
 mod verify;
@@ -56,6 +57,11 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
     // Handle --stats-only: quick statistics without Ollama or database modifications
     if args.stats_only {
         return cmd_scan_stats_only(&target_repos, &scanner, json_output, quiet);
+    }
+
+    // Handle --assess: onboarding assessment without modifying anything
+    if args.assess {
+        return assess::cmd_scan_assess(&target_repos, &scanner, json_output, quiet, args.detailed);
     }
 
     // Handle --check: validate index integrity for CI
@@ -235,6 +241,12 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
                     warn_icon,
                     temporal.coverage * 100.0,
                     temporal.facts_with_tags,
+                    temporal.total_facts
+                );
+                println!(
+                    "Source coverage: {:.0}% ({}/{} facts)",
+                    temporal.source_coverage * 100.0,
+                    temporal.facts_with_sources,
                     temporal.total_facts
                 );
                 if temporal.below_threshold_docs > 0 {

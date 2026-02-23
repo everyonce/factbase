@@ -192,7 +192,7 @@ Factbase exposes 21 MCP tools:
 | `check_repository` | Run quality checks and generate review questions |
 | `apply_review_answers` | Apply answered review questions to document content |
 | `get_deferred_items` | Get deferred review items needing human attention |
-| `workflow` | Run a guided workflow (update, resolve, ingest, enrich) |
+| `workflow` | Run a guided workflow (update, resolve, ingest, enrich, improve) |
 | `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
 | `organize` | Execute reorganization actions (merge, split, move, retype, apply) |
 | `get_authoring_guide` | Get document formatting rules and templates |

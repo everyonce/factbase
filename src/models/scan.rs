@@ -115,6 +115,10 @@ pub struct TemporalScanStats {
     pub coverage: f32,
     /// Number of documents below the coverage threshold
     pub below_threshold_docs: usize,
+    /// Facts with at least one source footnote
+    pub facts_with_sources: usize,
+    /// Source coverage percentage (0.0 to 1.0)
+    pub source_coverage: f32,
 }
 
 #[cfg(test)]
@@ -159,6 +163,8 @@ mod tests {
         assert_eq!(t.facts_with_tags, 0);
         assert!((t.coverage - 0.0).abs() < f32::EPSILON);
         assert_eq!(t.below_threshold_docs, 0);
+        assert_eq!(t.facts_with_sources, 0);
+        assert!((t.source_coverage - 0.0).abs() < f32::EPSILON);
     }
 
     #[test]

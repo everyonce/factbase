@@ -15,8 +15,8 @@ use tracing::{info, warn};
 use crate::models::TemporalScanStats;
 use crate::ProgressReporter;
 use crate::{
-    calculate_fact_stats, Database, DocumentProcessor, EmbeddingProvider, LinkDetector, Repository,
-    ScanResult, ScanStats,
+    calculate_fact_stats, count_facts_with_sources, Database, DocumentProcessor,
+    EmbeddingProvider, LinkDetector, Repository, ScanResult, ScanStats,
 };
 
 use super::options::ScanOptions;
@@ -62,6 +62,7 @@ pub async fn full_scan(
     // Temporal stats tracking
     let mut total_facts = 0usize;
     let mut facts_with_tags = 0usize;
+    let mut facts_with_sources = 0usize;
     let mut below_threshold_docs = 0usize;
 
     let file_discovery_ms = file_discovery_start.elapsed().as_millis() as u64;
@@ -226,6 +227,7 @@ pub async fn full_scan(
             let fact_stats = calculate_fact_stats(&content);
             total_facts += fact_stats.total_facts;
             facts_with_tags += fact_stats.facts_with_tags;
+            facts_with_sources += count_facts_with_sources(&content);
 
             // Check if below threshold and warn
             let is_below_threshold =
@@ -292,6 +294,7 @@ pub async fn full_scan(
                     links_detected: 0,
                     total_facts,
                     facts_with_tags,
+                    facts_with_sources,
                     below_threshold_docs,
                     file_discovery_ms,
                     parsing_ms: parsing_start.elapsed().as_millis() as u64,
@@ -393,6 +396,7 @@ pub async fn full_scan(
             links_detected: link_output.links_detected,
             total_facts,
             facts_with_tags,
+            facts_with_sources,
             below_threshold_docs,
             file_discovery_ms,
             parsing_ms,
@@ -437,11 +441,18 @@ pub async fn full_scan(
     } else {
         1.0 // No facts = 100% coverage (nothing to tag)
     };
+    let source_coverage = if total_facts > 0 {
+        facts_with_sources as f32 / total_facts as f32
+    } else {
+        1.0
+    };
     result.temporal_stats = Some(TemporalScanStats {
         total_facts,
         facts_with_tags,
         coverage: overall_coverage,
         below_threshold_docs,
+        facts_with_sources,
+        source_coverage,
     });
 
     Ok(result)

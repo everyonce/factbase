@@ -14,6 +14,7 @@ pub(super) struct InterruptedResultParams {
     pub links_detected: usize,
     pub total_facts: usize,
     pub facts_with_tags: usize,
+    pub facts_with_sources: usize,
     pub below_threshold_docs: usize,
     pub file_discovery_ms: u64,
     pub parsing_ms: u64,
@@ -29,6 +30,11 @@ pub(super) struct InterruptedResultParams {
 pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanResult {
     let overall_coverage = if params.total_facts > 0 {
         params.facts_with_tags as f32 / params.total_facts as f32
+    } else {
+        1.0
+    };
+    let source_coverage = if params.total_facts > 0 {
+        params.facts_with_sources as f32 / params.total_facts as f32
     } else {
         1.0
     };
@@ -59,6 +65,8 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
             facts_with_tags: params.facts_with_tags,
             coverage: overall_coverage,
             below_threshold_docs: params.below_threshold_docs,
+            facts_with_sources: params.facts_with_sources,
+            source_coverage,
         }),
         interrupted: true,
     }
@@ -79,6 +87,7 @@ mod tests {
             links_detected: 0,
             total_facts: 0,
             facts_with_tags: 0,
+            facts_with_sources: 0,
             below_threshold_docs: 0,
             file_discovery_ms: 0,
             parsing_ms: 0,
@@ -151,6 +160,7 @@ mod tests {
             links_detected: 7,
             total_facts: 100,
             facts_with_tags: 80,
+            facts_with_sources: 60,
             below_threshold_docs: 8,
             file_discovery_ms: 10,
             parsing_ms: 20,

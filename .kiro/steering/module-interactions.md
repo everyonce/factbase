@@ -149,6 +149,7 @@ src/
 │   ├── mod.rs           # Main processor
 │   ├── interpret.rs     # Answer interpretation
 │   ├── apply.rs         # Apply changes
+│   ├── validate.rs      # Output validation before writing
 │   └── temporal.rs      # Temporal answer handling
 │
 ├── organize/            # Knowledge base reorganization (Phase 10)

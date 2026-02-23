@@ -5,7 +5,8 @@ use chrono::NaiveDate;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::patterns::{
-    add_or_update_reviewed_marker, REVIEWED_MARKER_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX,
+    add_or_update_reviewed_marker, FACT_LINE_REGEX, REVIEWED_MARKER_REGEX, REVIEW_QUEUE_MARKER,
+    SOURCE_DEF_REGEX,
 };
 use crate::ReviewQuestion;
 
@@ -65,7 +66,7 @@ CHANGES:
 
 RULES:
 1. Apply ALL changes exactly as specified
-2. Keep all other lines unchanged
+2. Keep all other lines unchanged — do NOT add, remove, or rephrase lines not mentioned in CHANGES
 3. Preserve existing source references [^N] unless change says to remove
 4. Use ONLY these date formats in @t[] tags:
    - Year only: @t[2022]
@@ -73,6 +74,9 @@ RULES:
    - Range: @t[2020..2022-02]
 5. If change says "delete line", remove that line entirely
 6. If change says "split into", create separate list items
+7. Do NOT add new footnote definitions ([^N]: ...) — only modify existing ones if instructed
+8. Do NOT include any meta-text, labels, JSON, or commentary — output ONLY the rewritten section
+9. Preserve all headings (## ...) exactly as they appear
 
 Output the complete rewritten section only:"#
     )
@@ -120,6 +124,16 @@ pub async fn apply_changes_to_section(
         return Err(FactbaseError::ollama(
             "LLM returned empty response".to_string(),
         ));
+    }
+
+    // Validate the rewrite before accepting it
+    let validation_errors = super::validate::validate_rewrite(section, &rewritten);
+    if !validation_errors.is_empty() {
+        let details: Vec<String> = validation_errors.iter().map(|e| e.detail.clone()).collect();
+        return Err(FactbaseError::internal(format!(
+            "LLM rewrite failed validation (keeping original): {}",
+            details.join("; ")
+        )));
     }
 
     Ok(rewritten)
@@ -356,7 +370,7 @@ pub fn stamp_reviewed_markers(section: &str, date: &NaiveDate) -> String {
     section
         .lines()
         .map(|line| {
-            if line.trim_start().starts_with("- ") {
+            if FACT_LINE_REGEX.is_match(line) {
                 add_or_update_reviewed_marker(line, date)
             } else {
                 line.to_string()
@@ -373,7 +387,7 @@ pub fn stamp_reviewed_lines(content: &str, line_numbers: &[usize], date: &NaiveD
         .enumerate()
         .map(|(i, line)| {
             let line_num = i + 1;
-            if line_numbers.contains(&line_num) && line.trim_start().starts_with("- ") {
+            if line_numbers.contains(&line_num) && FACT_LINE_REGEX.is_match(line) {
                 add_or_update_reviewed_marker(line, date)
             } else {
                 line.to_string()
@@ -391,7 +405,7 @@ pub fn stamp_sequential_lines(content: &str, line_numbers: &[usize]) -> String {
         .map(|(i, line)| {
             let line_num = i + 1;
             if line_numbers.contains(&line_num)
-                && line.trim_start().starts_with("- ")
+                && FACT_LINE_REGEX.is_match(line)
                 && !line.contains("<!-- sequential")
             {
                 format!("{line} <!-- sequential -->")
@@ -413,11 +427,34 @@ pub fn stamp_sequential_by_text(content: &str, fact_texts: &[&str]) -> String {
     content
         .lines()
         .map(|line| {
-            if line.trim_start().starts_with("- ")
+            if FACT_LINE_REGEX.is_match(line)
                 && !line.contains("<!-- sequential")
                 && fact_texts.iter().any(|t| !t.is_empty() && line.contains(t))
             {
                 format!("{line} <!-- sequential -->")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Stamp `<!-- reviewed:YYYY-MM-DD -->` on fact lines matching the given text snippets.
+/// Text-based fallback for when line numbers may be stale due to content changes
+/// between question generation and answer application.
+pub fn stamp_reviewed_by_text(content: &str, fact_texts: &[&str], date: &NaiveDate) -> String {
+    if fact_texts.is_empty() {
+        return content.to_string();
+    }
+    content
+        .lines()
+        .map(|line| {
+            if FACT_LINE_REGEX.is_match(line)
+                && !REVIEWED_MARKER_REGEX.is_match(line)
+                && fact_texts.iter().any(|t| !t.is_empty() && line.contains(t))
+            {
+                add_or_update_reviewed_marker(line, date)
             } else {
                 line.to_string()
             }
@@ -879,6 +916,83 @@ Content here
         // Line 1 is "# Title" - not a list item, should not be stamped
         let result = stamp_reviewed_lines(content, &[1], &date);
         assert!(!result.contains("<!-- reviewed"));
+    }
+
+    // ==================== stamp_reviewed_lines with non-dash facts ====================
+
+    #[test]
+    fn test_stamp_reviewed_lines_asterisk_facts() {
+        let content = "# Title\n\n* Fact one\n* Fact two";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_lines(content, &[3], &date);
+        assert!(result.contains("* Fact one <!-- reviewed:2026-02-15 -->"));
+        assert!(!result.contains("* Fact two <!-- reviewed"));
+    }
+
+    #[test]
+    fn test_stamp_reviewed_lines_numbered_facts() {
+        let content = "# Title\n\n1. First fact\n2. Second fact";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_lines(content, &[3, 4], &date);
+        assert!(result.contains("1. First fact <!-- reviewed:2026-02-15 -->"));
+        assert!(result.contains("2. Second fact <!-- reviewed:2026-02-15 -->"));
+    }
+
+    #[test]
+    fn test_stamp_reviewed_markers_asterisk_facts() {
+        let section = "* Fact A\n* Fact B\nNot a fact";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_markers(section, &date);
+        assert!(result.contains("* Fact A <!-- reviewed:2026-02-15 -->"));
+        assert!(result.contains("* Fact B <!-- reviewed:2026-02-15 -->"));
+        assert!(!result.contains("Not a fact <!-- reviewed"));
+    }
+
+    // ==================== stamp_reviewed_by_text tests ====================
+
+    #[test]
+    fn test_stamp_reviewed_by_text_matches_fact() {
+        let content = "# Title\n\n- VP of Engineering @t[2020..]\n- Director of Sales @t[2018..2020]";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_by_text(content, &["VP of Engineering"], &date);
+        assert!(result.contains("VP of Engineering @t[2020..] <!-- reviewed:2026-02-15 -->"));
+        assert!(!result.contains("Director of Sales <!-- reviewed"));
+    }
+
+    #[test]
+    fn test_stamp_reviewed_by_text_skips_already_reviewed() {
+        let content = "- Fact one <!-- reviewed:2025-01-01 -->\n- Fact two";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_by_text(content, &["Fact one", "Fact two"], &date);
+        // Already-reviewed line should keep its existing marker
+        assert!(result.contains("<!-- reviewed:2025-01-01 -->"));
+        assert!(result.contains("Fact two <!-- reviewed:2026-02-15 -->"));
+    }
+
+    #[test]
+    fn test_stamp_reviewed_by_text_empty_texts() {
+        let content = "- Fact one\n- Fact two";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_by_text(content, &[], &date);
+        assert_eq!(result, content);
+    }
+
+    // ==================== stamp_sequential with non-dash facts ====================
+
+    #[test]
+    fn test_stamp_sequential_lines_asterisk_facts() {
+        let content = "# Title\n\n* Fact one @t[2020..2022]\n* Fact two @t[2022..]";
+        let result = stamp_sequential_lines(content, &[3]);
+        assert!(result.contains("* Fact one @t[2020..2022] <!-- sequential -->"));
+        assert!(!result.contains("* Fact two @t[2022..] <!-- sequential"));
+    }
+
+    #[test]
+    fn test_stamp_sequential_by_text_asterisk_facts() {
+        let content = "* Fact A @t[2020..2022]\n* Fact B @t[2022..]";
+        let result = stamp_sequential_by_text(content, &["Fact A"]);
+        assert!(result.contains("* Fact A @t[2020..2022] <!-- sequential -->"));
+        assert!(!result.contains("* Fact B @t[2022..] <!-- sequential"));
     }
 
     // ==================== uncheck_deferred_questions tests ====================
