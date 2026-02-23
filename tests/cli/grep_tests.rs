@@ -1,16 +1,16 @@
 //! Grep command integration tests.
 
 use chrono::Utc;
-use factbase::{database::Database, models::Repository};
+use factbase::{database::Database, ContentSearchParams, ProgressReporter};
 use std::fs;
 use tempfile::TempDir;
 
 /// Test grep --dry-run validates pattern and shows search scope
 #[test]
 fn test_grep_dry_run_flag() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     // Create test documents
     fs::write(repo_path.join("doc1.md"), "# Doc One\nFirst document.")
@@ -19,18 +19,10 @@ fn test_grep_dry_run_flag() {
         .expect("write should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path,
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path);
+    db.add_repository(&repo).unwrap();
 
     // Add documents to database
     for i in 0..2 {
@@ -46,13 +38,11 @@ fn test_grep_dry_run_flag() {
             indexed_at: Utc::now(),
             is_deleted: false,
         })
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     // Verify dry-run would show correct counts
-    let repos = db
-        .list_repositories_with_stats()
-        .expect("operation should succeed");
+    let repos = db.list_repositories_with_stats().unwrap();
     let repo_count = repos.len();
     let doc_count: usize = repos.iter().map(|(_, c)| *c).sum();
 
@@ -77,9 +67,9 @@ fn test_grep_dry_run_flag() {
 /// Test grep --format yaml outputs valid YAML
 #[test]
 fn test_grep_format_yaml() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     // Create test document with searchable content
     fs::write(
@@ -89,18 +79,10 @@ fn test_grep_format_yaml() {
     .expect("write should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path,
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path);
+    db.add_repository(&repo).unwrap();
 
     // Add document with content that matches "TODO"
     db.upsert_document(&factbase::models::Document {
@@ -115,11 +97,19 @@ fn test_grep_format_yaml() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     // Search for TODO and get YAML output
     let results = db
-        .search_content("TODO", 10, None, None, 0, None)
+        .search_content(&ContentSearchParams {
+            pattern: "TODO",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: None,
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
 
     // Verify we have results
@@ -138,23 +128,15 @@ fn test_grep_format_yaml() {
 /// Test grep --stats flag shows match statistics
 #[test]
 fn test_grep_stats_flag() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     // Add documents with multiple TODO matches
     db.upsert_document(&factbase::models::Document {
@@ -169,7 +151,7 @@ fn test_grep_stats_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     db.upsert_document(&factbase::models::Document {
         id: "doc002".into(),
@@ -183,11 +165,19 @@ fn test_grep_stats_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     // Search and get stats
     let results = db
-        .search_content("TODO", 10, None, None, 0, None)
+        .search_content(&ContentSearchParams {
+            pattern: "TODO",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: None,
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
 
     // Verify we have results from both docs
@@ -210,23 +200,15 @@ fn test_grep_stats_flag() {
 /// Test grep --since flag filters by indexed_at timestamp
 #[test]
 fn test_grep_since_flag() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     // Add document indexed now
     db.upsert_document(&factbase::models::Document {
@@ -241,11 +223,19 @@ fn test_grep_since_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     // Search without since filter - should find document
     let results = db
-        .search_content("TODO", 10, None, None, 0, None)
+        .search_content(&ContentSearchParams {
+            pattern: "TODO",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: None,
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
     assert_eq!(
         results.len(),
@@ -256,7 +246,15 @@ fn test_grep_since_flag() {
     // Search with since filter in the future - should not find document
     let future = Utc::now() + chrono::Duration::hours(1);
     let results = db
-        .search_content("TODO", 10, None, None, 0, Some(future))
+        .search_content(&ContentSearchParams {
+            pattern: "TODO",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: Some(future),
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
     assert_eq!(
         results.len(),
@@ -267,7 +265,15 @@ fn test_grep_since_flag() {
     // Search with since filter in the past - should find document
     let past = Utc::now() - chrono::Duration::hours(1);
     let results = db
-        .search_content("TODO", 10, None, None, 0, Some(past))
+        .search_content(&ContentSearchParams {
+            pattern: "TODO",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: Some(past),
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
     assert_eq!(
         results.len(),
@@ -279,23 +285,15 @@ fn test_grep_since_flag() {
 /// Test grep --count flag outputs only the match count
 #[test]
 fn test_grep_count_flag() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     // Add documents with multiple FIXME matches
     db.upsert_document(&factbase::models::Document {
@@ -310,7 +308,7 @@ fn test_grep_count_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     db.upsert_document(&factbase::models::Document {
         id: "doc002".into(),
@@ -324,11 +322,19 @@ fn test_grep_count_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     // Search and verify count
     let results = db
-        .search_content("FIXME", 10, None, None, 0, None)
+        .search_content(&ContentSearchParams {
+            pattern: "FIXME",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: None,
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
 
     let total_matches: usize = results.iter().map(|r| r.matches.len()).sum();
@@ -342,23 +348,15 @@ fn test_grep_count_flag() {
 /// Test grep --exclude-type flag filters out documents by type
 #[test]
 fn test_grep_exclude_type_flag() {
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     // Add documents with different types
     db.upsert_document(&factbase::models::Document {
@@ -373,7 +371,7 @@ fn test_grep_exclude_type_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     db.upsert_document(&factbase::models::Document {
         id: "doc002".into(),
@@ -387,7 +385,7 @@ fn test_grep_exclude_type_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     db.upsert_document(&factbase::models::Document {
         id: "doc003".into(),
@@ -401,11 +399,19 @@ fn test_grep_exclude_type_flag() {
         indexed_at: Utc::now(),
         is_deleted: false,
     })
-    .expect("operation should succeed");
+    .unwrap();
 
     // Search without exclusion - should find all 3
     let all_results = db
-        .search_content("TODO", 10, None, None, 0, None)
+        .search_content(&ContentSearchParams {
+            pattern: "TODO",
+            limit: 10,
+            doc_type: None,
+            repo_id: None,
+            context_lines: 0,
+            since: None,
+            progress: &ProgressReporter::Silent,
+        })
         .expect("search should succeed");
     assert_eq!(all_results.len(), 3, "Should find 3 documents with TODO");
 

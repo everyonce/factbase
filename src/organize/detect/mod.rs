@@ -24,7 +24,7 @@ use crate::error::FactbaseError;
 use crate::models::Document;
 
 // Cosine similarity between two embedding vectors.
-pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
@@ -69,7 +69,7 @@ pub(crate) fn get_document_embedding(
     doc_id: &str,
 ) -> Result<Option<Vec<f32>>, FactbaseError> {
     let conn = db.get_conn()?;
-    let chunk_id = format!("{}_0", doc_id);
+    let chunk_id = format!("{doc_id}_0");
 
     let result: Result<Vec<u8>, _> = conn.query_row(
         "SELECT embedding FROM document_embeddings WHERE id = ?1",

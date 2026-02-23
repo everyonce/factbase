@@ -7,32 +7,55 @@
 //! - `queue` - Review queue retrieval (`get_review_queue`)
 //! - `answer` - Question answering (`answer_question`, `bulk_answer_questions`)
 //! - `generate` - Question generation (`generate_questions`)
+//! - `apply` - Apply answered questions to documents (`apply_review_answers`)
 //!
 //! # Public API
 //!
-//! All 4 public functions are re-exported from this module:
+//! All 5 public functions are re-exported from this module:
 //! - `get_review_queue` - Get pending review questions
 //! - `answer_question` - Answer a single question
 //! - `bulk_answer_questions` - Answer multiple questions atomically
 //! - `generate_questions` - Generate review questions for a document
+//! - `apply_review_answers` - Apply answered questions to document content
 
 mod answer;
+mod apply;
 mod generate;
+mod lint;
 mod queue;
 
 pub use answer::{answer_question, bulk_answer_questions};
+pub use apply::apply_review_answers;
 pub use generate::generate_questions;
+pub use lint::lint_repository;
 pub use queue::get_review_queue;
 
+use crate::database::Database;
+use crate::error::FactbaseError;
 use crate::models::ReviewQuestion;
 use serde_json::Value;
+
+/// Unified answer tool: dispatches to single or bulk based on args.
+pub fn answer_questions(
+    db: &Database,
+    args: &Value,
+    progress: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    if args.get("answers").is_some() {
+        bulk_answer_questions(db, args, progress)
+    } else {
+        answer_question(db, args)
+    }
+}
 
 /// Formats a review question as JSON. When `doc_context` is provided,
 /// includes doc_id, doc_title, answered, and answer fields.
 pub(crate) fn format_question_json(q: &ReviewQuestion, doc_context: Option<(&str, &str)>) -> Value {
     let mut json = q.to_json();
     if let Some((doc_id, doc_title)) = doc_context {
-        let obj = json.as_object_mut().unwrap();
+        let obj = json
+            .as_object_mut()
+            .expect("to_json() returns a JSON object");
         obj.insert("doc_id".to_string(), Value::String(doc_id.to_string()));
         obj.insert(
             "doc_title".to_string(),

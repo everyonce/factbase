@@ -38,7 +38,7 @@ impl Database {
         embedding: &[f32],
     ) -> Result<(), FactbaseError> {
         let conn = self.get_conn()?;
-        let chunk_id = format!("{}_{}", doc_id, chunk_index);
+        let chunk_id = format!("{doc_id}_{chunk_index}");
 
         // Delete existing chunk if any
         conn.execute("DELETE FROM document_embeddings WHERE id = ?1", [&chunk_id])?;
@@ -77,12 +77,12 @@ impl Database {
         // Delete from embeddings using LIKE pattern for all chunks
         conn.execute(
             "DELETE FROM document_embeddings WHERE id LIKE ?1",
-            [format!("{}_%", doc_id)],
+            [format!("{doc_id}_%")],
         )?;
         // Also delete single-chunk format (doc_id_0)
         conn.execute(
             "DELETE FROM document_embeddings WHERE id = ?1",
-            [format!("{}_0", doc_id)],
+            [format!("{doc_id}_0")],
         )?;
         Ok(())
     }

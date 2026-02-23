@@ -14,7 +14,7 @@ fn main() {
     // Convert days since epoch to YYYY-MM-DD
     let (year, month, day) = days_to_date(days);
     let date = format!("{year:04}-{month:02}-{day:02}");
-    println!("cargo:rustc-env=BUILD_DATE={}", date);
+    println!("cargo:rustc-env=BUILD_DATE={date}");
 
     // Rust compiler version
     let rustc_version = Command::new("rustc")
@@ -22,11 +22,10 @@ fn main() {
         .output()
         .ok()
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().replace("rustc ", ""))
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |s| s.trim().replace("rustc ", ""));
     // Extract just version number (e.g., "1.75.0" from "1.75.0 (82e1608df 2023-12-21)")
     let rustc_short = rustc_version.split_whitespace().next().unwrap_or("unknown");
-    println!("cargo:rustc-env=RUSTC_VERSION={}", rustc_short);
+    println!("cargo:rustc-env=RUSTC_VERSION={rustc_short}");
 
     // Rerun if build.rs changes
     println!("cargo:rerun-if-changed=build.rs");
@@ -79,8 +78,7 @@ fn build_web_frontend() {
 
             if let Err(e) = install {
                 println!(
-                    "cargo:warning=Failed to install npm dependencies: {}. Web UI may not work.",
-                    e
+                    "cargo:warning=Failed to install npm dependencies: {e}. Web UI may not work."
                 );
                 return;
             }
@@ -98,17 +96,14 @@ fn build_web_frontend() {
             println!("cargo:warning=Web frontend build complete");
         }
         Ok(status) => {
-            println!(
-                "cargo:warning=Web frontend build failed with status: {}",
-                status
-            );
+            println!("cargo:warning=Web frontend build failed with status: {status}");
         }
         Err(e) => {
             // npm not found - provide helpful message
             if e.kind() == std::io::ErrorKind::NotFound {
                 println!("cargo:warning=npm not found. Install Node.js to build web UI, or disable the 'web' feature.");
             } else {
-                println!("cargo:warning=Failed to build web frontend: {}", e);
+                println!("cargo:warning=Failed to build web frontend: {e}");
             }
         }
     }

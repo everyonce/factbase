@@ -1,6 +1,6 @@
 //! JSON export format handler.
 
-use factbase::{Database, Document};
+use factbase::{Database, Document, ProgressReporter};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -31,9 +31,12 @@ pub fn export_json(
     output: &Path,
     compress: bool,
     to_stdout: bool,
+    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
-    let mut export_data: Vec<serde_json::Value> = Vec::with_capacity(docs.len());
-    for doc in docs {
+    let total = docs.len();
+    let mut export_data: Vec<serde_json::Value> = Vec::with_capacity(total);
+    for (i, doc) in docs.iter().enumerate() {
+        progress.report(i + 1, total, &doc.title);
         let links_from = db.get_links_from(&doc.id)?;
         let links_to = db.get_links_to(&doc.id)?;
         export_data.push(build_export_json(
@@ -55,7 +58,7 @@ pub fn export_json(
 
     if to_stdout {
         let mut stdout = io::stdout().lock();
-        writeln!(stdout, "{}", json_content)?;
+        writeln!(stdout, "{json_content}")?;
     } else if compress {
         #[cfg(feature = "compression")]
         {
@@ -82,6 +85,7 @@ pub fn export_yaml(
     db: &Database,
     output: &Path,
     to_stdout: bool,
+    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
     use serde::Serialize;
 
@@ -103,8 +107,10 @@ pub fn export_yaml(
         documents: Vec<ExportDoc>,
     }
 
-    let mut export_docs = Vec::with_capacity(docs.len());
-    for doc in docs {
+    let total = docs.len();
+    let mut export_docs = Vec::with_capacity(total);
+    for (i, doc) in docs.iter().enumerate() {
+        progress.report(i + 1, total, &doc.title);
         let links_from = db.get_links_from(&doc.id)?;
         let links_to = db.get_links_to(&doc.id)?;
         export_docs.push(ExportDoc {
@@ -124,7 +130,7 @@ pub fn export_yaml(
 
     if to_stdout {
         let mut stdout = io::stdout().lock();
-        write!(stdout, "{}", yaml_content)?;
+        write!(stdout, "{yaml_content}")?;
     } else {
         fs::write(output, &yaml_content)?;
         println!("Exported {} documents to {}", docs.len(), output.display());

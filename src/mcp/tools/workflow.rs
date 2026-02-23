@@ -15,39 +15,26 @@ use serde_json::Value;
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
 /// Start a guided workflow.
-pub fn workflow_start(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let workflow = get_str_arg_required(args, "workflow")?;
+    let step = get_u64_arg(args, "step", 1) as usize;
     let perspective = load_perspective(db, get_str_arg(args, "repo"));
 
     match workflow.as_str() {
-        "resolve" => Ok(resolve_step(1, args, &perspective)),
-        "ingest" => Ok(ingest_step(1, args, &perspective)),
-        "enrich" => Ok(enrich_step(1, args, &perspective)),
+        "update" => Ok(update_step(step, args, &perspective)),
+        "resolve" => Ok(resolve_step(step, args, &perspective)),
+        "ingest" => Ok(ingest_step(step, args, &perspective)),
+        "enrich" => Ok(enrich_step(step, args, &perspective)),
         "list" => Ok(serde_json::json!({
             "workflows": [
+                {"name": "update", "description": "Scan, check quality, find duplicates, and report what needs attention"},
                 {"name": "resolve", "description": "Fix quality issues by resolving review queue questions using external sources"},
                 {"name": "ingest", "description": "Research a topic and create/update factbase documents"},
                 {"name": "enrich", "description": "Find and fill gaps in existing documents"}
             ]
         })),
         _ => Ok(serde_json::json!({
-            "error": format!("Unknown workflow '{}'. Call workflow_start with workflow='list' to see available workflows.", workflow)
-        })),
-    }
-}
-
-/// Advance to the next step in a workflow.
-pub fn workflow_next(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
-    let workflow = get_str_arg_required(args, "workflow")?;
-    let step = get_u64_arg(args, "step", 2) as usize;
-    let perspective = load_perspective(db, get_str_arg(args, "repo"));
-
-    match workflow.as_str() {
-        "resolve" => Ok(resolve_step(step, args, &perspective)),
-        "ingest" => Ok(ingest_step(step, args, &perspective)),
-        "enrich" => Ok(enrich_step(step, args, &perspective)),
-        _ => Ok(serde_json::json!({
-            "error": format!("Unknown workflow '{}'", workflow)
+            "error": format!("Unknown workflow '{}'. Call workflow with workflow='list' to see available workflows.", workflow)
         })),
     }
 }
@@ -68,10 +55,10 @@ fn perspective_context(p: &Option<Perspective>) -> String {
     let Some(p) = p else { return String::new() };
     let mut parts = Vec::new();
     if let Some(ref org) = p.organization {
-        parts.push(format!("Organization: {}", org));
+        parts.push(format!("Organization: {org}"));
     }
     if let Some(ref focus) = p.focus {
-        parts.push(format!("Focus: {}", focus));
+        parts.push(format!("Focus: {focus}"));
     }
     if parts.is_empty() {
         return String::new();
@@ -83,8 +70,7 @@ fn stale_days(p: &Option<Perspective>) -> i64 {
     p.as_ref()
         .and_then(|p| p.review.as_ref())
         .and_then(|r| r.stale_days)
-        .map(|d| d as i64)
-        .unwrap_or(365)
+        .map_or(365, |d| d as i64)
 }
 
 fn required_fields_hint(p: &Option<Perspective>) -> String {
@@ -110,10 +96,50 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
     )
 }
 
+fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
+    let ctx = perspective_context(perspective);
+    let total = 4;
+    match step {
+        1 => serde_json::json!({
+            "workflow": "update",
+            "step": 1, "total_steps": total,
+            "instruction": format!("Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.{ctx}"),
+            "next_tool": "scan_repository",
+            "when_done": "Call workflow with workflow='update', step=2"
+        }),
+        2 => serde_json::json!({
+            "workflow": "update",
+            "step": 2, "total_steps": total,
+            "instruction": "Run a deep quality check across all documents. Call lint_repository — this performs local checks (temporal tags, sources, stale facts) AND cross-document validation using the LLM, so it may take several minutes on large knowledge bases. Tell the user this step takes a while before calling it.",
+            "next_tool": "lint_repository",
+            "suggested_args": {"dry_run": false},
+            "when_done": "Call workflow with workflow='update', step=3"
+        }),
+        3 => serde_json::json!({
+            "workflow": "update",
+            "step": 3, "total_steps": total,
+            "instruction": "Check for duplicate entity entries across documents. Call get_duplicate_entries to find entities mentioned in multiple places that may be stale or redundant.",
+            "next_tool": "get_duplicate_entries",
+            "when_done": "Call workflow with workflow='update', step=4"
+        }),
+        4 => serde_json::json!({
+            "workflow": "update",
+            "step": 4, "total_steps": total,
+            "instruction": "Summarize what you found: how many documents were scanned, how many quality issues were identified, how many duplicates were detected. If there are issues to fix, suggest the user run the 'resolve' workflow next.",
+            "complete": true
+        }),
+        _ => serde_json::json!({
+            "workflow": "update",
+            "complete": true,
+            "instruction": "Workflow complete."
+        }),
+    }
+}
+
 fn resolve_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
-    let total = 3;
+    let total = 4;
     match step {
         1 => serde_json::json!({
             "workflow": "resolve",
@@ -122,18 +148,26 @@ fn resolve_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -
             "next_tool": "get_review_queue",
             "suggested_args": {"include_context": true},
             "policy": {"stale_days": stale},
-            "when_done": "Call workflow_next with workflow='resolve', step=2"
+            "when_done": "Call workflow with workflow='resolve', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Determine which is current. This includes cross-document conflicts where a fact in one document contradicts another document. Check both documents and resolve. Answer: '[fact A] is current, [fact B] ended [date] per [source]'\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: Clarify. Answer: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nCross-document conflict questions include the source document ID in their description — use get_entity to read that document for context.\n\nAlways include your source. Skip questions you can't resolve — don't guess.{ctx}"),
+            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Determine which is current. This includes cross-document conflicts where a fact in one document contradicts another document. Check both documents and resolve. Answer: '[fact A] is current, [fact B] ended [date] per [source]'\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: Clarify. Answer: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nCross-document conflict questions include the source document ID in their description — use get_entity to read that document for context.\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
             "next_tool": "answer_question",
-            "when_done": "After resolving questions, call workflow_next with workflow='resolve', step=3"
+            "when_done": "After resolving questions, call workflow with workflow='resolve', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "resolve",
             "step": 3, "total_steps": total,
+            "instruction": "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. Use dry_run=true first to preview, then without dry_run to apply.",
+            "next_tool": "apply_review_answers",
+            "suggested_args": {"dry_run": false},
+            "when_done": "Call workflow with workflow='resolve', step=4"
+        }),
+        4 => serde_json::json!({
+            "workflow": "resolve",
+            "step": 4, "total_steps": total,
             "instruction": "Verify your work. For each document you modified, call generate_questions with dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.",
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
@@ -158,21 +192,21 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
             "step": 1, "total_steps": total,
             "instruction": format!("Search factbase to see what already exists about '{topic}'. Call search_knowledge with a relevant query. Also try list_entities to browse by type.{ctx}"),
             "next_tool": "search_knowledge",
-            "when_done": "Call workflow_next with workflow='ingest', step=2"
+            "when_done": "Call workflow with workflow='ingest', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "ingest",
             "step": 2, "total_steps": total,
             "instruction": format!("Research '{topic}' using your other tools (web search, APIs, files, etc.). Gather facts, dates, sources, and relationships.{ctx}"),
             "note": "This step uses your non-factbase tools. When you have enough information, proceed to step 3.",
-            "when_done": "Call workflow_next with workflow='ingest', step=3"
+            "when_done": "Call workflow with workflow='ingest', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
             "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, etc.\n- First # Heading = document title\n- Every dynamic fact needs a temporal tag:\n  @t[2020..2023] = date range, @t[2024..] = ongoing, @t[=2024-03] = point in time, @t[~2025-02] = last verified, @t[?] = unverified\n- Add source footnotes: [^1] on the fact, [^1]: Source type, date at the bottom\n- Use exact entity names matching other document titles for cross-linking\n- Never modify <!-- factbase:XXXXXX --> headers{fields}"),
             "next_tool": "create_document",
-            "when_done": "Call workflow_next with workflow='ingest', step=4"
+            "when_done": "Call workflow with workflow='ingest', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "ingest",
@@ -200,23 +234,23 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
             "workflow": "enrich",
             "step": 1, "total_steps": total,
             "instruction": format!("List documents to review. Call list_entities to browse documents{}. Then call get_document_stats on each to find which ones need attention (low temporal coverage, missing sources, few links).{ctx}",
-                if doc_type != "all types" { format!(" filtered by type '{}'", doc_type) } else { String::new() }),
+                if doc_type != "all types" { format!(" filtered by type '{doc_type}'") } else { String::new() }),
             "next_tool": "list_entities",
-            "when_done": "Call workflow_next with workflow='enrich', step=2"
+            "when_done": "Call workflow with workflow='enrich', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
             "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type{fields}"),
             "next_tool": "get_entity",
-            "when_done": "Call workflow_next with workflow='enrich', step=3"
+            "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
             "instruction": format!("Research the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely{ctx}"),
             "next_tool": "update_document",
-            "when_done": "Call workflow_next with workflow='enrich', step=4"
+            "when_done": "Call workflow with workflow='enrich', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "enrich",

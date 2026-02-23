@@ -12,7 +12,7 @@ pub fn tools_list() -> Value {
         "tools": [
             {
                 "name": "search_knowledge",
-                "description": "Search factbase by meaning or title. Use this when the user asks to look up, find, or search for something in factbase. For multi-step tasks like 'research X and add to factbase' or 'fix the review queue', use workflow_start instead.",
+                "description": "Search factbase by meaning, title, or temporal range.\n\nTriggers: 'what do we know about X', 'find X', 'search for X', 'look up X', 'who is X', 'tell me about X'\n\nFor multi-step tasks like 'research X', 'update the factbase', or 'fix issues', use workflow instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -24,35 +24,19 @@ pub fn tools_list() -> Value {
                         "repo": { "type": "string", "description": "Filter by repository" },
                         "as_of": { "type": "string", "description": "Filter to facts valid at date (YYYY, YYYY-MM, or YYYY-MM-DD)" },
                         "during": { "type": "string", "description": "Filter to facts valid during range (YYYY..YYYY or YYYY-MM..YYYY-MM)" },
-                        "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags or no temporal tags (default: false)" }
+                        "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags (default: false)" },
+                        "boost_recent": { "type": "boolean", "description": "Boost ranking of recent @t[~...] dates and return temporal metadata (default: false)" }
                     }
                 }
             },
             {
-                "name": "search_temporal",
-                "description": "Search factbase with temporal filtering. Find facts that were valid at a specific date or during a date range. Returns temporal metadata (tag types, date ranges, confidence) for each result.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string", "description": "Semantic search query" },
-                        "as_of": { "type": "string", "description": "Filter to facts valid at date (YYYY, YYYY-MM, or YYYY-MM-DD)" },
-                        "during": { "type": "string", "description": "Filter to facts valid during range (YYYY..YYYY or YYYY-MM..YYYY-MM)" },
-                        "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags or no temporal tags (default: false)" },
-                        "boost_recent": { "type": "boolean", "description": "Boost ranking of facts with recent @t[~...] dates (default: false)" },
-                        "limit": { "type": "integer", "description": "Max results (default: 10)" },
-                        "doc_type": { "type": "string", "description": "Filter by document type" },
-                        "repo": { "type": "string", "description": "Filter by repository" }
-                    },
-                    "required": ["query"]
-                }
-            },
-            {
                 "name": "get_entity",
-                "description": "Get a factbase document by ID, including its full content and links to/from other documents.",
+                "description": "Get a document by ID. Returns full content and links by default, or just stats with detail='stats'.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "id": { "type": "string", "description": "Document ID" },
+                        "detail": { "type": "string", "description": "'full' (default) for content+links, 'stats' for counts only" },
                         "include_preview": { "type": "boolean", "description": "Include 500-char content preview" },
                         "max_content_length": { "type": "integer", "description": "Truncate content to this length (0 = no truncation)" }
                     },
@@ -61,7 +45,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "list_entities",
-                "description": "List documents in factbase with optional type, repo, or title filters.",
+                "description": "List documents with optional type, repo, or title filters.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -74,22 +58,15 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "list_repositories",
-                "description": "List all factbase repositories."
-            },
-            {
-                "name": "get_document_stats",
-                "description": "Get quick statistics for a factbase document including temporal coverage, source coverage, link counts, and review queue status. Lighter weight than get_entity (no content returned).",
+                "description": "List all factbase repositories.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "Document ID" }
-                    },
-                    "required": ["id"]
+                    "properties": {}
                 }
             },
             {
                 "name": "get_perspective",
-                "description": "Get the factbase repository's perspective — its organization, focus area, and quality policies.",
+                "description": "Get repository context: organization, focus area, and quality policies.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -100,7 +77,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "create_document",
-                "description": "Create a new document in factbase.",
+                "description": "Create a new document. Call get_authoring_guide first if unsure about format.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -114,7 +91,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "update_document",
-                "description": "Update an existing factbase document's title or content.",
+                "description": "Update a document's title or content.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -127,7 +104,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "delete_document",
-                "description": "Delete a factbase document by ID.",
+                "description": "Delete a document by ID.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -138,7 +115,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "bulk_create_documents",
-                "description": "Create multiple factbase documents in one operation (atomic: all succeed or all fail).",
+                "description": "Create multiple documents atomically (max 100).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -162,7 +139,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "search_content",
-                "description": "Search factbase for exact text matches (like grep). No embeddings needed.",
+                "description": "Exact text search (like grep). No embeddings needed.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -177,89 +154,101 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "get_review_queue",
-                "description": "List pending review questions across factbase documents. Use include_context=true to get surrounding lines for each question.",
+                "description": "List review questions. Defaults to unanswered only. Use status filter to see answered, deferred, or all. Each question includes question_index for use with answer_questions.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
                         "doc_id": { "type": "string", "description": "Filter by document ID" },
                         "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate)" },
-                        "include_context": { "type": "boolean", "description": "Include surrounding lines from the document for each question (default: false)" }
+                        "status": { "type": "string", "description": "Filter by status: 'unanswered' (default), 'answered', 'deferred', 'all'" },
+                        "limit": { "type": "integer", "description": "Max questions to return (default: 10)" },
+                        "offset": { "type": "integer", "description": "Skip this many questions for pagination (default: 0)" }
                     }
                 }
             },
             {
-                "name": "answer_question",
-                "description": "Answer a review question in factbase. Modifies the document to record the answer.",
+                "name": "answer_questions",
+                "description": "Answer or defer review questions. For a single question: provide doc_id, question_index, answer. For bulk: provide answers array. Prefix with 'defer:' to leave in queue with a note.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "doc_id": { "type": "string", "description": "Document ID containing the question" },
-                        "question_index": { "type": "integer", "description": "0-based index of the question in the Review Queue" },
-                        "answer": { "type": "string", "description": "Answer text to add" }
-                    },
-                    "required": ["doc_id", "question_index", "answer"]
-                }
-            },
-            {
-                "name": "generate_questions",
-                "description": "Generate review questions for a factbase document. Use dry_run=true to preview without modifying the file.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "doc_id": { "type": "string", "description": "Document ID to generate questions for" },
-                        "dry_run": { "type": "boolean", "description": "If true, return questions without modifying the file (default: false)" }
-                    },
-                    "required": ["doc_id"]
-                }
-            },
-            {
-                "name": "bulk_answer_questions",
-                "description": "Answer multiple factbase review questions at once (atomic: all succeed or all fail).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
+                        "doc_id": { "type": "string", "description": "Document ID (single mode)" },
+                        "question_index": { "type": "integer", "description": "0-based question index (single mode)" },
+                        "answer": { "type": "string", "description": "Answer text or 'defer: <reason>' (single mode)" },
                         "answers": {
                             "type": "array",
-                            "description": "Array of answers to apply (max 50)",
+                            "description": "Array of answers for bulk mode (max 50)",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "doc_id": { "type": "string", "description": "Document ID containing the question" },
-                                    "question_index": { "type": "integer", "description": "0-based index of the question in the Review Queue" },
-                                    "answer": { "type": "string", "description": "Answer text to add" }
+                                    "doc_id": { "type": "string" },
+                                    "question_index": { "type": "integer" },
+                                    "answer": { "type": "string" }
                                 },
                                 "required": ["doc_id", "question_index", "answer"]
                             }
                         }
-                    },
-                    "required": ["answers"]
+                    }
                 }
             },
             {
-                "name": "workflow_start",
-                "description": "Start a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'fix the review queue' or 'resolve factbase issues' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps in factbase' or 'enrich [type] documents' → workflow='enrich'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nAfter each step, call workflow_next to get the next instruction.",
+                "name": "lint_repository",
+                "description": "Run quality checks and generate review questions. Lints all documents, or a single document if doc_id is provided.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "workflow": { "type": "string", "description": "Workflow name: 'resolve', 'ingest', 'enrich', or 'list'" },
-                        "topic": { "type": "string", "description": "For ingest: what to research (e.g., a person's name, company, project)" },
-                        "doc_type": { "type": "string", "description": "For enrich: document type to focus on (e.g., 'person', 'company')" },
-                        "repo": { "type": "string", "description": "Repository ID (optional, uses first repo if omitted)" }
-                    },
-                    "required": ["workflow"]
+                        "repo": { "type": "string", "description": "Repository ID (optional)" },
+                        "doc_id": { "type": "string", "description": "Lint a single document (optional, lints all if omitted)" },
+                        "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" }
+                    }
                 }
             },
             {
-                "name": "workflow_next",
-                "description": "Get the next step in an active workflow. Call this after completing the current step. The response tells you what to do next and which tool to call.",
+                "name": "scan_repository",
+                "description": "Re-index documents, generate embeddings, and detect entity links. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "workflow": { "type": "string", "description": "Workflow name (same as workflow_start)" },
-                        "step": { "type": "integer", "description": "Step number to advance to (default: 2)" },
-                        "topic": { "type": "string", "description": "For ingest: the topic being researched" },
-                        "doc_type": { "type": "string", "description": "For enrich: document type being enriched" },
+                        "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" }
+                    }
+                }
+            },
+            {
+                "name": "init_repository",
+                "description": "Initialize a new factbase repository at a directory path. Creates .factbase/ and registers it.\n\nTriggers: 'add this folder to factbase', 'initialize factbase at /path', 'set up a new knowledge base'",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "Directory path to initialize as a repository" },
+                        "id": { "type": "string", "description": "Repository ID (optional, defaults to directory name)" },
+                        "name": { "type": "string", "description": "Display name (optional, defaults to id)" }
+                    },
+                    "required": ["path"]
+                }
+            },
+            {
+                "name": "apply_review_answers",
+                "description": "Apply answered review questions to document content via LLM rewrite.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": { "type": "string", "description": "Apply only for this document (optional, applies all if omitted)" },
+                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
+                        "dry_run": { "type": "boolean", "description": "Preview changes without modifying files (default: false)" }
+                    }
+                }
+            },
+            {
+                "name": "workflow",
+                "description": "Run a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nCall again with the next step number to advance.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "workflow": { "type": "string", "description": "Workflow name: 'update', 'resolve', 'ingest', 'enrich', or 'list'" },
+                        "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
+                        "topic": { "type": "string", "description": "For ingest: what to research" },
+                        "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
                         "repo": { "type": "string", "description": "Repository ID (optional)" }
                     },
                     "required": ["workflow"]
@@ -267,18 +256,25 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "get_duplicate_entries",
-                "description": "Detect entity entries duplicated across multiple documents. Finds named entities (e.g., people listed under company team sections) that appear in two or more documents, and identifies which entries are stale based on temporal tags or file modification dates.",
+                "description": "Detect entity entries duplicated across documents. Used by update workflow.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" }
                     }
                 }
+            },
+            {
+                "name": "get_authoring_guide",
+                "description": "Get document formatting rules, temporal tag syntax, source citation format, and templates.\n\nTriggers: 'how should I format documents', 'what format does factbase use', 'how do I write a factbase document'",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
             }
         ]
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,13 +288,13 @@ mod tests {
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
-        assert!(names.contains(&"search_temporal"));
         assert!(names.contains(&"get_entity"));
-        assert!(names.contains(&"get_document_stats"));
         assert!(names.contains(&"get_review_queue"));
-        assert!(names.contains(&"answer_question"));
-        assert!(names.contains(&"generate_questions"));
-        assert!(names.contains(&"bulk_answer_questions"));
+        assert!(names.contains(&"answer_questions"));
+        assert!(names.contains(&"lint_repository"));
+        assert!(names.contains(&"scan_repository"));
+        assert!(names.contains(&"init_repository"));
+        assert!(names.contains(&"apply_review_answers"));
         assert!(names.contains(&"list_entities"));
         assert!(names.contains(&"list_repositories"));
         assert!(names.contains(&"get_perspective"));
@@ -308,6 +304,8 @@ mod tests {
         assert!(names.contains(&"bulk_create_documents"));
         assert!(names.contains(&"search_content"));
         assert!(names.contains(&"get_duplicate_entries"));
+        assert!(names.contains(&"get_authoring_guide"));
+        assert!(names.contains(&"workflow"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {
@@ -367,29 +365,23 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_search_temporal_schema() {
+    fn test_tools_list_search_knowledge_has_temporal_params() {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        let search_temporal = tools
+        let search = tools
             .iter()
-            .find(|t| t["name"] == "search_temporal")
+            .find(|t| t["name"] == "search_knowledge")
             .unwrap();
-        let props = search_temporal["inputSchema"]["properties"]
+        let props = search["inputSchema"]["properties"]
             .as_object()
             .expect("properties");
 
-        // Should have temporal-specific params
+        // Should have temporal params (merged from search_temporal)
         assert!(props.contains_key("as_of"));
         assert!(props.contains_key("during"));
         assert!(props.contains_key("exclude_unknown"));
         assert!(props.contains_key("boost_recent"));
-
-        // query should be required
-        let required = search_temporal["inputSchema"]["required"]
-            .as_array()
-            .expect("required array");
-        assert!(required.iter().any(|v| v == "query"));
     }
 
     #[test]

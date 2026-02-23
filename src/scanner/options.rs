@@ -26,6 +26,8 @@ pub struct ScanOptions {
     pub force_reindex: bool,
     /// Batch size for embedding generation
     pub embedding_batch_size: usize,
+    /// Batch size for link detection
+    pub link_batch_size: usize,
     /// Skip link detection phase for faster indexing
     pub skip_links: bool,
 }
@@ -44,6 +46,7 @@ impl Default for ScanOptions {
             min_coverage: 0.8,
             force_reindex: false,
             embedding_batch_size: 10,
+            link_batch_size: 5,
             skip_links: false,
         }
     }
@@ -56,6 +59,7 @@ impl ScanOptions {
             chunk_size: config.processor.chunk_size,
             chunk_overlap: config.processor.chunk_overlap,
             embedding_batch_size: config.processor.embedding_batch_size,
+            link_batch_size: config.processor.link_batch_size,
             min_coverage: config.temporal.min_coverage,
             ..Default::default()
         }

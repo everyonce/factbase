@@ -27,7 +27,7 @@
 //! - [`TemporalConflict`] - Conflicting temporal ranges
 //!
 //! ## Functions
-//! - Core: [`DocumentProcessor::new`], [`DocumentProcessor::compute_hash`], etc.
+//! - Core: [`DocumentProcessor::new`], [`content_hash`], etc.
 //! - Temporal: [`parse_temporal_tags`], [`validate_temporal_tags`], [`detect_temporal_conflicts`]
 //! - Sources: [`parse_source_references`], [`parse_source_definitions`]
 //! - Review: [`parse_review_queue`], [`append_review_questions`]
@@ -44,7 +44,7 @@ mod temporal;
 
 // Re-export core types and functions
 pub(crate) use core::normalize_type;
-pub use core::DocumentProcessor;
+pub use core::{content_hash, DocumentProcessor};
 
 // Re-export temporal types and functions
 pub use temporal::{

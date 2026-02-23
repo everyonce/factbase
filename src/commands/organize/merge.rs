@@ -200,7 +200,7 @@ fn print_result(result: &MergeResultOutput) {
     println!("  Links redirected: {}", result.links_redirected);
 
     if let Some(ref path) = result.orphan_path {
-        println!("\nOrphans written to: {}", path);
+        println!("\nOrphans written to: {path}");
     }
 }
 

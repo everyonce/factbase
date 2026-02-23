@@ -29,10 +29,12 @@ impl Database {
         );
 
         append_type_repo_filters(&mut sql, 2, doc_type, repo_id, "");
-        sql.push_str(&format!(" ORDER BY title LIMIT {}", limit));
+        {
+            write_str!(sql, " ORDER BY title LIMIT {}", limit);
+        }
 
         let mut stmt = conn.prepare_cached(&sql)?;
-        let pattern = format!("%{}%", title_filter);
+        let pattern = format!("%{title_filter}%");
 
         let mut results = Vec::with_capacity(limit);
 

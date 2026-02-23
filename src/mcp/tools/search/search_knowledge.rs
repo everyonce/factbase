@@ -40,6 +40,12 @@ pub async fn search_knowledge<E: EmbeddingProvider>(
     embedding: &E,
     args: &Value,
 ) -> Result<Value, FactbaseError> {
+    // Delegate to search_temporal when boost_recent is requested
+    let boost_recent = get_bool_arg(args, "boost_recent", false);
+    if boost_recent {
+        return super::search_temporal::search_temporal(db, embedding, args).await;
+    }
+
     let query = get_str_arg(args, "query");
     let title_filter = get_str_arg(args, "title_filter");
     let limit = get_u64_arg(args, "limit", 10) as usize;

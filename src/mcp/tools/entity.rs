@@ -1,15 +1,14 @@
 //! Entity-related MCP tools: get_entity, list_entities, get_perspective, list_repositories, get_document_stats
 
+use super::helpers::{
+    build_link_stats_json, build_review_stats_json, build_source_stats_json,
+    build_temporal_stats_json,
+};
 use super::{get_bool_arg, get_str_arg, get_u64_arg};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::output::truncate_at_word_boundary;
-use crate::processor::{
-    calculate_fact_stats, count_facts_with_sources, parse_review_queue, parse_source_definitions,
-    parse_source_references, parse_temporal_tags,
-};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
 use tracing::instrument;
 
 /// Retrieves a document by ID with its link relationships.
@@ -31,6 +30,13 @@ use tracing::instrument;
 #[instrument(name = "mcp_get_entity", skip(db, args))]
 pub fn get_entity(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let id = super::get_str_arg_required(args, "id")?;
+
+    // If detail="stats", return lightweight stats without content
+    let detail = super::get_str_arg(args, "detail").unwrap_or("full");
+    if detail == "stats" {
+        return get_document_stats(db, args);
+    }
+
     let include_preview = get_bool_arg(args, "include_preview", false);
     let max_content_length = get_u64_arg(args, "max_content_length", 0) as usize;
 
@@ -175,101 +181,24 @@ pub fn get_document_stats(db: &Database, args: &Value) -> Result<Value, Factbase
 
     let doc = db.require_document(&id)?;
 
-    // Temporal coverage
-    let fact_stats = calculate_fact_stats(&doc.content);
-    let temporal_tags = parse_temporal_tags(&doc.content);
-    let mut temporal_by_type: HashMap<String, usize> = HashMap::new();
-    for tag in &temporal_tags {
-        let type_name = format!("{:?}", tag.tag_type);
-        *temporal_by_type.entry(type_name).or_insert(0) += 1;
-    }
-
-    // Source coverage
-    let facts_with_sources = count_facts_with_sources(&doc.content);
-    let source_refs = parse_source_references(&doc.content);
-    let source_defs = parse_source_definitions(&doc.content);
-
-    // Orphan detection (collect numbers before consuming source_defs)
-    let ref_numbers: HashSet<_> = source_refs.iter().map(|r| r.number).collect();
-    let def_numbers: HashSet<_> = source_defs.iter().map(|d| d.number).collect();
-    let orphan_refs = ref_numbers.difference(&def_numbers).count();
-    let orphan_defs = def_numbers.difference(&ref_numbers).count();
-
-    // Capture counts before consuming
-    let source_ref_count = source_refs.len();
-    let source_def_count = source_defs.len();
-
-    // Count by type (consume source_defs to avoid clone)
-    let mut source_by_type: HashMap<String, usize> = HashMap::new();
-    for def in source_defs {
-        *source_by_type.entry(def.source_type).or_insert(0) += 1;
-    }
-
-    // Link counts
     let links_to = db.get_links_from(&id)?;
     let linked_from = db.get_links_to(&id)?;
-
-    // Word count (simple whitespace split)
-    let word_count = crate::models::word_count(&doc.content);
-
-    // Review queue status
-    let review_queue = parse_review_queue(&doc.content);
-    let (total_questions, answered_questions) = match &review_queue {
-        Some(questions) => {
-            let answered = questions.iter().filter(|q| q.answered).count();
-            (questions.len(), answered)
-        }
-        None => (0, 0),
-    };
 
     let mut result = doc.to_summary_json();
     let obj = result
         .as_object_mut()
         .expect("to_summary_json returns object");
-    obj.insert(
-        "temporal".into(),
-        serde_json::json!({
-            "total_facts": fact_stats.total_facts,
-            "facts_with_tags": fact_stats.facts_with_tags,
-            "coverage_percent": fact_stats.coverage,
-            "tag_count": temporal_tags.len(),
-            "by_type": temporal_by_type
-        }),
-    );
-    obj.insert(
-        "sources".into(),
-        serde_json::json!({
-            "total_facts": fact_stats.total_facts,
-            "facts_with_sources": facts_with_sources,
-            "coverage_percent": if fact_stats.total_facts > 0 {
-                (facts_with_sources as f32 / fact_stats.total_facts as f32) * 100.0
-            } else {
-                0.0
-            },
-            "reference_count": source_ref_count,
-            "definition_count": source_def_count,
-            "orphan_refs": orphan_refs,
-            "orphan_defs": orphan_defs,
-            "by_type": source_by_type
-        }),
-    );
+    obj.insert("temporal".into(), build_temporal_stats_json(&doc.content));
+    obj.insert("sources".into(), build_source_stats_json(&doc.content));
     obj.insert(
         "links".into(),
-        serde_json::json!({
-            "outgoing": links_to.len(),
-            "incoming": linked_from.len()
-        }),
+        build_link_stats_json(links_to.len(), linked_from.len()),
     );
-    obj.insert("word_count".into(), serde_json::json!(word_count));
     obj.insert(
-        "review_queue".into(),
-        serde_json::json!({
-            "has_queue": review_queue.is_some(),
-            "total_questions": total_questions,
-            "answered_questions": answered_questions,
-            "pending_questions": total_questions - answered_questions
-        }),
+        "word_count".into(),
+        serde_json::json!(crate::models::word_count(&doc.content)),
     );
+    obj.insert("review_queue".into(), build_review_stats_json(&doc.content));
 
     Ok(result)
 }

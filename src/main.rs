@@ -134,8 +134,25 @@ enum DbCommands {
     BackfillWordCounts(commands::db::DbBackfillWordCountsArgs),
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
+    // Spawn the main logic on a thread with 8MB stack (Windows default is 2MB,
+    // which overflows with large async state machines).
+    let builder = std::thread::Builder::new().stack_size(8 * 1024 * 1024);
+    let handler = builder.spawn(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_stack_size(8 * 1024 * 1024)
+            .build()
+            .expect("Failed to build tokio runtime")
+            .block_on(async_main())
+    })?;
+    handler.join().unwrap_or_else(|e| {
+        eprintln!("Fatal error: {e:?}");
+        std::process::exit(1);
+    })
+}
+
+async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Initialize graceful shutdown handler for Ctrl+C

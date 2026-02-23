@@ -304,6 +304,7 @@ async fn test_watcher_with_mcp_server() {
         port,
         ctx.config.rate_limit.clone(),
         &ctx.config.embedding.base_url,
+        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 

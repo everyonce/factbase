@@ -10,13 +10,7 @@ Add factbase as an MCP server to your agent, then talk to it naturally.
    cd factbase && cargo install --path .
    ```
 
-2. Initialize your knowledge base:
-   ```bash
-   cd ~/my-knowledge-base       # or any empty folder
-   factbase init .
-   ```
-
-3. Add factbase to your agent's MCP config (choose one transport):
+2. Add factbase to your agent's MCP config (choose one transport):
 
 ### Stdio transport (recommended for local use)
 
@@ -26,15 +20,15 @@ The agent launches factbase as a subprocess — no server to start or manage:
    {
      "mcpServers": {
        "factbase": {
-         "command": "factbase",
-         "args": ["mcp"],
+         "command": "npx",
+         "args": ["-y", "@everyonce/factbase", "mcp"],
          "cwd": "/path/to/your/knowledge-base"
        }
      }
    }
    ```
 
-Set `cwd` to the directory containing your knowledge base (where you ran `factbase init`). The agent starts and stops the process automatically.
+Set `cwd` to the directory containing your knowledge base. The factbase auto-initializes on first launch — no `init` or `scan` needed beforehand. Just tell your agent "scan the factbase" to index.
 
 ### HTTP transport (for shared or remote access)
 
@@ -76,7 +70,7 @@ Factbase's workflow tools pick up natural requests automatically:
 | "Search factbase for info on Project Alpha" | Semantic search across all documents |
 | "Fix the factbase review queue" | Resolve workflow: finds stale/conflicting/missing data, researches fixes, applies answers |
 | "Improve the person documents in factbase" | Enrich workflow: scans for gaps, researches missing info, updates documents |
-| "What's in factbase about Acme Corp?" | Searches and returns what's known |
+| "Lint factbase" or "check factbase for quality issues" | Runs lint_repository to generate review questions across all documents |
 
 ## Repository Perspective
 
@@ -100,21 +94,23 @@ This flows into workflow instructions automatically — the agent knows your org
 Factbase improves iteratively:
 
 1. **Ingest** — agent adds documents from your data sources
-2. **Lint** — `factbase lint --review` generates quality questions (stale facts, missing sources, conflicts)
-3. **Resolve** — agent fixes the review queue using external sources
+2. **Lint** — tell your agent "lint factbase" or "check factbase for quality issues" — it runs `lint_repository` to generate review questions across all documents
+3. **Resolve** — tell your agent "fix the factbase review queue" — it researches and resolves each question
 4. **Repeat** — each cycle produces fewer questions until documents stabilize
 
 ## MCP Tools
 
-The agent has access to 18 tools. You don't need to know them — the workflows handle tool selection. For reference:
+The agent has access to 21 tools. You don't need to know them — the workflows handle tool selection. For reference:
 
 | Category | Tools |
 |----------|-------|
+| Indexing | `scan_repository` |
 | Search | `search_knowledge`, `search_content`, `search_temporal` |
 | Read | `get_entity`, `get_document_stats`, `list_entities`, `list_repositories`, `get_perspective` |
 | Write | `create_document`, `update_document`, `delete_document`, `bulk_create_documents` |
-| Quality | `get_review_queue`, `answer_question`, `bulk_answer_questions`, `generate_questions` |
+| Quality | `get_review_queue`, `answer_question`, `bulk_answer_questions`, `generate_questions`, `lint_repository` |
 | Workflows | `workflow_start`, `workflow_next` |
+| Organize | `get_duplicate_entries` |
 
 ## Tips
 

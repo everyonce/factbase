@@ -3,11 +3,7 @@
 use super::common::ollama_helpers::require_ollama;
 use super::common::run_scan;
 use super::common::TestContext;
-use chrono::Utc;
-use factbase::{
-    config::Config, database::Database, embedding::OllamaEmbedding, models::Repository,
-    EmbeddingProvider,
-};
+use factbase::{config::Config, database::Database, embedding::OllamaEmbedding, EmbeddingProvider};
 use std::fs;
 use tempfile::TempDir;
 
@@ -16,9 +12,9 @@ use tempfile::TempDir;
 async fn test_search_count_flag() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).expect("operation should succeed");
+    fs::create_dir_all(&repo_path).unwrap();
 
     // Create test documents
     fs::write(repo_path.join("doc1.md"), "# Doc One\nFirst document.")
@@ -29,18 +25,10 @@ async fn test_search_count_flag() {
         .expect("write should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "notes".into(),
-        name: "Notes".into(),
-        path: repo_path,
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("notes", repo_path);
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     run_scan(&repo, &db, &config)

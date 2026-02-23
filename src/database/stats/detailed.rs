@@ -19,7 +19,7 @@ impl Database {
         since: Option<&DateTime<Utc>>,
     ) -> Result<DetailedStats, FactbaseError> {
         let conn = self.get_conn()?;
-        let since_str = since.map(|s| s.to_rfc3339());
+        let since_str = since.map(DateTime::to_rfc3339);
         let since_clause = if since.is_some() {
             " AND d.file_modified_at >= ?2"
         } else {
@@ -83,18 +83,18 @@ impl Database {
 
         // Total words and average words per document
         let (total_words, avg_words_per_doc) =
-            self.compute_word_stats(&conn, &params, since_clause_no_alias)?;
+            Self::compute_word_stats(&conn, &params, since_clause_no_alias)?;
 
         // Compression stats (only for unfiltered view)
         let compression_stats = if since.is_none() && self.compression {
-            self.compute_compression_stats(&conn, repo_id)?
+            Self::compute_compression_stats(&conn, repo_id)?
         } else {
             None
         };
 
         // Oldest and newest documents
-        let oldest_doc = self.query_boundary_doc(&conn, &params, since_clause_no_alias, "ASC")?;
-        let newest_doc = self.query_boundary_doc(&conn, &params, since_clause_no_alias, "DESC")?;
+        let oldest_doc = Self::query_boundary_doc(&conn, &params, since_clause_no_alias, "ASC")?;
+        let newest_doc = Self::query_boundary_doc(&conn, &params, since_clause_no_alias, "DESC")?;
 
         Ok(DetailedStats {
             most_linked,
@@ -112,7 +112,6 @@ impl Database {
 
     /// Compute total and average word counts.
     fn compute_word_stats(
-        &self,
         conn: &rusqlite::Connection,
         params: &[&dyn rusqlite::types::ToSql],
         since_clause: &str,
@@ -155,7 +154,6 @@ impl Database {
 
     /// Query oldest or newest document by modification date.
     fn query_boundary_doc(
-        &self,
         conn: &rusqlite::Connection,
         params: &[&dyn rusqlite::types::ToSql],
         since_clause: &str,

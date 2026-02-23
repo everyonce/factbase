@@ -1,14 +1,10 @@
 //! Ollama LLM implementation.
 
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 
 use crate::error::FactbaseError;
 use crate::ollama::OllamaClient;
-
-/// Boxed future type alias for async trait methods.
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+use crate::BoxFuture;
 
 /// Trait for LLM text completion providers.
 pub trait LlmProvider: Send + Sync {

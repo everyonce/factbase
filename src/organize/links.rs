@@ -80,8 +80,8 @@ pub fn redirect_file_links(
     to_id: &str,
     repo_path: &Path,
 ) -> Result<usize, FactbaseError> {
-    let pattern = format!("[[{}]]", from_id);
-    let replacement = format!("[[{}]]", to_id);
+    let pattern = format!("[[{from_id}]]");
+    let replacement = format!("[[{to_id}]]");
     let mut count = 0;
 
     // Get all documents that might contain manual links

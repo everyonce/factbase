@@ -1,0 +1,2 @@
+# Built binaries are copied here by npm-publish.sh — don't commit them
+factbase-*/bin/

@@ -31,13 +31,13 @@ pub fn validate_temporal_tags(content: &str) -> Vec<TemporalValidationError> {
 
         if let Some(ref start) = tag.start_date {
             if let Some(msg) = validate_date(start) {
-                tag_errors.push(format!("start date: {}", msg));
+                tag_errors.push(format!("start date: {msg}"));
             }
         }
 
         if let Some(ref end) = tag.end_date {
             if let Some(msg) = validate_date(end) {
-                tag_errors.push(format!("end date: {}", msg));
+                tag_errors.push(format!("end date: {msg}"));
             }
         }
 
@@ -86,7 +86,7 @@ pub fn detect_illogical_sequences(content: &str) -> Vec<TemporalSequenceError> {
             let start_norm = normalize_date_for_comparison(start);
             let end_norm = normalize_date_for_comparison(end);
             if end_norm < start_norm {
-                tag_errors.push(format!("end date {} is before start date {}", end, start));
+                tag_errors.push(format!("end date {end} is before start date {start}"));
             }
         }
 
@@ -124,7 +124,7 @@ fn check_future_date(date: &str, one_year_from_now: &DateTime<Utc>) -> Option<St
     let normalized = normalize_date_for_comparison(date);
     let future_limit = one_year_from_now.format("%Y-%m-%d").to_string();
     if normalized > future_limit {
-        Some(format!("date {} is more than 1 year in the future", date))
+        Some(format!("date {date} is more than 1 year in the future"))
     } else {
         None
     }
@@ -206,10 +206,7 @@ fn check_tag_conflict_msg(tag1: &TemporalTag, tag2: &TemporalTag) -> Option<Stri
     use TemporalTagType::*;
 
     match (&tag1.tag_type, &tag2.tag_type) {
-        (Ongoing, Range) | (Range, Ongoing) => {
-            return Some("conflicting tags: one implies ongoing, other implies ended".to_string());
-        }
-        (Ongoing, Historical) | (Historical, Ongoing) => {
+        (Ongoing, Range) | (Range, Ongoing) | (Ongoing, Historical) | (Historical, Ongoing) => {
             return Some("conflicting tags: one implies ongoing, other implies ended".to_string());
         }
         _ => {}
@@ -229,8 +226,7 @@ fn check_range_overlap_conflict(tag1: &TemporalTag, tag2: &TemporalTag) -> Optio
             if let (Some(e1), Some(e2)) = (end1, end2) {
                 if e1 != e2 && ranges_overlap(s1, e1, s2, e2) {
                     return Some(format!(
-                        "overlapping ranges with different boundaries: {}..{} vs {}..{}",
-                        s1, e1, s2, e2
+                        "overlapping ranges with different boundaries: {s1}..{e1} vs {s2}..{e2}"
                     ));
                 }
             }

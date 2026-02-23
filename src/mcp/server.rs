@@ -140,7 +140,7 @@ async fn health<E: EmbeddingProvider>(
 async fn check_ollama(base_url: &str) -> bool {
     let client = crate::ollama::create_http_client(std::time::Duration::from_secs(2));
     client
-        .get(format!("{}/api/tags", base_url))
+        .get(format!("{base_url}/api/tags"))
         .send()
         .await
         .map(|r| r.status().is_success())
@@ -214,7 +214,7 @@ async fn mcp_handler<E: EmbeddingProvider>(
     let start = Instant::now();
 
     let llm = state.llm.as_deref();
-    let result = handle_tool_call(&state.db, &state.embedding, llm, request).await;
+    let result = handle_tool_call(&state.db, &state.embedding, llm, request, None).await;
     let duration = start.elapsed();
 
     match &result {

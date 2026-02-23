@@ -129,7 +129,7 @@ Factbase includes an MCP server so AI agents can search and manage your knowledg
 }
 ```
 
-Set `cwd` to the directory where you ran `factbase init`.
+Set `cwd` to the directory where you ran `factbase init`. Run `factbase scan` first to index your documents — the stdio transport doesn't auto-scan.
 
 **HTTP (for shared or remote access)** — start the server first, then point your agent at it:
 

@@ -5,6 +5,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::mcp::tools::{get_str_arg, run_blocking};
 use crate::organize::{assess_staleness, detect_duplicate_entries};
+use crate::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
 
@@ -19,15 +20,19 @@ use tracing::instrument;
 /// # Returns
 /// JSON with `duplicates` array (entity_name, entries with doc_id/title/section/facts),
 /// `stale` array (entity_name, current entry, stale entries), and counts.
-#[instrument(name = "mcp_get_duplicate_entries", skip(db, embedding, args))]
+#[instrument(
+    name = "mcp_get_duplicate_entries",
+    skip(db, embedding, args, progress)
+)]
 pub async fn get_duplicate_entries<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
     args: &Value,
+    progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let repo = get_str_arg(args, "repo").map(String::from);
 
-    let duplicates = detect_duplicate_entries(db, embedding, repo.as_deref()).await?;
+    let duplicates = detect_duplicate_entries(db, embedding, repo.as_deref(), progress).await?;
 
     let db2 = db.clone();
     let dups_clone = duplicates.clone();

@@ -2,11 +2,7 @@
 
 use super::common::ollama_helpers::require_ollama;
 use super::common::run_scan;
-use chrono::Utc;
-use factbase::{
-    config::Config, database::Database, embedding::OllamaEmbedding, models::Repository,
-    EmbeddingProvider,
-};
+use factbase::{config::Config, database::Database, embedding::OllamaEmbedding, EmbeddingProvider};
 use std::fs;
 use tempfile::TempDir;
 
@@ -16,52 +12,40 @@ use tempfile::TempDir;
 async fn test_export_import_workflow() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("source");
     let export_path = temp_dir.path().join("export");
     let import_repo_path = temp_dir.path().join("imported");
 
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
-    fs::create_dir_all(&export_path).expect("operation should succeed");
-    fs::create_dir_all(&import_repo_path).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
+    fs::create_dir_all(&export_path).unwrap();
+    fs::create_dir_all(&import_repo_path).unwrap();
 
     // Create source documents
     fs::write(
         repo_path.join("docs/doc1.md"),
         "# Document 1\nFirst document content.",
     )
-    .expect("operation should succeed");
+    .unwrap();
     fs::write(
         repo_path.join("docs/doc2.md"),
         "# Document 2\nSecond document content.",
     )
-    .expect("operation should succeed");
+    .unwrap();
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "source".into(),
-        name: "Source".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = super::common::test_repo("source", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
 
     // Scan source
-    run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    run_scan(&repo, &db, &config).await.unwrap();
 
     // Simulate export - copy files
-    let docs = db
-        .get_documents_for_repo("source")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("source").unwrap();
     for doc in docs.values() {
         let src = repo_path.join(&doc.file_path);
         let dst_dir = export_path.join(
@@ -69,9 +53,9 @@ async fn test_export_import_workflow() {
                 .parent()
                 .unwrap_or(std::path::Path::new("")),
         );
-        fs::create_dir_all(&dst_dir).expect("operation should succeed");
+        fs::create_dir_all(&dst_dir).unwrap();
         let dst = export_path.join(&doc.file_path);
-        fs::copy(&src, &dst).expect("operation should succeed");
+        fs::copy(&src, &dst).unwrap();
     }
 
     // Verify export
@@ -101,32 +85,18 @@ async fn test_export_import_workflow() {
         }
     }
     for path in &md_files {
-        let rel = path
-            .strip_prefix(&export_path)
-            .expect("operation should succeed");
+        let rel = path.strip_prefix(&export_path).unwrap();
         let dst = import_repo_path.join(rel);
-        fs::create_dir_all(dst.parent().expect("operation should succeed"))
-            .expect("operation should succeed");
-        fs::copy(path, &dst).expect("operation should succeed");
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        fs::copy(path, &dst).unwrap();
     }
 
     // Add imported repo
-    let import_repo = Repository {
-        id: "imported".into(),
-        name: "Imported".into(),
-        path: import_repo_path,
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&import_repo)
-        .expect("operation should succeed");
+    let import_repo = super::common::test_repo("imported", import_repo_path);
+    db.add_repository(&import_repo).unwrap();
 
     // Scan imported
-    let result = run_scan(&import_repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    let result = run_scan(&import_repo, &db, &config).await.unwrap();
     assert_eq!(result.added, 2, "Should import 2 documents");
 
     // Create embedding provider for search
@@ -137,13 +107,10 @@ async fn test_export_import_workflow() {
     );
 
     // Verify search works on imported
-    let query_emb = embedding
-        .generate("document content")
-        .await
-        .expect("operation should succeed");
+    let query_emb = embedding.generate("document content").await.unwrap();
     let results = db
         .search_semantic_with_query(&query_emb, 10, Some("imported"), None, None)
-        .expect("operation should succeed");
+        .unwrap();
     assert_eq!(results.len(), 2, "Should find both imported documents");
 }
 

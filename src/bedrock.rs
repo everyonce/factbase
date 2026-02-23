@@ -1,6 +1,7 @@
 //! Amazon Bedrock provider implementations for embedding and LLM.
 
 use crate::error::FactbaseError;
+use crate::BoxFuture;
 use crate::EmbeddingProvider;
 use crate::LlmProvider;
 use aws_sdk_bedrockruntime::primitives::Blob;
@@ -8,20 +9,28 @@ use aws_sdk_bedrockruntime::types::{ContentBlock, ConversationRole, Message};
 use aws_sdk_bedrockruntime::Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
-use std::future::Future;
-use std::pin::Pin;
 use tracing::debug;
 
-/// Boxed future type alias for async trait methods.
-type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-/// Build a Bedrock runtime client with optional region override.
-async fn build_client(region: Option<&str>) -> Client {
+/// Build a Bedrock runtime client with optional region and profile override.
+async fn build_client(region: Option<&str>, profile: Option<&str>) -> Client {
     let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
     if let Some(r) = region {
         loader = loader.region(aws_config::Region::new(r.to_string()));
     }
-    Client::new(&loader.load().await)
+    if let Some(p) = profile {
+        loader = loader.profile_name(p);
+    }
+    let config = loader.load().await;
+    let timeout = aws_sdk_bedrockruntime::config::timeout::TimeoutConfig::builder()
+        .operation_timeout(std::time::Duration::from_secs(60))
+        .operation_attempt_timeout(std::time::Duration::from_secs(30))
+        .build();
+    Client::from_conf(
+        aws_sdk_bedrockruntime::Config::from(&config)
+            .to_builder()
+            .timeout_config(timeout)
+            .build(),
+    )
 }
 
 fn embed_err(ctx: &str, e: impl Display) -> FactbaseError {
@@ -30,6 +39,39 @@ fn embed_err(ctx: &str, e: impl Display) -> FactbaseError {
 
 fn llm_err(ctx: &str, e: impl Display) -> FactbaseError {
     FactbaseError::llm(format!("{ctx}: {e}"))
+}
+
+/// Retry an async operation with exponential backoff.
+/// Retries on throttling/timeout errors, up to 3 attempts.
+async fn retry_with_backoff<F, Fut, T, E>(mut f: F) -> Result<T, E>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    let mut delay = std::time::Duration::from_millis(500);
+    for attempt in 0..3u32 {
+        match f().await {
+            Ok(v) => return Ok(v),
+            Err(e) if attempt < 2 => {
+                let msg = e.to_string();
+                if msg.contains("throttl")
+                    || msg.contains("Throttl")
+                    || msg.contains("TimedOut")
+                    || msg.contains("dispatch failure")
+                    || msg.contains("DispatchFailure")
+                {
+                    tracing::warn!("Retrying after error (attempt {}): {}", attempt + 1, msg);
+                    tokio::time::sleep(delay).await;
+                    delay *= 2;
+                    continue;
+                }
+                return Err(e);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    unreachable!()
 }
 
 /// Bedrock embedding provider supporting Titan and Nova models.
@@ -89,9 +131,14 @@ struct NovaEmbeddingEntry {
 }
 
 impl BedrockEmbedding {
-    pub async fn new(model_id: &str, dimension: usize, region: Option<&str>) -> Self {
+    pub async fn new(
+        model_id: &str,
+        dimension: usize,
+        region: Option<&str>,
+        profile: Option<&str>,
+    ) -> Self {
         Self {
-            client: build_client(region).await,
+            client: build_client(region, profile).await,
             model_id: model_id.to_string(),
             dim: dimension,
         }
@@ -134,7 +181,7 @@ impl BedrockEmbedding {
             .body(Blob::new(body))
             .send()
             .await
-            .map_err(|e| embed_err("Bedrock invoke", e))?;
+            .map_err(|e| embed_err("Bedrock invoke", format!("{e:#}")))?;
 
         let raw = resp.body().as_ref();
 
@@ -169,7 +216,7 @@ impl BedrockEmbedding {
 
 impl EmbeddingProvider for BedrockEmbedding {
     fn generate<'a>(&'a self, text: &'a str) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
-        Box::pin(async move { self.invoke_embed(text).await })
+        Box::pin(async move { retry_with_backoff(|| self.invoke_embed(text)).await })
     }
 
     fn generate_batch<'a>(
@@ -179,7 +226,7 @@ impl EmbeddingProvider for BedrockEmbedding {
         Box::pin(async move {
             let mut results = Vec::with_capacity(texts.len());
             for text in texts {
-                results.push(self.invoke_embed(text).await?);
+                results.push(retry_with_backoff(|| self.invoke_embed(text)).await?);
             }
             Ok(results)
         })
@@ -197,9 +244,9 @@ pub struct BedrockLlm {
 }
 
 impl BedrockLlm {
-    pub async fn new(model_id: &str, region: Option<&str>) -> Self {
+    pub async fn new(model_id: &str, region: Option<&str>, profile: Option<&str>) -> Self {
         Self {
-            client: build_client(region).await,
+            client: build_client(region, profile).await,
             model_id: model_id.to_string(),
         }
     }
@@ -207,42 +254,44 @@ impl BedrockLlm {
     pub fn model(&self) -> &str {
         &self.model_id
     }
+
+    async fn invoke_converse(&self, prompt: &str) -> Result<String, FactbaseError> {
+        debug!("Bedrock converse: model={}", self.model_id);
+
+        let msg = Message::builder()
+            .role(ConversationRole::User)
+            .content(ContentBlock::Text(prompt.to_string()))
+            .build()
+            .map_err(|e| llm_err("Build message", e))?;
+
+        let resp = self
+            .client
+            .converse()
+            .model_id(&self.model_id)
+            .messages(msg)
+            .send()
+            .await
+            .map_err(|e| llm_err("Bedrock converse", format!("{e:?}")))?;
+
+        let text = resp
+            .output()
+            .ok_or_else(|| FactbaseError::llm("No output in response"))?
+            .as_message()
+            .map_err(|_| FactbaseError::llm("Output not a message"))?
+            .content()
+            .first()
+            .ok_or_else(|| FactbaseError::llm("No content in message"))?
+            .as_text()
+            .map_err(|_| FactbaseError::llm("Content is not text"))?
+            .to_string();
+
+        Ok(text)
+    }
 }
 
 impl LlmProvider for BedrockLlm {
     fn complete<'a>(&'a self, prompt: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
-        Box::pin(async move {
-            debug!("Bedrock converse: model={}", self.model_id);
-
-            let msg = Message::builder()
-                .role(ConversationRole::User)
-                .content(ContentBlock::Text(prompt.to_string()))
-                .build()
-                .map_err(|e| llm_err("Build message", e))?;
-
-            let resp = self
-                .client
-                .converse()
-                .model_id(&self.model_id)
-                .messages(msg)
-                .send()
-                .await
-                .map_err(|e| llm_err("Bedrock converse", e))?;
-
-            let text = resp
-                .output()
-                .ok_or_else(|| FactbaseError::llm("No output in response"))?
-                .as_message()
-                .map_err(|_| FactbaseError::llm("Output not a message"))?
-                .content()
-                .first()
-                .ok_or_else(|| FactbaseError::llm("No content in message"))?
-                .as_text()
-                .map_err(|_| FactbaseError::llm("Content is not text"))?
-                .to_string();
-
-            Ok(text)
-        })
+        Box::pin(async move { retry_with_backoff(|| self.invoke_converse(prompt)).await })
     }
 }
 

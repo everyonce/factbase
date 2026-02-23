@@ -12,16 +12,105 @@ use factbase::{
     mcp::McpServer,
     models::{Document, Perspective, Repository},
     processor::DocumentProcessor,
-    scanner::{full_scan, ScanOptions, Scanner},
+    scanner::{full_scan, ScanContext, ScanOptions, Scanner},
     ScanResult,
 };
 use reqwest::Client;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::sync::oneshot;
+
+/// Create a `Repository` with standard test defaults.
+/// Name is auto-capitalized from `id` (e.g., "test" → "Test").
+#[allow(dead_code)]
+pub fn test_repo(id: &str, path: PathBuf) -> Repository {
+    let name = {
+        let mut c = id.chars();
+        match c.next() {
+            None => String::new(),
+            Some(f) => f.to_uppercase().to_string() + c.as_str(),
+        }
+    };
+    Repository {
+        id: id.to_string(),
+        name,
+        path,
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    }
+}
+
+/// Standard `ScanOptions` for integration tests (all defaults).
+#[allow(dead_code)]
+pub fn test_scan_options() -> ScanOptions {
+    ScanOptions::default()
+}
+
+/// `ScanOptions` with link detection skipped (faster tests).
+#[allow(dead_code)]
+pub fn test_scan_options_skip_links() -> ScanOptions {
+    ScanOptions {
+        skip_links: true,
+        ..Default::default()
+    }
+}
+
+/// Owns all scan components, provides `context()` to borrow them into a `ScanContext`.
+#[allow(dead_code)]
+pub struct TestScanSetup {
+    pub config: Config,
+    pub scanner: Scanner,
+    pub processor: DocumentProcessor,
+    pub embedding: OllamaEmbedding,
+    pub link_detector: LinkDetector,
+    pub opts: ScanOptions,
+}
+
+#[allow(dead_code)]
+impl TestScanSetup {
+    /// Create with default config and scan options.
+    pub fn new() -> Self {
+        Self::with_options(test_scan_options())
+    }
+
+    /// Create with custom scan options.
+    pub fn with_options(opts: ScanOptions) -> Self {
+        let config = Config::default();
+        let scanner = Scanner::new(&config.watcher.ignore_patterns);
+        let processor = DocumentProcessor::new();
+        let embedding = OllamaEmbedding::new(
+            &config.embedding.base_url,
+            &config.embedding.model,
+            config.embedding.dimension,
+        );
+        let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
+        let link_detector = LinkDetector::new(Box::new(llm));
+        Self {
+            config,
+            scanner,
+            processor,
+            embedding,
+            link_detector,
+            opts,
+        }
+    }
+
+    /// Borrow all fields into a `ScanContext`.
+    pub fn context(&self) -> ScanContext<'_> {
+        ScanContext {
+            scanner: &self.scanner,
+            processor: &self.processor,
+            embedding: &self.embedding,
+            link_detector: &self.link_detector,
+            opts: &self.opts,
+            progress: &factbase::ProgressReporter::Silent,
+        }
+    }
+}
 
 /// Generate a random port in the range 30000-39999 for test servers.
 #[allow(dead_code)]
@@ -31,21 +120,10 @@ pub fn random_port() -> u16 {
     30000 + (u16::from_le_bytes(buf) % 10000)
 }
 
-/// Compute cosine similarity between two vectors.
-#[allow(dead_code)]
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
-    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
-    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    dot / (norm_a * norm_b)
-}
-
 /// Compute SHA256 hash of content.
 #[allow(dead_code)]
 pub fn compute_hash(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+    factbase::content_hash(content)
 }
 
 /// Creates a test database in a temp directory.
@@ -73,15 +151,8 @@ pub fn create_test_repo(id: &str, name: &str, files: &[(&str, &str)]) -> (Reposi
         std::fs::write(&file_path, content).expect("write file");
     }
 
-    let repo = Repository {
-        id: id.to_string(),
-        name: name.to_string(),
-        path: temp.path().to_path_buf(),
-        perspective: None,
-        created_at: chrono::Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
+    let mut repo = test_repo(id, temp.path().to_path_buf());
+    repo.name = name.to_string();
 
     (repo, temp)
 }
@@ -117,15 +188,8 @@ impl TestContext {
         let db_path = temp_dir.path().join("test.db");
         let db = Database::new(&db_path).expect("create database");
 
-        let repo = Repository {
-            id: repo_id.to_string(),
-            name: repo_id.to_string(),
-            path: repo_path.clone(),
-            perspective,
-            created_at: Utc::now(),
-            last_indexed_at: None,
-            last_lint_at: None,
-        };
+        let mut repo = test_repo(repo_id, repo_path.clone());
+        repo.perspective = perspective;
         db.upsert_repository(&repo).expect("add repository");
 
         Self {
@@ -188,43 +252,10 @@ impl TestContext {
 pub async fn run_scan(
     repo: &Repository,
     db: &Database,
-    config: &Config,
+    _config: &Config,
 ) -> anyhow::Result<ScanResult> {
-    let scanner = Scanner::new(&config.watcher.ignore_patterns);
-    let processor = DocumentProcessor::new();
-    let embedding = OllamaEmbedding::new(
-        &config.embedding.base_url,
-        &config.embedding.model,
-        config.embedding.dimension,
-    );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
-
-    let opts = ScanOptions {
-        chunk_size: 100_000,
-        chunk_overlap: 2_000,
-        verbose: false,
-        dry_run: false,
-        show_progress: false,
-        check_duplicates: false,
-        collect_stats: false,
-        since: None,
-        min_coverage: 0.8,
-        embedding_batch_size: 10,
-        force_reindex: false,
-        skip_links: false,
-    };
-
-    full_scan(
-        repo,
-        db,
-        &scanner,
-        &processor,
-        &embedding,
-        &link_detector,
-        &opts,
-    )
-    .await
+    let setup = TestScanSetup::new();
+    full_scan(repo, db, &setup.context()).await
 }
 
 /// Test MCP server with HTTP client for integration tests.
@@ -325,6 +356,7 @@ impl TestServer {
             port,
             config.rate_limit.clone(),
             &config.embedding.base_url,
+            None,
         );
         let base_url = format!("http://127.0.0.1:{}", port);
 

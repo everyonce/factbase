@@ -3,13 +3,9 @@
 
 mod common;
 
-use chrono::Utc;
 use common::ollama_helpers::require_ollama;
 use common::run_scan;
-use factbase::{
-    config::Config, database::Database, embedding::OllamaEmbedding, mcp::McpServer,
-    models::Repository,
-};
+use factbase::{config::Config, database::Database, embedding::OllamaEmbedding, mcp::McpServer};
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::fs;
@@ -24,9 +20,9 @@ use tokio::sync::oneshot;
 async fn test_concurrent_file_changes_and_mcp() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Create initial documents
     for i in 0..5 {
@@ -34,22 +30,14 @@ async fn test_concurrent_file_changes_and_mcp() {
             repo_path.join(format!("docs/doc{}.md", i)),
             format!("# Document {}\nInitial content for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -59,9 +47,7 @@ async fn test_concurrent_file_changes_and_mcp() {
     );
 
     // Initial scan
-    run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    run_scan(&repo, &db, &config).await.unwrap();
 
     // Start MCP server
     let port = common::random_port();
@@ -72,6 +58,7 @@ async fn test_concurrent_file_changes_and_mcp() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -85,7 +72,7 @@ async fn test_concurrent_file_changes_and_mcp() {
         Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
-            .expect("operation should succeed"),
+            .unwrap(),
     );
 
     let errors = Arc::new(AtomicUsize::new(0));
@@ -176,13 +163,11 @@ async fn test_concurrent_file_changes_and_mcp() {
 
     // Wait for all tasks
     for handle in handles {
-        handle.await.expect("operation should succeed");
+        handle.await.unwrap();
     }
 
     // Final scan to process all changes
-    let result = run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    let result = run_scan(&repo, &db, &config).await.unwrap();
 
     let total_errors = errors.load(Ordering::SeqCst);
     let total_mcp = mcp_success.load(Ordering::SeqCst);
@@ -213,9 +198,9 @@ async fn test_concurrent_file_changes_and_mcp() {
 async fn test_scan_during_active_mcp_requests() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Create documents
     for i in 0..10 {
@@ -223,22 +208,14 @@ async fn test_scan_during_active_mcp_requests() {
             repo_path.join(format!("docs/doc{}.md", i)),
             format!("# Document {}\nContent for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -248,9 +225,7 @@ async fn test_scan_during_active_mcp_requests() {
     );
 
     // Initial scan
-    run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    run_scan(&repo, &db, &config).await.unwrap();
 
     // Start MCP server
     let port = common::random_port();
@@ -261,6 +236,7 @@ async fn test_scan_during_active_mcp_requests() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -273,7 +249,7 @@ async fn test_scan_during_active_mcp_requests() {
     let client = Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
-        .expect("operation should succeed");
+        .unwrap();
 
     // Start MCP requests in background
     let client_clone = client.clone();
@@ -308,16 +284,14 @@ async fn test_scan_during_active_mcp_requests() {
             repo_path.join(format!("docs/doc{}.md", i)),
             format!("# Document {}\nModified content for document {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     // Run scan while MCP requests are active
-    let scan_result = run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    let scan_result = run_scan(&repo, &db, &config).await.unwrap();
 
     // Wait for MCP requests to complete
-    let mcp_success = mcp_handle.await.expect("operation should succeed");
+    let mcp_success = mcp_handle.await.unwrap();
 
     println!("Scan during MCP results:");
     println!("  MCP successes: {}/20", mcp_success);
@@ -337,9 +311,9 @@ async fn test_scan_during_active_mcp_requests() {
 async fn test_mcp_writes_during_scan() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().expect("operation should succeed");
+    let temp_dir = TempDir::new().unwrap();
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(repo_path.join("docs")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("docs")).unwrap();
 
     // Create initial documents
     for i in 0..5 {
@@ -347,22 +321,14 @@ async fn test_mcp_writes_during_scan() {
             repo_path.join(format!("docs/initial{}.md", i)),
             format!("# Initial {}\nInitial content {}.", i, i),
         )
-        .expect("operation should succeed");
+        .unwrap();
     }
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).expect("operation should succeed");
+    let db = Database::new(&db_path).unwrap();
 
-    let repo = Repository {
-        id: "test".into(),
-        name: "Test".into(),
-        path: repo_path.clone(),
-        perspective: None,
-        created_at: Utc::now(),
-        last_indexed_at: None,
-        last_lint_at: None,
-    };
-    db.add_repository(&repo).expect("operation should succeed");
+    let repo = common::test_repo("test", repo_path.clone());
+    db.add_repository(&repo).unwrap();
 
     let config = Config::default();
     let embedding = OllamaEmbedding::new(
@@ -380,6 +346,7 @@ async fn test_mcp_writes_during_scan() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
+        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -392,7 +359,7 @@ async fn test_mcp_writes_during_scan() {
     let client = Client::builder()
         .timeout(Duration::from_secs(60))
         .build()
-        .expect("operation should succeed");
+        .unwrap();
 
     // Start scan in background
     let repo_clone = repo.clone();
@@ -421,10 +388,10 @@ async fn test_mcp_writes_during_scan() {
             }))
             .send()
             .await
-            .expect("operation should succeed")
+            .unwrap()
             .json::<Value>()
             .await
-            .expect("operation should succeed");
+            .unwrap();
 
         if let Some(id) = resp["result"]["id"].as_str() {
             created_ids.push(id.to_string());
@@ -433,15 +400,10 @@ async fn test_mcp_writes_during_scan() {
     }
 
     // Wait for scan to complete
-    let scan_result = scan_handle
-        .await
-        .expect("operation should succeed")
-        .expect("operation should succeed");
+    let scan_result = scan_handle.await.unwrap().unwrap();
 
     // Run another scan to pick up MCP-created documents
-    let final_result = run_scan(&repo, &db, &config)
-        .await
-        .expect("operation should succeed");
+    let final_result = run_scan(&repo, &db, &config).await.unwrap();
 
     println!("MCP writes during scan results:");
     println!("  First scan: {} added", scan_result.added);
@@ -452,9 +414,7 @@ async fn test_mcp_writes_during_scan() {
     );
 
     // Verify all documents exist
-    let docs = db
-        .get_documents_for_repo("test")
-        .expect("operation should succeed");
+    let docs = db.get_documents_for_repo("test").unwrap();
     assert!(
         docs.len() >= 8,
         "Should have at least 8 documents (5 initial + 3 MCP created)"

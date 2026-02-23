@@ -21,7 +21,7 @@ use crate::error::FactbaseError;
 use database::{default_compression, default_pool_size};
 use processor::{
     default_chunk_overlap, default_chunk_size, default_embedding_batch_size,
-    default_metadata_cache_size,
+    default_link_batch_size, default_lint_concurrency, default_metadata_cache_size,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -83,6 +83,8 @@ impl Default for Config {
                 chunk_size: default_chunk_size(),
                 chunk_overlap: default_chunk_overlap(),
                 embedding_batch_size: default_embedding_batch_size(),
+                link_batch_size: default_link_batch_size(),
+                lint_concurrency: default_lint_concurrency(),
                 metadata_cache_size: default_metadata_cache_size(),
             },
             embedding: EmbeddingConfig::default(),
@@ -110,7 +112,18 @@ impl Config {
     }
 
     pub fn load(path: Option<&Path>) -> Result<Self, FactbaseError> {
-        let config_path = path.map(PathBuf::from).unwrap_or_else(Self::default_path);
+        let config_path = path.map_or_else(
+            || {
+                // Check for local .factbase/config.yaml first, then global
+                let local = PathBuf::from(".factbase/config.yaml");
+                if local.exists() {
+                    local
+                } else {
+                    Self::default_path()
+                }
+            },
+            PathBuf::from,
+        );
 
         if !config_path.exists() {
             return Ok(Config::default());
