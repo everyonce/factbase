@@ -2,9 +2,9 @@
 
 ## Project Status
 
-**Phases 1-47 complete, Phase 48 in progress** (Tasks 1-5 complete; Task 6 pending). Releases: v0.1.0 through v0.4.3. Current Cargo.toml version: v48.5.4.
+**Phases 1-48 complete, Phase 49 in progress**. Releases: v0.1.0 through v0.4.3. Current Cargo.toml version: v48.5.5.
 
-## Key Learnings from Past Phases (1-47)
+## Key Learnings from Past Phases (1-48)
 
 ### Architecture & Patterns
 - Filesystem is truth — markdown files on disk are authoritative, SQLite is the index
@@ -67,25 +67,7 @@
 - `test_scan_options()` and `test_repo(id, path)` helpers in `tests/common/mod.rs`
 - In integration tests, `.unwrap()` is idiomatic — generic `.expect("operation should succeed")` adds no diagnostic value
 
-### Deduplication Patterns
-- `to_json()` / `to_summary_json()` methods on model structs for consistent JSON serialization
-- `::new()` constructors for structs with repeated default fields
-- `as_str() -> &'static str` methods replace standalone conversion functions
-- `from_config(&Config)` constructors consolidate repeated field mapping
-- `setup_database_only()` eliminates config discards; `setup_db_and_resolve_repos()` for common command setup
-- `setup_cached_embedding(&config, timeout)` consolidates embedding+cache setup
-- `resolve_repos()`, `confirm_prompt()`, `execute_with_snapshot()` for CLI command patterns
-- `read_file`/`write_file`/`remove_file`/`copy_file`/`create_dir`/`remove_dir` in `organize/fs_helpers.rs`
-- `load_orphan_entries(repo_path)` consolidates orphan file loading pattern
-- Centralize all static `LazyLock<Regex>` patterns in `src/patterns.rs`
-- `word_count()` free function in `models/document.rs`
-- `content_hash()` free function in `processor/core.rs` (promoted from method, re-exported via lib.rs)
-- `cosine_similarity()`, `get_document_embedding()`, `compute_centroid()` in `organize/detect/mod.rs`
-- `fetch_active_doc_content()` and `CONTENT_ONLY_QUERY` in `database/stats/mod.rs`
-- `parse_since_filter()` in `commands/utils.rs`
-- Promote internal helpers to `pub` + re-export through `lib.rs` when integration tests need them
-
-### Review System (Phase 48 — in progress)
+### Review System (Phase 48)
 - `<!-- reviewed:YYYY-MM-DD -->` HTML comments on fact lines track when a fact was last reviewed — invisible in rendered markdown, parseable by lint
 - `REVIEWED_MARKER_REGEX` in `patterns.rs` with `extract_reviewed_date()` helper returns `Option<NaiveDate>`
 - Lint generators check for reviewed markers before generating questions — prevents regeneration loops
@@ -108,20 +90,39 @@
 - When all active instructions are `AddSource` (+ `Delete`), bypasses LLM rewrite entirely — deterministic path handles stamping, unchecking, and question removal
 - Deterministic confirmation: `apply_confirmations(content, updates)` handles `UpdateTemporal` (replace old tag) and `AddTemporal` (insert new tag before markers/footnotes)
 - Expanded `all_deterministic` check includes `UpdateTemporal` and `AddTemporal` alongside `AddSource` and `Delete`
-- `classify_answer()` test coverage: 10 direct tests covering all 6 answer types, including edge cases for source-vs-correction disambiguation and short "yes" prefix confirmation
-- `normalize_review_section()` cleanup pass after apply prevents format degradation — dedup headers, strip orphaned `@q[...]` markers, remove empty blockquotes
+- `normalize_review_section()` cleanup pass — dedup headers, strip orphaned `@q[...]` markers, remove empty blockquotes
 - `INLINE_QUESTION_MARKER` regex in `patterns.rs` for orphaned `@q[type]` markers outside review section
 - `remove_processed_questions()` improved: strips `## Review Queue` heading and `---` separator when all questions removed
 - Normalization wired into all 3 write paths in `apply_one_document()` (dismiss/defer, deterministic, LLM rewrite) and `append_review_questions()`
 - Lint net-new reporting: `LintDocResult` expanded with `new_questions`, `existing_unanswered`, `existing_answered`, `skipped_reviewed` fields
 - `generate_review_questions()` returns `(usize, Option<ExportedDocQuestions>)` tuple to expose new question count
-- MCP `lint_repository` response includes: `new_unanswered`, `already_in_queue`, `skipped_reviewed`, `total_questions_generated`
+- MCP `lint_repository` response includes: `new_unanswered`, `already_in_queue`, `skipped_reviewed`, `total_questions_generated`, `deferred_count`
 - CLI lint summary: "Generated N total, M new (X already in queue, Y skipped as recently reviewed)"
 - `count_reviewed_facts(content)` helper counts fact lines with reviewed markers within 180 days
 - `extract_reviewed_date` and `FACT_LINE_REGEX` promoted to `pub` and re-exported through `lib.rs` for binary crate access
 - `FactLine.source_refs: Vec<u32>` tracks footnote references per fact line; extracted via `SOURCE_REF_CAPTURE_REGEX` on raw line before cleaning
 - `FactWithContext.source_defs: Vec<String>` holds resolved source footnote definitions; built by mapping `source_refs` against parsed `SourceDefinition` entries via `HashMap<u32, String>`
 - Cross-validation prompt includes source context per fact ("Sources for this fact: ...") and entity role distinction instruction — distinguishes SUBJECT entities from SOURCE entities to prevent false stale/conflict flags when a source person is inactive
+- `get_deferred_items` MCP tool surfaces deferred questions prominently; workflow_start includes deferred count
+- `REVIEW_QUESTION_REGEX` requires backtick-wrapped `@q[type]` markers — bare markers won't parse
+
+### Deduplication Patterns
+- `to_json()` / `to_summary_json()` methods on model structs for consistent JSON serialization
+- `::new()` constructors for structs with repeated default fields
+- `as_str() -> &'static str` methods replace standalone conversion functions
+- `from_config(&Config)` constructors consolidate repeated field mapping
+- `setup_database_only()` eliminates config discards; `setup_db_and_resolve_repos()` for common command setup
+- `setup_cached_embedding(&config, timeout)` consolidates embedding+cache setup
+- `resolve_repos()`, `confirm_prompt()`, `execute_with_snapshot()` for CLI command patterns
+- `read_file`/`write_file`/`remove_file`/`copy_file`/`create_dir`/`remove_dir` in `organize/fs_helpers.rs`
+- `load_orphan_entries(repo_path)` consolidates orphan file loading pattern
+- Centralize all static `LazyLock<Regex>` patterns in `src/patterns.rs`
+- `word_count()` free function in `models/document.rs`
+- `content_hash()` free function in `processor/core.rs` (promoted from method, re-exported via lib.rs)
+- `cosine_similarity()`, `get_document_embedding()`, `compute_centroid()` in `organize/detect/mod.rs`
+- `fetch_active_doc_content()` and `CONTENT_ONLY_QUERY` in `database/stats/mod.rs`
+- `parse_since_filter()` in `commands/utils.rs`
+- Promote internal helpers to `pub` + re-export through `lib.rs` when integration tests need them
 
 ### Entity Deduplication (Phase 46)
 - Two extraction patterns: H3+ headings under H2 sections, and bold-name list items
@@ -157,13 +158,10 @@
 
 ## Active Work
 
-- [x] Phase 48: Review System Robustness — see [tasks/phase48.md](tasks/phase48.md)
-  - [x] Task 1: Reviewed-fact markers (1.1-1.6 complete)
-  - [x] Task 2: Answer type classification (2.1-2.6 complete)
-  - [x] Task 3: Review section cleanup (3.1-3.4)
-  - [x] Task 4: Lint net-new reporting (4.1-4.5)
-  - [x] Task 5: Cross-validation entity role distinction (5.1-5.4 complete)
-  - [x] Task 6: Deferred item surfacing (6.1-6.5 complete)
+- [ ] Phase 49: Consolidation & Documentation Sync — see [tasks/phase49.md](tasks/phase49.md)
+  - [ ] Task 1: Add `is_deferred()` method to ReviewQuestion (1.1-1.2)
+  - [ ] Task 2: Sync MCP tool documentation (2.1-2.3)
+  - [ ] Task 3: Extract `count_deferred_questions` as Database helper (3.1-3.2)
 
 ## Future Considerations
 

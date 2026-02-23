@@ -2097,3 +2097,35 @@ Key Features:
 - Updated all call sites from `self.method(conn)` to `Self::method(conn)`
 
 **Phase 47 fully complete (38/38 tasks).** Test counts: 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.
+
+---
+
+## Phase 48: Review System Robustness (6/6 Complete - 2026-02-15)
+
+**Goal:** Fix six user-reported issues in the review lifecycle: lint regeneration loops, coarse answer handling, review section format degradation, cross-validation entity role conflation, inflated lint totals, and deferred item visibility.
+
+| Task | Subtasks | Summary |
+|------|----------|---------|
+| 1. Reviewed-fact markers | 6/6 | `<!-- reviewed:YYYY-MM-DD -->` HTML comments on fact lines; `REVIEWED_MARKER_REGEX` + `extract_reviewed_date()` in patterns.rs; lint generators skip recently-reviewed facts (180-day threshold); `add_or_update_reviewed_marker()`, `stamp_reviewed_markers()`, `stamp_reviewed_lines()` in apply.rs |
+| 2. Answer type classification | 6/6 | `AnswerType` enum (Dismissal/Deferral/SourceCitation/Confirmation/Correction/Deletion); `classify_answer()` with priority-ordered pattern matching; deterministic paths for SourceCitation and Confirmation (no LLM needed); `ChangeInstruction::Defer` variant; `uncheck_deferred_questions()`; `apply_source_citations()` and `apply_confirmations()` for deterministic handling |
+| 3. Review section cleanup | 4/4 | `normalize_review_section()` in processor/review.rs; dedup headers, strip orphaned `@q[...]` markers, remove empty blockquotes; wired into all 3 write paths in apply + append_review_questions |
+| 4. Lint net-new reporting | 5/5 | Expanded `LintDocResult` with new_questions/existing_unanswered/existing_answered/skipped_reviewed; MCP response includes deferred_count; CLI shows "Generated N total, M new (X already in queue, Y skipped)" |
+| 5. Cross-validation entity role distinction | 4/4 | `FactLine.source_refs: Vec<u32>` for footnote tracking; `FactWithContext.source_defs: Vec<String>` for resolved definitions; prompt includes source context per fact and entity role distinction instruction |
+| 6. Deferred item surfacing | 5/5 | `get_deferred_items` MCP tool (tool #20); workflow_start includes deferred count; lint_repository response includes deferred_count; CLI `review --status` shows Deferred row |
+
+**Key Learnings:**
+- `<!-- reviewed:YYYY-MM-DD -->` HTML comments are invisible in rendered markdown but parseable by lint — prevents regeneration loops
+- `REVIEWED_SKIP_DAYS` constant (180 days) used across temporal, missing, ambiguous, and stale generators
+- Answer type classification (`AnswerType` enum) enables deterministic handling: only Correction needs LLM rewrite
+- `classify_answer()` uses priority-ordered pattern matching: Dismissal → Deletion → Deferral → Correction (explicit) → Confirmation → SourceCitation → Correction (fallback)
+- Source citation detection: `SOURCE_PREFIXES` + date-pattern heuristic; `has_correction_indicators()` prevents misclassification
+- Deterministic source citation: find max footnote number, assign sequential `[^N]`, insert before `<!-- reviewed:... -->` marker
+- Deterministic confirmation: `apply_confirmations()` handles `UpdateTemporal` (replace old tag) and `AddTemporal` (insert new tag)
+- `all_deterministic` check includes `UpdateTemporal`, `AddTemporal`, `AddSource`, and `Delete` — bypasses LLM entirely
+- Deferred questions: `uncheck_deferred_questions()` converts `[x]` → `[ ]` and strips answer lines; NO reviewed markers (they need to resurface)
+- `normalize_review_section()` cleanup pass prevents format degradation — wired into all write paths
+- Cross-validation prompt includes source context per fact and entity role distinction instruction
+- `FactLine.source_refs` extracted via `SOURCE_REF_CAPTURE_REGEX` on raw line before cleaning
+- `REVIEW_QUESTION_REGEX` requires backtick-wrapped `@q[type]` markers — bare markers won't parse
+
+**Test counts at Phase 48 completion:** 1115 lib + 358 binary = 1473 (with all features). Zero clippy warnings.
