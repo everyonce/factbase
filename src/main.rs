@@ -53,8 +53,8 @@ Hidden commands: db, completions, version (use 'factbase <cmd> --help')",
 pub struct Cli {
     #[command(subcommand)]
     command: Commands,
-    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
-    verbose: u8,
+    #[arg(short, long, global = true)]
+    verbose: bool,
     /// Log level (overrides -v flag)
     #[arg(long, global = true, value_enum, default_value = "warn")]
     log_level: LogLevel,
@@ -170,11 +170,8 @@ async fn async_main() -> anyhow::Result<()> {
     }
 
     // Determine log level: --log-level takes precedence, then -v flags, then default
-    let log_level = if cli.verbose > 0 {
-        match cli.verbose {
-            1 => "debug",
-            _ => "trace",
-        }
+    let log_level = if cli.verbose {
+        "debug"
     } else {
         match cli.log_level {
             LogLevel::Off => "off",
@@ -244,4 +241,66 @@ async fn async_main() -> anyhow::Result<()> {
         Commands::Version(args) => cmd_version(args)?,
     }
     Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_debug_assert() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn parse_review_status() {
+        let cli = Cli::try_parse_from(["factbase", "review", "--status"]).unwrap();
+        assert!(matches!(cli.command, Commands::Review(_)));
+        assert!(!cli.verbose);
+    }
+
+    #[test]
+    fn parse_review_status_json() {
+        let cli = Cli::try_parse_from(["factbase", "review", "--status", "--json"]).unwrap();
+        assert!(matches!(cli.command, Commands::Review(_)));
+    }
+
+    #[test]
+    fn parse_review_status_with_verbose() {
+        let cli = Cli::try_parse_from(["factbase", "-v", "review", "--status"]).unwrap();
+        assert!(matches!(cli.command, Commands::Review(_)));
+        assert!(cli.verbose);
+    }
+
+    #[test]
+    fn parse_global_verbose_after_subcommand() {
+        let cli = Cli::try_parse_from(["factbase", "review", "--status", "-v"]).unwrap();
+        assert!(matches!(cli.command, Commands::Review(_)));
+        assert!(cli.verbose);
+    }
+
+    /// Ensure every subcommand parses without TypeId mismatch panics.
+    /// Regression test for clap global-arg downcast bug.
+    #[test]
+    fn parse_all_subcommands_with_global_verbose() {
+        let cases: &[&[&str]] = &[
+            &["factbase", "-v", "review", "--status"],
+            &["factbase", "-v", "review", "--apply", "--dry-run"],
+            &["factbase", "-v", "review", "-j"],
+            &["factbase", "review", "--status", "-v"],
+            &["factbase", "-v", "check", "--dry-run"],
+            &["factbase", "-v", "scan", "--dry-run"],
+            &["factbase", "-v", "status"],
+            &["factbase", "-v", "stats"],
+            &["factbase", "-v", "grep", "test"],
+            &["factbase", "-v", "search", "test"],
+        ];
+        for args in cases {
+            Cli::try_parse_from(*args).unwrap_or_else(|e| {
+                panic!("Failed to parse {:?}: {e}", args);
+            });
+        }
+    }
 }

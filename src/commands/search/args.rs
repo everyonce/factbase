@@ -4,7 +4,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Semantic search across documents",
     after_help = "\
 EXAMPLES:

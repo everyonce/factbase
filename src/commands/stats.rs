@@ -6,7 +6,6 @@ use std::fs;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Show quick aggregate statistics",
     after_help = "\
 EXAMPLES:

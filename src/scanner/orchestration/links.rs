@@ -5,6 +5,7 @@ use std::time::Instant;
 use tracing::info;
 
 use crate::{Database, LinkDetector};
+use crate::progress::ProgressReporter;
 
 use crate::scanner::progress::OptionalProgress;
 
@@ -19,6 +20,7 @@ pub struct LinkPhaseInput<'a> {
     pub verbose: bool,
     pub skip_links: bool,
     pub link_batch_size: usize,
+    pub progress: &'a ProgressReporter,
 }
 
 /// Output from the link detection phase
@@ -115,6 +117,12 @@ pub async fn run_link_detection_phase(
         }
 
         link_pb.set_position((batch_idx + 1) as u64);
+        let docs_done = (batch_idx + 1) * link_batch_size;
+        input.progress.report(
+            docs_done.min(docs_to_scan.len()),
+            docs_to_scan.len(),
+            "documents link-detected",
+        );
 
         // Prepare batch data
         let batch_docs: Vec<(&str, &str, &str)> = chunk

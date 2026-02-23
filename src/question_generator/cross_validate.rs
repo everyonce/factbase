@@ -10,7 +10,7 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::models::{QuestionType, ReviewQuestion, SearchResult};
+use crate::models::{QuestionType, ReviewQuestion, SearchResult, TemporalTagType};
 use crate::processor::parse_source_definitions;
 
 use super::facts::{extract_all_facts, FactLine};
@@ -250,6 +250,12 @@ pub async fn cross_validate_document(
         return Ok(Vec::new());
     }
 
+    // Build temporal context to suppress false STALE flags on facts with
+    // closed temporal ranges (e.g., historical events where old sources are expected).
+    let body = &content[..crate::patterns::body_end_offset(content)];
+    let temporal_tags = crate::processor::parse_temporal_tags(body);
+    let heading_temporal_map = super::stale::build_heading_temporal_map(body, &temporal_tags);
+
     let doc_title = extract_title(content, doc_id);
     let mut questions = Vec::new();
 
@@ -267,6 +273,25 @@ pub async fn cross_validate_document(
 
         let results = parse_llm_response(&response);
         for r in &results {
+            // Suppress STALE results for facts with closed temporal ranges —
+            // old sources are expected for historical/completed events.
+            if r.status.eq_ignore_ascii_case("STALE") {
+                if let Some(fwc) = r.fact.checked_sub(1).and_then(|i| batch.get(i)) {
+                    let ln = fwc.fact.line_number;
+                    let has_closed = temporal_tags.iter().any(|t| {
+                        t.line_number == ln
+                            && matches!(
+                                t.tag_type,
+                                TemporalTagType::Range
+                                    | TemporalTagType::PointInTime
+                                    | TemporalTagType::Historical
+                            )
+                    }) || heading_temporal_map.get(&ln).is_some();
+                    if has_closed {
+                        continue;
+                    }
+                }
+            }
             if let Some(q) = result_to_question(r, &batch) {
                 questions.push(q);
             }
@@ -852,7 +877,7 @@ mod tests {
             - John Smith joined as advisor @t[=2019]\n";
 
         let llm = MockLlm::new(
-            r#"[{"fact":1,"status":"STALE","reason":"John Smith is CEO not just advisor, doc missing leadership info","source_doc":"John Smith"}]"#,
+            r#"[{"fact":1,"status":"CONFLICT","reason":"John Smith is CEO not just advisor, doc missing leadership info","source_doc":"John Smith"}]"#,
         );
 
         let questions = cross_validate_document(
@@ -946,6 +971,78 @@ mod tests {
         assert!(
             questions.is_empty(),
             "unrelated cross-type result should be filtered out"
+        );
+    }
+
+    /// STALE results from the LLM should be suppressed for facts with closed
+    /// temporal ranges — old sources are expected for historical/completed events.
+    #[tokio::test]
+    async fn test_cross_validate_suppresses_stale_for_historical_facts() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut related_doc = Document::test_default();
+        related_doc.id = "rel001".to_string();
+        related_doc.title = "Roman Military".to_string();
+        related_doc.content = "# Roman Military\n\n- Defeated at Adrianople".to_string();
+        db.upsert_document(&related_doc).unwrap();
+        db.upsert_embedding("rel001", &vec![0.1; 1024]).unwrap();
+
+        // Document about a historical event with H1 temporal tag
+        let content = "# Battle of Adrianople @t[=0378]\n\n\
+            - Emperor Valens was killed [^1]\n\n\
+            ---\n\
+            [^1]: Burns, Thomas S., 1994\n";
+
+        // LLM flags the fact as STALE because the source is from 1994
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"STALE","reason":"Source from 1994 may be outdated","source_doc":""}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content, "bat001", None, &db, &MockEmbedding::new(1024), &llm,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            questions.is_empty(),
+            "STALE should be suppressed for facts under H1 with closed temporal tag"
+        );
+    }
+
+    /// STALE results should still be generated for facts without closed temporal context.
+    #[tokio::test]
+    async fn test_cross_validate_stale_not_suppressed_without_temporal() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut related_doc = Document::test_default();
+        related_doc.id = "rel002".to_string();
+        related_doc.title = "Acme Corp".to_string();
+        related_doc.content = "# Acme Corp\n\n- Changed CEO in 2025".to_string();
+        db.upsert_document(&related_doc).unwrap();
+        db.upsert_embedding("rel002", &vec![0.1; 1024]).unwrap();
+
+        let content = "# Some Entity\n\n\
+            - Works at Acme Corp [^1]\n\n\
+            ---\n\
+            [^1]: LinkedIn, 2020-01\n";
+
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"STALE","reason":"Other docs suggest this changed","source_doc":"Acme Corp"}]"#,
+        );
+
+        let questions = cross_validate_document(
+            content, "ent001", None, &db, &MockEmbedding::new(1024), &llm,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            questions.len(),
+            1,
+            "STALE should NOT be suppressed for facts without closed temporal context"
         );
     }
 }

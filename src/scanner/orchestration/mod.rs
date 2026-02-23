@@ -112,7 +112,7 @@ pub async fn full_scan(
         for pre in pre_read.into_iter() {
             global_idx += 1;
             pb.set_position(global_idx as u64);
-            if total_files >= 50 && global_idx.is_multiple_of(25) && !ctx.opts.show_progress {
+            if !ctx.opts.show_progress {
                 ctx.progress
                     .report(global_idx, total_files, "files processed");
             }
@@ -287,6 +287,7 @@ pub async fn full_scan(
                 show_progress: ctx.opts.show_progress,
                 verbose: ctx.opts.verbose,
                 collect_stats: ctx.opts.collect_stats,
+                progress: ctx.progress,
             })
             .await?;
 
@@ -394,6 +395,7 @@ pub async fn full_scan(
         verbose: ctx.opts.verbose,
         skip_links: ctx.opts.skip_links,
         link_batch_size: ctx.opts.link_batch_size,
+        progress: ctx.progress,
     })
     .await?;
 

@@ -5,9 +5,20 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::mcp::tools::{get_bool_arg, get_str_arg};
+use crate::processor::parse_review_queue;
 use crate::progress::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
+
+/// Extract doc_id that may be passed as string or number.
+fn get_doc_id_arg(args: &Value) -> Option<String> {
+    args.get("doc_id").and_then(|v| {
+        v.as_str()
+            .map(String::from)
+            .or_else(|| v.as_u64().map(|n| n.to_string()))
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+    })
+}
 
 /// Apply answered review questions, rewriting document content via LLM.
 ///
@@ -22,7 +33,8 @@ pub async fn apply_review_answers(
     let llm = llm
         .ok_or_else(|| FactbaseError::internal("LLM provider required for apply_review_answers"))?;
 
-    let doc_id_filter = get_str_arg(args, "doc_id");
+    let doc_id_owned = get_doc_id_arg(args);
+    let doc_id_filter = doc_id_owned.as_deref();
     let repo_filter = get_str_arg(args, "repo");
     let dry_run = get_bool_arg(args, "dry_run", false);
 
@@ -66,6 +78,25 @@ pub async fn apply_review_answers(
         })
         .collect();
 
+    let no_questions_msg = if doc_id_filter.is_some() && result.documents.is_empty() && result.total_errors == 0 {
+        let id = doc_id_filter.unwrap();
+        match db.get_document(id)? {
+            None => format!("Document '{id}' not found."),
+            Some(doc) => {
+                let q_count = parse_review_queue(&doc.content)
+                    .map(|qs| (qs.iter().filter(|q| q.answered).count(), qs.len()))
+                    .unwrap_or((0, 0));
+                format!(
+                    "Document '{id}' has {} question(s) ({} answered) but none could be applied. \
+                     Ensure the file exists on disk at the registered repository path.",
+                    q_count.1, q_count.0
+                )
+            }
+        }
+    } else {
+        "No answered questions to apply.".to_string()
+    };
+
     Ok(serde_json::json!({
         "total_applied": result.total_applied,
         "total_errors": result.total_errors,
@@ -75,8 +106,10 @@ pub async fn apply_review_answers(
             format!("Dry run: {} question(s) would be applied", result.total_applied)
         } else if result.total_applied > 0 {
             format!("Applied {} question(s). Run scan_repository to re-index.", result.total_applied)
+        } else if !result.documents.is_empty() {
+            format!("Processed {} document(s) (all questions dismissed/deferred). Run scan_repository to re-index.", result.documents.len())
         } else {
-            "No answered questions to apply.".to_string()
+            no_questions_msg
         }
     }))
 }
@@ -93,5 +126,23 @@ mod tests {
         crate::organize::fs_helpers::write_file(&path, "updated").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "updated");
         assert!(!path.with_extension("md.tmp").exists());
+    }
+
+    #[test]
+    fn test_get_doc_id_arg_string() {
+        let args = serde_json::json!({"doc_id": "abc123"});
+        assert_eq!(super::get_doc_id_arg(&args), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn test_get_doc_id_arg_number() {
+        let args = serde_json::json!({"doc_id": 543601});
+        assert_eq!(super::get_doc_id_arg(&args), Some("543601".to_string()));
+    }
+
+    #[test]
+    fn test_get_doc_id_arg_missing() {
+        let args = serde_json::json!({});
+        assert_eq!(super::get_doc_id_arg(&args), None);
     }
 }

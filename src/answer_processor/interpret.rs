@@ -52,7 +52,10 @@ pub fn classify_answer(answer: &str) -> AnswerType {
     // Deferral
     if lower == "defer"
         || lower == "later"
+        || lower.starts_with("defer:")
         || lower.starts_with("defer ")
+        || lower.starts_with("deferred:")
+        || lower.starts_with("deferred ")
         || lower.starts_with("needs ")
         || lower.starts_with("check later")
     {
@@ -121,6 +124,14 @@ fn extract_date_string(text: &str) -> Option<String> {
     DATE_EXTRACT_REGEX
         .find(text)
         .map(|m| m.as_str().to_string())
+}
+
+/// Extract a verification date from answer text — only matches dates with month
+/// precision or better (YYYY-MM-DD or YYYY-MM).  Bare years like "1998" are
+/// excluded because they are almost always publication years from citations
+/// (e.g. "Beard (1998)"), not verification dates.
+fn extract_verification_date(text: &str) -> Option<String> {
+    extract_date_string(text).filter(|d| d.contains('-'))
 }
 
 /// Check if text looks like confirmation language (e.g. "still current", "confirmed").
@@ -208,8 +219,10 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
             AnswerType::Deletion => ChangeInstruction::Delete { line_text },
             // Treat source citations as confirmations — the user is confirming
             // the fact is still current with evidence, not providing a new source.
+            // Use verification date (month precision+) to avoid extracting
+            // publication years from citations like "Beard (1998)".
             AnswerType::Confirmation | AnswerType::SourceCitation { .. } => {
-                let date_str = extract_date_string(answer)
+                let date_str = extract_verification_date(answer)
                     .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
                 if let Some(ref old) = old_tag {
                     let inner = old
@@ -251,6 +264,31 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
         };
     }
 
+    // Ambiguous questions ("which X is this?") are informational — the answer
+    // clarifies meaning but should never modify document body text.  Injecting
+    // answer prose into content causes corruption (e.g. "Antiochus III" becoming
+    // "Antiochus III — the 3rd ruler of that name").
+    // Exception: explicit "split:" corrections are allowed since they restructure
+    // the document rather than injecting answer text.
+    if question.question_type == crate::models::QuestionType::Ambiguous {
+        // Allow "split:" corrections through — they restructure, not inject
+        if let AnswerType::Correction { ref detail } = answer_type {
+            if detail.to_lowercase().starts_with("split:") {
+                return ChangeInstruction::Split {
+                    line_text,
+                    instruction: detail["split:".len()..].trim().to_string(),
+                };
+            }
+        }
+        return match answer_type {
+            AnswerType::Dismissal | AnswerType::Confirmation | AnswerType::SourceCitation { .. } | AnswerType::Correction { .. } => {
+                ChangeInstruction::Dismiss
+            }
+            AnswerType::Deferral => ChangeInstruction::Defer,
+            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
+        };
+    }
+
     match answer_type {
         AnswerType::Dismissal => ChangeInstruction::Dismiss,
         AnswerType::Deferral => ChangeInstruction::Defer,
@@ -260,9 +298,11 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
         // belong in the review queue section, not as source citations.
         AnswerType::SourceCitation { .. } => ChangeInstruction::Dismiss,
         AnswerType::Confirmation => {
-            // Use date from the answer if provided (e.g. "Still current 2024-02"),
-            // otherwise fall back to today's date.
-            let date_str = extract_date_string(answer)
+            // Use verification date (month precision+) from the answer if provided
+            // (e.g. "Still current 2024-02"), otherwise fall back to today's date.
+            // Bare years are excluded to avoid extracting publication years from
+            // citations like "Beard (1998)".
+            let date_str = extract_verification_date(answer)
                 .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
             if let Some(ref old) = old_tag {
                 // Preserve open-ended ranges: confirming @t[2023-08..] means
@@ -1077,5 +1117,182 @@ mod tests {
             interpret_answer(&q, "role appears unchanged based on available info"),
             ChangeInstruction::Dismiss
         ));
+    }
+
+    // --- Bug fix: publication years must not become temporal tags ---
+
+    #[test]
+    fn test_stale_confirmation_ignores_publication_year() {
+        // "Beard (1998) findings are still current" — 1998 is a publication year,
+        // not a verification date.  Should use today's date, not @t[~1998].
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""Sacred fire as symbol of truth" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("Beard (1998) findings are still current".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "Beard (1998) findings are still current");
+        match result {
+            ChangeInstruction::AddTemporal { tag, .. } => {
+                assert!(!tag.contains("1998"), "Should not use publication year: {tag}");
+                // Should use today's date
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                assert!(tag.contains(&today), "Should use today's date: {tag}");
+            }
+            _ => panic!("Expected AddTemporal, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_stale_confirmation_with_precise_date_uses_it() {
+        // "Still current per 2024-06 review" — 2024-06 has month precision, use it.
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: r#""Works at Acme @t[~2024-01]" - still valid?"#.to_string(),
+            answered: true,
+            answer: Some("Still current per 2024-06 review".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "Still current per 2024-06 review");
+        match result {
+            ChangeInstruction::UpdateTemporal { new_tag, .. } => {
+                assert!(new_tag.contains("2024-06"), "Should use precise date: {new_tag}");
+            }
+            _ => panic!("Expected UpdateTemporal, got {result:?}"),
+        }
+    }
+
+    #[test]
+    fn test_confirmation_ignores_bare_year_in_citation() {
+        // Default confirmation handler should also ignore bare years
+        let q = ReviewQuestion {
+            question_type: QuestionType::Temporal,
+            line_ref: Some(5),
+            description: r#""Founded in antiquity" - when?"#.to_string(),
+            answered: true,
+            answer: Some("yes".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "yes");
+        match result {
+            ChangeInstruction::AddTemporal { tag, .. } => {
+                let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                assert!(tag.contains(&today), "Should use today's date: {tag}");
+            }
+            _ => panic!("Expected AddTemporal, got {result:?}"),
+        }
+    }
+
+    // --- Bug fix: ambiguous answers must not inject text into body ---
+
+    #[test]
+    fn test_ambiguous_answer_dismissed_not_injected() {
+        // "the 3rd ruler of that name" should NOT be injected into document body
+        let q = ReviewQuestion {
+            question_type: QuestionType::Ambiguous,
+            line_ref: Some(5),
+            description: r#""Antiochus III" - which one?"#.to_string(),
+            answered: true,
+            answer: Some("the 3rd ruler of that name. Standard historical convention.".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(
+            &q,
+            "the 3rd ruler of that name. Standard historical convention.",
+        );
+        assert!(
+            matches!(result, ChangeInstruction::Dismiss),
+            "Ambiguous answer should be dismissed, not injected: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_ambiguous_answer_defer_works() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Ambiguous,
+            line_ref: Some(5),
+            description: r#""Antiochus" - which one?"#.to_string(),
+            answered: true,
+            answer: Some("defer".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "defer"),
+            ChangeInstruction::Defer
+        ));
+    }
+
+    #[test]
+    fn test_ambiguous_answer_delete_works() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Ambiguous,
+            line_ref: Some(5),
+            description: r#""Antiochus" - which one?"#.to_string(),
+            answered: true,
+            answer: Some("delete".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "delete"),
+            ChangeInstruction::Delete { .. }
+        ));
+    }
+
+    #[test]
+    fn test_ambiguous_split_still_works() {
+        // "split:" prefix should still work for ambiguous questions
+        let q = ReviewQuestion {
+            question_type: QuestionType::Ambiguous,
+            line_ref: Some(5),
+            description: r#""Engineer then Lead" - clarify"#.to_string(),
+            answered: true,
+            answer: Some("split: separate roles".to_string()),
+            line_number: 10,
+        };
+        assert!(matches!(
+            interpret_answer(&q, "split: separate roles"),
+            ChangeInstruction::Split { .. }
+        ));
+    }
+
+    #[test]
+    fn test_interpret_answer_defer_with_colon() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: "test".to_string(),
+            answered: true,
+            answer: Some("defer: recursive question about review queue".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "defer: recursive question about review queue");
+        assert!(matches!(result, ChangeInstruction::Defer));
+    }
+
+    #[test]
+    fn test_interpret_answer_deferred_prefix() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Stale,
+            line_ref: Some(5),
+            description: "test".to_string(),
+            answered: true,
+            answer: Some("deferred: needs more research".to_string()),
+            line_number: 10,
+        };
+        let result = interpret_answer(&q, "deferred: needs more research");
+        assert!(matches!(result, ChangeInstruction::Defer));
+    }
+
+    #[test]
+    fn test_classify_answer_defer_colon_variants() {
+        assert!(matches!(classify_answer("defer: reason"), AnswerType::Deferral));
+        assert!(matches!(classify_answer("Defer: reason"), AnswerType::Deferral));
+        assert!(matches!(classify_answer("DEFER: reason"), AnswerType::Deferral));
+        assert!(matches!(classify_answer("defer:reason"), AnswerType::Deferral));
+        assert!(matches!(classify_answer("deferred: later"), AnswerType::Deferral));
+        assert!(matches!(classify_answer("deferred later"), AnswerType::Deferral));
     }
 }

@@ -3,7 +3,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Search document content for text patterns",
     after_help = "\
 EXAMPLES:

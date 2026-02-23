@@ -47,7 +47,13 @@ pub fn get_review_queue(
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let repo_filter = get_str_arg(args, "repo").map(String::from);
-    let doc_id_filter = get_str_arg(args, "doc_id").map(String::from);
+    let doc_id_owned = args.get("doc_id").and_then(|v| {
+        v.as_str()
+            .map(String::from)
+            .or_else(|| v.as_u64().map(|n| n.to_string()))
+            .or_else(|| v.as_i64().map(|n| n.to_string()))
+    });
+    let doc_id_filter = doc_id_owned;
     let type_filter = get_str_arg(args, "type").map(String::from);
     let _include_context = get_bool_arg(args, "include_context", false);
     let status_filter = get_str_arg(args, "status").unwrap_or("unanswered");
@@ -65,7 +71,20 @@ pub fn get_review_queue(
     let offset = get_u64_arg(args, "offset", 0) as usize;
 
     // Only load documents that have review queues (indexed via has_review_queue flag)
-    let docs = db.get_documents_with_review_queue(repo_filter.as_deref())?;
+    let mut docs = db.get_documents_with_review_queue(repo_filter.as_deref())?;
+
+    // Fallback: if a specific doc_id is requested but not in the list, fetch it
+    // directly (the has_review_queue flag may be stale).
+    if let Some(ref filter_id) = doc_id_filter {
+        if !docs.iter().any(|d| d.id == *filter_id) {
+            if let Ok(Some(doc)) = db.get_document(filter_id) {
+                if !doc.is_deleted {
+                    docs.push(doc);
+                }
+            }
+        }
+    }
+
     let total_docs = docs.len();
 
     progress.log(&format!(

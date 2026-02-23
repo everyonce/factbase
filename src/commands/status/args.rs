@@ -3,7 +3,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Show repository statistics (offline, no Ollama required)",
     after_help = "\
 EXAMPLES:

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Export documents from a repository",
     after_help = "\
 EXAMPLES:

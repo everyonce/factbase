@@ -5,7 +5,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Process review questions",
     after_help = "\
 EXAMPLES:

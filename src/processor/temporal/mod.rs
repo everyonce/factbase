@@ -34,6 +34,7 @@ mod validation;
 
 // Re-export parser functions
 pub use parser::{find_malformed_tags, parse_temporal_tags};
+pub(crate) use parser::{line_has_temporal_tag, normalize_temporal_tags};
 
 // Re-export date functions
 pub use date::validate_date;

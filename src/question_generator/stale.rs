@@ -173,7 +173,11 @@ fn days_since_date(date_str: &str, today: NaiveDate) -> Option<i64> {
 /// Build a map from line numbers to the temporal tag type of their enclosing `## Heading`.
 /// If a heading has a closed temporal tag (PointInTime, Range, Historical), all fact lines
 /// under it inherit that classification until the next heading.
-fn build_heading_temporal_map(
+/// Build a map from line number → inherited closed temporal tag type from the
+/// nearest preceding heading (`#` or `##`). This lets facts under a heading
+/// like `## Battle @t[=378]` or a title like `# Event @t[216 BCE..202 BCE]`
+/// inherit the closed temporal context, suppressing false stale-source flags.
+pub(crate) fn build_heading_temporal_map(
     content: &str,
     tags: &[crate::models::TemporalTag],
 ) -> HashMap<usize, TemporalTagType> {
@@ -183,20 +187,13 @@ fn build_heading_temporal_map(
 
     for (idx, line) in content.lines().enumerate() {
         let line_number = idx + 1;
-        if line.starts_with("## ") {
-            // Check if this heading has a closed temporal tag
-            current_tag_type = tags
-                .iter()
-                .find(|t| {
-                    t.line_number == line_number
-                        && matches!(
-                            t.tag_type,
-                            TemporalTagType::Range
-                                | TemporalTagType::PointInTime
-                                | TemporalTagType::Historical
-                        )
-                })
-                .map(|t| t.tag_type);
+        if line.starts_with("# ") && !line.starts_with("## ") {
+            // H1 title heading — sets default for lines before first H2
+            current_tag_type = find_closed_tag(tags, line_number);
+            heading_line = line_number;
+        } else if line.starts_with("## ") {
+            // H2 section heading — overrides H1 context
+            current_tag_type = find_closed_tag(tags, line_number);
             heading_line = line_number;
         } else if let Some(ref tt) = current_tag_type {
             if line_number > heading_line {
@@ -205,6 +202,23 @@ fn build_heading_temporal_map(
         }
     }
     map
+}
+
+fn find_closed_tag(
+    tags: &[crate::models::TemporalTag],
+    line_number: usize,
+) -> Option<TemporalTagType> {
+    tags.iter()
+        .find(|t| {
+            t.line_number == line_number
+                && matches!(
+                    t.tag_type,
+                    TemporalTagType::Range
+                        | TemporalTagType::PointInTime
+                        | TemporalTagType::Historical
+                )
+        })
+        .map(|t| t.tag_type)
 }
 
 #[cfg(test)]
@@ -357,5 +371,35 @@ mod tests {
         let content = "# Person\n\n- Works at Acme Corp @t[~2020-06]\n\n## Review Queue\n\n- [ ] `@q[stale]` Line 3: \"Works at Acme Corp\" - is this still accurate?\n  > \n";
         let questions = generate_stale_questions(content, 365);
         assert!(questions.iter().all(|q| q.line_ref == Some(3)));
+    }
+
+    #[test]
+    fn test_h1_title_temporal_tag_suppresses_stale() {
+        // H1 title with closed temporal range suppresses stale for facts before first H2
+        let c1 = "# Battle of Adrianople @t[=0378]\n\n- Fought near Adrianople [^1]\n\n[^1]: Burns (1994), 1994";
+        assert!(
+            generate_stale_questions(c1, 365).is_empty(),
+            "facts under H1 with closed temporal tag should not be flagged as stale"
+        );
+        // H1 with range also suppresses
+        let c2 = "# Second Punic War @t[-218..-201]\n\n- Hannibal crossed the Alps [^1]\n\n[^1]: Livy translation, 2003";
+        assert!(
+            generate_stale_questions(c2, 365).is_empty(),
+            "facts under H1 with date range should not be flagged as stale"
+        );
+        // H1 without temporal tag still flags
+        let c3 = "# Some Entity\n\n- Old fact [^1]\n\n[^1]: Source, 2020-01-15";
+        assert_eq!(generate_stale_questions(c3, 365).len(), 1);
+    }
+
+    #[test]
+    fn test_h2_overrides_h1_temporal_context() {
+        // H1 has closed range but H2 has no tag — facts under H2 should still be flagged
+        let content = "# Historical Event @t[=378]\n\n## Modern Analysis\n\n- Recent claim [^1]\n\n[^1]: Source, 2020-01-15";
+        assert_eq!(
+            generate_stale_questions(content, 365).len(),
+            1,
+            "H2 without temporal tag should override H1 context"
+        );
     }
 }

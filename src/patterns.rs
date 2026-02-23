@@ -247,6 +247,14 @@ pub(crate) fn body_end_offset(content: &str) -> usize {
     }
 }
 
+/// Return the document body without the review queue section.
+///
+/// Callers that pass content to question generators should use this to ensure
+/// review queue entries are never analysed as document facts.
+pub fn content_body(content: &str) -> &str {
+    &content[..body_end_offset(content)]
+}
+
 // =============================================================================
 // Orphan review patterns
 // =============================================================================
@@ -757,6 +765,18 @@ mod tests {
         // No review section
         let c4 = "# Title\n\n- fact one\n- fact two\n";
         assert_eq!(body_end_offset(c4), c4.len());
+    }
+
+    #[test]
+    fn test_content_body_strips_review_queue() {
+        let c = "# Title\n\n- fact\n\n<!-- factbase:review -->\n- [ ] question";
+        assert_eq!(content_body(c), "# Title\n\n- fact\n\n");
+    }
+
+    #[test]
+    fn test_content_body_no_review_queue() {
+        let c = "# Title\n\n- fact one\n";
+        assert_eq!(content_body(c), c);
     }
 
     // =========================================================================

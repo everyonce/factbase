@@ -5,7 +5,6 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Reorganize knowledge base (merge, split, move, retype)",
     after_help = "\
 EXAMPLES:
@@ -51,7 +50,6 @@ pub enum OrganizeCommands {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Detect reorganization opportunities",
     after_help = "\
 EXAMPLES:
@@ -88,7 +86,6 @@ pub struct AnalyzeArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Merge similar documents",
     after_help = "\
 EXAMPLES:
@@ -131,7 +128,6 @@ pub struct MergeArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Split multi-topic document",
     after_help = "\
 EXAMPLES:
@@ -171,7 +167,6 @@ pub struct SplitArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Move document to different folder",
     after_help = "\
 EXAMPLES:
@@ -207,7 +202,6 @@ pub struct MoveArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Change document type without moving",
     after_help = "\
 EXAMPLES:
@@ -247,7 +241,6 @@ pub struct RetypeArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Process answered organization suggestions",
     after_help = "\
 EXAMPLES:

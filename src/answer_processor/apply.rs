@@ -313,7 +313,19 @@ pub fn identify_affected_section(
     let min_line = line_refs.first().copied().unwrap_or(1);
     let max_line = line_refs.last().copied().unwrap_or(lines.len());
 
-    let mut start = 1;
+    // Determine the minimum start line: skip the factbase header comment and
+    // the document title (# Heading) so they are never sent to the LLM.  This
+    // prevents the LLM from duplicating the title in its output.
+    let mut min_start = 1; // 1-based
+    for (i, line) in lines.iter().enumerate() {
+        if line.starts_with("<!-- factbase:") || line.starts_with("# ") {
+            min_start = i + 2; // 1-based line after this one
+        } else if !line.trim().is_empty() {
+            break;
+        }
+    }
+
+    let mut start = min_start;
     let mut end = lines.len();
 
     // Find section start (look backwards for ## heading)
@@ -322,6 +334,11 @@ pub fn identify_affected_section(
             start = i + 1;
             break;
         }
+    }
+
+    // Ensure start is never before the document header/title
+    if start < min_start {
+        start = min_start;
     }
 
     // Find section end (look forwards for ## heading)
@@ -461,6 +478,25 @@ pub fn stamp_reviewed_by_text(content: &str, fact_texts: &[&str], date: &NaiveDa
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Remove duplicate `# Title` headings that can result from LLM rewrites.
+/// Keeps only the first `# ` heading encountered.
+pub fn dedup_titles(content: &str) -> String {
+    let mut seen_title = false;
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| {
+            if line.starts_with("# ") && !line.starts_with("## ") {
+                if seen_title {
+                    return false; // drop duplicate
+                }
+                seen_title = true;
+            }
+            true
+        })
+        .collect();
+    lines.join("\n")
 }
 
 /// Remove processed questions from Review Queue
@@ -1130,5 +1166,52 @@ Content here
         let content = "- Fact line";
         let result = stamp_sequential_by_text(content, &[""]);
         assert!(!result.contains("<!-- sequential"));
+    }
+
+    // --- dedup_titles tests ---
+
+    #[test]
+    fn test_dedup_titles_removes_duplicate() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n# Title\n\n- Fact";
+        let result = dedup_titles(content);
+        assert_eq!(result.matches("# Title").count(), 1);
+        assert!(result.contains("- Fact"));
+    }
+
+    #[test]
+    fn test_dedup_titles_preserves_single() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact";
+        let result = dedup_titles(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_dedup_titles_preserves_h2_headings() {
+        let content = "# Title\n\n## Section A\n## Section B";
+        let result = dedup_titles(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_dedup_titles_no_title() {
+        let content = "<!-- factbase:abc123 -->\n\n- Fact";
+        let result = dedup_titles(content);
+        assert_eq!(result, content);
+    }
+
+    // --- identify_affected_section excludes header/title ---
+
+    #[test]
+    fn test_identify_section_excludes_header_and_title() {
+        let content = "<!-- factbase:abc123 -->\n# My Document\n\n- Fact on line 4\n- Fact on line 5";
+        let questions = vec![make_question(Some(4))];
+        let result = identify_affected_section(content, &questions);
+        assert!(result.is_some());
+        let (start, _end, section) = result.unwrap();
+        // Section should NOT include the factbase header or title
+        assert!(!section.contains("<!-- factbase:"), "Section should not contain factbase header");
+        assert!(!section.contains("# My Document"), "Section should not contain title");
+        assert!(section.contains("Fact on line 4"));
+        assert!(start >= 3, "Start should be after header+title, got {start}");
     }
 }

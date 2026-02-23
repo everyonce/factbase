@@ -6,7 +6,6 @@ use clap::Parser;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Index documents in repositories",
     after_help = "\
 EXAMPLES:

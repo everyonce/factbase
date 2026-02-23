@@ -6,7 +6,6 @@ use std::path::PathBuf;
 /// Import documents into a repository
 #[derive(Parser)]
 #[command(
-    version,
     about = "Import documents into a repository",
     after_help = "\
 EXAMPLES:

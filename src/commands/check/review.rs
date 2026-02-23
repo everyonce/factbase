@@ -56,26 +56,30 @@ pub fn generate_questions_for_content(
     doc_type: Option<&str>,
     config: &ReviewConfig,
 ) -> Vec<ReviewQuestion> {
+    // Strip the review queue section so generators never treat review
+    // entries as document facts.
+    let body = factbase::content_body(content);
+
     // Generate temporal questions (missing tags, stale ongoing)
-    let mut new_questions = generate_temporal_questions(content);
+    let mut new_questions = generate_temporal_questions(body);
 
     // Generate conflict questions (overlapping dates)
-    new_questions.extend(generate_conflict_questions(content));
+    new_questions.extend(generate_conflict_questions(body));
 
     // Generate duplicate entry questions (same fact appearing multiple times)
-    new_questions.extend(generate_duplicate_entry_questions(content));
+    new_questions.extend(generate_duplicate_entry_questions(body));
 
     // Generate missing source questions
-    new_questions.extend(generate_missing_questions(content));
+    new_questions.extend(generate_missing_questions(body));
 
     // Generate source quality questions (untraceable sources)
-    new_questions.extend(generate_source_quality_questions(content));
+    new_questions.extend(generate_source_quality_questions(body));
 
     // Generate ambiguous questions (unclear phrasing)
-    new_questions.extend(generate_ambiguous_questions(content));
+    new_questions.extend(generate_ambiguous_questions(body));
 
     // Generate stale questions (old sources or @t[~...] dates)
-    new_questions.extend(generate_stale_questions(content, config.stale_threshold));
+    new_questions.extend(generate_stale_questions(body, config.stale_threshold));
 
     // Deduplicate: stale subsumes temporal for the same line
     let stale_lines: HashSet<_> = new_questions
@@ -91,14 +95,14 @@ pub fn generate_questions_for_content(
     // Generate required field questions (missing required fields per doc type)
     if let Some(ref required_fields) = config.required_fields {
         new_questions.extend(generate_required_field_questions(
-            content,
+            body,
             doc_type,
             required_fields,
         ));
     }
 
     // Post-filter: remove conflict questions for boundary-month sequential entries
-    filter_sequential_conflicts(content, &mut new_questions);
+    filter_sequential_conflicts(body, &mut new_questions);
 
     // Filter out questions that already exist in the document
     filter_existing_questions(content, new_questions)
@@ -113,24 +117,28 @@ pub fn generate_and_prune(
     doc_type: Option<&str>,
     config: &ReviewConfig,
 ) -> (Vec<ReviewQuestion>, String, usize) {
+    // Strip the review queue section so generators never treat review
+    // entries as document facts.
+    let body = factbase::content_body(content);
+
     // Generate all questions (before dedup) to get the "valid" set
-    let mut all_generated = generate_temporal_questions(content);
-    all_generated.extend(generate_conflict_questions(content));
-    all_generated.extend(generate_duplicate_entry_questions(content));
-    all_generated.extend(generate_missing_questions(content));
-    all_generated.extend(generate_source_quality_questions(content));
-    all_generated.extend(generate_ambiguous_questions(content));
-    all_generated.extend(generate_stale_questions(content, config.stale_threshold));
+    let mut all_generated = generate_temporal_questions(body);
+    all_generated.extend(generate_conflict_questions(body));
+    all_generated.extend(generate_duplicate_entry_questions(body));
+    all_generated.extend(generate_missing_questions(body));
+    all_generated.extend(generate_source_quality_questions(body));
+    all_generated.extend(generate_ambiguous_questions(body));
+    all_generated.extend(generate_stale_questions(body, config.stale_threshold));
     if let Some(ref required_fields) = config.required_fields {
         all_generated.extend(generate_required_field_questions(
-            content,
+            body,
             doc_type,
             required_fields,
         ));
     }
 
     // Post-filter: remove conflict questions for boundary-month sequential entries
-    filter_sequential_conflicts(content, &mut all_generated);
+    filter_sequential_conflicts(body, &mut all_generated);
 
     let valid_descriptions: HashSet<_> =
         all_generated.iter().map(|q| q.description.clone()).collect();
@@ -401,5 +409,36 @@ mod tests {
         let content = "- Fact one @t[2020..2022]\n- Fact two @t[2022..]";
         let suppressed = count_suppressed_questions(content, None);
         assert_eq!(suppressed, 0, "No markers means no suppression");
+    }
+
+    #[test]
+    fn test_review_queue_entries_not_treated_as_facts() {
+        // Regression: the checker was generating temporal questions about
+        // answered review queue entries as if they were document facts.
+        let content = r#"# Battle of Actium
+
+- Date: 2 September 31 BCE @t[=31 BCE]
+- Location: Ionian Sea
+
+---
+
+## Review Queue
+
+<!-- factbase:review -->
+- [x] `@q[temporal]` Line 10: "Date: 2 September 31 BCE" - when was this true?
+  > Added @t[=31 BCE]
+- [ ] `@q[missing]` Line 4: "Location: Ionian Sea" - what is the source?
+  > 
+"#;
+        let config = ReviewConfig::default();
+        let questions = generate_questions_for_content(content, None, &config);
+        // No question should reference review queue text
+        for q in &questions {
+            assert!(
+                !q.description.contains("@q["),
+                "Generated question references review queue entry: {}",
+                q.description
+            );
+        }
     }
 }

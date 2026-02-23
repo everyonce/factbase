@@ -6,7 +6,6 @@ use std::fs;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Optimize database storage",
     after_help = "\
 EXAMPLES:
@@ -19,7 +18,6 @@ pub struct DbVacuumArgs;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Show database statistics",
     after_help = "\
 EXAMPLES:
@@ -38,7 +36,6 @@ pub struct DbStatsArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Backfill word counts for existing documents",
     after_help = "\
 EXAMPLES:

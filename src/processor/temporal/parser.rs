@@ -25,7 +25,7 @@ static BCE_YEAR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Normalize shorthand temporal tags:
 /// - Short range ends: `@t[2025-Q3..Q4]` → `@t[2025-Q3..2025-Q4]`
 /// - BCE notation: `@t[=331 BCE]` → `@t[=-331]`, `@t[490 BCE..479 BCE]` → `@t[-490..-479]`
-fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
     let result = SHORT_RANGE_END_REGEX.replace_all(line, "@t[$1$2..$1-$3]");
     // Convert BCE notation to negative years within @t[...] tags
     if !result.contains("BCE") {
@@ -40,6 +40,16 @@ fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
             .to_string()
     });
     std::borrow::Cow::Owned(converted.into_owned())
+}
+
+/// Check if a line contains at least one valid temporal tag (including BCE notation).
+///
+/// This is the single source of truth for "does this line have a temporal tag?"
+/// All consumers (coverage counting, question generation, etc.) should use this
+/// instead of matching `TEMPORAL_TAG_FULL_REGEX` directly, which misses BCE tags.
+pub(crate) fn line_has_temporal_tag(line: &str) -> bool {
+    let normalized = normalize_temporal_tags(line);
+    TEMPORAL_TAG_FULL_REGEX.is_match(&normalized)
 }
 
 /// Parse all temporal tags from document content.
@@ -379,5 +389,30 @@ mod tests {
         let line = "- Modern event @t[=2024-03]";
         let normalized = normalize_temporal_tags(line);
         assert_eq!(normalized, "- Modern event @t[=2024-03]");
+    }
+
+    // --- line_has_temporal_tag tests ---
+
+    #[test]
+    fn test_line_has_temporal_tag_ce() {
+        assert!(line_has_temporal_tag("- Fact @t[2024]"));
+        assert!(line_has_temporal_tag("- Fact @t[=2024-03]"));
+        assert!(line_has_temporal_tag("- Fact @t[2020..2022]"));
+        assert!(line_has_temporal_tag("- Fact @t[?]"));
+    }
+
+    #[test]
+    fn test_line_has_temporal_tag_bce() {
+        assert!(line_has_temporal_tag("- Battle @t[=331 BCE]"));
+        assert!(line_has_temporal_tag("- Wars @t[336 BCE..323 BCE]"));
+        assert!(line_has_temporal_tag("- Event @t[=-0490]"));
+        assert!(line_has_temporal_tag("- Range @t[-490..-479]"));
+    }
+
+    #[test]
+    fn test_line_has_temporal_tag_rejects_malformed() {
+        assert!(!line_has_temporal_tag("- Fact @t[traditional..modern]"));
+        assert!(!line_has_temporal_tag("- Fact @t[static]"));
+        assert!(!line_has_temporal_tag("- No tag here"));
     }
 }

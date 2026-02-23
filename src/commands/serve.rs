@@ -17,7 +17,6 @@ use tracing::{error, info};
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Start MCP server and file watcher",
     after_help = "\
 EXAMPLES:

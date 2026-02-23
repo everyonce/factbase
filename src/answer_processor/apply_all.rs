@@ -9,7 +9,7 @@ use crate::models::QuestionType;
 use crate::organize::fs_helpers::write_file;
 use crate::processor::{content_hash, normalize_review_section, parse_review_queue};
 use crate::progress::ProgressReporter;use crate::{
-    apply_changes_to_section, apply_confirmations, apply_source_citations,
+    apply_changes_to_section, apply_confirmations, apply_source_citations, dedup_titles,
     identify_affected_section, interpret_answer, remove_processed_questions, replace_section,
     stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers,
     stamp_sequential_by_text, stamp_sequential_lines, uncheck_deferred_questions,
@@ -65,7 +65,21 @@ pub async fn apply_all_review_answers(
     config: &ApplyConfig<'_>,
     progress: &ProgressReporter,
 ) -> Result<ApplyResult, FactbaseError> {
-    let docs = db.get_documents_with_review_queue(config.repo_filter)?;
+    let mut docs = db.get_documents_with_review_queue(config.repo_filter)?;
+
+    // When a specific doc_id is requested, ensure it's in the candidate list
+    // even if has_review_queue is FALSE in the DB (the flag can be stale when
+    // the file was edited externally or the DB wasn't synced after check/answer).
+    if let Some(filter_id) = config.doc_id_filter {
+        if !docs.iter().any(|d| d.id == filter_id) {
+            if let Some(doc) = db.get_document(filter_id)? {
+                if !doc.is_deleted {
+                    docs.push(doc);
+                }
+            }
+        }
+    }
+
     let repos = db.list_repositories()?;
     let repo_paths: HashMap<_, _> = repos.iter().map(|r| (r.id.as_str(), &r.path)).collect();
 
@@ -90,34 +104,75 @@ pub async fn apply_all_review_answers(
         let abs_path = match repo_paths.get(doc.repo_id.as_str()) {
             Some(repo_path) => repo_path.join(&doc.file_path),
             None => {
+                let msg = format!("Repository '{}' not found", doc.repo_id);
                 warn!(doc_id = %doc.id, repo_id = %doc.repo_id, "Skipping document: repository not found");
+                if config.doc_id_filter.is_some() {
+                    result.total_errors += 1;
+                    result.documents.push(ApplyDocResult {
+                        doc_id: doc.id.clone(),
+                        doc_title: doc.title.clone(),
+                        questions_applied: 0,
+                        status: ApplyStatus::Error,
+                        error: Some(msg),
+                    });
+                }
                 continue;
             }
         };
-        // Parse questions from the file on disk (not the database) so that
-        // line_ref values match the current file content.  If the document was
-        // enriched after the last scan the DB content is stale and its line
-        // numbers will be wrong, causing the LLM rewrite to target the wrong
-        // section and drop recently-added content.
-        let disk_content = match fs::read_to_string(&abs_path) {
-            Ok(c) => c,
-            Err(e) => {
-                warn!(doc_id = %doc.id, path = %abs_path.display(), error = %e, "Skipping document: cannot read file");
-                continue;
-            }
+        // Check both disk and DB for answered questions and use whichever
+        // has more.  This keeps get_review_queue (DB-based) and apply
+        // consistent: if the DB has answers (e.g. written by answer_questions),
+        // we use them even when the disk copy diverges.  Conversely, if the
+        // file was edited externally, disk answers win.
+        let disk_content = fs::read_to_string(&abs_path).ok();
+        let disk_answered = disk_content
+            .as_deref()
+            .and_then(parse_review_queue)
+            .map(|qs| {
+                qs.into_iter()
+                    .enumerate()
+                    .filter(|(_, q)| q.answered && q.answer.is_some())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let db_answered = parse_review_queue(&doc.content)
+            .map(|qs| {
+                qs.into_iter()
+                    .enumerate()
+                    .filter(|(_, q)| q.answered && q.answer.is_some())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Use whichever source found more answered questions
+        let (answered, need_sync) = if disk_answered.len() >= db_answered.len() {
+            (disk_answered, false)
+        } else {
+            (db_answered, true)
         };
-        let Some(questions) = parse_review_queue(&disk_content) else {
-            warn!(doc_id = %doc.id, "Skipping document: no review queue marker in file on disk");
-            continue;
-        };
-        let answered: Vec<_> = questions
-            .into_iter()
-            .enumerate()
-            .filter(|(_, q)| q.answered && q.answer.is_some())
-            .collect();
+
         if answered.is_empty() {
-            warn!(doc_id = %doc.id, "Skipping document: review queue found but no answered questions");
+            warn!(doc_id = %doc.id, "Skipping document: no answered questions on disk or in database");
             continue;
+        }
+
+        // Sync DB content to disk so apply_one_document reads consistent content.
+        // If the sync fails, report an error instead of silently skipping.
+        if need_sync {
+            if let Err(e) = fs::write(&abs_path, &doc.content) {
+                let msg = format!("Failed to sync DB content to disk: {e}");
+                warn!(doc_id = %doc.id, error = %e, "Failed to sync DB content to disk");
+                result.total_errors += 1;
+                result.documents.push(ApplyDocResult {
+                    doc_id: doc.id.clone(),
+                    doc_title: doc.title.clone(),
+                    questions_applied: 0,
+                    status: ApplyStatus::Error,
+                    error: Some(msg),
+                });
+                continue;
+            }
         }
         work.push((doc, answered, abs_path));
     }
@@ -281,6 +336,7 @@ async fn apply_one_document(
             new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
             new_content = remove_processed_questions(&new_content, &dismissed_indices);
             new_content = normalize_review_section(&new_content);
+            new_content = dedup_titles(&new_content);
 
             // Validate before writing
             let validation_errors =
@@ -477,6 +533,7 @@ async fn apply_one_document(
     new_content = remove_processed_questions(&new_content, &active_indices);
 
     new_content = normalize_review_section(&new_content);
+    new_content = dedup_titles(&new_content);
 
     // Validate the final document before writing
     let validation_errors = super::validate::validate_document(&content, &new_content);
@@ -618,5 +675,601 @@ mod tests {
         };
         let texts = conflict_fact_texts(&ia);
         assert!(texts.is_empty());
+    }
+
+    /// Reproduces the bug where apply_review_answers returns 0 when the disk
+    /// file has answered questions but the DB content is stale (unanswered).
+    /// The fix: read from disk first (filesystem is source of truth).
+    #[tokio::test]
+    async fn test_apply_finds_answered_on_disk_when_db_stale() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Disk file has answered questions (the source of truth)
+        let disk_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When was this true?\n\
+> dismiss\n";
+        let doc_file = repo_dir.join("test.md");
+        std::fs::write(&doc_file, disk_content).unwrap();
+
+        // DB content is stale — still has unanswered questions
+        let db_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[temporal]` Line 4: When was this true?\n";
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash1".into(),
+            title: "Test Entity".into(),
+            doc_type: Some("note".into()),
+            content: db_content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        // Should find the answered question from disk even though DB is stale
+        assert_eq!(result.documents.len(), 1, "Should process 1 document from disk");
+    }
+
+    /// Reproduces the bug where apply_review_answers returns 0 when the disk
+    /// file has unanswered questions but the DB content has answered questions.
+    /// The fix: fall back to DB content and sync it to disk.
+    #[tokio::test]
+    async fn test_apply_falls_back_to_db_content_when_disk_diverges() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Disk file has unanswered questions (simulating divergence)
+        let disk_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[temporal]` Line 4: When was this true?\n\
+  > \n";
+        let doc_file = repo_dir.join("test.md");
+        std::fs::write(&doc_file, disk_content).unwrap();
+
+        // DB content has the same question answered
+        let db_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When was this true?\n\
+  > dismiss\n";
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash1".into(),
+            title: "Test Entity".into(),
+            doc_type: Some("note".into()),
+            content: db_content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        // Should have processed the document via DB fallback (dismiss returns 0 applied
+        // but still processes the document — removes the question from the review queue)
+        assert_eq!(result.documents.len(), 1, "Should process 1 document via DB fallback");
+
+        // Disk file should have been modified — the dismissed question should be removed
+        let final_disk = std::fs::read_to_string(&doc_file).unwrap();
+        assert!(
+            !final_disk.contains("- [x] `@q[temporal]`"),
+            "Answered question should be removed from disk after apply"
+        );
+        assert!(
+            !final_disk.contains("- [ ] `@q[temporal]`"),
+            "Unanswered question should not remain on disk"
+        );
+    }
+
+    /// When DB has answered questions and disk is in sync, apply should process them.
+    #[tokio::test]
+    async fn test_apply_finds_answered_from_db_when_disk_in_sync() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Both disk and DB have the answered question
+        let content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When was this true?\n\
+> dismiss\n";
+        let doc_file = repo_dir.join("test.md");
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash1".into(),
+            title: "Test Entity".into(),
+            doc_type: Some("note".into()),
+            content: content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(result.documents.len(), 1, "Should process 1 document");
+    }
+
+    /// When both disk and DB have no answered questions, apply should return 0.
+    #[tokio::test]
+    async fn test_apply_returns_zero_when_no_answered_anywhere() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        let content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[temporal]` Line 4: When was this true?\n\
+  > \n";
+        let doc_file = repo_dir.join("test.md");
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash1".into(),
+            title: "Test Entity".into(),
+            doc_type: Some("note".into()),
+            content: content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(result.total_applied, 0);
+        assert!(result.documents.is_empty());
+    }
+
+    /// Reproduces the bug where apply_review_answers returns no-op when the
+    /// DB has_review_queue flag is FALSE but the disk file has answered questions.
+    /// This happens when the review queue was added/answered externally without
+    /// updating the DB flag (e.g., file edited outside factbase tools, or a
+    /// race with the file watcher resetting the flag).
+    #[tokio::test]
+    async fn test_apply_finds_doc_when_has_review_queue_flag_is_false() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Disk file has a review queue with answered questions
+        let disk_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When was this true?\n\
+> dismiss\n";
+        let doc_file = repo_dir.join("test.md");
+        std::fs::write(&doc_file, disk_content).unwrap();
+
+        // DB content has NO review queue (simulating stale has_review_queue=FALSE)
+        let db_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n";
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash1".into(),
+            title: "Test Entity".into(),
+            doc_type: Some("note".into()),
+            content: db_content.to_string(), // No review queue → has_review_queue=FALSE
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        // Before the fix, this returned 0 documents because has_review_queue=FALSE
+        // excluded the document from the candidate list entirely.
+        assert_eq!(
+            result.documents.len(),
+            1,
+            "Should find and process document even when has_review_queue flag is stale"
+        );
+    }
+
+    /// Reproduces the bug where answers are written directly into the document
+    /// file (not via answer_questions tool) and both DB and disk are in sync,
+    /// but apply_review_answers still returns "No answered questions to apply."
+    #[tokio::test]
+    async fn test_apply_processes_answers_written_directly_to_file() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Content with multiple answered questions (simulating agent editing file directly)
+        let content = "\
+<!-- factbase:543601 -->\n\
+# Technologies\n\
+\n\
+- Uses Rust @t[=2024-01]\n\
+- Uses Python @t[=2023-06]\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When did Rust usage begin?\n\
+> dismiss\n\
+- [x] `@q[temporal]` Line 5: When did Python usage begin?\n\
+> dismiss\n\
+- [x] `@q[missing]` Line 4: What is the source for Rust usage?\n\
+> dismiss\n";
+
+        let doc_file = repo_dir.join("technologies.md");
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // DB content matches disk (simulating a scan after file was edited)
+        let doc = Document {
+            id: "543601".into(),
+            repo_id: "r1".into(),
+            file_path: "technologies.md".into(),
+            file_hash: "hash1".into(),
+            title: "Technologies".into(),
+            doc_type: Some("technology".into()),
+            content: content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("543601"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.documents.len(),
+            1,
+            "Should process document with answers written directly to file"
+        );
+    }
+
+    /// When DB has answered questions but disk file is missing, the error
+    /// should be reported (not silently swallowed).
+    #[tokio::test]
+    async fn test_apply_reports_error_when_disk_sync_fails() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // DB content has answered questions but NO file on disk
+        let db_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When was this true?\n\
+> dismiss\n";
+
+        // Point repo to a non-existent subdirectory so the write fails
+        let bad_repo_dir = dir.path().join("nonexistent").join("deep");
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: bad_repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash1".into(),
+            title: "Test Entity".into(),
+            doc_type: Some("note".into()),
+            content: db_content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+            .await
+            .unwrap();
+
+        // Should report an error instead of silently returning "no questions"
+        assert_eq!(result.total_errors, 1, "Should report disk sync error");
+        assert_eq!(result.documents.len(), 1, "Should include error document in results");
+        assert!(
+            result.documents[0].error.is_some(),
+            "Should include error message"
+        );
     }
 }

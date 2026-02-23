@@ -79,13 +79,17 @@ pub async fn generate_questions(
     let disk_content = fs::read_to_string(&file_path).ok();
     let content = disk_content.as_deref().unwrap_or(&doc.content);
 
+    // Strip the review queue section so generators never treat review
+    // entries as document facts.
+    let body = crate::patterns::content_body(content);
+
     // Generate all question types
-    let mut new_questions = generate_temporal_questions(content);
-    new_questions.extend(generate_conflict_questions(content));
-    new_questions.extend(generate_duplicate_entry_questions(content));
-    new_questions.extend(generate_missing_questions(content));
-    new_questions.extend(generate_ambiguous_questions(content));
-    new_questions.extend(generate_stale_questions(content, 365)); // Default 365 days
+    let mut new_questions = generate_temporal_questions(body);
+    new_questions.extend(generate_conflict_questions(body));
+    new_questions.extend(generate_duplicate_entry_questions(body));
+    new_questions.extend(generate_missing_questions(body));
+    new_questions.extend(generate_ambiguous_questions(body));
+    new_questions.extend(generate_stale_questions(body, 365)); // Default 365 days
 
     // Generate duplicate questions
     if let Ok(similar_docs) = db.find_similar_documents(&doc.id, 0.95) {
@@ -94,14 +98,14 @@ pub async fn generate_questions(
 
     // Cross-document fact validation (when LLM is available)
     if let Some(llm) = llm {
-        match cross_validate_document(content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm).await {
+        match cross_validate_document(body, &doc.id, doc.doc_type.as_deref(), db, embedding, llm).await {
             Ok(cross_questions) => new_questions.extend(cross_questions),
             Err(e) => warn!("Cross-validation failed for {}: {e}", doc_id),
         }
     }
 
     // Post-filter: remove conflict questions for boundary-month sequential entries
-    filter_sequential_conflicts(content, &mut new_questions);
+    filter_sequential_conflicts(body, &mut new_questions);
 
     // Check for existing review queue to avoid duplicates
     let existing_questions = parse_review_queue(content).unwrap_or_default();

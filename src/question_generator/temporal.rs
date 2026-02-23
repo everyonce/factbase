@@ -9,7 +9,7 @@ use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
     extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, TEMPORAL_TAG_FULL_REGEX,
 };
-use crate::processor::find_malformed_tags;
+use crate::processor::{find_malformed_tags, normalize_temporal_tags, line_has_temporal_tag};
 
 use super::iter_fact_lines;
 
@@ -35,7 +35,7 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
             continue;
         }
 
-        if !TEMPORAL_TAG_FULL_REGEX.is_match(line) {
+        if !line_has_temporal_tag(line) {
             if MALFORMED_TAG_REGEX.is_match(line) {
                 // Has a malformed tag — find_malformed_tags will flag it below
                 continue;
@@ -46,15 +46,22 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
                 Some(line_number),
                 format!("\"{fact_text}\" - when was this true?"),
             ));
-        } else if let Some(cap) = ONGOING_TAG_REGEX.captures(line) {
-            // Check for stale ongoing tags
-            let start_date = &cap[1];
-            if is_stale_ongoing(start_date, current_year) && !has_recent_verification(line, today) {
-                questions.push(ReviewQuestion::new(
-                    QuestionType::Temporal,
-                    Some(line_number),
-                    format!("\"{fact_text}\" has @t[{start_date}..] - is this role still current?"),
-                ));
+        } else {
+            let normalized = normalize_temporal_tags(line);
+            if let Some(cap) = ONGOING_TAG_REGEX.captures(&normalized) {
+                // Check for stale ongoing tags
+                let start_date = &cap[1];
+                if is_stale_ongoing(start_date, current_year)
+                    && !has_recent_verification(line, today)
+                {
+                    questions.push(ReviewQuestion::new(
+                        QuestionType::Temporal,
+                        Some(line_number),
+                        format!(
+                            "\"{fact_text}\" has @t[{start_date}..] - is this role still current?"
+                        ),
+                    ));
+                }
             }
         }
     }
@@ -88,7 +95,8 @@ fn is_stale_ongoing(start_date: &str, current_year: i32) -> bool {
 
 /// Check if a line has a recent `@t[~DATE]` verification tag (within 180 days).
 pub(crate) fn has_recent_verification(line: &str, today: NaiveDate) -> bool {
-    for cap in TEMPORAL_TAG_FULL_REGEX.captures_iter(line) {
+    let normalized = normalize_temporal_tags(line);
+    for cap in TEMPORAL_TAG_FULL_REGEX.captures_iter(&normalized) {
         if cap.get(1).map(|m| m.as_str()) == Some("~") {
             if let Some(date_str) = cap.get(2).map(|m| m.as_str()) {
                 if let Some(date) = parse_verification_date(date_str) {
@@ -405,5 +413,20 @@ mod tests {
             .filter(|q| q.description.contains("Malformed"))
             .collect();
         assert!(malformed.is_empty(), "Valid tags should not be flagged");
+    }
+
+    #[test]
+    fn test_bce_tags_not_flagged_as_missing_temporal() {
+        let content =
+            "# Doc\n\n- Battle @t[=331 BCE]\n- Reign @t[336 BCE..323 BCE]\n- Event @t[=-0490]";
+        let questions = generate_temporal_questions(content);
+        let missing: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("when was this true?"))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "BCE-tagged facts should not be flagged as missing temporal tags"
+        );
     }
 }

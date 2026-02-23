@@ -5,7 +5,6 @@ use std::io::{self, Write};
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Generate shell completions",
     after_help = "\
 EXAMPLES:

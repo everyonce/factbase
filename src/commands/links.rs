@@ -7,7 +7,6 @@ use serde::Serialize;
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Explore document link relationships",
     after_help = "\
 EXAMPLES:

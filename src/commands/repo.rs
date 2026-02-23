@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Add a repository",
     after_help = "\
 EXAMPLES:
@@ -23,7 +22,6 @@ pub struct RepoAddArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "Remove a repository",
     after_help = "\
 EXAMPLES:
@@ -43,7 +41,6 @@ pub struct RepoRemoveArgs {
 
 #[derive(Parser)]
 #[command(
-    version,
     about = "List all repositories",
     after_help = "\
 EXAMPLES:
