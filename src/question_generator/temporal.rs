@@ -28,7 +28,7 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
             questions.push(ReviewQuestion::new(
                 QuestionType::Temporal,
                 Some(line_number),
-                format!("\"{fact_text}\" - when was this true?"),
+                format!("\"{}\" - when was this true?", fact_text),
             ));
         } else if let Some(cap) = ONGOING_TAG_REGEX.captures(line) {
             // Check for stale ongoing tags
@@ -37,7 +37,10 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
                 questions.push(ReviewQuestion::new(
                     QuestionType::Temporal,
                     Some(line_number),
-                    format!("\"{fact_text}\" has @t[{start_date}..] - is this role still current?"),
+                    format!(
+                        "\"{}\" has @t[{}..] - is this role still current?",
+                        fact_text, start_date
+                    ),
                 ));
             }
         }

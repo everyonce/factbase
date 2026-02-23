@@ -2,41 +2,11 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1386_passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1247_passing-brightgreen.svg)]()
 
 Filesystem-based knowledge management with semantic search for AI agents.
 
 Factbase indexes markdown files and provides semantic search via MCP (Model Context Protocol). The filesystem is the source of truth—edit files with any tool, and factbase keeps the index updated.
-
-## Using Factbase with Your Agent
-
-**1. Point your agent at a directory** of markdown files:
-
-```json
-{
-  "mcpServers": {
-    "factbase": {
-      "command": "npx",
-      "args": ["-y", "@everyonce/factbase", "mcp"],
-      "cwd": "/home/you/my-notes"
-    }
-  }
-}
-```
-
-The factbase auto-initializes on first launch. Then tell your agent:
-
-> "Scan the factbase"
-
-**2. Search it:**
-
-> "What do we know about Project Atlas?"
-
-**3. After editing files or adding new ones:**
-
-> "Rescan the factbase"
-
-That's it. Everything below is optional depth.
 
 ## Features
 
@@ -60,19 +30,6 @@ Optional power features (plain markdown works without these):
 
 ## Installation
 
-### Via npm (recommended)
-
-```bash
-npx @everyonce/factbase mcp
-```
-
-No install needed — `npx` downloads the right binary for your platform. Or install globally:
-
-```bash
-npm i -g @everyonce/factbase
-factbase mcp
-```
-
 ### From source
 
 ```bash
@@ -80,6 +37,10 @@ git clone https://gitea.home.everyonce.com/daniel/factbase.git
 cd factbase
 cargo install --path .
 ```
+
+This installs `factbase` to `~/.cargo/bin/` (ensure it's in your `PATH`).
+
+<!-- Once published: cargo install factbase --features full -->
 
 ### Feature Flags
 
@@ -149,13 +110,13 @@ database:
 
 embedding:
   provider: bedrock
-  model: amazon.nova-2-multimodal-embeddings-v1:0
+  model: amazon.titan-embed-text-v2:0
   dimension: 1024
   region: us-east-1    # AWS region (for bedrock) or base_url for ollama
 
 llm:
   provider: bedrock
-  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  model: us.anthropic.claude-3-5-haiku-20241022-v1:0
   region: us-east-1
 
 server:
@@ -171,31 +132,22 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 21 MCP tools:
+Factbase exposes these MCP tools on `localhost:3000`:
 
 | Tool | Description |
 |------|-------------|
-| `scan_repository` | Index (or re-index) all documents — run after adding/editing files |
 | `search_knowledge` | Semantic search with optional type/repo filters |
 | `search_content` | Search document content for exact text matches |
 | `get_entity` | Get document by ID with incoming/outgoing links |
 | `list_entities` | List documents with optional type/repo filters |
 | `list_repositories` | List all registered repositories |
 | `get_perspective` | Get repository context from perspective.yaml |
-| `get_document_stats` | Get document statistics |
 | `create_document` | Create a new document in a repository |
 | `update_document` | Update an existing document's title or content |
 | `delete_document` | Delete a document by ID |
 | `bulk_create_documents` | Create multiple documents atomically (max 100) |
-| `get_review_queue` | Get pending review questions |
-| `answer_question` | Answer a single review question |
-| `bulk_answer_questions` | Answer multiple review questions |
-| `generate_questions` | Generate review questions for a document |
-| `lint_repository` | Run quality checks and generate review questions across all documents |
 | `workflow_start` | Start a guided workflow — resolve issues, ingest data, or enrich documents |
 | `workflow_next` | Get the next step in an active workflow |
-| `get_duplicate_entries` | Detect entity entries duplicated across documents |
-| `search_temporal` | Temporal-aware semantic search |
 
 ## Document Format
 

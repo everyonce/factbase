@@ -7,7 +7,6 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::models::normalize_pair;
 use crate::organize::MergeCandidate;
-use crate::ProgressReporter;
 use std::collections::HashSet;
 
 /// Detects documents that are candidates for merging based on embedding similarity.
@@ -27,18 +26,13 @@ pub fn detect_merge_candidates(
     db: &Database,
     threshold: f32,
     repo_id: Option<&str>,
-    progress: &ProgressReporter,
 ) -> Result<Vec<MergeCandidate>, FactbaseError> {
     let docs = collect_active_documents(db, repo_id)?;
 
-    progress.phase("Detecting merge candidates");
-
     let mut candidates = Vec::new();
     let mut seen_pairs: HashSet<(String, String)> = HashSet::new();
-    let total = docs.len();
 
-    for (i, doc) in docs.iter().enumerate() {
-        progress.report(i + 1, total, &doc.title);
+    for doc in &docs {
         let similar = db.find_similar_documents(&doc.id, threshold)?;
 
         for (similar_id, similar_title, similarity) in similar {
@@ -51,8 +45,9 @@ pub fn detect_merge_candidates(
             seen_pairs.insert(pair_key);
 
             // Get the similar document for comparison
-            let Some(similar_doc) = db.get_document(&similar_id)? else {
-                continue;
+            let similar_doc = match db.get_document(&similar_id)? {
+                Some(d) => d,
+                None => continue,
             };
 
             // Determine which document to keep based on content length and links

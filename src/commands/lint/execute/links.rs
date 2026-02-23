@@ -70,7 +70,7 @@ pub fn check_document_links(
                 doc.id
             );
             for link_id in &result.broken_links {
-                println!("    - Remove [[{link_id}]]");
+                println!("    - Remove [[{}]]", link_id);
             }
         } else {
             print!(
@@ -87,7 +87,7 @@ pub fn check_document_links(
                 // Read fresh content from file to avoid clone
                 let mut content = fs::read_to_string(&doc.file_path)?;
                 for link_id in &result.broken_links {
-                    let pattern = format!("[[{link_id}]]");
+                    let pattern = format!("[[{}]]", link_id);
                     content = content.replace(&pattern, "");
                 }
                 fs::write(&doc.file_path, &content)?;

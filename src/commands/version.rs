@@ -26,10 +26,12 @@ pub fn cmd_version(args: VersionArgs) -> anyhow::Result<()> {
     let config = Config::load(None).ok();
     let embedding_model = config
         .as_ref()
-        .map_or("not configured", |c| c.embedding.model.as_str());
+        .map(|c| c.embedding.model.as_str())
+        .unwrap_or("not configured");
     let llm_model = config
         .as_ref()
-        .map_or("not configured", |c| c.llm.model.as_str());
+        .map(|c| c.llm.model.as_str())
+        .unwrap_or("not configured");
 
     if args.json {
         let json = serde_json::json!({

@@ -8,11 +8,6 @@ use std::path::Path;
 
 use super::OutputFormat;
 
-/// Case-insensitive file extension check.
-pub fn ends_with_ext(path: &str, ext: &str) -> bool {
-    path.len() >= ext.len() && path[path.len() - ext.len()..].eq_ignore_ascii_case(ext)
-}
-
 /// Print data in the specified output format.
 ///
 /// For JSON and YAML formats, serializes the data directly.
@@ -113,7 +108,11 @@ pub fn filter_by_excluded_types<T>(
     let exclude_lower: Vec<String> = exclude_types.iter().map(|t| t.to_lowercase()).collect();
     items
         .into_iter()
-        .filter(|item| get_type(item).is_none_or(|t| !exclude_lower.contains(&t.to_lowercase())))
+        .filter(|item| {
+            get_type(item)
+                .map(|t| !exclude_lower.contains(&t.to_lowercase()))
+                .unwrap_or(true)
+        })
         .collect()
 }
 

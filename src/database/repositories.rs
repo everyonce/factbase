@@ -153,7 +153,7 @@ impl Database {
             // Delete embeddings using LIKE pattern for all chunks
             conn.execute(
                 "DELETE FROM document_embeddings WHERE id LIKE ?1",
-                [format!("{doc_id}_%")],
+                [format!("{}_%", doc_id)],
             )?;
         }
 

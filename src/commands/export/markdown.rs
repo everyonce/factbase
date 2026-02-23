@@ -1,6 +1,6 @@
 //! Markdown export format handler.
 
-use factbase::{writeln_str, Database, Document, ProgressReporter};
+use factbase::{Database, Document};
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
@@ -14,16 +14,16 @@ pub fn build_yaml_frontmatter(
     linked_from: &[&str],
 ) -> String {
     let mut fm = String::from("---\n");
-    writeln_str!(fm, "id: {}", id);
-    writeln_str!(fm, "title: {}", title);
+    fm.push_str(&format!("id: {}\n", id));
+    fm.push_str(&format!("title: {}\n", title));
     if let Some(t) = doc_type {
-        writeln_str!(fm, "type: {}", t);
+        fm.push_str(&format!("type: {}\n", t));
     }
     if !links_to.is_empty() {
-        writeln_str!(fm, "links_to: [{}]", links_to.join(", "));
+        fm.push_str(&format!("links_to: [{}]\n", links_to.join(", ")));
     }
     if !linked_from.is_empty() {
-        writeln_str!(fm, "linked_from: [{}]", linked_from.join(", "));
+        fm.push_str(&format!("linked_from: [{}]\n", linked_from.join(", ")));
     }
     fm.push_str("---\n\n");
     fm
@@ -32,7 +32,7 @@ pub fn build_yaml_frontmatter(
 /// Build a single document's markdown output with optional frontmatter.
 pub fn build_document_markdown(content: &str, frontmatter: Option<&str>) -> String {
     match frontmatter {
-        Some(fm) => format!("{fm}{content}"),
+        Some(fm) => format!("{}{}", fm, content),
         None => content.to_string(),
     }
 }
@@ -42,12 +42,9 @@ fn build_markdown_content(
     docs: &[Document],
     db: &Database,
     with_metadata: bool,
-    progress: &ProgressReporter,
 ) -> anyhow::Result<String> {
-    let total = docs.len();
     let mut content = String::new();
     for (i, doc) in docs.iter().enumerate() {
-        progress.report(i + 1, total, &doc.title);
         if i > 0 {
             content.push_str("\n\n---\n\n");
         }
@@ -80,11 +77,10 @@ pub fn export_markdown_stdout(
     docs: &[Document],
     db: &Database,
     with_metadata: bool,
-    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
-    let content = build_markdown_content(docs, db, with_metadata, progress)?;
+    let content = build_markdown_content(docs, db, with_metadata)?;
     let mut stdout = io::stdout().lock();
-    writeln!(stdout, "{content}")?;
+    writeln!(stdout, "{}", content)?;
     Ok(())
 }
 
@@ -95,9 +91,8 @@ pub fn export_markdown_single_file(
     output: &Path,
     with_metadata: bool,
     compress: bool,
-    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
-    let content = build_markdown_content(docs, db, with_metadata, progress)?;
+    let content = build_markdown_content(docs, db, with_metadata)?;
 
     if compress {
         #[cfg(feature = "compression")]
@@ -126,13 +121,10 @@ pub fn export_markdown_directory(
     output: &Path,
     repo_path: &Path,
     with_metadata: bool,
-    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
     fs::create_dir_all(output)?;
 
-    let total = docs.len();
-    for (i, doc) in docs.iter().enumerate() {
-        progress.report(i + 1, total, &doc.title);
+    for doc in docs {
         let rel_path = Path::new(&doc.file_path)
             .strip_prefix(repo_path)
             .unwrap_or(Path::new(&doc.file_path));

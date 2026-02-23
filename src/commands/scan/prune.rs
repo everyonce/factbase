@@ -84,7 +84,7 @@ pub(super) fn cmd_scan_prune(
                     entry.title, entry.doc_id, entry.file_path
                 );
             }
-            let prompt = format!("{action} these entries?");
+            let prompt = format!("{} these entries?", action);
             confirm_prompt(&prompt)?
         } else {
             false
@@ -145,7 +145,7 @@ pub(super) fn cmd_scan_prune(
             println!("\nPrune Summary");
             println!("=============");
         }
-        println!("Total documents: {total_documents}");
+        println!("Total documents: {}", total_documents);
         println!("Orphaned entries: {}", result.orphaned.len());
 
         if dry_run && !result.orphaned.is_empty() {
@@ -161,9 +161,9 @@ pub(super) fn cmd_scan_prune(
             } else {
                 "soft delete"
             };
-            println!("\nRun without --dry-run to {action} these entries.");
+            println!("\nRun without --dry-run to {} these entries.", action);
         } else if !dry_run {
-            println!("Pruned: {pruned_count}");
+            println!("Pruned: {}", pruned_count);
         }
     }
 

@@ -9,7 +9,6 @@ use super::{
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::organize::MisplacedCandidate;
-use crate::ProgressReporter;
 use std::collections::HashMap;
 
 /// Minimum documents per type to compute a meaningful centroid.
@@ -30,15 +29,12 @@ const MIN_DOCS_PER_TYPE: usize = 2;
 pub fn detect_misplaced(
     db: &Database,
     repo_id: Option<&str>,
-    progress: &ProgressReporter,
 ) -> Result<Vec<MisplacedCandidate>, FactbaseError> {
     // Get all documents with their types
     let docs = get_documents_with_types(db, repo_id)?;
     if docs.is_empty() {
         return Ok(Vec::new());
     }
-
-    progress.phase("Detecting misplaced documents");
 
     // Group documents by type
     let docs_by_type = group_by_type(&docs);
@@ -51,17 +47,16 @@ pub fn detect_misplaced(
 
     // Compare each document to all centroids
     let mut candidates = Vec::new();
-    let total = docs.len();
-    for (i, (doc_id, doc_title, current_type)) in docs.iter().enumerate() {
-        progress.report(i + 1, total, doc_title);
+    for (doc_id, doc_title, current_type) in &docs {
         // Skip docs whose type doesn't have a centroid (too few docs)
         if !centroids.contains_key(current_type) {
             continue;
         }
 
         // Get document embedding
-        let Some(embedding) = get_document_embedding(db, doc_id)? else {
-            continue;
+        let embedding = match get_document_embedding(db, doc_id)? {
+            Some(e) => e,
+            None => continue,
         };
 
         // Find closest centroid
@@ -88,7 +83,8 @@ pub fn detect_misplaced(
                     suggested_type: closest_type.clone(),
                     confidence,
                     rationale: format!(
-                        "Similarity to '{closest_type}': {closest_sim:.2}, to '{current_type}': {current_sim:.2}"
+                        "Similarity to '{}': {:.2}, to '{}': {:.2}",
+                        closest_type, closest_sim, current_type, current_sim
                     ),
                 });
             }

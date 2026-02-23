@@ -97,7 +97,7 @@ pub async fn plan_split(
             FactDestination::Orphan
         };
         let target_doc = if destination == FactDestination::Document {
-            Some(format!("section_{section_idx}"))
+            Some(format!("section_{}", section_idx))
         } else {
             None
         };
@@ -119,32 +119,26 @@ fn build_split_prompt(doc_title: &str, facts: &[TrackedFact], sections: &[SplitS
     let mut prompt = format!(
         r#"You are analyzing facts from a document to split it into separate documents.
 
-SOURCE DOCUMENT: "{doc_title}"
+SOURCE DOCUMENT: "{}"
 
 SECTIONS IDENTIFIED:
-"#
+"#,
+        doc_title
     );
 
     for (i, section) in sections.iter().enumerate() {
-        writeln_str!(
-            prompt,
-            "S{}: {} (lines {}-{})",
-            i,
-            section.title,
-            section.start_line,
-            section.end_line
-        );
+        prompt.push_str(&format!(
+            "S{}: {} (lines {}-{})\n",
+            i, section.title, section.start_line, section.end_line
+        ));
     }
 
     prompt.push_str("\nFACTS TO ASSIGN:\n");
     for (i, fact) in facts.iter().enumerate() {
-        writeln_str!(
-            prompt,
-            "F{}: [line {}] {}",
-            i,
-            fact.source_line,
-            fact.content
-        );
+        prompt.push_str(&format!(
+            "F{}: [line {}] {}\n",
+            i, fact.source_line, fact.content
+        ));
     }
 
     prompt.push_str(
@@ -264,7 +258,7 @@ fn build_proposed_documents(
             .get(i)
             .cloned()
             .unwrap_or_else(|| section.title.clone());
-        let target_id = format!("section_{i}");
+        let target_id = format!("section_{}", i);
 
         // Get facts assigned to this section
         let section_facts: Vec<&TrackedFact> = facts
@@ -278,7 +272,7 @@ fn build_proposed_documents(
             .collect();
 
         // Build content from section content plus any additional facts
-        let mut content = format!("# {title}\n\n");
+        let mut content = format!("# {}\n\n", title);
 
         // Add facts as list items
         for fact in section_facts {

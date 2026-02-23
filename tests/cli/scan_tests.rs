@@ -2,14 +2,15 @@
 
 use super::common::ollama_helpers::require_ollama;
 use super::common::run_scan;
-use super::common::TestScanSetup;
 use chrono::Utc;
 use factbase::{
     config::Config,
     database::Database,
     embedding::OllamaEmbedding,
+    llm::{LinkDetector, OllamaLlm},
     models::{Perspective, Repository},
-    scanner::{full_scan, ScanOptions},
+    processor::DocumentProcessor,
+    scanner::{full_scan, ScanOptions, Scanner},
     EmbeddingProvider,
 };
 use std::fs;
@@ -20,36 +21,79 @@ use tempfile::TempDir;
 async fn test_dry_run_scan() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo_path).unwrap();
+    fs::create_dir_all(&repo_path).expect("operation should succeed");
 
-    fs::write(repo_path.join("doc.md"), "# Test\nContent.").unwrap();
+    fs::write(repo_path.join("doc.md"), "# Test\nContent.").expect("operation should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
-    let repo = super::common::test_repo("test", repo_path.clone());
-    db.add_repository(&repo).unwrap();
+    let repo = Repository {
+        id: "test".into(),
+        name: "Test".into(),
+        path: repo_path.clone(),
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
+    db.add_repository(&repo).expect("operation should succeed");
+
+    let config = Config::default();
+    let embedding = OllamaEmbedding::new(
+        &config.embedding.base_url,
+        &config.embedding.model,
+        config.embedding.dimension,
+    );
 
     // Dry-run scan
-    let setup = TestScanSetup::with_options(ScanOptions {
+    let scanner = Scanner::new(&config.watcher.ignore_patterns);
+    let processor = DocumentProcessor::new();
+    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
+    let link_detector = LinkDetector::new(Box::new(llm));
+
+    let opts = ScanOptions {
+        chunk_size: 100_000,
+        chunk_overlap: 2_000,
+        verbose: false,
         dry_run: true,
-        ..ScanOptions::default()
-    });
-    let result = full_scan(&repo, &db, &setup.context()).await.unwrap();
+        show_progress: false,
+        check_duplicates: false,
+        collect_stats: false,
+        since: None,
+        min_coverage: 0.8,
+        embedding_batch_size: 10,
+        force_reindex: false,
+        skip_links: false,
+    };
+
+    let result = full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("operation should succeed");
 
     assert_eq!(result.added, 1, "Dry-run should report 1 new document");
 
     // Verify no actual changes
-    let docs = db.get_documents_for_repo("test").unwrap();
+    let docs = db
+        .get_documents_for_repo("test")
+        .expect("operation should succeed");
     assert!(
         docs.is_empty(),
         "Dry-run should not add documents to database"
     );
 
     // Verify file not modified (no header injected)
-    let content = fs::read_to_string(repo_path.join("doc.md")).unwrap();
+    let content = fs::read_to_string(repo_path.join("doc.md")).expect("operation should succeed");
     assert!(
         !content.contains("<!-- factbase:"),
         "Dry-run should not inject header"
@@ -61,17 +105,26 @@ async fn test_dry_run_scan() {
 async fn test_timeout_flag_override() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).unwrap();
+    fs::create_dir_all(&repo_path).expect("operation should succeed");
 
-    fs::write(repo_path.join("doc.md"), "# Test\nSimple document.").unwrap();
+    fs::write(repo_path.join("doc.md"), "# Test\nSimple document.")
+        .expect("operation should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
-    let repo = super::common::test_repo("test", repo_path);
-    db.add_repository(&repo).unwrap();
+    let repo = Repository {
+        id: "test".into(),
+        name: "Test".into(),
+        path: repo_path,
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
+    db.add_repository(&repo).expect("operation should succeed");
 
     let config = Config::default();
 
@@ -85,7 +138,10 @@ async fn test_timeout_flag_override() {
     );
 
     // Verify embedding works with custom timeout
-    let query_emb = embedding.generate("test query").await.unwrap();
+    let query_emb = embedding
+        .generate("test query")
+        .await
+        .expect("operation should succeed");
     assert_eq!(
         query_emb.len(),
         config.embedding.dimension,
@@ -156,25 +212,25 @@ fn test_scan_progress_flags_mutually_exclusive() {
 async fn test_init_scan_search_workflow() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(repo_path.join("people")).unwrap();
+    fs::create_dir_all(repo_path.join("people")).expect("operation should succeed");
 
     // Create test documents
     fs::write(
         repo_path.join("people/alice.md"),
         "# Alice\nAlice is a software engineer.",
     )
-    .unwrap();
+    .expect("operation should succeed");
     fs::write(
         repo_path.join("readme.md"),
         "# My Notes\nPersonal knowledge base.",
     )
-    .unwrap();
+    .expect("operation should succeed");
 
     // Simulate `factbase init` - create database
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
     // Simulate `factbase repo add`
     let repo = Repository {
@@ -192,12 +248,14 @@ async fn test_init_scan_search_workflow() {
         last_indexed_at: None,
         last_lint_at: None,
     };
-    db.add_repository(&repo).unwrap();
+    db.add_repository(&repo).expect("operation should succeed");
 
     let config = Config::default();
 
     // Simulate `factbase scan`
-    let result = run_scan(&repo, &db, &config).await.unwrap();
+    let result = run_scan(&repo, &db, &config)
+        .await
+        .expect("operation should succeed");
     assert_eq!(result.added, 2, "Should add 2 documents");
 
     // Create embedding provider for search
@@ -208,10 +266,13 @@ async fn test_init_scan_search_workflow() {
     );
 
     // Simulate `factbase search "software engineer"`
-    let query_embedding = embedding.generate("software engineer").await.unwrap();
+    let query_embedding = embedding
+        .generate("software engineer")
+        .await
+        .expect("operation should succeed");
     let results = db
         .search_semantic_with_query(&query_embedding, 10, None, None, None)
-        .unwrap();
+        .expect("operation should succeed");
 
     assert!(!results.is_empty(), "Search should return results");
     // Alice document should be most relevant
@@ -227,50 +288,79 @@ async fn test_init_scan_search_workflow() {
 async fn test_repo_add_scan_remove_workflow() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
 
     // Create two repos
     let repo1_path = temp_dir.path().join("repo1");
     let repo2_path = temp_dir.path().join("repo2");
-    fs::create_dir_all(&repo1_path).unwrap();
-    fs::create_dir_all(&repo2_path).unwrap();
+    fs::create_dir_all(&repo1_path).expect("operation should succeed");
+    fs::create_dir_all(&repo2_path).expect("operation should succeed");
 
-    fs::write(repo1_path.join("doc1.md"), "# Doc 1\nContent for repo 1.").unwrap();
-    fs::write(repo2_path.join("doc2.md"), "# Doc 2\nContent for repo 2.").unwrap();
+    fs::write(repo1_path.join("doc1.md"), "# Doc 1\nContent for repo 1.")
+        .expect("operation should succeed");
+    fs::write(repo2_path.join("doc2.md"), "# Doc 2\nContent for repo 2.")
+        .expect("operation should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
     // Add both repos
-    let repo1 = super::common::test_repo("repo1", repo1_path);
-    let repo2 = super::common::test_repo("repo2", repo2_path);
-    db.add_repository(&repo1).unwrap();
-    db.add_repository(&repo2).unwrap();
+    let repo1 = Repository {
+        id: "repo1".into(),
+        name: "Repo 1".into(),
+        path: repo1_path,
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
+    let repo2 = Repository {
+        id: "repo2".into(),
+        name: "Repo 2".into(),
+        path: repo2_path,
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
+    db.add_repository(&repo1).expect("operation should succeed");
+    db.add_repository(&repo2).expect("operation should succeed");
 
     let config = Config::default();
 
     // Scan both
-    run_scan(&repo1, &db, &config).await.unwrap();
-    run_scan(&repo2, &db, &config).await.unwrap();
+    run_scan(&repo1, &db, &config)
+        .await
+        .expect("operation should succeed");
+    run_scan(&repo2, &db, &config)
+        .await
+        .expect("operation should succeed");
 
     // Verify both indexed
-    let repos = db.list_repositories().unwrap();
+    let repos = db.list_repositories().expect("operation should succeed");
     assert_eq!(repos.len(), 2, "Should have 2 repos");
 
-    let docs1 = db.get_documents_for_repo("repo1").unwrap();
-    let docs2 = db.get_documents_for_repo("repo2").unwrap();
+    let docs1 = db
+        .get_documents_for_repo("repo1")
+        .expect("operation should succeed");
+    let docs2 = db
+        .get_documents_for_repo("repo2")
+        .expect("operation should succeed");
     assert_eq!(docs1.len(), 1, "Repo 1 should have 1 doc");
     assert_eq!(docs2.len(), 1, "Repo 2 should have 1 doc");
 
     // Remove repo1
-    db.remove_repository("repo1").unwrap();
+    db.remove_repository("repo1")
+        .expect("operation should succeed");
 
     // Verify repo1 removed
-    let repos = db.list_repositories().unwrap();
+    let repos = db.list_repositories().expect("operation should succeed");
     assert_eq!(repos.len(), 1, "Should have 1 repo after removal");
     assert_eq!(repos[0].id, "repo2", "Remaining repo should be repo2");
 
     // Verify repo2 unaffected
-    let docs2 = db.get_documents_for_repo("repo2").unwrap();
+    let docs2 = db
+        .get_documents_for_repo("repo2")
+        .expect("operation should succeed");
     assert_eq!(docs2.len(), 1, "Repo 2 should still have 1 doc");
 }

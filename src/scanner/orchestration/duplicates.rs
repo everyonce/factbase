@@ -23,7 +23,8 @@ pub(super) fn check_duplicates(
                 if seen_pairs.insert(pair) {
                     let doc_title = db
                         .get_document(doc_id)?
-                        .map_or_else(|| doc_id.clone(), |d| d.title);
+                        .map(|d| d.title)
+                        .unwrap_or_else(|| doc_id.clone());
                     duplicates.push(DuplicatePair {
                         doc1_id: doc_id.clone(),
                         doc1_title: doc_title,

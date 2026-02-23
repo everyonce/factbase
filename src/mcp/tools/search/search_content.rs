@@ -1,10 +1,8 @@
 //! search_content MCP tool - text/regex search (like grep)
 
-use crate::database::{ContentSearchParams, Database};
+use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::mcp::tools::{extract_type_repo_filters, get_str_arg_required, get_u64_arg};
-use crate::models::ContentSearchResult;
-use crate::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
 
@@ -19,32 +17,23 @@ use tracing::instrument;
 ///
 /// # Returns
 /// JSON with `results` array, `count`, and `pattern`.
-#[instrument(name = "mcp_search_content", skip(db, args, progress))]
-pub fn search_content(
-    db: &Database,
-    args: &Value,
-    progress: &ProgressReporter,
-) -> Result<Value, FactbaseError> {
+#[instrument(name = "mcp_search_content", skip(db, args))]
+pub fn search_content(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let pattern = get_str_arg_required(args, "pattern")?;
     let limit = get_u64_arg(args, "limit", 10) as usize;
     let (doc_type, repo) = extract_type_repo_filters(args);
     let context = get_u64_arg(args, "context", 0) as usize;
 
-    let params = ContentSearchParams {
-        pattern: &pattern,
+    let results = db.search_content(
+        &pattern,
         limit,
-        doc_type: doc_type.as_deref(),
-        repo_id: repo.as_deref(),
-        context_lines: context,
-        since: None,
-        progress,
-    };
-    let results = db.search_content(&params)?;
+        doc_type.as_deref(),
+        repo.as_deref(),
+        context,
+        None, // MCP tool doesn't expose since filter
+    )?;
 
-    let items: Vec<Value> = results
-        .into_iter()
-        .map(ContentSearchResult::to_json)
-        .collect();
+    let items: Vec<Value> = results.into_iter().map(|r| r.to_json()).collect();
 
     Ok(serde_json::json!({
         "results": items,
@@ -61,11 +50,7 @@ mod tests {
     #[test]
     fn test_pattern_required() {
         let args = serde_json::json!({});
-        let result = search_content(
-            &crate::database::tests::test_db().0,
-            &args,
-            &crate::ProgressReporter::Silent,
-        );
+        let result = search_content(&crate::database::tests::test_db().0, &args);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("pattern"));
     }
@@ -109,7 +94,7 @@ mod tests {
     fn test_empty_results_response_format() {
         let (db, _dir) = crate::database::tests::test_db();
         let args = serde_json::json!({"pattern": "nonexistent"});
-        let result = search_content(&db, &args, &crate::ProgressReporter::Silent).unwrap();
+        let result = search_content(&db, &args).unwrap();
         assert_eq!(result["count"], 0);
         assert_eq!(result["pattern"], "nonexistent");
         assert!(result["results"].as_array().unwrap().is_empty());

@@ -18,7 +18,6 @@ pub struct LinkPhaseInput<'a> {
     pub show_progress: bool,
     pub verbose: bool,
     pub skip_links: bool,
-    pub link_batch_size: usize,
 }
 
 /// Output from the link detection phase
@@ -61,7 +60,7 @@ pub async fn run_link_detection_phase(
         .iter()
         .flat_map(|t| t.split_whitespace())
         .filter(|w| w.len() >= 3)
-        .map(str::to_lowercase)
+        .map(|w| w.to_lowercase())
         .collect();
 
     let full_rescan = input.added_count > 10;
@@ -88,8 +87,8 @@ pub async fn run_link_detection_phase(
         })
         .collect();
 
-    let link_batch_size = input.link_batch_size;
-    let total_batches = docs_to_scan.len().div_ceil(link_batch_size);
+    const LINK_BATCH_SIZE: usize = 5;
+    let total_batches = docs_to_scan.len().div_ceil(LINK_BATCH_SIZE);
 
     let link_pb = if input.show_progress {
         OptionalProgress::new(
@@ -103,13 +102,13 @@ pub async fn run_link_detection_phase(
     };
 
     // Process in batches
-    for (batch_idx, chunk) in docs_to_scan.chunks(link_batch_size).enumerate() {
+    for (batch_idx, chunk) in docs_to_scan.chunks(LINK_BATCH_SIZE).enumerate() {
         if crate::shutdown::is_shutdown_requested() {
             link_pb.finish_and_clear();
             return Ok(LinkPhaseOutput {
                 links_detected,
                 link_detection_ms: link_detection_start.elapsed().as_millis() as u64,
-                docs_link_detected: batch_idx * link_batch_size,
+                docs_link_detected: batch_idx * LINK_BATCH_SIZE,
                 interrupted: true,
             });
         }

@@ -4,7 +4,7 @@
 use super::common::ollama_helpers::require_ollama;
 use super::common::run_scan;
 use chrono::Utc;
-use factbase::{config::Config, database::Database};
+use factbase::{config::Config, database::Database, models::Repository};
 use std::fs;
 use tempfile::TempDir;
 
@@ -14,35 +14,49 @@ use tempfile::TempDir;
 async fn test_status_command() {
     require_ollama().await;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(&repo_path).unwrap();
+    fs::create_dir_all(&repo_path).expect("operation should succeed");
 
     for i in 0..5 {
         fs::write(
             repo_path.join(format!("doc{}.md", i)),
             format!("# Document {}\nContent {}.", i, i),
         )
-        .unwrap();
+        .expect("operation should succeed");
     }
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
-    let repo = super::common::test_repo("test", repo_path);
-    db.add_repository(&repo).unwrap();
+    let repo = Repository {
+        id: "test".into(),
+        name: "Test".into(),
+        path: repo_path,
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
+    db.add_repository(&repo).expect("operation should succeed");
 
     let config = Config::default();
 
-    run_scan(&repo, &db, &config).await.unwrap();
+    run_scan(&repo, &db, &config)
+        .await
+        .expect("operation should succeed");
 
     // Simulate `factbase status`
-    let stats = db.get_stats("test", None).unwrap();
+    let stats = db
+        .get_stats("test", None)
+        .expect("operation should succeed");
     assert_eq!(stats.total, 5, "Should have 5 documents");
     assert_eq!(stats.active, 5, "Should have 5 active documents");
 
     // Simulate `factbase status --detailed`
-    let detailed = db.get_detailed_stats("test", None).unwrap();
+    let detailed = db
+        .get_detailed_stats("test", None)
+        .expect("operation should succeed");
     assert!(detailed.avg_doc_size > 0, "Avg doc size should be > 0");
 }
 
@@ -51,16 +65,24 @@ async fn test_status_command() {
 fn test_stats_short_flag() {
     use factbase::format_bytes;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let repo_path = temp_dir.path().join("notes");
-    fs::create_dir_all(&repo_path).unwrap();
+    fs::create_dir_all(&repo_path).expect("operation should succeed");
 
     let db_path = temp_dir.path().join("factbase.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
     // Add a repository with some documents
-    let repo = super::common::test_repo("test", repo_path);
-    db.add_repository(&repo).unwrap();
+    let repo = Repository {
+        id: "test".into(),
+        name: "Test".into(),
+        path: repo_path,
+        perspective: None,
+        created_at: Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
+    db.add_repository(&repo).expect("operation should succeed");
 
     // Add some test documents directly to database
     for i in 0..3 {
@@ -76,11 +98,13 @@ fn test_stats_short_flag() {
             indexed_at: Utc::now(),
             is_deleted: false,
         })
-        .unwrap();
+        .expect("operation should succeed");
     }
 
     // Get stats to verify format
-    let repos = db.list_repositories_with_stats().unwrap();
+    let repos = db
+        .list_repositories_with_stats()
+        .expect("operation should succeed");
     let total_repos = repos.len();
     let total_docs: usize = repos.iter().map(|(_, c)| c).sum();
     let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
@@ -224,16 +248,16 @@ fn test_show_nonexistent_document() {
     use std::process::Command;
     use tempfile::TempDir;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let db_path = temp_dir.path().join("factbase.db");
 
     // Create empty database
-    let db = factbase::Database::new(&db_path).unwrap();
+    let db = factbase::Database::new(&db_path).expect("operation should succeed");
     drop(db);
 
     // Create minimal config pointing to temp database
     let config_dir = temp_dir.path().join(".config").join("factbase");
-    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(&config_dir).expect("operation should succeed");
     let config_content = format!(
         r#"database:
   path: {}
@@ -263,7 +287,8 @@ llm:
 "#,
         db_path.display()
     );
-    std::fs::write(config_dir.join("config.yaml"), config_content).unwrap();
+    std::fs::write(config_dir.join("config.yaml"), config_content)
+        .expect("operation should succeed");
 
     // Run show with non-existent ID
     let output = Command::new("cargo")
@@ -325,16 +350,16 @@ fn test_links_nonexistent_document() {
     use std::process::Command;
     use tempfile::TempDir;
 
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let db_path = temp_dir.path().join("factbase.db");
 
     // Create empty database
-    let db = factbase::Database::new(&db_path).unwrap();
+    let db = factbase::Database::new(&db_path).expect("operation should succeed");
     drop(db);
 
     // Create minimal config pointing to temp database
     let config_dir = temp_dir.path().join(".config").join("factbase");
-    std::fs::create_dir_all(&config_dir).unwrap();
+    std::fs::create_dir_all(&config_dir).expect("operation should succeed");
     let config_content = format!(
         r#"database:
   path: {}
@@ -363,7 +388,8 @@ llm:
   timeout_secs: 30"#,
         db_path.display()
     );
-    std::fs::write(config_dir.join("config.yaml"), config_content).unwrap();
+    std::fs::write(config_dir.join("config.yaml"), config_content)
+        .expect("operation should succeed");
 
     // Run links with non-existent ID
     let output = Command::new("cargo")

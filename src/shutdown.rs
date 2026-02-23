@@ -34,7 +34,8 @@ pub fn init_shutdown_handler() {
 pub(crate) fn is_shutdown_requested() -> bool {
     SHUTDOWN_FLAG
         .get()
-        .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        .map(|flag| flag.load(Ordering::SeqCst))
+        .unwrap_or(false)
 }
 
 /// Request shutdown programmatically.

@@ -5,26 +5,20 @@
 //! - Split candidates: documents covering multiple distinct topics
 //! - Misplaced candidates: documents in wrong folders
 
-mod duplicate_entries;
-mod entity_entries;
 mod merge;
 mod misplaced;
 mod split;
-mod staleness;
 
-pub use duplicate_entries::detect_duplicate_entries;
-pub use entity_entries::{extract_entity_entries, EntityEntry};
 pub use merge::detect_merge_candidates;
 pub use misplaced::detect_misplaced;
 pub use split::{detect_split_candidates, extract_sections};
-pub use staleness::{assess_staleness, generate_stale_entry_questions, StaleDuplicate};
 
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::models::Document;
 
 // Cosine similarity between two embedding vectors.
-pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub(crate) fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {
         return 0.0;
     }
@@ -69,7 +63,7 @@ pub(crate) fn get_document_embedding(
     doc_id: &str,
 ) -> Result<Option<Vec<f32>>, FactbaseError> {
     let conn = db.get_conn()?;
-    let chunk_id = format!("{doc_id}_0");
+    let chunk_id = format!("{}_0", doc_id);
 
     let result: Result<Vec<u8>, _> = conn.query_row(
         "SELECT embedding FROM document_embeddings WHERE id = ?1",

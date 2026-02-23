@@ -137,7 +137,7 @@ pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> S
         for q in questions {
             let line_ref = q
                 .line_ref
-                .map(|n| format!("Line {n}: "))
+                .map(|n| format!("Line {}: ", n))
                 .unwrap_or_default();
             let type_tag = match q.question_type {
                 QuestionType::Temporal => "temporal",
@@ -147,15 +147,10 @@ pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> S
                 QuestionType::Stale => "stale",
                 QuestionType::Duplicate => "duplicate",
             };
-            {
-                write_str!(
-                    questions_text,
-                    "\n- [ ] `@q[{}]` {}{}\n  > \n",
-                    type_tag,
-                    line_ref,
-                    q.description
-                );
-            }
+            questions_text.push_str(&format!(
+                "\n- [ ] `@q[{}]` {}{}\n  > \n",
+                type_tag, line_ref, q.description
+            ));
         }
 
         result.insert_str(insert_pos, &questions_text);

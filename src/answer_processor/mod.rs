@@ -24,7 +24,6 @@
 //! - [`remove_processed_questions`] - Remove processed questions from review queue
 
 mod apply;
-pub(crate) mod apply_all;
 pub mod inbox;
 mod interpret;
 mod temporal;

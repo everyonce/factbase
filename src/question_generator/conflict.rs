@@ -71,43 +71,23 @@ fn collect_facts_with_ranges(content: &str) -> Vec<FactWithRange> {
             .filter(|t| t.line_number == line_number)
             .collect();
 
-        // Extract the best range from tags
+        // Extract the best range from tags (only Range/Ongoing can conflict)
         let (start_date, end_date, is_ongoing) = if line_tags.is_empty() {
             (None, None, false)
         } else {
-            // Prefer Range/Ongoing tags, fall back to PointInTime/LastSeen as single-point ranges
-            let tag = line_tags
-                .iter()
-                .find(|t| {
-                    matches!(
-                        t.tag_type,
-                        crate::models::TemporalTagType::Range
-                            | crate::models::TemporalTagType::Ongoing
-                    )
-                })
-                .or_else(|| {
-                    line_tags.iter().find(|t| {
-                        matches!(
-                            t.tag_type,
-                            crate::models::TemporalTagType::PointInTime
-                                | crate::models::TemporalTagType::LastSeen
-                        )
-                    })
-                });
-
-            let Some(tag) = tag else { continue };
+            // Only consider Range/Ongoing tags — LastSeen/PointInTime aren't time spans
+            let tag = match line_tags.iter().find(|t| {
+                matches!(
+                    t.tag_type,
+                    crate::models::TemporalTagType::Range | crate::models::TemporalTagType::Ongoing
+                )
+            }) {
+                Some(t) => t,
+                None => continue, // No range tags on this line, skip
+            };
 
             let is_ongoing = matches!(tag.tag_type, crate::models::TemporalTagType::Ongoing);
-
-            match tag.tag_type {
-                crate::models::TemporalTagType::PointInTime
-                | crate::models::TemporalTagType::LastSeen => {
-                    // Treat as a single-point range: start == end
-                    let date = tag.start_date.clone();
-                    (date.clone(), date, false)
-                }
-                _ => (tag.start_date.clone(), tag.end_date.clone(), is_ongoing),
-            }
+            (tag.start_date.clone(), tag.end_date.clone(), is_ongoing)
         };
 
         facts.push(FactWithRange {
@@ -535,41 +515,5 @@ mod tests {
         let content = "# Person\n\n## Career History\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
         let questions = generate_conflict_questions(content);
         assert_eq!(questions.len(), 1);
-    }
-
-    #[test]
-    fn test_point_in_time_vs_range_conflict() {
-        let content = "# Person\n\n- CTO at Acme @t[=2023]\n- CEO at BigCo @t[2022..2024]";
-        let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("overlaps"));
-    }
-
-    #[test]
-    fn test_two_point_in_time_same_date_conflict() {
-        let content = "# Person\n\n- CTO at Acme @t[=2023]\n- CEO at BigCo @t[=2023]";
-        let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
-    }
-
-    #[test]
-    fn test_two_point_in_time_different_dates_no_conflict() {
-        let content = "# Person\n\n- CTO at Acme @t[=2020]\n- CEO at BigCo @t[=2023]";
-        let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty());
-    }
-
-    #[test]
-    fn test_last_seen_vs_range_conflict() {
-        let content = "# Person\n\n- CTO at Acme @t[~2023]\n- CEO at BigCo @t[2022..2024]";
-        let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
-    }
-
-    #[test]
-    fn test_point_in_time_outside_range_no_conflict() {
-        let content = "# Person\n\n- CTO at Acme @t[=2018]\n- CEO at BigCo @t[2022..2024]";
-        let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty());
     }
 }

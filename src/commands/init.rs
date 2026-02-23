@@ -68,7 +68,8 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
     let repo_id = args.id.unwrap_or_else(|| "main".into());
     let repo_name = args.name.unwrap_or_else(|| {
         path.file_name()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().to_string())
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "main".into())
     });
     let repo = create_repository(&repo_id, &repo_name, &path);
     db.upsert_repository(&repo)?;

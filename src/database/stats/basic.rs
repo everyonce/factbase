@@ -20,7 +20,7 @@ impl Database {
         since: Option<&DateTime<Utc>>,
     ) -> Result<RepoStats, FactbaseError> {
         let conn = self.get_conn()?;
-        let since_str = since.map(DateTime::to_rfc3339);
+        let since_str = since.map(|s| s.to_rfc3339());
         let since_clause = if since.is_some() {
             " AND file_modified_at >= ?2"
         } else {

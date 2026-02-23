@@ -45,7 +45,8 @@ fn extract_title(content: &str, doc_id: &str) -> String {
     content
         .lines()
         .find(|l| l.starts_with("# "))
-        .map_or_else(|| doc_id.to_string(), |l| l[2..].trim().to_string())
+        .map(|l| l[2..].trim().to_string())
+        .unwrap_or_else(|| doc_id.to_string())
 }
 
 /// Build the LLM prompt for a batch of facts with their cross-document context.
@@ -61,23 +62,21 @@ fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
          For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n",
     );
 
-    write_str!(prompt, "Document: {doc_title}\n---\n");
+    prompt.push_str(&format!("Document: {doc_title}\n---\n"));
 
     for (i, fwc) in batch.iter().enumerate() {
         let idx = i + 1;
-        write_str!(
-            prompt,
+        prompt.push_str(&format!(
             "Fact {idx} (line {}): \"{}\"\nRelated information:\n",
-            fwc.fact.line_number,
-            fwc.fact.text
-        );
+            fwc.fact.line_number, fwc.fact.text
+        ));
         for r in &fwc.related {
             let snip = if r.snippet.len() > MAX_SNIPPET_LEN {
                 format!("{}...", &r.snippet[..MAX_SNIPPET_LEN])
             } else {
                 r.snippet.clone()
             };
-            writeln_str!(prompt, "- [{}] \"{}\"", r.title, snip);
+            prompt.push_str(&format!("- [{}] \"{}\"\n", r.title, snip));
         }
         prompt.push('\n');
     }
@@ -210,21 +209,41 @@ pub async fn cross_validate_document(
 mod tests {
     use super::*;
     use crate::database::tests::test_db;
-    use crate::embedding::test_helpers::MockEmbedding;
-    use crate::llm::test_helpers::MockLlm;
+    use crate::error::FactbaseError;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+    struct MockEmbedding;
+    impl EmbeddingProvider for MockEmbedding {
+        fn generate<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
+            Box::pin(async { Ok(vec![0.1; 1024]) })
+        }
+        fn dimension(&self) -> usize {
+            1024
+        }
+    }
+
+    struct MockLlm;
+    impl LlmProvider for MockLlm {
+        fn complete<'a>(
+            &'a self,
+            _prompt: &'a str,
+        ) -> BoxFuture<'a, Result<String, FactbaseError>> {
+            Box::pin(async { Ok("[]".into()) })
+        }
+    }
 
     #[tokio::test]
     async fn test_empty_content_returns_no_questions() {
         let (db, _tmp) = test_db();
-        let questions = cross_validate_document(
-            "",
-            "abc123",
-            &db,
-            &MockEmbedding::new(1024),
-            &MockLlm::default(),
-        )
-        .await
-        .unwrap();
+        let questions = cross_validate_document("", "abc123", &db, &MockEmbedding, &MockLlm)
+            .await
+            .unwrap();
         assert!(questions.is_empty());
     }
 
@@ -232,15 +251,9 @@ mod tests {
     async fn test_no_list_items_returns_no_questions() {
         let (db, _tmp) = test_db();
         let content = "# Title\n\nJust paragraphs here.";
-        let questions = cross_validate_document(
-            content,
-            "abc123",
-            &db,
-            &MockEmbedding::new(1024),
-            &MockLlm::default(),
-        )
-        .await
-        .unwrap();
+        let questions = cross_validate_document(content, "abc123", &db, &MockEmbedding, &MockLlm)
+            .await
+            .unwrap();
         assert!(questions.is_empty());
     }
 
@@ -248,15 +261,9 @@ mod tests {
     async fn test_no_relevant_results_returns_no_questions() {
         let (db, _tmp) = test_db();
         let content = "# Person\n\n- VP Engineering at Acme\n- Based in Seattle";
-        let questions = cross_validate_document(
-            content,
-            "abc123",
-            &db,
-            &MockEmbedding::new(1024),
-            &MockLlm::default(),
-        )
-        .await
-        .unwrap();
+        let questions = cross_validate_document(content, "abc123", &db, &MockEmbedding, &MockLlm)
+            .await
+            .unwrap();
         assert!(questions.is_empty());
     }
 

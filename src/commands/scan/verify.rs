@@ -3,7 +3,7 @@
 //! Contains `cmd_scan_verify` and fix helper functions.
 
 use anyhow::bail;
-use factbase::{content_hash, format_json, Database, Repository};
+use factbase::{format_json, Database, DocumentProcessor, Repository};
 use serde::Serialize;
 use std::fmt;
 use std::fs;
@@ -141,7 +141,7 @@ pub(super) fn cmd_scan_verify(
                         file_path,
                         repo_id,
                         issue_type: IssueType::ReadError,
-                        message: format!("Cannot read file: {e}"),
+                        message: format!("Cannot read file: {}", e),
                         fixable: false,
                     });
                     continue;
@@ -149,11 +149,11 @@ pub(super) fn cmd_scan_verify(
             };
 
             // Check 2: Content hash matches
-            let current_hash = content_hash(&content);
+            let current_hash = DocumentProcessor::compute_hash(&content);
             let hash_mismatch = current_hash != db_hash;
 
             // Check 3: ID header present and matches
-            let expected_header = format!("<!-- factbase:{doc_id} -->");
+            let expected_header = format!("<!-- factbase:{} -->", doc_id);
             let has_expected_header = content.contains(&expected_header);
             let has_any_header = content.contains("<!-- factbase:");
 
@@ -336,9 +336,9 @@ pub(super) fn cmd_scan_verify(
         // Only show summary if not in fix mode (fix mode shows its own output)
         println!("Verification Results");
         println!("====================");
-        println!("Total documents: {total_documents}");
-        println!("Verified OK: {verified_ok}");
-        println!("Issues found: {issues_len}");
+        println!("Total documents: {}", total_documents);
+        println!("Verified OK: {}", verified_ok);
+        println!("Issues found: {}", issues_len);
 
         if !result.issues.is_empty() {
             println!();
@@ -361,14 +361,14 @@ pub(super) fn cmd_scan_verify(
         println!("\nFix Summary");
         println!("===========");
         let failed = result.fixed.iter().filter(|f| !f.success).count();
-        println!("Fixed: {successful_fixes}");
-        println!("Failed: {failed}");
-        println!("Remaining issues: {issues_len}");
+        println!("Fixed: {}", successful_fixes);
+        println!("Failed: {}", failed);
+        println!("Remaining issues: {}", issues_len);
     }
 
     // Exit with error if any unfixed issues remain (useful for CI)
     if issues_len > 0 {
-        anyhow::bail!("{issues_len} unfixed issue(s) remain")
+        anyhow::bail!("{} unfixed issue(s) remain", issues_len)
     }
 
     Ok(())
@@ -385,8 +385,8 @@ fn fix_missing_header(
         .join(file_path);
 
     let content = fs::read_to_string(&full_path)?;
-    let header = format!("<!-- factbase:{doc_id} -->\n");
-    let new_content = format!("{header}{content}");
+    let header = format!("<!-- factbase:{} -->\n", doc_id);
+    let new_content = format!("{}{}", header, content);
 
     // Write to temp file first, then rename (atomic)
     let temp_path = full_path.with_extension("tmp");
@@ -408,7 +408,7 @@ fn fix_modified_content(
         .join(file_path);
 
     let content = fs::read_to_string(&full_path)?;
-    let new_hash = content_hash(&content);
+    let new_hash = DocumentProcessor::compute_hash(&content);
 
     // Update the document's hash in the database
     db.update_document_hash(doc_id, &new_hash)?;

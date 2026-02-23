@@ -86,9 +86,8 @@ fn run_quick_lint(
         // Check orphan documents using pre-fetched links
         let (links_from, links_to) = all_links
             .get(&doc.id)
-            .map_or((&[][..], &[][..]), |(out, inc)| {
-                (out.as_slice(), inc.as_slice())
-            });
+            .map(|(out, inc)| (out.as_slice(), inc.as_slice()))
+            .unwrap_or((&[], &[]));
         if links_from.is_empty() && links_to.is_empty() {
             if !quiet {
                 println!(
@@ -104,7 +103,10 @@ fn run_quick_lint(
         if watch_errors == 0 && watch_warnings == 0 {
             println!("✓ No issues found");
         } else {
-            println!("Found {watch_errors} error(s), {watch_warnings} warning(s)");
+            println!(
+                "Found {} error(s), {} warning(s)",
+                watch_errors, watch_warnings
+            );
         }
     }
 

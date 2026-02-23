@@ -55,13 +55,13 @@ pub fn check_database(config: &Config) -> (bool, CheckStatus, String) {
             }
             Err(e) => (
                 false,
-                CheckStatus::err(format!("health check failed: {e}")),
+                CheckStatus::err(format!("health check failed: {}", e)),
                 db_path,
             ),
         },
         Err(e) => (
             false,
-            CheckStatus::err(format!("cannot open: {e}")),
+            CheckStatus::err(format!("cannot open: {}", e)),
             db_path,
         ),
     }
@@ -83,7 +83,7 @@ pub async fn check_ollama_server(client: &Client, base_url: &str) -> (bool, Chec
 
 /// Fetch list of available models from Ollama.
 pub async fn fetch_available_models(client: &Client, base_url: &str) -> Vec<String> {
-    let tags_url = format!("{base_url}/api/tags");
+    let tags_url = format!("{}/api/tags", base_url);
     match client.get(&tags_url).send().await {
         Ok(resp) => {
             if let Ok(json) = resp.json::<serde_json::Value>().await {
@@ -91,9 +91,7 @@ pub async fn fetch_available_models(client: &Client, base_url: &str) -> Vec<Stri
                     .as_array()
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|m| {
-                                m["name"].as_str().map(std::string::ToString::to_string)
-                            })
+                            .filter_map(|m| m["name"].as_str().map(|s| s.to_string()))
                             .collect()
                     })
                     .unwrap_or_default()

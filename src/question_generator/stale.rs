@@ -82,7 +82,8 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                             QuestionType::Stale,
                             Some(line_number),
                             format!(
-                                "\"{fact_text}\" - {source_type} source is {days_old} days old, is this still accurate?"
+                                "\"{}\" - {} source is {} days old, is this still accurate?",
+                                fact_text, source_type, days_old
                             ),
                         ));
                         break; // One question per fact line
@@ -113,7 +114,8 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                                         QuestionType::Stale,
                                         Some(tag.line_number),
                                         format!(
-                                            "\"{fact_text}\" has @t[~{date_str}] ({days_old} days ago) - is this still accurate?"
+                                            "\"{}\" has @t[~{}] ({} days ago) - is this still accurate?",
+                                            fact_text, date_str, days_old
                                         ),
                                     ));
                                 }

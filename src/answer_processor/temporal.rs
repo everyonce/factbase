@@ -34,7 +34,7 @@ pub(crate) fn extract_dates_from_answer(answer: &str) -> Option<DateInfo> {
         let month_name = &cap[1];
         let year = &cap[2];
         let month_num = month_name_to_number(month_name);
-        let date = format!("{year}-{month_num:02}");
+        let date = format!("{}-{:02}", year, month_num);
 
         if has_end_indicator && info.end_date.is_none() {
             info.end_date = Some(date);
@@ -75,6 +75,7 @@ pub(crate) fn extract_dates_from_answer(answer: &str) -> Option<DateInfo> {
 /// Convert month name to number
 fn month_name_to_number(name: &str) -> u32 {
     match name.to_lowercase().as_str() {
+        "january" => 1,
         "february" => 2,
         "march" => 3,
         "april" => 4,
@@ -86,7 +87,6 @@ fn month_name_to_number(name: &str) -> u32 {
         "october" => 10,
         "november" => 11,
         "december" => 12,
-        // "january" and any unrecognized name default to 1
         _ => 1,
     }
 }
@@ -94,10 +94,10 @@ fn month_name_to_number(name: &str) -> u32 {
 /// Format a new temporal tag from date info
 pub(crate) fn format_new_temporal_tag(dates: &DateInfo) -> String {
     match (&dates.start_date, &dates.end_date, dates.is_ongoing) {
-        (Some(start), Some(end), _) => format!("@t[{start}..{end}]"),
-        (Some(start), None, true) => format!("@t[{start}..]"),
-        (Some(start), None, false) => format!("@t[={start}]"),
-        (None, Some(end), _) => format!("@t[..{end}]"),
+        (Some(start), Some(end), _) => format!("@t[{}..{}]", start, end),
+        (Some(start), None, true) => format!("@t[{}..]", start),
+        (Some(start), None, false) => format!("@t[={}]", start),
+        (None, Some(end), _) => format!("@t[..{}]", end),
         _ => "@t[?]".to_string(),
     }
 }
@@ -114,19 +114,19 @@ pub(crate) fn format_temporal_tag(dates: &DateInfo, old_tag: &str) -> String {
     if old_content.ends_with("..") {
         if let Some(end) = &dates.end_date {
             let start = old_content.strip_suffix("..").unwrap_or("");
-            return format!("@t[{start}..{end}]");
+            return format!("@t[{}..{}]", start, end);
         }
     }
 
     // If we have both dates, create a range
     if let (Some(start), Some(end)) = (&dates.start_date, &dates.end_date) {
-        return format!("@t[{start}..{end}]");
+        return format!("@t[{}..{}]", start, end);
     }
 
     // If ongoing, keep or make it ongoing
     if dates.is_ongoing {
         if let Some(start) = &dates.start_date {
-            return format!("@t[{start}..]");
+            return format!("@t[{}..]", start);
         }
         // Keep existing start if we're just confirming ongoing
         if old_content.contains("..") {

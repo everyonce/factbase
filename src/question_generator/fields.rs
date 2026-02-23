@@ -70,8 +70,9 @@ pub fn generate_required_field_questions(
         None => return questions, // No type, no required fields
     };
 
-    let Some(required) = required_fields.get(&doc_type) else {
-        return questions;
+    let required = match required_fields.get(&doc_type) {
+        Some(fields) => fields,
+        None => return questions, // No required fields for this type
     };
 
     // Detect fields present in document
@@ -85,7 +86,8 @@ pub fn generate_required_field_questions(
                 QuestionType::Missing,
                 None,
                 format!(
-                    "Required field \"{field}\" is missing for {doc_type} document - please add"
+                    "Required field \"{}\" is missing for {} document - please add",
+                    field, doc_type
                 ),
             ));
         }
