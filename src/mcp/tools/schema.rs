@@ -193,13 +193,13 @@ pub fn tools_list() -> Value {
                 }
             },
             {
-                "name": "lint_repository",
+                "name": "check_repository",
                 "description": "Run quality checks and generate review questions. Lints all documents, or a single document if doc_id is provided.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
-                        "doc_id": { "type": "string", "description": "Lint a single document (optional, lints all if omitted)" },
+                        "doc_id": { "type": "string", "description": "Check a single document (optional, lints all if omitted)" },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" }
                     }
                 }
@@ -304,7 +304,7 @@ mod tests {
         assert!(names.contains(&"get_entity"));
         assert!(names.contains(&"get_review_queue"));
         assert!(names.contains(&"answer_questions"));
-        assert!(names.contains(&"lint_repository"));
+        assert!(names.contains(&"check_repository"));
         assert!(names.contains(&"scan_repository"));
         assert!(names.contains(&"init_repository"));
         assert!(names.contains(&"apply_review_answers"));

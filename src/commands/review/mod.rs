@@ -11,6 +11,7 @@
 
 mod apply;
 mod args;
+mod clear;
 mod import;
 mod status;
 
@@ -18,31 +19,38 @@ mod status;
 pub use args::ReviewArgs;
 
 use apply::cmd_review_apply;
+use clear::cmd_review_clear;
 use import::cmd_review_import;
 use status::cmd_review_status;
 
 /// Main entry point for the review command.
 pub async fn cmd_review(args: ReviewArgs) -> anyhow::Result<()> {
-    // Check for mutually exclusive flags
-    let mode_count = [args.apply, args.status, args.import_questions.is_some()]
-        .iter()
-        .filter(|&&x| x)
-        .count();
+    let mode_count = [
+        args.apply,
+        args.status,
+        args.clear,
+        args.import_questions.is_some(),
+    ]
+    .iter()
+    .filter(|&&x| x)
+    .count();
 
     if mode_count == 0 {
-        anyhow::bail!("One of --apply, --status, or --import-questions must be specified");
+        anyhow::bail!(
+            "One of --apply, --status, --clear, or --import-questions must be specified"
+        );
     }
 
     if mode_count > 1 {
-        anyhow::bail!(
-            "Cannot use multiple modes at the same time (--apply, --status, --import-questions)"
-        );
+        anyhow::bail!("Cannot use multiple modes at the same time");
     }
 
     if args.status {
         cmd_review_status(&args)?;
     } else if args.apply {
         cmd_review_apply(&args).await?;
+    } else if args.clear {
+        cmd_review_clear(&args)?;
     } else if let Some(ref path) = args.import_questions {
         cmd_review_import(&args, path)?;
     }

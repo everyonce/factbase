@@ -21,11 +21,11 @@ pub(super) const SCHEMA_VERSION: i32 = 7;
 /// Migrations are run in order for versions > current user_version.
 /// Version 1 is the baseline schema (created by init_schema).
 pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
-    // Version 2: Add last_lint_at column for incremental linting
+    // Version 2: Add last_check_at column for incremental checking
     (
         2,
-        "Add last_lint_at to repositories",
-        "ALTER TABLE repositories ADD COLUMN last_lint_at TIMESTAMP;",
+        "Add last_check_at to repositories",
+        "ALTER TABLE repositories ADD COLUMN last_check_at TIMESTAMP;",
     ),
     // Version 3: Add index on file_modified_at for --since filter performance
     (
@@ -74,7 +74,7 @@ impl Database {
                 perspective TEXT,
                 created_at TIMESTAMP NOT NULL,
                 last_indexed_at TIMESTAMP,
-                last_lint_at TIMESTAMP
+                last_check_at TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,

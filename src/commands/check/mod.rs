@@ -1,4 +1,4 @@
-//! Lint command for checking knowledge base quality.
+//! Check command for checking knowledge base quality.
 //!
 //! This module provides the `factbase lint` command which checks for:
 //! - Orphan documents (no incoming or outgoing links)
@@ -12,18 +12,18 @@
 //!
 //! # Module Organization
 //!
-//! - `args` - Command argument parsing (`LintArgs`)
+//! - `args` - Command argument parsing (`CheckArgs`)
 //! - `checks` - Individual lint check functions
 //! - `review` - Review question generation
 //! - `output` - Output formatting structs
-//! - `incremental` - Incremental lint tracking (timestamps, filtering)
+//! - `incremental` - Incremental check tracking (timestamps, filtering)
 //! - `watch` - Watch mode for continuous linting
 //! - `execute` - Lint execution helpers
 //!
 //! # Public API
 //!
-//! Only [`LintArgs`] and [`cmd_lint`] are exported for use by main.rs.
-//! Internal submodules are used within the lint command implementation.
+//! Only [`CheckArgs`] and [`cmd_check`] are exported for use by main.rs.
+//! Internal submodules are used within the check command implementation.
 
 mod args;
 mod checks;
@@ -33,13 +33,13 @@ mod output;
 mod review;
 mod watch;
 
-// Re-exports for external use (only LintArgs is used by main.rs)
-pub use args::LintArgs;
+// Re-exports for external use (only CheckArgs is used by main.rs)
+pub use args::CheckArgs;
 
 // Internal imports from submodules
-use checks::{lint_document_content, DocLintResult, ParallelLintOptions};
+use checks::{check_document_content, DocCheckResult, ParallelCheckOptions};
 use output::{
-    print_lint_result, ExportedDocQuestions, LintResult, LintSourceStats, LintTemporalStats,
+    print_check_result, ExportedDocQuestions, CheckResult, CheckSourceStats, CheckTemporalStats,
 };
 
 use super::{
@@ -48,19 +48,19 @@ use super::{
 };
 use chrono::Utc;
 use factbase::{config::validate_timeout, format_json, format_yaml, ProgressReporter};
-use incremental::{filter_documents_by_time, get_effective_since, update_lint_timestamps};
+use incremental::{filter_documents_by_time, get_effective_since, update_check_timestamps};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use tracing::info;
-use watch::run_lint_watch_mode;
+use watch::run_check_watch_mode;
 
 #[tracing::instrument(
-    name = "cmd_lint",
+    name = "cmd_check",
     skip(args),
-    fields(repo = ?args.repo, check_temporal = args.check_temporal, check_sources = args.check_sources, review = args.review)
+    fields(repo = ?args.repo, check_temporal = args.check_temporal, check_sources = args.check_sources, review = true)
 )]
-pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
+pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
     let (config, db) = setup_database()?;
     let repos = db.list_repositories()?;
 
@@ -87,14 +87,11 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
         validate_timeout(timeout)?;
     }
 
-    // Initialize ReviewLlm when --review flag is used
-    // Currently question generation is rule-based, but this prepares for future LLM-based generation
-    let _review_llm = if args.review {
+    // Initialize ReviewLlm for question generation
+    let _review_llm = {
         let review_llm = setup_review_llm_with_timeout(&config, args.timeout).await;
         info!("Review LLM initialized with model: {}", review_llm.model());
         Some(review_llm)
-    } else {
-        None
     };
 
     // Initialize embedding + LLM providers when --cross-check is used
@@ -107,7 +104,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
         None
     };
 
-    let repos_to_lint = resolve_repos(repos, args.repo.as_deref())?;
+    let repos_to_check = resolve_repos(repos, args.repo.as_deref())?;
 
     // Unified progress reporter for both review and cross-check passes
     let progress = ProgressReporter::Cli { quiet: args.quiet };
@@ -121,14 +118,14 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
 
     // Temporal stats aggregation
     let mut temporal_stats = if check_temporal {
-        Some(LintTemporalStats::default())
+        Some(CheckTemporalStats::default())
     } else {
         None
     };
 
     // Source stats aggregation
     let mut source_stats = if check_sources {
-        Some(LintSourceStats::default())
+        Some(CheckSourceStats::default())
     } else {
         None
     };
@@ -142,10 +139,10 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
     let mut review_already_in_queue: usize = 0;
     let mut review_skipped_reviewed: usize = 0;
 
-    // Track lint start time for updating last_lint_at
-    let lint_start_time = Utc::now();
+    // Track lint start time for updating last_check_at
+    let check_start_time = Utc::now();
 
-    for repo in &repos_to_lint {
+    for repo in &repos_to_check {
         if is_table_format {
             println!("Linting repository: {} ({})", repo.name, repo.id);
         }
@@ -164,7 +161,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
 
         if is_table_format && effective_since.is_some() {
             println!(
-                "  Incremental lint: {}/{} documents to check",
+                "  Incremental check: {}/{} documents to check",
                 docs.len(),
                 db.list_documents(None, Some(&repo.id), None, 10000)?.len()
             );
@@ -202,10 +199,8 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             .as_ref()
             .and_then(|p| p.allowed_types.as_ref());
 
-        // Report review phase via ProgressReporter
-        if args.review {
-            progress.phase("Generating review questions");
-        }
+        // Report check phase via ProgressReporter
+        progress.phase("Generating review questions");
 
         // Process documents in batches if batch_size > 0, otherwise process all at once
         let doc_batches: Vec<&[factbase::Document]> = if batch_size > 0 {
@@ -226,21 +221,21 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             }
 
             // Parallel processing of temporal and source checks for this batch
-            let parallel_results: Option<Vec<DocLintResult>> = if args.parallel {
+            let parallel_results: Option<Vec<DocCheckResult>> = if args.parallel {
                 if is_table_format && !args.quiet && batch_size == 0 {
                     println!("  Processing {} documents in parallel...", batch_docs.len());
                 }
-                let opts = ParallelLintOptions {
+                let opts = ParallelCheckOptions {
                     check_temporal,
                     check_sources,
                     min_length: args.min_length,
                     max_age_days: args.max_age,
                     allowed_types: allowed_types.cloned(),
                 };
-                let results: Vec<DocLintResult> = batch_docs
+                let results: Vec<DocCheckResult> = batch_docs
                     .par_iter()
                     .map(|doc| {
-                        lint_document_content(
+                        check_document_content(
                             &doc.content,
                             &doc.id,
                             &doc.title,
@@ -307,9 +302,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                 } else {
                     doc_idx
                 };
-                if args.review {
-                    progress.report(global_idx + 1, docs.len(), &doc.title);
-                }
+                progress.report(global_idx + 1, docs.len(), &doc.title);
 
                 // Get pre-fetched links for this document
                 let (links_from, links_to) = batch_links
@@ -359,8 +352,8 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
                     errors += src_errors;
                 }
 
-                // Generate review questions when --review flag is set
-                if args.review {
+                // Generate review questions
+                {
                     // Count existing questions and reviewed markers for summary
                     let existing = factbase::parse_review_queue(&doc.content).unwrap_or_default();
                     review_already_in_queue += existing.len();
@@ -483,9 +476,9 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
         }
     }
 
-    // Update last_lint_at timestamp for incremental mode
+    // Update last_check_at timestamp for incremental mode
     if args.incremental && !args.dry_run {
-        update_lint_timestamps(&db, &repos_to_lint, lint_start_time, is_table_format)?;
+        update_check_timestamps(&db, &repos_to_check, check_start_time, is_table_format)?;
     }
 
     // Calculate final coverage percentage
@@ -531,7 +524,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
     }
 
     // Print review summary when --review was used
-    if args.review && is_table_format && !args.quiet {
+    if is_table_format && !args.quiet {
         let total_generated = review_new_total + review_already_in_queue;
         println!(
             "\nReview: Generated {total_generated} total, {review_new_total} new \
@@ -541,7 +534,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
     }
 
     // Output results
-    let result = LintResult {
+    let result = CheckResult {
         errors,
         warnings,
         fixed,
@@ -550,7 +543,7 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
         source_stats,
     };
 
-    print_lint_result(&result, format)?;
+    print_check_result(&result, format)?;
 
     // Watch mode: monitor for file changes and re-lint
     if args.watch {
@@ -560,8 +553,8 @@ pub async fn cmd_lint(args: LintArgs) -> anyhow::Result<()> {
             println!("\nWatching for changes... (Press Ctrl+C to stop)");
         }
 
-        let mut ctx = WatchContext::new(&config, repos_to_lint)?;
-        run_lint_watch_mode(&mut ctx, &db, args.min_length, args.quiet)?;
+        let mut ctx = WatchContext::new(&config, repos_to_check)?;
+        run_check_watch_mode(&mut ctx, &db, args.min_length, args.quiet)?;
     }
 
     Ok(())

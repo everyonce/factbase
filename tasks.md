@@ -2,9 +2,9 @@
 
 ## Project Status
 
-**Phases 1-48 complete, Phase 49 in progress**. Releases: v0.1.0 through v0.4.3. Current Cargo.toml version: v48.5.5.
+**Phases 1-49 complete**. Releases: v0.1.0 through v0.4.3. Current Cargo.toml version: v49.1.3.
 
-## Key Learnings from Past Phases (1-48)
+## Key Learnings from Past Phases (1-49)
 
 ### Architecture & Patterns
 - Filesystem is truth — markdown files on disk are authoritative, SQLite is the index
@@ -123,6 +123,9 @@
 - `fetch_active_doc_content()` and `CONTENT_ONLY_QUERY` in `database/stats/mod.rs`
 - `parse_since_filter()` in `commands/utils.rs`
 - Promote internal helpers to `pub` + re-export through `lib.rs` when integration tests need them
+- Semantic concepts (e.g., "is deferred?") belong as methods on model structs, not inline patterns repeated across files
+- `count_deferred_questions()` as Database helper — DB methods can delegate to processor parsing functions within the same crate
+- MCP tool documentation drifts easily — `test_schema_dispatch_consistency` catches dispatch drift, but doc tables need manual sync
 
 ### Entity Deduplication (Phase 46)
 - Two extraction patterns: H3+ headings under H2 sections, and bold-name list items
@@ -156,12 +159,9 @@
 - CI: 7 jobs — clippy (all-features), test (default + bin), test-web, test-features matrix (5 combos), readme-validation
 - Binary sizes: no-features 6.7MB, +progress +0.1MB, +compression +0.6MB, +mcp +1MB, +bedrock +7MB, full 16MB, +web +1MB
 
-## Active Work
+## Completed Phases
 
-- [ ] Phase 49: Consolidation & Documentation Sync — see [tasks/phase49.md](tasks/phase49.md)
-  - [ ] Task 1: Add `is_deferred()` method to ReviewQuestion (1.1-1.2)
-  - [ ] Task 2: Sync MCP tool documentation (2.1-2.3)
-  - [ ] Task 3: Extract `count_deferred_questions` as Database helper (3.1-3.2)
+- Phase 49: Consolidation & Documentation Sync ✓ (Tasks 1-3, commits fa6b989, 1b513e9, 1971dae)
 
 ## Future Considerations
 

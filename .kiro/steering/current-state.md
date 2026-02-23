@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Phases 1-48 complete, Phase 49 in progress**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v48.5.5.
+**Phases 1-49 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v49.1.3.
 
 ### Active Work
-- Phase 49: Consolidation & Documentation Sync — Tasks 1-3 pending (is_deferred() method, MCP tool doc sync, count_deferred_questions helper)
+- No active phases. All work through Phase 49 is complete.
 
 ## Current Configuration
 
@@ -22,11 +22,6 @@
 ### Link Detection Truncation  
 - **Current limit**: ~40K chars per document in batch mode
 - **Impact**: Entity mentions beyond limit may not be detected in very long documents
-
-### MCP Tool Count Documentation Drift
-- **Actual tools in schema.rs**: 20
-- **README.md claims**: 21 (includes removed/renamed tools, missing new ones)
-- **Phase 49 Task 2** will resolve this discrepancy
 
 ## CLI Commands Reference
 
@@ -46,8 +41,8 @@
 - `factbase status [--repo <id>]` - Show statistics
 - `factbase stats` - Quick aggregate stats
 - `factbase doctor` - Check inference backend connectivity
-- `factbase lint [--repo <id>]` - Quality checks
-- `factbase lint --cross-check` - Cross-document fact validation (requires inference backend)
+- `factbase check [--repo <id>]` - Quality checks
+- `factbase check --cross-check` - Cross-document fact validation (requires inference backend)
 - `factbase grep <pattern>` - Content search (like grep)
 - `factbase export <repo> <output>` - Backup documents
 - `factbase import <repo> <input>` - Restore documents
@@ -65,7 +60,7 @@
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (20 in schema.rs — docs say 21, see Phase 49 Task 2)
+## MCP Tools (20)
 
 ### Search Operations
 | Tool | Description |
@@ -94,7 +89,7 @@
 |------|-------------|
 | `get_review_queue` | Get pending review questions |
 | `answer_questions` | Answer one or more review questions |
-| `lint_repository` | Run quality checks and generate review questions |
+| `check_repository` | Run quality checks and generate review questions |
 | `apply_review_answers` | Process answered review questions |
 | `get_deferred_items` | Get deferred questions needing human attention |
 
@@ -141,7 +136,7 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: ~1054 lib tests (default features); ~1115 lib tests (with all features including web)
+- Currently: ~1058 lib tests (default features); ~1119 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
@@ -158,7 +153,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Vitest with jsdom environment
 - Currently: 56 tests
 
-### Total: ~1405 unit/binary tests (default features), ~1473 (with all features) + 73+ integration tests + 56 frontend tests
+### Total: ~1408 unit/binary tests (default features), ~1476 (with all features) + 73+ integration tests + 56 frontend tests
 
 ## Codebase Structure
 

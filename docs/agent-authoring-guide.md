@@ -55,6 +55,11 @@ More content...
    /projects/platform-api.md → type: "project"
    /concepts/caching.md      → type: "concept"
    ```
+   Entity folder convention: if the filename matches the parent folder, the type comes from the grandparent:
+   ```
+   /companies/xsolis/xsolis.md       → type: "company" (entity doc)
+   /companies/xsolis/people/jane.md  → type: "person"  (normal)
+   ```
 
 4. **Embedding Generation**: Content is vectorized for semantic search
 
@@ -70,12 +75,14 @@ More content...
 
 | Syntax | Meaning | Example |
 |--------|---------|---------|
-| `@t[=2024-03]` | Point in time / as of | `Founded company @t[=2019-06]` |
-| `@t[~2024-03]` | Last verified / last known | `Lives in Austin @t[~2024-01]` |
+| `@t[=2024-03]` | Event — happened at this date | `Founded company @t[=2019-06]` |
+| `@t[~2024-03]` | State — true as of this date, may have changed | `Lives in Austin @t[~2024-01]` |
 | `@t[2020..2022]` | Date range | `CTO at Acme @t[2020..2022]` |
 | `@t[2021..]` | Started, ongoing | `Board member @t[2021..]` |
 | `@t[..2020]` | Historical, ended | `Advisor role @t[..2020]` |
 | `@t[?]` | Unknown / unverified | `Has PhD @t[?]` |
+
+**`=` vs `~` rule of thumb:** Use `=` for things that happened once (founded, graduated, married, acquired). Use `~` for things that could change and you're recording when you last checked (lives in, works at, employee count, contact info).
 
 ### Date Granularity
 
@@ -88,11 +95,12 @@ More content...
 
 | Static (no date needed) | Dynamic (always date) |
 |------------------------|----------------------|
-| Education degrees | Current job title |
-| Historical events | Current employer |
-| Past projects completed | Contact information |
-| Awards received | Team members |
-| Publications | Office location |
+| Historical events | Current job title |
+| Past projects completed | Current employer |
+| Awards received | Contact information |
+| Publications | Team members |
+
+Education degrees are static facts, but graduation years should still use `@t[=YYYY]` to record when they occurred.
 
 ### Examples
 
@@ -134,17 +142,109 @@ Use markdown footnotes to cite sources. This enables fact verification and confi
 | Press release | `Press release, 2024-01-15` |
 | News | `News article, TechCrunch, 2024-01-15` |
 | Filing | `SEC filing (10-K), 2024` |
-| Direct | `Direct conversation, 2024-01-15` |
+| Author knowledge | `Author knowledge, see [[a1b2c3]]` |
 | Email | `Email from John Smith, 2024-01-15` |
 | Event | `Conference bio, AWS re:Invent 2024` |
+| Slack | `Slack #channel-name, 2024-01-15, https://workspace.slack.com/archives/...` |
 | Inferred | `Inferred from org chart` |
 | Unverified | `Unverified` |
+
+### Source Traceability (Required)
+
+Every source MUST include enough detail to locate the original data. A platform name alone is never sufficient.
+
+**Good sources** — traceable back to original data:
+```markdown
+[^1]: LinkedIn profile (linkedin.com/in/jsmith), scraped 2024-01-15
+[^2]: Slack #project-alpha, 2024-01-10, https://workspace.slack.com/archives/C01234/p1234
+[^3]: Email from Jane Doe, subject "Q4 Reorg", 2024-01-15
+[^4]: Author knowledge, see [[a1b2c3]]
+```
+
+**Bad sources** — cannot be verified or relocated:
+```markdown
+[^1]: LinkedIn        ← which profile? when?
+[^2]: Slack message   ← which channel? which message?
+[^3]: Outlook         ← what email? from whom?
+[^4]: Internal        ← internal what?
+```
+
+### Author Knowledge Documents
+
+Facts known directly by the knowledge base owner (not obtained by agents) should be recorded in dedicated author knowledge files:
+
+```markdown
+# Author Knowledge: Project Context
+
+## Team Structure
+- Alice Chen reports to Bob Martinez @t[2024..]
+- Platform team owns the billing service @t[2024..]
+
+## Business Context
+- Series B targeting Q3 2025
+- Board approved headcount for 5 new engineers @t[=2025-01]
+```
+
+Place these in an `author-knowledge/` folder (type: "author-knowledge"). Other documents cite them like any source:
+
+```markdown
+- Alice Chen reports to Bob Martinez @t[2024..] [^3]
+
+---
+[^3]: Author knowledge, see [[a1b2c3]]
+```
+
+**Important:** Author knowledge files are for facts the human owner knows firsthand. Agents must NEVER create or populate these files. Agents must not use "Author knowledge" as a source for facts they obtained from other data — use the actual source instead.
 
 ### Multiple Sources
 
 ```markdown
 - Acquired StartupX for $50M @t[=2023-06] [^1][^2]
 ```
+
+---
+
+## Definitions Files
+
+When you encounter undefined acronyms, jargon, or domain-specific terms (flagged as `@q[ambiguous]` by lint), create or update a definitions file rather than only answering the question inline. This builds a reusable glossary for the knowledge base.
+
+### Structure
+
+Place definitions files in a `definitions/` folder, organized by domain:
+
+```
+definitions/
+├── business-terms.md      → "TAM", "ARR", "NPS", "runway"
+├── technical-terms.md     → "gRPC", "CQRS", "eventual consistency"
+└── product-terms.md       → product-specific acronyms and jargon
+```
+
+### Template
+
+```markdown
+# Definitions: Business Terms
+
+## Acronyms
+- **TAM**: Total Addressable Market — the total revenue opportunity for a product
+- **SAM**: Serviceable Addressable Market — the portion of TAM reachable by the company
+- **NPS**: Net Promoter Score — customer satisfaction metric (-100 to 100)
+
+## Terms
+- **ARR**: Annual Recurring Revenue — annualized value of active subscriptions
+- **Runway**: Months of cash remaining at current burn rate
+- **Burn rate**: Monthly cash expenditure exceeding revenue
+```
+
+### Workflow for Ambiguous Questions
+
+When resolving `@q[ambiguous]` questions about acronyms or terms:
+
+1. Check if a `definitions/` file already covers the term
+2. If not, create or update the appropriate definitions file with the term
+3. Answer the review question with: `See [[id]] definitions file`
+4. The definition becomes searchable and linked across the knowledge base
+
+Do **not** create definitions files for one-off clarifications (like "is this home or work address?") — answer those directly.
 
 ---
 
@@ -298,12 +398,14 @@ alice_chen.md           ⚠️ works but hyphens preferred
 
 ```
 knowledge-base/
-├── people/           → type: "person"
-├── companies/        → type: "company"
-├── projects/         → type: "project"
-├── concepts/         → type: "concept"
-├── meetings/         → type: "meeting"
-└── notes/            → type: "note"
+├── people/              → type: "person"
+├── companies/           → type: "company"
+├── projects/            → type: "project"
+├── concepts/            → type: "concept"
+├── meetings/            → type: "meeting"
+├── definitions/         → type: "definition" (glossaries, acronyms)
+├── author-knowledge/    → type: "author-knowledge" (human-only facts)
+└── notes/               → type: "note"
 ```
 
 Folder names are automatically singularized: `people/` → "person"
@@ -318,7 +420,9 @@ Folder names are automatically singularized: `people/` → "person"
 | Vague references | "the project" won't link | Use exact names: "Platform API project" |
 | Undated employment | "Works at Acme" - when? | "Works at Acme @t[2023..]" |
 | Duplicate content | Same text in multiple docs | Link instead: "See [[abc123]]" |
-| Missing sources | Can't verify facts | Add footnotes with source type and date |
+| Missing sources | Can't verify facts | Add footnotes with source type, date, and locator |
+| Untraceable sources | "Slack message" can't be found | Include channel, date, URL, or subject line |
+| Using "Author knowledge" | Reserved for human owner only | Cite the actual source where you found the data |
 | Orphan documents | No links to/from others | Add context mentioning related entities |
 
 ---
@@ -387,7 +491,7 @@ After creating documents, Factbase will:
 1. **Scan**: `factbase scan` indexes new/changed files
 2. **Embed**: Generate semantic vectors for search
 3. **Link**: Detect entity mentions across all documents
-4. **Validate**: `factbase lint` checks for quality issues
+4. **Validate**: `factbase check` checks for quality issues
 
 The document becomes searchable immediately after scanning and will be linked to other documents that mention its title or ID.
 

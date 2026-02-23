@@ -84,6 +84,11 @@ impl ReviewQuestion {
         }
     }
 
+    /// Returns true if this question was deferred (unchecked but has an answer/note).
+    pub fn is_deferred(&self) -> bool {
+        !self.answered && self.answer.is_some()
+    }
+
     /// Returns a JSON representation of the base question fields.
     pub fn to_json(&self) -> Value {
         serde_json::json!({
@@ -207,5 +212,26 @@ mod tests {
         let json = q.to_json();
         assert_eq!(json["type"], "missing");
         assert!(json["line_ref"].is_null());
+    }
+
+    #[test]
+    fn test_is_deferred_unchecked_with_answer() {
+        let mut q = ReviewQuestion::new(QuestionType::Temporal, None, "When?".to_string());
+        q.answer = Some("defer".to_string());
+        assert!(q.is_deferred());
+    }
+
+    #[test]
+    fn test_is_deferred_answered() {
+        let mut q = ReviewQuestion::new(QuestionType::Temporal, None, "When?".to_string());
+        q.answered = true;
+        q.answer = Some("2024".to_string());
+        assert!(!q.is_deferred());
+    }
+
+    #[test]
+    fn test_is_deferred_unanswered_no_answer() {
+        let q = ReviewQuestion::new(QuestionType::Temporal, None, "When?".to_string());
+        assert!(!q.is_deferred());
     }
 }

@@ -123,10 +123,13 @@ fn parse_source_type(text: &str) -> (String, String) {
         ("Press release", "Press release"),
         ("News article", "News"),
         ("Public filing", "Filing"),
+        ("Author knowledge", "Author knowledge"),
         ("Direct conversation", "Direct"),
         ("Email from", "Email"),
         ("Conference bio", "Event"),
         ("Speaker bio", "Event"),
+        ("Slack #", "Slack"),
+        ("Slack message", "Slack"),
         ("Inferred from", "Inferred"),
         ("Unverified", "Unverified"),
         ("Public records", "Filing"),
@@ -158,7 +161,7 @@ fn parse_source_type(text: &str) -> (String, String) {
 /// Extract date from source definition text.
 /// Looks for dates in formats: YYYY-MM-DD, YYYY-MM, YYYY
 /// Returns the most specific (longest) date found.
-fn extract_source_date(text: &str) -> Option<String> {
+pub fn extract_source_date(text: &str) -> Option<String> {
     let mut best_date: Option<String> = None;
 
     for cap in DATE_EXTRACT_REGEX.captures_iter(text) {

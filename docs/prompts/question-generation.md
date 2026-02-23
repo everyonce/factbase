@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document defines the LLM prompt for generating review questions during `factbase lint --review`.
+This document defines the LLM prompt for generating review questions during `factbase check`.
 
 ## Input Parameters
 

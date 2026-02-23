@@ -1,4 +1,4 @@
-//! Repository-wide lint MCP tool.
+//! Repository-wide check MCP tool.
 
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
@@ -7,14 +7,14 @@ use crate::llm::LlmProvider;
 use crate::mcp::tools::get_str_arg;
 use crate::models::Perspective;
 use crate::progress::ProgressReporter;
-use crate::question_generator::lint::{lint_all_documents, LintConfig};
+use crate::question_generator::check::{check_all_documents, CheckConfig};
 use serde_json::Value;
 
-/// Default concurrency for parallel lint (LLM calls).
+/// Default concurrency for parallel check (LLM calls).
 const LINT_CONCURRENCY: usize = 5;
 
-/// Runs lint --review across all documents in a repository via MCP.
-pub async fn lint_repository(
+/// Runs check across all documents in a repository via MCP.
+pub async fn check_repository(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
     llm: Option<&dyn LlmProvider>,
@@ -28,13 +28,13 @@ pub async fn lint_repository(
         .and_then(Value::as_bool)
         .unwrap_or(false);
 
-    // If doc_id is provided, lint just that one document (replaces generate_questions)
+    // If doc_id is provided, check just that one document (replaces generate_questions)
     if doc_id.is_some() {
         return super::generate_questions(db, embedding, llm, args).await;
     }
 
-    let lint_concurrency = crate::Config::load(None)
-        .map(|c| c.processor.lint_concurrency)
+    let check_concurrency = crate::Config::load(None)
+        .map(|c| c.processor.check_concurrency)
         .unwrap_or(LINT_CONCURRENCY);
 
     // Load perspective for stale_days and required_fields
@@ -72,36 +72,33 @@ pub async fn lint_repository(
     let total = docs.len();
     progress.phase("Generating review questions");
 
-    let config = LintConfig {
+    let config = CheckConfig {
         stale_days,
         required_fields,
         dry_run,
-        concurrency: lint_concurrency,
+        concurrency: check_concurrency,
     };
 
-    let results = lint_all_documents(&docs, db, embedding, llm, &config, progress).await?;
+    let results = check_all_documents(&docs, db, embedding, llm, &config, progress).await?;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
+    let total_pruned: usize = results.iter().map(|r| r.pruned_questions).sum();
     let total_existing: usize = results
         .iter()
         .map(|r| r.existing_unanswered + r.existing_answered)
         .sum();
     let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
-    let deferred_count: usize = docs
-        .iter()
-        .filter_map(|d| crate::processor::parse_review_queue(&d.content))
-        .flatten()
-        .filter(|q| !q.answered && q.answer.is_some())
-        .count();
+    let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
     let details: Vec<Value> = results
         .iter()
-        .filter(|r| r.new_questions > 0)
+        .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)
         .map(|r| {
             serde_json::json!({
                 "doc_id": r.doc_id,
                 "doc_title": r.doc_title,
                 "new_questions": r.new_questions,
+                "pruned_questions": r.pruned_questions,
             })
         })
         .collect();
@@ -112,6 +109,7 @@ pub async fn lint_repository(
         "total_questions_generated": total_new + total_existing,
         "new_unanswered": total_new,
         "already_in_queue": total_existing,
+        "pruned_stale": total_pruned,
         "skipped_reviewed": total_skipped,
         "deferred_count": deferred_count,
         "dry_run": dry_run,

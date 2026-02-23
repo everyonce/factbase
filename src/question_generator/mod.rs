@@ -24,6 +24,7 @@
 //! - [`generate_temporal_questions`] - Generate temporal questions
 //! - [`generate_conflict_questions`] - Generate conflict questions
 //! - [`generate_missing_questions`] - Generate missing source questions
+//! - [`generate_source_quality_questions`] - Generate questions for untraceable sources
 //! - [`generate_ambiguous_questions`] - Generate ambiguous questions
 //! - [`generate_stale_questions`] - Generate stale questions
 //! - [`generate_duplicate_questions`] - Generate duplicate questions
@@ -38,7 +39,7 @@ pub mod cross_validate;
 mod duplicate;
 pub(crate) mod facts;
 mod fields;
-pub mod lint;
+pub mod check;
 mod missing;
 mod stale;
 mod temporal;
@@ -50,7 +51,7 @@ pub use ambiguous::generate_ambiguous_questions;
 pub use conflict::generate_conflict_questions;
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
-pub use missing::generate_missing_questions;
+pub use missing::{generate_missing_questions, generate_source_quality_questions};
 pub use stale::generate_stale_questions;
 pub use temporal::generate_temporal_questions;
 

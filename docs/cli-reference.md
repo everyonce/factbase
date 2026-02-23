@@ -326,7 +326,7 @@ factbase doctor
 # All checks passed. Ready to scan.
 ```
 
-## `factbase lint [--repo <repo>] [--min-length <n>] [--max-age <days>] [--check-duplicates] [--min-similarity <n>] [--fix]`
+## `factbase check [--repo <repo>] [--min-length <n>] [--max-age <days>] [--check-duplicates] [--min-similarity <n>] [--fix]`
 
 Check knowledge base quality for common issues.
 
@@ -345,12 +345,12 @@ Check knowledge base quality for common issues.
 Checks for: orphan documents, broken `[[id]]` links, stub documents, unknown types, stale documents, duplicates.
 
 ```bash
-factbase lint
-factbase lint --max-age 365
-factbase lint --incremental
+factbase check
+factbase check --max-age 365
+factbase check --incremental
 ```
 
-## `factbase lint --review [--repo <repo>]`
+## `factbase check [--repo <repo>]`
 
 Generate review questions for documents using LLM analysis.
 
@@ -406,7 +406,7 @@ The review system enables human-in-the-loop quality improvement for fact documen
 ### Workflow Overview
 
 ```
-1. Generate questions    →  factbase lint --review
+1. Generate questions    →  factbase check
 2. Answer questions      →  Edit markdown files
 3. Apply answers         →  factbase review --apply
 4. Repeat as needed
@@ -414,7 +414,7 @@ The review system enables human-in-the-loop quality improvement for fact documen
 
 ### Answering Questions
 
-Run `lint --review` to append a Review Queue section to documents with issues:
+Run `check` to append a Review Queue section to documents with issues:
 
 ```markdown
 <!-- factbase:review -->

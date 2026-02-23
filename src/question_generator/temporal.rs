@@ -9,6 +9,7 @@ use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
     extract_reviewed_date, ONGOING_TAG_REGEX, TEMPORAL_TAG_DETECT_REGEX, TEMPORAL_TAG_FULL_REGEX,
 };
+use crate::processor::find_malformed_tags;
 
 use super::iter_fact_lines;
 
@@ -52,6 +53,15 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
                 ));
             }
         }
+    }
+
+    // Flag malformed temporal tags (e.g., @t[~2025-10..~2026-01])
+    for (line_number, raw) in find_malformed_tags(content) {
+        questions.push(ReviewQuestion::new(
+            QuestionType::Temporal,
+            Some(line_number),
+            format!("Malformed temporal tag {raw} — see docs for valid syntax"),
+        ));
     }
 
     questions

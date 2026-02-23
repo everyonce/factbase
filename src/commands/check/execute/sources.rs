@@ -2,7 +2,7 @@
 //!
 //! Validates source references and definitions.
 
-use crate::commands::lint::output::LintSourceStats;
+use crate::commands::check::output::CheckSourceStats;
 use factbase::{
     calculate_fact_stats, count_facts_with_sources, parse_source_definitions,
     parse_source_references, Document,
@@ -12,7 +12,7 @@ use std::collections::HashSet;
 /// Check source references for a document and update stats.
 pub fn check_source_refs(
     doc: &Document,
-    source_stats: &mut Option<LintSourceStats>,
+    source_stats: &mut Option<CheckSourceStats>,
     is_table_format: bool,
 ) -> (usize, usize) {
     let mut warnings = 0;
@@ -92,13 +92,13 @@ pub fn check_source_refs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::lint::execute::test_helpers::make_test_doc;
+    use crate::commands::check::execute::test_helpers::make_test_doc;
 
     #[test]
     fn test_check_source_refs_orphan_reference() {
         // Reference [^1] without definition
         let doc = make_test_doc("# Person\n\n- CEO at Acme [^1]\n");
-        let mut stats = Some(LintSourceStats::default());
+        let mut stats = Some(CheckSourceStats::default());
         let (warnings, errors) = check_source_refs(&doc, &mut stats, false);
         assert_eq!(errors, 1); // orphan reference
         assert_eq!(warnings, 0);
@@ -109,7 +109,7 @@ mod tests {
     fn test_check_source_refs_orphan_definition() {
         // Definition [^1] without reference
         let doc = make_test_doc("# Person\n\n- CEO at Acme\n\n---\n[^1]: LinkedIn, 2024-01-15");
-        let mut stats = Some(LintSourceStats::default());
+        let mut stats = Some(CheckSourceStats::default());
         let (warnings, errors) = check_source_refs(&doc, &mut stats, false);
         assert_eq!(errors, 0);
         assert_eq!(warnings, 1); // orphan definition
@@ -121,7 +121,7 @@ mod tests {
         // Matching reference and definition
         let doc =
             make_test_doc("# Person\n\n- CEO at Acme [^1]\n\n---\n[^1]: LinkedIn, 2024-01-15");
-        let mut stats = Some(LintSourceStats::default());
+        let mut stats = Some(CheckSourceStats::default());
         let (warnings, errors) = check_source_refs(&doc, &mut stats, false);
         assert_eq!(errors, 0);
         assert_eq!(warnings, 0);
@@ -134,7 +134,7 @@ mod tests {
         let doc = make_test_doc(
             "# Person\n\n- CEO at Acme [^1]\n- CTO at BigCo [^2]\n\n---\n[^1]: LinkedIn, 2024-01-15\n[^2]: Website, 2024-02-01",
         );
-        let mut stats = Some(LintSourceStats::default());
+        let mut stats = Some(CheckSourceStats::default());
         let (warnings, errors) = check_source_refs(&doc, &mut stats, false);
         assert_eq!(errors, 0);
         assert_eq!(warnings, 0);

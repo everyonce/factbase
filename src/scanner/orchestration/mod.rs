@@ -81,10 +81,6 @@ pub async fn full_scan(
         OptionalProgress::none()
     };
 
-    if !ctx.opts.dry_run {
-        db.begin_transaction()?;
-    }
-
     let mut pending: Vec<PendingDoc> = Vec::new();
     let mut all_file_timings: Vec<(usize, usize, u64, u64)> = Vec::new();
     let mut total_docs_embedded = 0usize;
@@ -337,8 +333,6 @@ pub async fn full_scan(
     }
 
     if !ctx.opts.dry_run {
-        db.commit_transaction()?;
-
         // Invalidate cross-check hashes for documents that link TO changed documents.
         // When a document's content changes, any document referencing it may now have
         // stale cross-validation results and needs re-checking.

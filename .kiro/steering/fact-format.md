@@ -38,7 +38,7 @@ Regex pattern for extraction:
 
 ### Lint Integration
 
-The `factbase lint` command should check:
+The `factbase check` command should check:
 - Percentage of facts with temporal tags
 - Valid date formats in tags
 - Footnote reference/definition matching
@@ -60,6 +60,6 @@ See [docs/review-system.md](../../docs/review-system.md) for full design.
 Question types: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]`
 
 Commands:
-- `factbase lint --review` - Generate questions
+- `factbase check` - Generate questions
 - `factbase review --apply` - Process answered questions
 - `factbase review --status` - Show pending question summary

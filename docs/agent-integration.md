@@ -70,7 +70,7 @@ Factbase's workflow tools pick up natural requests automatically:
 | "Search factbase for info on Project Alpha" | Semantic search across all documents |
 | "Fix the factbase review queue" | Resolve workflow: finds stale/conflicting/missing data, researches fixes, applies answers |
 | "Improve the person documents in factbase" | Enrich workflow: scans for gaps, researches missing info, updates documents |
-| "Lint factbase" or "check factbase for quality issues" | Runs lint_repository to generate review questions across all documents |
+| "Lint factbase" or "check factbase for quality issues" | Runs check_repository to generate review questions across all documents |
 
 ## Repository Perspective
 
@@ -94,7 +94,7 @@ This flows into workflow instructions automatically — the agent knows your org
 Factbase improves iteratively:
 
 1. **Ingest** — agent adds documents from your data sources
-2. **Lint** — tell your agent "lint factbase" or "check factbase for quality issues" — it runs `lint_repository` to generate review questions across all documents
+2. **Lint** — tell your agent "lint factbase" or "check factbase for quality issues" — it runs `check_repository` to generate review questions across all documents
 3. **Resolve** — tell your agent "fix the factbase review queue" — it researches and resolves each question
 4. **Repeat** — each cycle produces fewer questions until documents stabilize
 
@@ -108,7 +108,7 @@ The agent has access to 21 tools. You don't need to know them — the workflows 
 | Search | `search_knowledge`, `search_content`, `search_temporal` |
 | Read | `get_entity`, `get_document_stats`, `list_entities`, `list_repositories`, `get_perspective` |
 | Write | `create_document`, `update_document`, `delete_document`, `bulk_create_documents` |
-| Quality | `get_review_queue`, `answer_question`, `bulk_answer_questions`, `generate_questions`, `lint_repository` |
+| Quality | `get_review_queue`, `answer_question`, `bulk_answer_questions`, `generate_questions`, `check_repository` |
 | Workflows | `workflow_start`, `workflow_next` |
 | Organize | `get_duplicate_entries` |
 

@@ -1,11 +1,13 @@
 //! Missing source question generation.
 //!
-//! Generates `@q[missing]` questions for facts without source references.
+//! Generates `@q[missing]` questions for facts without source references
+//! and for source definitions that lack traceability.
 
 use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{extract_reviewed_date, SOURCE_REF_DETECT_REGEX};
+use crate::processor::{parse_source_definitions, parse_source_references};
 
 use super::iter_fact_lines;
 
@@ -33,6 +35,77 @@ pub fn generate_missing_questions(content: &str) -> Vec<ReviewQuestion> {
             )
         })
         .collect()
+}
+
+/// Generate questions for source definitions that lack traceability.
+///
+/// A source like "Slack message" or "Outlook" with no channel, date, URL,
+/// or subject line cannot be verified. This flags those for human review.
+pub fn generate_source_quality_questions(content: &str) -> Vec<ReviewQuestion> {
+    let defs = parse_source_definitions(content);
+    let refs = parse_source_references(content);
+
+    defs.iter()
+        .filter(|d| {
+            // Only flag sources that are actually referenced by facts
+            refs.iter().any(|r| r.number == d.number) && is_untraceable_source(&d.context)
+        })
+        .map(|d| {
+            ReviewQuestion::new(
+                QuestionType::Missing,
+                Some(d.line_number),
+                format!(
+                    "Source [^{}] \"{}\" lacks traceability — add date, URL, channel, or other identifier to locate the original data",
+                    d.number,
+                    truncate(&d.context, 80),
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Check if a source definition is too vague to trace back to original data.
+fn is_untraceable_source(context: &str) -> bool {
+    let lower = context.trim().to_lowercase();
+
+    // Very short sources are almost always untraceable
+    // (e.g., "Slack", "Outlook", "Email", "Internal")
+    if lower.len() <= 20 && !lower.contains("unverified") {
+        // Short is OK if it contains a date or URL
+        let has_date = crate::processor::extract_source_date(context).is_some();
+        let has_url = context.contains("http") || context.contains("://");
+        if !has_date && !has_url {
+            return true;
+        }
+    }
+
+    // Known platform-only patterns that lack specifics
+    let vague_patterns = [
+        "slack message",
+        "slack conversation",
+        "outlook",
+        "email",
+        "internal",
+        "teams message",
+        "teams chat",
+        "chat message",
+    ];
+    for pattern in &vague_patterns {
+        // Match if the entire source is just the platform name (possibly with minor punctuation)
+        if lower == *pattern || lower == format!("{pattern}s") {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn truncate(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        &s[..s.floor_char_boundary(max)]
+    }
 }
 
 #[cfg(test)]
@@ -128,6 +201,84 @@ mod tests {
             questions.len(),
             1,
             "Old reviewed marker should not suppress missing source question"
+        );
+    }
+
+    // ==================== Source Quality Tests ====================
+
+    #[test]
+    fn test_source_quality_good_source_no_question() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: LinkedIn profile (linkedin.com/in/jsmith), scraped 2024-01-15";
+        let questions = generate_source_quality_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_source_quality_vague_slack() {
+        let content =
+            "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Slack message";
+        let questions = generate_source_quality_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("lacks traceability"));
+    }
+
+    #[test]
+    fn test_source_quality_vague_outlook() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Outlook";
+        let questions = generate_source_quality_questions(content);
+        assert_eq!(questions.len(), 1);
+    }
+
+    #[test]
+    fn test_source_quality_vague_email() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Email";
+        let questions = generate_source_quality_questions(content);
+        assert_eq!(questions.len(), 1);
+    }
+
+    #[test]
+    fn test_source_quality_good_slack_with_channel() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Slack #project-alpha, 2024-01-10, https://workspace.slack.com/archives/C01234/p1234";
+        let questions = generate_source_quality_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_source_quality_good_email_with_details() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Email from Jane Doe, subject \"Q4 Reorg\", 2024-01-15";
+        let questions = generate_source_quality_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_source_quality_unreferenced_vague_source_ignored() {
+        // Source [^2] is vague but not referenced by any fact — should not flag
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-15\n[^2]: Slack message";
+        let questions = generate_source_quality_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_source_quality_short_with_date_ok() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Internal, 2024-01-15";
+        let questions = generate_source_quality_questions(content);
+        assert!(questions.is_empty(), "Short source with date should be OK");
+    }
+
+    #[test]
+    fn test_source_quality_author_knowledge_ok() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Author knowledge, see [[a1b2c3]]";
+        let questions = generate_source_quality_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_source_quality_unverified_not_flagged() {
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Unverified";
+        let questions = generate_source_quality_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Unverified is an explicit acknowledgment, not a traceability issue"
         );
     }
 }

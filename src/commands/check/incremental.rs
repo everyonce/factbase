@@ -1,4 +1,4 @@
-//! Incremental lint tracking.
+//! Incremental check tracking.
 //!
 //! Handles filtering documents by modification time and tracking last lint timestamps.
 
@@ -8,11 +8,11 @@ use std::fs;
 use std::path::Path;
 use tracing::info;
 
-/// Determine the effective since filter for incremental linting.
+/// Determine the effective since filter for incremental checking.
 ///
 /// Priority:
 /// 1. Explicit --since flag takes precedence
-/// 2. --incremental uses repo.last_lint_at
+/// 2. --incremental uses repo.last_check_at
 /// 3. Otherwise, no filtering (returns None)
 pub fn get_effective_since(
     explicit_since: Option<DateTime<Utc>>,
@@ -23,17 +23,17 @@ pub fn get_effective_since(
     if let Some(since_dt) = explicit_since {
         Some(since_dt)
     } else if incremental {
-        if let Some(last_lint) = repo.last_lint_at {
+        if let Some(last_check) = repo.last_check_at {
             if is_table_format {
                 println!(
                     "  Incremental mode: checking files modified since {}",
-                    last_lint.format("%Y-%m-%d %H:%M:%S")
+                    last_check.format("%Y-%m-%d %H:%M:%S")
                 );
             }
-            Some(last_lint)
+            Some(last_check)
         } else {
             if is_table_format {
-                println!("  Incremental mode: no previous lint, checking all files");
+                println!("  Incremental mode: no previous check, checking all files");
             }
             None
         }
@@ -68,19 +68,19 @@ pub fn filter_documents_by_time(
         .collect()
 }
 
-/// Update last_lint_at timestamp for repositories after successful lint.
-pub fn update_lint_timestamps(
+/// Update last_check_at timestamp for repositories after successful lint.
+pub fn update_check_timestamps(
     db: &Database,
     repos: &[Repository],
     lint_time: DateTime<Utc>,
     is_table_format: bool,
 ) -> anyhow::Result<()> {
     for repo in repos {
-        db.update_last_lint_at(&repo.id, lint_time)?;
+        db.update_last_check_at(&repo.id, lint_time)?;
     }
     if is_table_format {
         info!(
-            "Updated last_lint_at to {} for {} repository(ies)",
+            "Updated last_check_at to {} for {} repository(ies)",
             lint_time.format("%Y-%m-%d %H:%M:%S"),
             repos.len()
         );
@@ -96,12 +96,12 @@ mod tests {
     use std::path::PathBuf;
     use tempfile::TempDir;
 
-    fn test_repo(last_lint_at: Option<DateTime<Utc>>) -> Repository {
+    fn test_repo(last_check_at: Option<DateTime<Utc>>) -> Repository {
         Repository {
             id: "test".to_string(),
             name: "Test".to_string(),
             path: PathBuf::from("/tmp"),
-            last_lint_at,
+            last_check_at,
             ..make_test_repo()
         }
     }
@@ -125,12 +125,12 @@ mod tests {
     }
 
     #[test]
-    fn test_get_effective_since_incremental_uses_last_lint() {
-        let last_lint = Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap();
-        let repo = test_repo(Some(last_lint));
+    fn test_get_effective_since_incremental_uses_last_check() {
+        let last_check = Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap();
+        let repo = test_repo(Some(last_check));
 
         let result = get_effective_since(None, true, &repo, false);
-        assert_eq!(result, Some(last_lint));
+        assert_eq!(result, Some(last_check));
     }
 
     #[test]
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_effective_since_incremental_no_last_lint() {
+    fn test_get_effective_since_incremental_no_last_check() {
         let repo = test_repo(None);
 
         let result = get_effective_since(None, true, &repo, false);

@@ -50,8 +50,8 @@ pub struct ProcessorConfig {
     pub embedding_batch_size: usize,
     #[serde(default = "default_link_batch_size")]
     pub link_batch_size: usize,
-    #[serde(default = "default_lint_concurrency")]
-    pub lint_concurrency: usize,
+    #[serde(default = "default_check_concurrency")]
+    pub check_concurrency: usize,
     #[serde(default = "default_metadata_cache_size")]
     pub metadata_cache_size: usize,
 }
@@ -64,7 +64,7 @@ pub(crate) fn default_link_batch_size() -> usize {
     5
 }
 
-pub(crate) fn default_lint_concurrency() -> usize {
+pub(crate) fn default_check_concurrency() -> usize {
     5
 }
 
@@ -85,7 +85,7 @@ impl Default for ProcessorConfig {
             chunk_overlap: default_chunk_overlap(),
             embedding_batch_size: default_embedding_batch_size(),
             link_batch_size: default_link_batch_size(),
-            lint_concurrency: default_lint_concurrency(),
+            check_concurrency: default_check_concurrency(),
             metadata_cache_size: default_metadata_cache_size(),
         }
     }

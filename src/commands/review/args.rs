@@ -59,4 +59,13 @@ pub struct ReviewArgs {
     /// Timeout in seconds for Ollama API calls (default: from config, max: 300)
     #[arg(long)]
     pub timeout: Option<u64>,
+
+    /// Remove all unanswered review questions from documents.
+    /// Keeps answered questions (ready for --apply). Use --type to clear only specific types.
+    #[arg(long)]
+    pub clear: bool,
+
+    /// Filter --clear to a specific question type (temporal, conflict, missing, ambiguous, stale, duplicate)
+    #[arg(long, value_name = "TYPE")]
+    pub r#type: Option<String>,
 }

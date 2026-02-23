@@ -176,6 +176,6 @@ This context flows into the workflow instructions automatically — the agent wi
 ## Next steps
 
 - `factbase status` — see what's indexed
-- `factbase lint` — check for quality issues (orphan docs, broken links)
+- `factbase check` — check for quality issues (orphan docs, broken links)
 - `factbase doctor` — verify your inference backend is working
 - See the full [README](../README.md) for all commands and configuration options

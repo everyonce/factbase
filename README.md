@@ -128,7 +128,7 @@ See [docs/cli-reference.md](docs/cli-reference.md) for the full command referenc
 | `factbase status` | Show repository statistics |
 | `factbase stats` | Quick aggregate statistics |
 | `factbase doctor` | Check inference backend connectivity |
-| `factbase lint` | Check knowledge base quality |
+| `factbase check` | Check knowledge base quality |
 | `factbase review --apply` | Process answered review questions |
 | `factbase review --status` | Show review queue summary |
 | `factbase export <repo> <out>` | Export documents (markdown, JSON, compressed) |
@@ -171,31 +171,30 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 21 MCP tools:
+Factbase exposes 20 MCP tools:
 
 | Tool | Description |
 |------|-------------|
-| `scan_repository` | Index (or re-index) all documents — run after adding/editing files |
-| `search_knowledge` | Semantic search with optional type/repo filters |
-| `search_content` | Search document content for exact text matches |
+| `search_knowledge` | Semantic search with optional type/repo/temporal filters |
+| `search_content` | Exact text search (like grep) |
 | `get_entity` | Get document by ID with incoming/outgoing links |
 | `list_entities` | List documents with optional type/repo filters |
 | `list_repositories` | List all registered repositories |
 | `get_perspective` | Get repository context from perspective.yaml |
-| `get_document_stats` | Get document statistics |
 | `create_document` | Create a new document in a repository |
 | `update_document` | Update an existing document's title or content |
 | `delete_document` | Delete a document by ID |
 | `bulk_create_documents` | Create multiple documents atomically (max 100) |
+| `scan_repository` | Index (or re-index) all documents — run after adding/editing files |
+| `init_repository` | Initialize a new factbase repository at a directory path |
 | `get_review_queue` | Get pending review questions |
-| `answer_question` | Answer a single review question |
-| `bulk_answer_questions` | Answer multiple review questions |
-| `generate_questions` | Generate review questions for a document |
-| `lint_repository` | Run quality checks and generate review questions across all documents |
-| `workflow_start` | Start a guided workflow — resolve issues, ingest data, or enrich documents |
-| `workflow_next` | Get the next step in an active workflow |
+| `answer_questions` | Answer or defer one or more review questions |
+| `check_repository` | Run quality checks and generate review questions |
+| `apply_review_answers` | Apply answered review questions to document content |
+| `get_deferred_items` | Get deferred review items needing human attention |
+| `workflow` | Run a guided workflow (update, resolve, ingest, enrich) |
 | `get_duplicate_entries` | Detect entity entries duplicated across documents |
-| `search_temporal` | Temporal-aware semantic search |
+| `get_authoring_guide` | Get document formatting rules and templates |
 
 ## Document Format
 

@@ -76,6 +76,21 @@ impl Database {
     }
 }
 
+impl Database {
+    /// Count deferred review questions across documents.
+    ///
+    /// A deferred question has an answer but is not marked as answered (checkbox unchecked).
+    pub fn count_deferred_questions(&self, repo_id: Option<&str>) -> Result<usize, FactbaseError> {
+        let docs = self.get_documents_with_review_queue(repo_id)?;
+        Ok(docs
+            .iter()
+            .filter_map(|d| crate::processor::parse_review_queue(&d.content))
+            .flatten()
+            .filter(|q| q.is_deferred())
+            .count())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::database::tests::{test_db, test_doc, test_repo};
@@ -135,5 +150,38 @@ mod tests {
             .expect("compute_stats with since");
         assert_eq!(filtered_stats.active, 0);
         assert!(filtered_stats.by_type.is_empty());
+    }
+
+    #[test]
+    fn test_count_deferred_questions() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).expect("upsert repo");
+
+        // Doc with 1 deferred (unchecked + answer), 1 answered, 1 unanswered
+        let mut doc = test_doc("doc1", "Doc 1");
+        doc.content = "# Doc 1\n\nContent.\n\n<!-- factbase:review -->\n\
+            - [ ] `@q[temporal]` When was this? \n\
+            > deferred answer\n\
+            - [x] `@q[conflict]` Is this right?\n\
+            > yes\n\
+            - [ ] `@q[missing]` Source needed?"
+            .to_string();
+        db.upsert_document(&doc).expect("upsert doc1");
+
+        // Doc without review queue
+        db.upsert_document(&test_doc("doc2", "Doc 2"))
+            .expect("upsert doc2");
+
+        assert_eq!(db.count_deferred_questions(None).expect("count"), 1);
+        assert_eq!(
+            db.count_deferred_questions(Some(&repo.id)).expect("count"),
+            1
+        );
+        assert_eq!(
+            db.count_deferred_questions(Some("nonexistent"))
+                .expect("count"),
+            0
+        );
     }
 }

@@ -58,7 +58,7 @@ async fn setup_indexed_repo() -> (TempDir, Database, OllamaEmbedding, Repository
         }),
         created_at: Utc::now(),
         last_indexed_at: None,
-        last_lint_at: None,
+        last_check_at: None,
     };
     db.add_repository(&repo).unwrap();
 

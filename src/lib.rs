@@ -85,6 +85,7 @@ pub use processor::{
     append_review_questions, calculate_fact_stats, calculate_recency_boost, chunk_document,
     content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
     normalize_review_section, overlaps_point, overlaps_range, parse_review_queue,
+    prune_stale_questions,
     parse_source_definitions, parse_source_references, parse_temporal_tags, validate_temporal_tags,
     DocumentProcessor,
 };
@@ -92,7 +93,8 @@ pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::cross_validate::cross_validate_document;
 pub use question_generator::{
     generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_missing_questions, generate_required_field_questions, generate_stale_questions,
+    generate_missing_questions, generate_required_field_questions,
+    generate_source_quality_questions, generate_stale_questions,
     generate_temporal_questions,
 };
 pub use scanner::{full_scan, scan_all_repositories, ScanContext, ScanOptions, Scanner};

@@ -1,9 +1,9 @@
 //! Output formatting for lint results.
 //!
 //! Contains structs for lint output:
-//! - [`LintTemporalStats`] - Temporal tag statistics
-//! - [`LintSourceStats`] - Source footnote statistics
-//! - [`LintResult`] - Overall lint result
+//! - [`CheckTemporalStats`] - Temporal tag statistics
+//! - [`CheckSourceStats`] - Source footnote statistics
+//! - [`CheckResult`] - Overall lint result
 //! - [`ExportedQuestion`] - Single exported question
 //! - [`ExportedDocQuestions`] - Document with exported questions
 
@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 /// Temporal statistics for lint output
 #[derive(Debug, Clone, Serialize, Default)]
-pub struct LintTemporalStats {
+pub struct CheckTemporalStats {
     pub total_facts: usize,
     pub facts_with_tags: usize,
     pub coverage_percent: f32,
@@ -26,7 +26,7 @@ pub struct LintTemporalStats {
 
 /// Source statistics for lint output
 #[derive(Debug, Clone, Serialize, Default)]
-pub struct LintSourceStats {
+pub struct CheckSourceStats {
     pub total_facts: usize,
     pub facts_with_sources: usize,
     pub coverage_percent: f32,
@@ -55,20 +55,20 @@ pub struct ExportedDocQuestions {
 
 /// Lint result for JSON output
 #[derive(Debug, Clone, Serialize)]
-pub struct LintResult {
+pub struct CheckResult {
     pub errors: usize,
     pub warnings: usize,
     pub fixed: usize,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub type_distribution: HashMap<String, usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temporal_stats: Option<LintTemporalStats>,
+    pub temporal_stats: Option<CheckTemporalStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_stats: Option<LintSourceStats>,
+    pub source_stats: Option<CheckSourceStats>,
 }
 
 /// Print lint result in the specified format.
-pub fn print_lint_result(result: &LintResult, format: OutputFormat) -> anyhow::Result<()> {
+pub fn print_check_result(result: &CheckResult, format: OutputFormat) -> anyhow::Result<()> {
     match format {
         OutputFormat::Json => {
             println!("{}", format_json(result)?);
@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn test_lint_temporal_stats_default() {
-        let stats = LintTemporalStats::default();
+        let stats = CheckTemporalStats::default();
         assert_eq!(stats.total_facts, 0);
         assert_eq!(stats.facts_with_tags, 0);
         assert_eq!(stats.coverage_percent, 0.0);
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn test_lint_source_stats_default() {
-        let stats = LintSourceStats::default();
+        let stats = CheckSourceStats::default();
         assert_eq!(stats.total_facts, 0);
         assert_eq!(stats.facts_with_sources, 0);
         assert_eq!(stats.coverage_percent, 0.0);
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn test_lint_result_json_serialization() {
-        let result = LintResult {
+        let result = CheckResult {
             errors: 2,
             warnings: 3,
             fixed: 1,
@@ -192,7 +192,7 @@ mod tests {
     fn test_lint_result_with_type_distribution() {
         let mut type_dist = HashMap::new();
         type_dist.insert("person".to_string(), 5);
-        let result = LintResult {
+        let result = CheckResult {
             errors: 0,
             warnings: 0,
             fixed: 0,
@@ -210,12 +210,12 @@ mod tests {
     fn test_lint_result_with_temporal_stats() {
         let mut by_type = HashMap::new();
         by_type.insert("range".to_string(), 10);
-        let result = LintResult {
+        let result = CheckResult {
             errors: 1,
             warnings: 2,
             fixed: 0,
             type_distribution: HashMap::new(),
-            temporal_stats: Some(LintTemporalStats {
+            temporal_stats: Some(CheckTemporalStats {
                 total_facts: 20,
                 facts_with_tags: 15,
                 coverage_percent: 75.0,
