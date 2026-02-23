@@ -151,7 +151,12 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
     }
 }
 
-fn resolve_step(step: usize, _args: &Value, perspective: &Option<Perspective>, deferred: usize) -> Value {
+fn resolve_step(
+    step: usize,
+    _args: &Value,
+    perspective: &Option<Perspective>,
+    deferred: usize,
+) -> Value {
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
     let total = 4;
