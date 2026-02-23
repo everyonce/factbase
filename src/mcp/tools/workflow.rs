@@ -120,15 +120,16 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         1 => serde_json::json!({
             "workflow": "update",
             "step": 1, "total_steps": total,
-            "instruction": format!("Re-index the factbase to pick up any file changes. Call scan_repository.{ctx}"),
+            "instruction": format!("Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.{ctx}"),
             "next_tool": "scan_repository",
             "when_done": "Call workflow_next with workflow='update', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": "Run quality checks across all documents. Call lint_repository to find missing temporal tags, missing sources, stale facts, conflicts, and ambiguous statements. This generates review questions for any issues found.",
+            "instruction": "Run a deep quality check across all documents. Call lint_repository — this performs local checks (temporal tags, sources, stale facts) AND cross-document validation using the LLM, so it may take several minutes on large knowledge bases. Tell the user this step takes a while before calling it.",
             "next_tool": "lint_repository",
+            "suggested_args": {"dry_run": false},
             "when_done": "Call workflow_next with workflow='update', step=3"
         }),
         3 => serde_json::json!({

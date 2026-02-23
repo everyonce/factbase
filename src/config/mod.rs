@@ -110,7 +110,15 @@ impl Config {
     }
 
     pub fn load(path: Option<&Path>) -> Result<Self, FactbaseError> {
-        let config_path = path.map(PathBuf::from).unwrap_or_else(Self::default_path);
+        let config_path = path.map(PathBuf::from).unwrap_or_else(|| {
+            // Check for local .factbase/config.yaml first, then global
+            let local = PathBuf::from(".factbase/config.yaml");
+            if local.exists() {
+                local
+            } else {
+                Self::default_path()
+            }
+        });
 
         if !config_path.exists() {
             return Ok(Config::default());

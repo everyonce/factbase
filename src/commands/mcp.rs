@@ -6,6 +6,7 @@ use tracing::info;
 
 /// Run the MCP stdio transport (reads JSON-RPC from stdin, writes to stdout).
 pub async fn cmd_mcp() -> anyhow::Result<()> {
+    info!("factbase v{} starting (MCP stdio)", env!("CARGO_PKG_VERSION"));
     let result = find_repo_with_config(None);
     let (config, db, _) = match result {
         Ok(tuple) => tuple,

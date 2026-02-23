@@ -24,7 +24,7 @@ processor:
 embedding:
   provider: bedrock
   region: us-east-1                        # AWS region
-  model: amazon.titan-embed-text-v2:0      # 1024 dims, 8K context
+  model: amazon.nova-2-multimodal-embeddings-v1:0      # 1024 dims, 8K context
   dimension: 1024
   cache_size: 100              # Query embedding cache (1-10000)
   timeout_secs: 30             # HTTP timeout (1-300)
@@ -32,7 +32,7 @@ embedding:
 llm:
   provider: bedrock
   region: us-east-1                                         # AWS region
-  model: us.anthropic.claude-3-5-haiku-20241022-v1:0        # Cross-region, fast
+  model: us.anthropic.claude-haiku-4-5-20251001-v1:0        # Cross-region, fast
   timeout_secs: 30             # HTTP timeout (1-300)
 
 # --- Alternative: Ollama (self-hosted) ---

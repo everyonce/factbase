@@ -39,17 +39,29 @@ pub async fn scan_repository(
     // For LLM-powered entity detection, run lint_repository after scanning.
     let link_detector = LinkDetector::new(Box::new(NoOpLlm));
 
-    if let Some(ref tx) = progress {
-        let _ = tx.send(serde_json::json!({
-            "progress": 0,
-            "total": 1,
-            "message": "Scanning repository...",
-        }));
-    }
+    info!("Scanning repository '{}'...", repo.id);
 
-    let result = crate::full_scan(&repo, db, &scanner, &processor, embedding, &link_detector, &opts)
-        .await
-        .map_err(|e| FactbaseError::Internal(e.to_string()))?;
+    let scan_fut = crate::full_scan(&repo, db, &scanner, &processor, embedding, &link_detector, &opts);
+    tokio::pin!(scan_fut);
+    let mut elapsed_secs = 0u64;
+    let result = loop {
+        tokio::select! {
+            result = &mut scan_fut => {
+                break result.map_err(|e| FactbaseError::Internal(e.to_string()))?;
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
+                elapsed_secs += 10;
+                info!("Scan in progress... ({}s elapsed)", elapsed_secs);
+                if let Some(ref tx) = progress {
+                    let _ = tx.send(serde_json::json!({
+                        "progress": elapsed_secs,
+                        "total": 0,
+                        "message": format!("Scan in progress... ({}s elapsed)", elapsed_secs),
+                    }));
+                }
+            }
+        }
+    };
 
     info!(
         "Scan complete: {} added, {} updated, {} unchanged",

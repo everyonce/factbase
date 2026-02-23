@@ -74,7 +74,11 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "list_repositories",
-                "description": "List all factbase repositories."
+                "description": "List all factbase repositories.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {}
+                }
             },
             {
                 "name": "get_document_stats",
@@ -284,7 +288,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "workflow_start",
-                "description": "Start a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'update the factbase' or 'check the factbase' or 'resync' or 'run a quality check' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nAfter each step, call workflow_next to get the next instruction.",
+                "description": "Start a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'update the factbase' or 'check the factbase' or 'resync' or 'run a quality check' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nAfter each step, call workflow_next to get the next instruction.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
