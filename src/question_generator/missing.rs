@@ -2,10 +2,15 @@
 //!
 //! Generates `@q[missing]` questions for facts without source references.
 
+use chrono::Utc;
+
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::SOURCE_REF_DETECT_REGEX;
+use crate::patterns::{extract_reviewed_date, SOURCE_REF_DETECT_REGEX};
 
 use super::iter_fact_lines;
+
+/// Default number of days a reviewed marker suppresses question regeneration.
+const REVIEWED_SKIP_DAYS: i64 = 180;
 
 /// Generate missing source questions for a document.
 ///
@@ -13,8 +18,13 @@ use super::iter_fact_lines;
 ///
 /// Returns a list of `ReviewQuestion` with `question_type = Missing`.
 pub fn generate_missing_questions(content: &str) -> Vec<ReviewQuestion> {
+    let today = Utc::now().date_naive();
     iter_fact_lines(content)
-        .filter(|(_, line, _)| !SOURCE_REF_DETECT_REGEX.is_match(line))
+        .filter(|(_, line, _)| {
+            !SOURCE_REF_DETECT_REGEX.is_match(line)
+                && extract_reviewed_date(line)
+                    .is_none_or(|d| (today - d).num_days() > REVIEWED_SKIP_DAYS)
+        })
         .map(|(line_number, _, fact_text)| {
             ReviewQuestion::new(
                 QuestionType::Missing,
@@ -93,5 +103,31 @@ mod tests {
         let questions = generate_missing_questions(content);
         assert_eq!(questions.len(), 1);
         assert!(questions[0].description.contains("Indented fact"));
+    }
+
+    #[test]
+    fn test_reviewed_marker_suppresses_missing_source() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        let content = format!(
+            "# Person\n\n- Works at Acme Corp <!-- reviewed:{} -->",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_missing_questions(&content);
+        assert!(
+            questions.is_empty(),
+            "Recent reviewed marker should suppress missing source question"
+        );
+    }
+
+    #[test]
+    fn test_old_reviewed_marker_still_generates_missing() {
+        let content = "# Person\n\n- Works at Acme Corp <!-- reviewed:2020-01-01 -->";
+        let questions = generate_missing_questions(content);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Old reviewed marker should not suppress missing source question"
+        );
     }
 }

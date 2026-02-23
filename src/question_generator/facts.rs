@@ -4,7 +4,7 @@
 //! not just temporally-tagged ones. Used by cross-validation to search
 //! each fact against the rest of the factbase.
 
-use crate::patterns::FACT_LINE_REGEX;
+use crate::patterns::{FACT_LINE_REGEX, SOURCE_REF_CAPTURE_REGEX};
 
 /// A single fact line extracted from a document.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +16,8 @@ pub(crate) struct FactLine {
     pub text: String,
     /// The `## H2` section heading this fact appears under, if any.
     pub section: Option<String>,
+    /// Footnote reference numbers (`[^N]`) found on this line.
+    pub source_refs: Vec<u32>,
 }
 
 /// Extract all fact lines (list items at any indentation level) from markdown content.
@@ -43,10 +45,16 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
             continue;
         }
 
+        let source_refs: Vec<u32> = SOURCE_REF_CAPTURE_REGEX
+            .captures_iter(line)
+            .filter_map(|c| c[1].parse().ok())
+            .collect();
+
         facts.push(FactLine {
             line_number: line_idx + 1,
             text,
             section: current_section.clone(),
+            source_refs,
         });
     }
 
@@ -249,5 +257,39 @@ mod tests {
         let content = "# Title\n\nJust paragraphs.\n\nNo lists here.";
         let facts = extract_all_facts(content);
         assert!(facts.is_empty());
+    }
+
+    // --- source_refs extraction tests ---
+
+    #[test]
+    fn test_extract_source_refs_single() {
+        let content = "- VP Engineering at Acme [^1]";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].source_refs, vec![1]);
+    }
+
+    #[test]
+    fn test_extract_source_refs_multiple() {
+        let content = "- VP Engineering at Acme [^1] [^3]";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].source_refs, vec![1, 3]);
+    }
+
+    #[test]
+    fn test_extract_source_refs_none() {
+        let content = "- No footnotes here";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 1);
+        assert!(facts[0].source_refs.is_empty());
+    }
+
+    #[test]
+    fn test_extract_source_refs_with_temporal() {
+        let content = "- VP Engineering @t[2020..] [^2]";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].source_refs, vec![2]);
     }
 }

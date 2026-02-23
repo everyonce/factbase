@@ -50,9 +50,11 @@ pub(crate) type BoxFuture<'a, T> =
 
 pub use answer_processor::{
     apply_all::{apply_all_review_answers, ApplyConfig, ApplyDocResult, ApplyResult, ApplyStatus},
-    apply_changes_to_section, identify_affected_section,
+    apply_changes_to_section, apply_confirmations, apply_source_citations, classify_answer,
+    identify_affected_section,
     inbox::{apply_inbox_integration, extract_inbox_blocks},
-    interpret_answer, remove_processed_questions, replace_section, ChangeInstruction,
+    interpret_answer, remove_processed_questions, replace_section, stamp_reviewed_lines,
+    stamp_reviewed_markers, uncheck_deferred_questions, AnswerType, ChangeInstruction,
     InterpretedAnswer,
 };
 pub use config::Config;
@@ -78,12 +80,13 @@ pub use organize::{
     StaleDuplicate, VerificationResult,
 };
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
-pub use patterns::MANUAL_LINK_REGEX;
+pub use patterns::{extract_reviewed_date, FACT_LINE_REGEX, MANUAL_LINK_REGEX};
 pub use processor::{
     append_review_questions, calculate_fact_stats, calculate_recency_boost, chunk_document,
     content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
-    overlaps_point, overlaps_range, parse_review_queue, parse_source_definitions,
-    parse_source_references, parse_temporal_tags, validate_temporal_tags, DocumentProcessor,
+    normalize_review_section, overlaps_point, overlaps_range, parse_review_queue,
+    parse_source_definitions, parse_source_references, parse_temporal_tags, validate_temporal_tags,
+    DocumentProcessor,
 };
 pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::cross_validate::cross_validate_document;

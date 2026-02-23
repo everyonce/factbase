@@ -6,9 +6,14 @@
 use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::{ONGOING_TAG_REGEX, TEMPORAL_TAG_DETECT_REGEX, TEMPORAL_TAG_FULL_REGEX};
+use crate::patterns::{
+    extract_reviewed_date, ONGOING_TAG_REGEX, TEMPORAL_TAG_DETECT_REGEX, TEMPORAL_TAG_FULL_REGEX,
+};
 
 use super::iter_fact_lines;
+
+/// Default number of days a reviewed marker suppresses question regeneration.
+const REVIEWED_SKIP_DAYS: i64 = 180;
 
 /// Generate temporal questions for a document.
 ///
@@ -23,6 +28,12 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
 
     for (line_number, line, fact_text) in iter_fact_lines(content) {
+        // Skip facts with a recent reviewed marker
+        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        {
+            continue;
+        }
+
         if !TEMPORAL_TAG_DETECT_REGEX.is_match(line) {
             // No temporal tag at all
             questions.push(ReviewQuestion::new(
@@ -288,6 +299,51 @@ mod tests {
         assert_eq!(
             parse_verification_date("2025-Q2"),
             NaiveDate::from_ymd_opt(2025, 6, 30)
+        );
+    }
+
+    #[test]
+    fn test_reviewed_marker_suppresses_missing_temporal() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        let content = format!(
+            "# Person\n\n- Works at Acme Corp <!-- reviewed:{} -->",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_temporal_questions(&content);
+        assert!(
+            questions.is_empty(),
+            "Recent reviewed marker should suppress temporal question"
+        );
+    }
+
+    #[test]
+    fn test_old_reviewed_marker_still_generates_temporal() {
+        let content = "# Person\n\n- Works at Acme Corp <!-- reviewed:2020-01-01 -->";
+        let questions = generate_temporal_questions(content);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Old reviewed marker should not suppress temporal question"
+        );
+    }
+
+    #[test]
+    fn test_reviewed_marker_suppresses_stale_ongoing() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        let content = format!(
+            "# Person\n\n- CTO at Acme @t[2020..] <!-- reviewed:{} -->",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_temporal_questions(&content);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "Recent reviewed marker should suppress stale ongoing question"
         );
     }
 }

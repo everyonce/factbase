@@ -165,6 +165,40 @@ pub fn get_review_queue(
     Ok(result)
 }
 
+/// Gets deferred review items as a focused summary.
+///
+/// Delegates to `get_review_queue` with `status: "deferred"` and reshapes
+/// the response into a concise format for surfacing deferred items.
+#[instrument(name = "mcp_get_deferred_items", skip(db, args, progress))]
+pub fn get_deferred_items(
+    db: &Database,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    // Build args with status=deferred, preserving caller's repo/type/limit/offset
+    let mut deferred_args = args.clone();
+    if let Some(obj) = deferred_args.as_object_mut() {
+        obj.insert("status".to_string(), serde_json::json!("deferred"));
+    }
+
+    let result = get_review_queue(db, &deferred_args, progress)?;
+
+    let items = result["questions"].as_array().cloned().unwrap_or_default();
+    let total = result["deferred"].as_u64().unwrap_or(0);
+
+    let summary = match total {
+        0 => "No deferred items.".to_string(),
+        1 => "1 item needs human attention.".to_string(),
+        n => format!("{n} items need human attention."),
+    };
+
+    Ok(serde_json::json!({
+        "deferred_items": items,
+        "total_deferred": total,
+        "summary": summary,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +275,51 @@ mod tests {
         assert!(json["line_ref"].is_null());
         assert_eq!(json["answered"], true);
         assert_eq!(json["answer"], "LinkedIn profile");
+    }
+
+    #[test]
+    fn test_get_deferred_items_returns_only_deferred() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        // Doc with mixed questions: unanswered, answered, and deferred (unchecked with answer)
+        let content = "<!-- factbase:aaa111 -->\n# Test\n\nSome fact\n\n## Review Queue\n\n<!-- factbase:review -->\n\n- [ ] `@q[stale]` Is this still current? (line 4)\n- [x] `@q[temporal]` When did this happen? (line 4)\n  > 2024-01\n- [ ] `@q[missing]` What is the source? (line 4)\n  > defer: needs more research\n";
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "aaa111".to_string();
+        doc.title = "Test".to_string();
+        doc.content = content.to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let reporter = ProgressReporter::Silent;
+        let result = get_deferred_items(&db, &serde_json::json!({}), &reporter).unwrap();
+
+        assert_eq!(result["total_deferred"], 1);
+        let items = result["deferred_items"].as_array().unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["type"], "missing");
+        assert!(result["summary"].as_str().unwrap().contains("1 item"));
+    }
+
+    #[test]
+    fn test_get_deferred_items_empty_when_none() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        // Doc with only unanswered questions (no deferred)
+        let content = "<!-- factbase:bbb222 -->\n# Test\n\n## Review Queue\n\n<!-- factbase:review -->\n\n- [ ] `@q[stale]` Is this current? (line 3)\n";
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "bbb222".to_string();
+        doc.title = "Test".to_string();
+        doc.content = content.to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let reporter = ProgressReporter::Silent;
+        let result = get_deferred_items(&db, &serde_json::json!({}), &reporter).unwrap();
+
+        assert_eq!(result["total_deferred"], 0);
+        assert!(result["deferred_items"].as_array().unwrap().is_empty());
+        assert_eq!(result["summary"], "No deferred items.");
     }
 }

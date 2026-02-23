@@ -1,8 +1,12 @@
 //! Apply changes to documents based on interpreted answers.
 
+use chrono::NaiveDate;
+
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::patterns::REVIEW_QUEUE_MARKER;
+use crate::patterns::{
+    add_or_update_reviewed_marker, REVIEWED_MARKER_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX,
+};
 use crate::ReviewQuestion;
 
 use super::{ChangeInstruction, InterpretedAnswer};
@@ -13,7 +17,7 @@ pub fn format_changes_for_llm(instructions: &[InterpretedAnswer]) -> String {
 
     for (i, ia) in instructions.iter().enumerate() {
         let change_text = match &ia.instruction {
-            ChangeInstruction::Dismiss => continue,
+            ChangeInstruction::Dismiss | ChangeInstruction::Defer => continue,
             ChangeInstruction::Delete { line_text } => {
                 format!("Delete line containing \"{line_text}\"")
             }
@@ -83,7 +87,12 @@ pub async fn apply_changes_to_section(
     // Filter out dismiss instructions
     let active_instructions: Vec<_> = instructions
         .iter()
-        .filter(|ia| !matches!(ia.instruction, ChangeInstruction::Dismiss))
+        .filter(|ia| {
+            !matches!(
+                ia.instruction,
+                ChangeInstruction::Dismiss | ChangeInstruction::Defer
+            )
+        })
         .collect();
 
     if active_instructions.is_empty() {
@@ -130,6 +139,109 @@ fn apply_deletes_without_llm(
     }
 
     Ok(lines.join("\n"))
+}
+
+/// Apply source citation footnotes deterministically (no LLM).
+///
+/// For each (line_text, source_info) pair:
+/// 1. Finds the next available footnote number
+/// 2. Appends `[^N]` to the matching fact line (before reviewed marker if present)
+/// 3. Adds `[^N]: source_info` to the footnotes section
+pub fn apply_source_citations(content: &str, sources: &[(&str, &str)]) -> String {
+    if sources.is_empty() {
+        return content.to_string();
+    }
+
+    // Find max existing footnote number
+    let max_footnote = content
+        .lines()
+        .filter_map(|l| SOURCE_DEF_REGEX.captures(l))
+        .filter_map(|cap| cap[1].parse::<u32>().ok())
+        .max()
+        .unwrap_or(0);
+
+    let mut lines: Vec<String> = content.lines().map(String::from).collect();
+    let mut footnote_defs: Vec<String> = Vec::new();
+    let mut next_num = max_footnote + 1;
+
+    for &(line_text, source_info) in sources {
+        // Find the first line containing line_text
+        let Some(line) = lines.iter_mut().find(|l| l.contains(line_text)) else {
+            continue;
+        };
+        let ref_tag = format!("[^{next_num}]");
+        // Insert before reviewed marker if present, otherwise append
+        if let Some(m) = REVIEWED_MARKER_REGEX.find(line.as_str()) {
+            let pos = line[..m.start()].trim_end().len();
+            line.replace_range(pos..m.start(), &format!(" {ref_tag} "));
+        } else {
+            line.push_str(&format!(" {ref_tag}"));
+        }
+        footnote_defs.push(format!("[^{next_num}]: {source_info}"));
+        next_num += 1;
+    }
+
+    if footnote_defs.is_empty() {
+        return content.to_string();
+    }
+
+    // Find insertion point for footnote definitions
+    let last_def_idx = lines.iter().rposition(|l| SOURCE_DEF_REGEX.is_match(l));
+
+    if let Some(idx) = last_def_idx {
+        // Append after last existing footnote definition
+        for (i, def) in footnote_defs.into_iter().enumerate() {
+            lines.insert(idx + 1 + i, def);
+        }
+    } else {
+        // No existing footnotes — insert before review queue or at end
+        let insert_idx = lines
+            .iter()
+            .position(|l| l.contains(REVIEW_QUEUE_MARKER))
+            .unwrap_or(lines.len());
+        // Add separator and definitions
+        let mut to_insert = vec!["".to_string(), "---".to_string()];
+        to_insert.extend(footnote_defs);
+        for (i, line) in to_insert.into_iter().enumerate() {
+            lines.insert(insert_idx + i, line);
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Apply confirmation temporal tag updates deterministically (no LLM).
+///
+/// For each `(line_text, old_tag, new_tag)` triple:
+/// - If `old_tag` is Some, replaces it with `new_tag` on the matching line
+/// - If `old_tag` is None, inserts `new_tag` before footnotes/reviewed markers
+pub fn apply_confirmations(content: &str, updates: &[(&str, Option<&str>, &str)]) -> String {
+    if updates.is_empty() {
+        return content.to_string();
+    }
+    let mut lines: Vec<String> = content.lines().map(String::from).collect();
+    for &(line_text, old_tag, new_tag) in updates {
+        let Some(line) = lines.iter_mut().find(|l| l.contains(line_text)) else {
+            continue;
+        };
+        if let Some(old) = old_tag {
+            // Replace existing temporal tag
+            *line = line.replacen(old, new_tag, 1);
+        } else {
+            // Add temporal tag — insert before footnote refs, reviewed markers, or end
+            let insert_pos = REVIEWED_MARKER_REGEX
+                .find(line.as_str())
+                .map(|m| m.start())
+                .or_else(|| {
+                    // Before first footnote reference [^N]
+                    line.find("[^")
+                })
+                .unwrap_or(line.len());
+            let pos = line[..insert_pos].trim_end().len();
+            line.insert_str(pos, &format!(" {new_tag}"));
+        }
+    }
+    lines.join("\n")
 }
 
 /// Identify the section of a document affected by questions
@@ -207,6 +319,41 @@ pub fn replace_section(content: &str, start: usize, end: usize, new_section: &st
     result.join("\n")
 }
 
+/// Add reviewed markers to fact lines (list items) in a section.
+///
+/// Stamps all list-item lines (`- ...`) with `<!-- reviewed:YYYY-MM-DD -->`.
+/// Lines that already have a marker get their date updated.
+pub fn stamp_reviewed_markers(section: &str, date: &NaiveDate) -> String {
+    section
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("- ") {
+                add_or_update_reviewed_marker(line, date)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Add reviewed markers to specific 1-based line numbers in content.
+pub fn stamp_reviewed_lines(content: &str, line_numbers: &[usize], date: &NaiveDate) -> String {
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line_num = i + 1;
+            if line_numbers.contains(&line_num) && line.trim_start().starts_with("- ") {
+                add_or_update_reviewed_marker(line, date)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Remove processed questions from Review Queue
 pub fn remove_processed_questions(content: &str, processed_indices: &[usize]) -> String {
     let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
@@ -253,9 +400,74 @@ pub fn remove_processed_questions(content: &str, processed_indices: &[usize]) ->
             result_lines.join("\n")
         )
     } else {
-        // Remove entire Review Queue section
-        before_marker.trim_end().to_string()
+        // Remove entire Review Queue section including heading and separator
+        let mut body = before_marker.to_string();
+        // Strip trailing ## Review Queue heading, --- separator, and whitespace
+        loop {
+            let trimmed = body.trim_end();
+            if trimmed.ends_with("## Review Queue") {
+                body = trimmed.trim_end_matches("## Review Queue").to_string();
+            } else if trimmed.ends_with("---") {
+                body = trimmed.trim_end_matches("---").to_string();
+            } else {
+                body = trimmed.to_string();
+                break;
+            }
+        }
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body
     }
+}
+
+/// Uncheck deferred questions in the Review Queue (convert `[x]` → `[ ]`).
+///
+/// Deferred questions stay in the queue but become unanswered again,
+/// so they surface as pending items for future review.
+pub fn uncheck_deferred_questions(content: &str, deferred_indices: &[usize]) -> String {
+    if deferred_indices.is_empty() {
+        return content.to_string();
+    }
+    let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
+        return content.to_string();
+    };
+
+    let (before_marker, after_marker) = content.split_at(marker_pos);
+    let queue_content = &after_marker[REVIEW_QUEUE_MARKER.len()..];
+
+    let mut result_lines: Vec<String> = Vec::with_capacity(queue_content.lines().count());
+    let mut current_question_idx = 0;
+    let mut skip_answer = false;
+
+    for line in queue_content.lines() {
+        let is_question = line.trim_start().starts_with("- [");
+
+        if is_question {
+            if deferred_indices.contains(&current_question_idx) {
+                // Uncheck: replace `- [x]` with `- [ ]`
+                result_lines.push(line.replacen("- [x]", "- [ ]", 1));
+                skip_answer = true;
+            } else {
+                result_lines.push(line.to_string());
+                skip_answer = false;
+            }
+            current_question_idx += 1;
+        } else if skip_answer && line.trim_start().starts_with('>') {
+            // Remove the answer line for deferred questions
+            continue;
+        } else {
+            result_lines.push(line.to_string());
+            skip_answer = false;
+        }
+    }
+
+    format!(
+        "{}{}\n{}",
+        before_marker,
+        REVIEW_QUEUE_MARKER,
+        result_lines.join("\n")
+    )
 }
 
 #[cfg(test)]
@@ -531,5 +743,245 @@ Content here
         let content = "# Doc\n\nNo review queue here";
         let result = remove_processed_questions(content, &[0]);
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_remove_processed_questions_strips_heading_and_separator() {
+        let content = "# Doc\n\nContent\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Question\n> Answer\n";
+        let result = remove_processed_questions(content, &[0]);
+        assert!(!result.contains("Review Queue"));
+        assert!(!result.contains("---"));
+        assert!(result.contains("Content"));
+    }
+
+    // ==================== stamp_reviewed_markers tests ====================
+
+    #[test]
+    fn test_stamp_reviewed_markers_stamps_list_items() {
+        let section = "## Career\n- Job 1 @t[2020..]\n- Job 2 @t[2022..]\nSome text";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_markers(section, &date);
+        assert!(result.contains("- Job 1 @t[2020..] <!-- reviewed:2026-02-15 -->"));
+        assert!(result.contains("- Job 2 @t[2022..] <!-- reviewed:2026-02-15 -->"));
+        assert!(result.contains("## Career"));
+        assert!(result.contains("Some text"));
+        // Non-list lines should not get markers
+        assert!(!result.contains("## Career <!-- reviewed"));
+        assert!(!result.contains("Some text <!-- reviewed"));
+    }
+
+    #[test]
+    fn test_stamp_reviewed_markers_updates_existing() {
+        let section = "- Fact one <!-- reviewed:2020-01-01 -->\n- Fact two";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_markers(section, &date);
+        assert!(result.contains("- Fact one <!-- reviewed:2026-02-15 -->"));
+        assert!(result.contains("- Fact two <!-- reviewed:2026-02-15 -->"));
+        // Should not have double markers
+        assert_eq!(result.matches("reviewed:").count(), 2);
+    }
+
+    #[test]
+    fn test_stamp_reviewed_markers_empty_section() {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_markers("", &date);
+        assert_eq!(result, "");
+    }
+
+    // ==================== stamp_reviewed_lines tests ====================
+
+    #[test]
+    fn test_stamp_reviewed_lines_specific_lines() {
+        let content = "# Title\n\n## Career\n- Job 1\n- Job 2\n- Job 3";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        let result = stamp_reviewed_lines(content, &[4], &date);
+        assert!(result.contains("- Job 1 <!-- reviewed:2026-02-15 -->"));
+        assert!(!result.contains("- Job 2 <!-- reviewed"));
+        assert!(!result.contains("- Job 3 <!-- reviewed"));
+    }
+
+    #[test]
+    fn test_stamp_reviewed_lines_skips_non_list_items() {
+        let content = "# Title\n\n## Career\n- Job 1";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        // Line 1 is "# Title" - not a list item, should not be stamped
+        let result = stamp_reviewed_lines(content, &[1], &date);
+        assert!(!result.contains("<!-- reviewed"));
+    }
+
+    // ==================== uncheck_deferred_questions tests ====================
+
+    #[test]
+    fn test_uncheck_deferred_single() {
+        let content = r#"# Doc
+
+<!-- factbase:review -->
+- [x] `@q[temporal]` Question 0
+> defer"#;
+        let result = uncheck_deferred_questions(content, &[0]);
+        assert!(result.contains("- [ ] `@q[temporal]` Question 0"));
+        assert!(!result.contains("> defer"));
+    }
+
+    #[test]
+    fn test_uncheck_deferred_preserves_others() {
+        let content = r#"# Doc
+
+<!-- factbase:review -->
+- [x] `@q[temporal]` Question 0
+> dismiss
+- [x] `@q[stale]` Question 1
+> defer
+- [ ] `@q[missing]` Question 2"#;
+        let result = uncheck_deferred_questions(content, &[1]);
+        // Question 0 unchanged (still checked)
+        assert!(result.contains("- [x] `@q[temporal]` Question 0"));
+        assert!(result.contains("> dismiss"));
+        // Question 1 unchecked, answer removed
+        assert!(result.contains("- [ ] `@q[stale]` Question 1"));
+        assert!(!result.contains("> defer"));
+        // Question 2 unchanged
+        assert!(result.contains("- [ ] `@q[missing]` Question 2"));
+    }
+
+    #[test]
+    fn test_uncheck_deferred_empty_indices() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer";
+        let result = uncheck_deferred_questions(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_uncheck_deferred_no_marker() {
+        let content = "# Doc\n\nNo review queue";
+        let result = uncheck_deferred_questions(content, &[0]);
+        assert_eq!(result, content);
+    }
+
+    // ==================== apply_source_citations tests ====================
+
+    #[test]
+    fn test_source_citation_new_footnote_no_existing() {
+        let content = "# Doc\n\n## Career\n- VP at Acme @t[2020..]";
+        let result = apply_source_citations(content, &[("VP at Acme", "LinkedIn, 2026-02-15")]);
+        assert!(result.contains("- VP at Acme @t[2020..] [^1]"));
+        assert!(result.contains("[^1]: LinkedIn, 2026-02-15"));
+        assert!(result.contains("---"));
+    }
+
+    #[test]
+    fn test_source_citation_appends_after_existing() {
+        let content = "# Doc\n\n- Fact one [^1]\n\n---\n[^1]: Original source";
+        let result = apply_source_citations(content, &[("Fact one", "New source, 2026-01")]);
+        assert!(result.contains("- Fact one [^1] [^2]"));
+        assert!(result.contains("[^1]: Original source"));
+        assert!(result.contains("[^2]: New source, 2026-01"));
+    }
+
+    #[test]
+    fn test_source_citation_multiple() {
+        let content = "# Doc\n\n- Fact A\n- Fact B";
+        let result =
+            apply_source_citations(content, &[("Fact A", "Source A"), ("Fact B", "Source B")]);
+        assert!(result.contains("- Fact A [^1]"));
+        assert!(result.contains("- Fact B [^2]"));
+        assert!(result.contains("[^1]: Source A"));
+        assert!(result.contains("[^2]: Source B"));
+    }
+
+    #[test]
+    fn test_source_citation_before_reviewed_marker() {
+        let content = "- Fact here <!-- reviewed:2026-01-01 -->";
+        let result = apply_source_citations(content, &[("Fact here", "Source info")]);
+        assert!(result.contains("[^1] <!-- reviewed:2026-01-01 -->"));
+        assert!(result.contains("- Fact here [^1]"));
+    }
+
+    #[test]
+    fn test_source_citation_before_review_queue() {
+        let content = "# Doc\n\n- Fact one\n\n<!-- factbase:review -->\n- [ ] Question";
+        let result = apply_source_citations(content, &[("Fact one", "Source")]);
+        // Footnotes should appear before the review queue marker
+        let footnote_pos = result.find("[^1]: Source").unwrap();
+        let review_pos = result.find("<!-- factbase:review -->").unwrap();
+        assert!(footnote_pos < review_pos);
+    }
+
+    #[test]
+    fn test_source_citation_empty_sources() {
+        let content = "# Doc\n\n- Fact";
+        let result = apply_source_citations(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_source_citation_line_not_found() {
+        let content = "# Doc\n\n- Fact A";
+        let result = apply_source_citations(content, &[("Nonexistent line", "Source")]);
+        assert_eq!(result, content);
+    }
+
+    // =========================================================================
+    // apply_confirmations tests
+    // =========================================================================
+
+    #[test]
+    fn test_confirmation_update_existing_tag() {
+        let content = "- VP at BigCo @t[~2024-01]";
+        let result = apply_confirmations(
+            content,
+            &[("VP at BigCo", Some("@t[~2024-01]"), "@t[~2026-02-15]")],
+        );
+        assert_eq!(result, "- VP at BigCo @t[~2026-02-15]");
+    }
+
+    #[test]
+    fn test_confirmation_add_tag_no_existing() {
+        let content = "- VP at BigCo";
+        let result = apply_confirmations(content, &[("VP at BigCo", None, "@t[~2026-02-15]")]);
+        assert_eq!(result, "- VP at BigCo @t[~2026-02-15]");
+    }
+
+    #[test]
+    fn test_confirmation_add_tag_before_footnote() {
+        let content = "- VP at BigCo [^1]";
+        let result = apply_confirmations(content, &[("VP at BigCo", None, "@t[~2026-02-15]")]);
+        assert_eq!(result, "- VP at BigCo @t[~2026-02-15] [^1]");
+    }
+
+    #[test]
+    fn test_confirmation_add_tag_before_reviewed_marker() {
+        let content = "- VP at BigCo <!-- reviewed:2025-01-01 -->";
+        let result = apply_confirmations(content, &[("VP at BigCo", None, "@t[~2026-02-15]")]);
+        assert!(result.contains("@t[~2026-02-15] <!-- reviewed:2025-01-01 -->"));
+    }
+
+    #[test]
+    fn test_confirmation_empty_updates() {
+        let content = "- Some fact";
+        let result = apply_confirmations(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_confirmation_line_not_found() {
+        let content = "- Fact A";
+        let result =
+            apply_confirmations(content, &[("Nonexistent", Some("@t[~2024]"), "@t[~2026]")]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_confirmation_multiple_updates() {
+        let content = "- Fact A @t[~2024-01]\n- Fact B";
+        let result = apply_confirmations(
+            content,
+            &[
+                ("Fact A", Some("@t[~2024-01]"), "@t[~2026-02]"),
+                ("Fact B", None, "@t[~2026-02]"),
+            ],
+        );
+        assert!(result.contains("- Fact A @t[~2026-02]"));
+        assert!(result.contains("- Fact B @t[~2026-02]"));
     }
 }

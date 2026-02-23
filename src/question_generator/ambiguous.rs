@@ -3,9 +3,15 @@
 //! Generates `@q[ambiguous]` questions for unclear phrasing
 //! that needs clarification.
 
+use chrono::Utc;
+
 use crate::models::{QuestionType, ReviewQuestion};
+use crate::patterns::extract_reviewed_date;
 
 use super::iter_fact_lines;
+
+/// Default number of days a reviewed marker suppresses question regeneration.
+const REVIEWED_SKIP_DAYS: i64 = 180;
 
 /// Generate ambiguous questions for a document.
 ///
@@ -17,8 +23,15 @@ use super::iter_fact_lines;
 /// Returns a list of `ReviewQuestion` with `question_type = Ambiguous`.
 pub fn generate_ambiguous_questions(content: &str) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
+    let today = Utc::now().date_naive();
 
-    for (line_number, _, fact_text) in iter_fact_lines(content) {
+    for (line_number, line, fact_text) in iter_fact_lines(content) {
+        // Skip facts with a recent reviewed marker
+        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        {
+            continue;
+        }
+
         // Check for ambiguous location (no context like "home", "work", "office")
         let ambiguity = detect_ambiguous_location(&fact_text)
             .or_else(|| detect_ambiguous_relationship(&fact_text));
@@ -241,5 +254,31 @@ mod tests {
         assert!(detect_ambiguous_relationship("Connected to Jane as mentor").is_none());
         assert!(detect_ambiguous_relationship("Works with Bob as his manager").is_none());
         assert!(detect_ambiguous_relationship("Met Jane, now a close friend").is_none());
+    }
+
+    #[test]
+    fn test_reviewed_marker_suppresses_ambiguous() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        let content = format!(
+            "# Person\n\n- Lives in San Francisco <!-- reviewed:{} -->",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_ambiguous_questions(&content);
+        assert!(
+            questions.is_empty(),
+            "Recent reviewed marker should suppress ambiguous question"
+        );
+    }
+
+    #[test]
+    fn test_old_reviewed_marker_still_generates_ambiguous() {
+        let content = "# Person\n\n- Lives in San Francisco <!-- reviewed:2020-01-01 -->";
+        let questions = generate_ambiguous_questions(content);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Old reviewed marker should not suppress ambiguous question"
+        );
     }
 }

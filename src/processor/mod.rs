@@ -57,7 +57,7 @@ pub use temporal::{
 pub use sources::{count_facts_with_sources, parse_source_definitions, parse_source_references};
 
 // Re-export review types and functions
-pub use review::{append_review_questions, parse_review_queue};
+pub use review::{append_review_questions, normalize_review_section, parse_review_queue};
 
 // Re-export chunking types and functions
 pub use chunks::{chunk_document, DocumentChunk};

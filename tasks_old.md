@@ -2080,3 +2080,20 @@ Key Features:
 - `write_str!`/`writeln_str!` macros for infallible String formatting
 - `TestScanSetup` struct with `context()` method for integration test setup deduplication
 - `test_scan_options()`, `test_repo()` helpers for integration test construction
+
+## Phase 47 Tasks 36-38: Clippy Pedantic Cleanup (Complete - 2026-02-15)
+
+### Task 36.1 — Consolidate identical match arm bodies (commit bf678e4)
+- Merged 10 match arms with identical bodies across 6 files using `|` patterns or wildcard reordering
+- Files: `answer_processor/temporal.rs`, `commands/search/mod.rs`, `organize/plan/merge.rs`, `patterns.rs` (4), `processor/temporal/parser.rs`, `processor/temporal/validation.rs`
+
+### Task 37.1 — Fix case-sensitive file extension comparisons (commit bf678e4)
+- Added `ends_with_ext(path, ext)` helper to `commands/utils.rs` using `eq_ignore_ascii_case`
+- Replaced 8 `path.ends_with(".ext")` calls across 4 files
+
+### Task 38.1 — Convert unused-self methods to associated functions (commit bf678e4)
+- Converted 9 methods total (8 original + `run_migrations`) from `&self` methods to associated functions
+- Files: `database/schema.rs` (6), `database/stats/compression.rs` (1), `database/stats/detailed.rs` (2)
+- Updated all call sites from `self.method(conn)` to `Self::method(conn)`
+
+**Phase 47 fully complete (38/38 tasks).** Test counts: 1031 lib + 355 binary = 1386 (with all features). Zero clippy warnings.

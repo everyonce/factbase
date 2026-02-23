@@ -60,7 +60,9 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
 
     // Determine format from file extension
     let imported: Vec<ImportedDocQuestions> =
-        if crate::commands::utils::ends_with_ext(import_path, ".yaml") || crate::commands::utils::ends_with_ext(import_path, ".yml") {
+        if crate::commands::utils::ends_with_ext(import_path, ".yaml")
+            || crate::commands::utils::ends_with_ext(import_path, ".yml")
+        {
             serde_yaml_ng::from_str(&content).context("Failed to parse YAML")?
         } else {
             serde_json::from_str(&content).context("Failed to parse JSON")?

@@ -28,7 +28,7 @@ pub use answer::{answer_question, bulk_answer_questions};
 pub use apply::apply_review_answers;
 pub use generate::generate_questions;
 pub use lint::lint_repository;
-pub use queue::get_review_queue;
+pub use queue::{get_deferred_items, get_review_queue};
 
 use crate::database::Database;
 use crate::error::FactbaseError;

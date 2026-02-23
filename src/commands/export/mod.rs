@@ -43,7 +43,10 @@ pub fn detect_format_from_path(path: &str) -> Option<&'static str> {
         Some("json")
     } else if ends_with_ext(path, ".yaml") {
         Some("yaml")
-    } else if ends_with_ext(path, ".md") || ends_with_ext(path, ".md.zst") || ends_with_ext(path, ".tar.zst") {
+    } else if ends_with_ext(path, ".md")
+        || ends_with_ext(path, ".md.zst")
+        || ends_with_ext(path, ".tar.zst")
+    {
         Some("md")
     } else {
         None

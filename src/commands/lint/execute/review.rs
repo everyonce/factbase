@@ -15,12 +15,13 @@ use std::path::Path;
 use tracing::info;
 
 /// Generate review questions for a document.
+/// Returns (new_question_count, optional exported questions).
 pub fn generate_review_questions(
     doc: &Document,
     repo: &Repository,
     db: &Database,
     opts: &ReviewQuestionOptions,
-) -> anyhow::Result<Option<ExportedDocQuestions>> {
+) -> anyhow::Result<(usize, Option<ExportedDocQuestions>)> {
     // Check if file should be skipped based on ignore_patterns
     let should_skip = repo
         .perspective
@@ -47,7 +48,7 @@ pub fn generate_review_questions(
             "Skipping {} due to perspective.review.ignore_patterns",
             doc.file_path
         );
-        return Ok(None);
+        return Ok((0, None));
     }
 
     // Build review config from perspective and args
@@ -97,8 +98,10 @@ pub fn generate_review_questions(
     }
 
     if questions_to_add.is_empty() {
-        return Ok(None);
+        return Ok((0, None));
     }
+
+    let count = questions_to_add.len();
 
     if opts.export_mode {
         // Export mode: return questions for file export
@@ -123,7 +126,7 @@ pub fn generate_review_questions(
                 doc.id
             );
         }
-        return Ok(Some(exported));
+        return Ok((count, Some(exported)));
     }
 
     if opts.dry_run {
@@ -163,5 +166,5 @@ pub fn generate_review_questions(
         }
     }
 
-    Ok(None)
+    Ok((count, None))
 }

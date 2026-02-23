@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Phases 1-47 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v0.7.6.
+**Phases 1-47 complete, Phase 48 in progress**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v48.5.4.
 
 ### Active Work
-- None — all phases complete
+- Phase 48: Review System Robustness — Tasks 1-5 complete (reviewed-fact markers, AnswerType enum + classify_answer, interpret_answer refactor + ChangeInstruction::Defer, defer handling with uncheck, deterministic source citation footnote addition, deterministic confirmation @t[~] date update, classify_answer unit tests, normalize_review_section cleanup pass, lint net-new reporting with expanded LintDocResult, source_refs extraction in FactLine, source definitions attached to FactWithContext, source context in cross-validation prompts with entity role distinction, unit tests for prompt source context), Task 6 pending (deferred item surfacing)
 
 ## Current Configuration
 
@@ -141,12 +141,12 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: 1031 lib tests (with all features including web)
+- Currently: ~1050 lib tests (without web); ~1111 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
 - No external dependencies required
-- Currently: 355 bin tests (with all features including web)
+- Currently: ~351 bin tests (without web); ~358 bin tests (with all features including web)
 
 ### Integration Tests (Require inference backend)
 - Run with: `cargo test -- --ignored`
@@ -158,7 +158,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Vitest with jsdom environment
 - Currently: 56 tests
 
-### Total: 1386 unit/binary tests (with all features) + 73+ integration tests + 56 frontend tests
+### Total: ~1401 unit/binary tests (without web), ~1469 (with all features) + 73+ integration tests + 56 frontend tests
 
 ## Codebase Structure
 
