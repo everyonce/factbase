@@ -1,6 +1,6 @@
 {
   "name": "@everyonce/factbase-linux-x64",
-  "version": "0.4.3",
+  "version": "0.5.1",
   "description": "factbase binary for Linux x64",
   "license": "MIT",
   "os": [

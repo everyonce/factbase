@@ -184,6 +184,14 @@ impl Database {
             return Ok(());
         }
 
+        // Forward-compatibility: database was created by a newer version
+        if current_version > SCHEMA_VERSION {
+            return Err(FactbaseError::config(format!(
+                "Database schema version ({current_version}) is newer than this binary supports ({SCHEMA_VERSION}). \
+                 Please update factbase: npm i -g @everyonce/factbase (or cargo install --path .)"
+            )));
+        }
+
         // Run any migrations newer than current version
         for (version, description, sql) in MIGRATIONS {
             if *version > current_version {

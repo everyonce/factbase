@@ -171,10 +171,113 @@ pub async fn get_review_status(
     let status = serde_json::json!({
         "total": result.get("total").unwrap_or(&Value::Null),
         "answered": result.get("answered").unwrap_or(&Value::Null),
-        "unanswered": result.get("unanswered").unwrap_or(&Value::Null)
+        "unanswered": result.get("unanswered").unwrap_or(&Value::Null),
+        "deferred": result.get("deferred").unwrap_or(&Value::Null)
     });
 
     Ok(Json(status))
+}
+
+/// Request body for applying review answers.
+#[derive(Debug, Deserialize)]
+pub struct ApplyRequest {
+    /// Filter by repository ID
+    pub repo: Option<String>,
+    /// Filter by document ID
+    pub doc_id: Option<String>,
+    /// Preview changes without writing
+    pub dry_run: Option<bool>,
+}
+
+/// POST /api/apply - Apply answered review questions to documents.
+///
+/// Requires LLM provider (available when started via `factbase serve`).
+/// Returns CLI instructions if LLM is not available.
+pub async fn post_apply(
+    State(state): State<Arc<WebAppState>>,
+    Json(body): Json<ApplyRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let llm = state.llm.as_ref().ok_or_else(|| {
+        let mut cmd = "factbase review --apply".to_string();
+        if let Some(ref repo) = body.repo {
+            cmd.push_str(&format!(" --repo {repo}"));
+        }
+        if body.dry_run.unwrap_or(false) {
+            cmd.push_str(" --dry-run");
+        }
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError::new(
+                format!("LLM provider not available. Run via CLI: `{cmd}`"),
+                "LLM_REQUIRED",
+            )),
+        )
+    })?;
+
+    let db = state.db.clone();
+    let llm = llm.clone();
+    let dry_run = body.dry_run.unwrap_or(false);
+    let repo = body.repo.clone();
+    let doc_id = body.doc_id.clone();
+
+    let args = serde_json::json!({
+        "repo": repo,
+        "doc_id": doc_id,
+        "dry_run": dry_run,
+    });
+
+    let result = crate::mcp::tools::apply_review_answers(
+        &db,
+        Some(&*llm),
+        &args,
+        &ProgressReporter::Silent,
+    )
+    .await
+    .map_err(super::errors::handle_error)?;
+
+    Ok(Json(result))
+}
+
+/// POST /api/scan - Trigger repository scan.
+///
+/// Scan requires embedding provider and full scanner infrastructure.
+/// Returns CLI instructions.
+pub async fn post_scan(
+    Json(body): Json<ScanCheckRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let mut cmd = "factbase scan".to_string();
+    if let Some(ref repo) = body.repo {
+        cmd.push_str(&format!(" --repo {repo}"));
+    }
+    Ok(Json(serde_json::json!({
+        "status": "cli_required",
+        "message": format!("Scan requires embedding provider. Run via CLI: `{cmd}`"),
+        "command": cmd,
+    })))
+}
+
+/// POST /api/check - Trigger quality checks.
+///
+/// Check requires embedding provider for question generation.
+/// Returns CLI instructions.
+pub async fn post_check(
+    Json(body): Json<ScanCheckRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let mut cmd = "factbase check".to_string();
+    if let Some(ref repo) = body.repo {
+        cmd.push_str(&format!(" --repo {repo}"));
+    }
+    Ok(Json(serde_json::json!({
+        "status": "cli_required",
+        "message": format!("Check requires embedding provider. Run via CLI: `{cmd}`"),
+        "command": cmd,
+    })))
+}
+
+/// Request body for scan/check endpoints.
+#[derive(Debug, Deserialize)]
+pub struct ScanCheckRequest {
+    pub repo: Option<String>,
 }
 
 #[cfg(test)]
@@ -270,5 +373,37 @@ mod tests {
             let query: ReviewQueueQuery = serde_json::from_str(&json).unwrap();
             assert_eq!(query.question_type, Some(qtype.to_string()));
         }
+    }
+
+    #[test]
+    fn test_apply_request_deserialize() {
+        let json = r#"{"repo": "main", "doc_id": "abc123", "dry_run": true}"#;
+        let req: ApplyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.repo, Some("main".to_string()));
+        assert_eq!(req.doc_id, Some("abc123".to_string()));
+        assert_eq!(req.dry_run, Some(true));
+    }
+
+    #[test]
+    fn test_apply_request_deserialize_empty() {
+        let json = r#"{}"#;
+        let req: ApplyRequest = serde_json::from_str(json).unwrap();
+        assert!(req.repo.is_none());
+        assert!(req.doc_id.is_none());
+        assert!(req.dry_run.is_none());
+    }
+
+    #[test]
+    fn test_scan_check_request_deserialize() {
+        let json = r#"{"repo": "main"}"#;
+        let req: ScanCheckRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.repo, Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_scan_check_request_deserialize_empty() {
+        let json = r#"{}"#;
+        let req: ScanCheckRequest = serde_json::from_str(json).unwrap();
+        assert!(req.repo.is_none());
     }
 }

@@ -95,7 +95,7 @@ pub enum ChangeInstruction {
 }
 
 /// Result of interpreting an answer
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct InterpretedAnswer {
     pub question: ReviewQuestion,
     pub instruction: ChangeInstruction,

@@ -29,9 +29,51 @@ impl Database {
         // Calculate word count for efficient stats queries
         let word_count = crate::models::word_count(&doc.content) as i64;
         let has_review_queue = doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
+
+        // Remove any stale document at the same path with a different ID.
+        // This handles the case where a file's factbase ID was regenerated.
         conn.execute(
-            "INSERT OR REPLACE INTO documents (id, repo_id, file_path, file_hash, title, doc_type, content, file_modified_at, indexed_at, is_deleted, word_count, has_review_queue)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, FALSE, ?10, ?11)",
+            "DELETE FROM document_links WHERE source_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)
+             OR target_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
+        // Clean up embeddings: get chunk IDs first, then delete from vec0 and chunks table
+        let stale_chunk_ids: Vec<String> = conn
+            .prepare("SELECT ec.id FROM embedding_chunks ec JOIN documents d ON ec.document_id = d.id WHERE d.repo_id = ?1 AND d.file_path = ?2 AND d.id != ?3")?
+            .query_map(rusqlite::params![doc.repo_id, doc.file_path, doc.id], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+        for chunk_id in &stale_chunk_ids {
+            let _ = conn.execute("DELETE FROM document_embeddings WHERE id = ?1", [chunk_id]);
+        }
+        conn.execute(
+            "DELETE FROM embedding_chunks WHERE document_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
+        conn.execute(
+            "DELETE FROM document_content_fts WHERE doc_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
+        conn.execute(
+            "DELETE FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
+
+        conn.execute(
+            "INSERT INTO documents (id, repo_id, file_path, file_hash, title, doc_type, content, file_modified_at, indexed_at, is_deleted, word_count, has_review_queue)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, FALSE, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                repo_id = excluded.repo_id,
+                file_path = excluded.file_path,
+                file_hash = excluded.file_hash,
+                title = excluded.title,
+                doc_type = excluded.doc_type,
+                content = excluded.content,
+                file_modified_at = excluded.file_modified_at,
+                indexed_at = excluded.indexed_at,
+                is_deleted = FALSE,
+                word_count = excluded.word_count,
+                has_review_queue = excluded.has_review_queue",
             rusqlite::params![
                 doc.id, doc.repo_id, doc.file_path, doc.file_hash, doc.title, doc.doc_type, content_to_store,
                 doc.file_modified_at.map(|t| t.to_rfc3339()), doc.indexed_at.to_rfc3339(), word_count, has_review_queue

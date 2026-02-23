@@ -32,7 +32,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
         "enrich" => Ok(enrich_step(step, args, &perspective)),
         "list" => Ok(serde_json::json!({
             "workflows": [
-                {"name": "update", "description": "Scan, check quality, find duplicates, and report what needs attention"},
+                {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
                 {"name": "resolve", "description": "Fix quality issues by resolving review queue questions using external sources"},
                 {"name": "ingest", "description": "Research a topic and create/update factbase documents"},
                 {"name": "enrich", "description": "Find and fill gaps in existing documents"}
@@ -103,7 +103,7 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
 
 fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
     let ctx = perspective_context(perspective);
-    let total = 3;
+    let total = 4;
     match step {
         1 => serde_json::json!({
             "workflow": "update",
@@ -115,15 +115,22 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": "Run quality checks across all documents. Before calling check_repository, ask the user if they want a deep check (cross-document validation). Deep check finds conflicts between documents but takes significantly longer — minutes vs seconds on large knowledge bases.\n\nIf the user says yes (or specified deep_check when starting the workflow), call check_repository with deep_check=true. Otherwise call it without deep_check for a fast local-only check.\n\nAfter check_repository completes, also call get_duplicate_entries to find entity entries duplicated across documents.",
+            "instruction": "Run quality checks across all documents. Before calling check_repository, ask the user if they want a deep check (cross-document validation). Deep check finds conflicts between documents but takes significantly longer — minutes vs seconds on large knowledge bases.\n\nIf the user says yes (or specified deep_check when starting the workflow), call check_repository with deep_check=true. Otherwise call it without deep_check for a fast local-only check.",
             "next_tool": "check_repository",
             "suggested_args": {"dry_run": false},
-            "when_done": "Call get_duplicate_entries, then call workflow with workflow='update', step=3"
+            "when_done": "Call workflow with workflow='update', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
-            "instruction": "Summarize what you found: how many documents were scanned, how many quality issues were identified, how many duplicates were detected. If there are issues to fix, suggest the user run the 'resolve' workflow next.",
+            "instruction": "Run a full organization analysis to detect structural improvements. Call organize_analyze (without a focus parameter) to find merge candidates, split candidates, misplaced documents, and duplicate entries across the knowledge base.\n\nAfter results come back, report what was found:\n- Merge candidates: documents similar enough to combine\n- Split candidates: documents covering multiple distinct topics\n- Misplaced documents: documents whose type doesn't match their content\n- Duplicate entries: facts repeated across multiple documents\n\nIf any high-confidence suggestions are found, ask the user if they'd like to act on them (merge, split, move, or retype). Use the organize tool to execute approved actions.",
+            "next_tool": "organize_analyze",
+            "when_done": "Call workflow with workflow='update', step=4"
+        }),
+        4 => serde_json::json!({
+            "workflow": "update",
+            "step": 4, "total_steps": total,
+            "instruction": "Summarize what you found across all steps: how many documents were scanned, how many quality issues were identified, and what organization opportunities were detected (merges, splits, misplaced, duplicates). If there are review questions to fix, suggest the user run the 'resolve' workflow next.",
             "complete": true
         }),
         _ => serde_json::json!({
@@ -169,7 +176,7 @@ fn resolve_step(
         3 => serde_json::json!({
             "workflow": "resolve",
             "step": 3, "total_steps": total,
-            "instruction": "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. Use dry_run=true first to preview, then without dry_run to apply.",
+            "instruction": "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If you have many answered questions, apply them in batches by passing doc_id to process one document at a time — this avoids timeouts on large batches. Use dry_run=true first to preview, then without dry_run to apply.",
             "next_tool": "apply_review_answers",
             "suggested_args": {"dry_run": false},
             "when_done": "Call workflow with workflow='resolve', step=4"

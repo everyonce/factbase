@@ -56,7 +56,11 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
     }
 
     // Flag malformed temporal tags (e.g., @t[~2025-10..~2026-01])
-    for (line_number, raw) in find_malformed_tags(content) {
+    // Truncate at review queue marker to avoid flagging tags inside review entries
+    let body = &content[..content
+        .find(crate::patterns::REVIEW_QUEUE_MARKER)
+        .unwrap_or(content.len())];
+    for (line_number, raw) in find_malformed_tags(body) {
         questions.push(ReviewQuestion::new(
             QuestionType::Temporal,
             Some(line_number),

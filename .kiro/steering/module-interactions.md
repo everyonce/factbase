@@ -258,7 +258,7 @@ src/
     ├── stdio.rs         # Stdio transport (stdin/stdout JSON-RPC)
     ├── server.rs        # HTTP server (axum)
     └── tools/
-        ├── mod.rs       # Tool routing (18 tools)
+        ├── mod.rs       # Tool routing (21 tools)
         ├── schema.rs    # Tool schemas
         ├── helpers.rs   # Tool helpers
         ├── search.rs    # search_knowledge, search_content, search_temporal

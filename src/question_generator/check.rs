@@ -4,14 +4,15 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::llm::LlmProvider;
 use crate::models::{Document, QuestionType, ReviewQuestion};
-use crate::patterns::{extract_reviewed_date, FACT_LINE_REGEX};
+use crate::patterns::{extract_reviewed_date, has_corruption_artifacts, FACT_LINE_REGEX};
 use crate::processor::{
     append_review_questions, content_hash, parse_review_queue, prune_stale_questions,
 };
 use crate::progress::ProgressReporter;
 use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
-    generate_ambiguous_questions, generate_conflict_questions, generate_missing_questions,
+    generate_ambiguous_questions_with_type, generate_conflict_questions,
+    generate_duplicate_role_questions, generate_missing_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };
@@ -69,6 +70,25 @@ pub async fn check_all_documents(
         ));
     }
 
+    // Detect documents with corruption artifacts from failed apply_review_answers
+    let (clean_docs, corrupted_docs): (Vec<_>, Vec<_>) = active_docs
+        .into_iter()
+        .partition(|d| !has_corruption_artifacts(&d.content));
+    if !corrupted_docs.is_empty() {
+        for doc in &corrupted_docs {
+            warn!(
+                "{} [{}]: skipped — contains corruption artifacts from a failed apply_review_answers run",
+                doc.title, doc.id
+            );
+        }
+        progress.log(&format!(
+            "Skipping {} corrupted document(s) — rebuild content before checking",
+            corrupted_docs.len()
+        ));
+    }
+    let active_docs = clean_docs;
+    let total_active = active_docs.len();
+
     // Build title → doc IDs map for duplicate title detection (all docs, not just active)
     let mut title_map: HashMap<String, Vec<(&str, &str)>> = HashMap::new();
     for doc in docs {
@@ -95,9 +115,10 @@ pub async fn check_all_documents(
 
                     let mut questions = generate_temporal_questions(&doc.content);
                     questions.extend(generate_conflict_questions(&doc.content));
+                    questions.extend(generate_duplicate_role_questions(&doc.content));
                     questions.extend(generate_missing_questions(&doc.content));
                     questions.extend(generate_source_quality_questions(&doc.content));
-                    questions.extend(generate_ambiguous_questions(&doc.content));
+                    questions.extend(generate_ambiguous_questions_with_type(&doc.content, doc.doc_type.as_deref()));
                     questions.extend(generate_stale_questions(&doc.content, config.stale_days));
 
                     // Check for duplicate titles
@@ -123,14 +144,8 @@ pub async fn check_all_documents(
                         ));
                     }
 
-                    if let Some(llm) = llm {
-                        match cross_validate_document(&doc.content, &doc.id, db, embedding, llm)
-                            .await
-                        {
-                            Ok(cross) => questions.extend(cross),
-                            Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
-                        }
-                    }
+                    // Cross-validation is done in a separate sequential pass below
+                    // to avoid overwhelming the Bedrock API with concurrent calls
 
                     let existing_questions = parse_review_queue(&doc.content).unwrap_or_default();
                     let existing_unanswered =
@@ -193,6 +208,22 @@ pub async fn check_all_documents(
 
         let batch = futures::future::join_all(futs).await;
         all_results.extend(batch);
+    }
+
+    // Sequential cross-validation pass (one doc at a time to avoid API throttling)
+    if llm.is_some() {
+        progress.phase("Cross-document validation");
+        for (i, (doc, questions, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
+            if i % 25 == 0 && total_active >= 50 {
+                progress.report(i + 1, total_active, "Cross-validating");
+            }
+            if let Some(llm) = llm {
+                match cross_validate_document(&doc.content, &doc.id, db, embedding, llm).await {
+                    Ok(cross) => questions.extend(cross),
+                    Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
+                }
+            }
+        }
     }
 
     // Write results (sequential for filesystem safety)

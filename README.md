@@ -171,7 +171,7 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 20 MCP tools:
+Factbase exposes 21 MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -193,7 +193,8 @@ Factbase exposes 20 MCP tools:
 | `apply_review_answers` | Apply answered review questions to document content |
 | `get_deferred_items` | Get deferred review items needing human attention |
 | `workflow` | Run a guided workflow (update, resolve, ingest, enrich) |
-| `get_duplicate_entries` | Detect entity entries duplicated across documents |
+| `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
+| `organize` | Execute reorganization actions (merge, split, move, retype, apply) |
 | `get_authoring_guide` | Get document formatting rules and templates |
 
 ## Document Format

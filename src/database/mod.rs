@@ -237,10 +237,7 @@ impl Database {
         let size = pool_size.clamp(1, 32);
 
         let pool = Pool::builder().max_size(size).build(manager).map_err(|e| {
-            FactbaseError::Database(rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(1),
-                Some(e.to_string()),
-            ))
+            FactbaseError::Database(format!("Failed to create connection pool: {e}"))
         })?;
 
         let db = Self {
@@ -258,10 +255,7 @@ impl Database {
     /// This is used internally by submodules for database operations.
     pub(crate) fn get_conn(&self) -> Result<DbConn, FactbaseError> {
         self.pool.get().map_err(|e| {
-            FactbaseError::Database(rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(1),
-                Some(e.to_string()),
-            ))
+            FactbaseError::Database(format!("Failed to get database connection: {e}"))
         })
     }
 

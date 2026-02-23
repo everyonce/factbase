@@ -1,6 +1,6 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 20 MCP tools exposed by factbase.
+//! Contains the JSON schema for all 26 MCP tools exposed by factbase.
 
 use serde_json::Value;
 
@@ -256,13 +256,37 @@ pub fn tools_list() -> Value {
                 }
             },
             {
-                "name": "get_duplicate_entries",
-                "description": "Detect entity entries duplicated across documents. Used by update workflow.",
+                "name": "organize_analyze",
+                "description": "Analyze repository for reorganization opportunities: merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" }
+                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
+                        "focus": { "type": "string", "enum": ["duplicates"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info (replaces get_duplicate_entries)." },
+                        "merge_threshold": { "type": "number", "description": "Minimum similarity for merge candidates (default: 0.95)" },
+                        "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" }
                     }
+                }
+            },
+            {
+                "name": "organize",
+                "description": "Execute a knowledge base reorganization action: merge two documents, split a multi-topic document, move a document to a different folder, change a document's type, or process orphan assignments.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "enum": ["merge", "split", "move", "retype", "apply"], "description": "The reorganization action to perform" },
+                        "doc1": { "type": "string", "description": "First document ID (merge)" },
+                        "doc2": { "type": "string", "description": "Second document ID (merge)" },
+                        "into": { "type": "string", "description": "Which document to keep — must be doc1 or doc2 (merge, optional)" },
+                        "doc_id": { "type": "string", "description": "Document ID (split, move, retype)" },
+                        "at": { "type": "string", "description": "Split at specific section title (split, optional)" },
+                        "to": { "type": "string", "description": "Destination folder relative to repo root (move)" },
+                        "new_type": { "type": "string", "description": "New type to assign (retype)" },
+                        "persist": { "type": "boolean", "description": "Persist type override to file (retype, default: false)" },
+                        "repo": { "type": "string", "description": "Repository ID (apply, optional)" },
+                        "dry_run": { "type": "boolean", "description": "Preview without executing (merge, split, move; default: false)" }
+                    },
+                    "required": ["action"]
                 }
             },
             {
@@ -298,7 +322,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 20, "should have 20 tools");
+        assert_eq!(tools.len(), 21, "should have 21 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -317,10 +341,11 @@ mod tests {
         assert!(names.contains(&"delete_document"));
         assert!(names.contains(&"bulk_create_documents"));
         assert!(names.contains(&"search_content"));
-        assert!(names.contains(&"get_duplicate_entries"));
         assert!(names.contains(&"get_deferred_items"));
         assert!(names.contains(&"get_authoring_guide"));
         assert!(names.contains(&"workflow"));
+        assert!(names.contains(&"organize_analyze"));
+        assert!(names.contains(&"organize"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {

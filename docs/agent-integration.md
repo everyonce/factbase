@@ -110,7 +110,7 @@ The agent has access to 21 tools. You don't need to know them — the workflows 
 | Write | `create_document`, `update_document`, `delete_document`, `bulk_create_documents` |
 | Quality | `get_review_queue`, `answer_question`, `bulk_answer_questions`, `generate_questions`, `check_repository` |
 | Workflows | `workflow_start`, `workflow_next` |
-| Organize | `get_duplicate_entries` |
+| Organize | `organize_analyze`, `organize` |
 
 ## Tips
 

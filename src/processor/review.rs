@@ -33,7 +33,7 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
         if let Some(cap) = REVIEW_QUESTION_REGEX.captures(line) {
             let checkbox = &cap[1];
             let type_str = &cap[2];
-            let description = cap[3].to_string();
+            let raw_description = cap[3].to_string();
 
             let checkbox_checked = checkbox == "x" || checkbox == "X";
             let question_type = type_str.parse::<QuestionType>().unwrap_or_else(|_| {
@@ -42,7 +42,8 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
             });
 
             // Extract line_ref from description if present (e.g., "Line 5: ...")
-            let line_ref = extract_line_ref(&description);
+            // and strip the prefix so parsed descriptions match generator descriptions
+            let (line_ref, description) = extract_line_ref_and_strip(&raw_description);
 
             // Look for answer in following blockquote line(s)
             let mut answer = None;
@@ -93,26 +94,33 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
     Some(questions)
 }
 
-/// Extract line reference from question description.
-/// Looks for patterns like "Line 5:" or "Lines 5-10:" at the start.
-fn extract_line_ref(description: &str) -> Option<usize> {
-    // Pattern: "Line N:" at start of description
+/// Extract line reference from question description and strip the prefix.
+/// Returns `(line_ref, stripped_description)`.
+/// If a "Line N:" prefix is found, it's removed from the description so that
+/// parsed descriptions match what generators produce (generators store line_ref
+/// separately and don't include the prefix in the description).
+fn extract_line_ref_and_strip(description: &str) -> (Option<usize>, String) {
+    // Pattern: "Line N: rest" at start of description
     if let Some(rest) = description.strip_prefix("Line ") {
         if let Some(colon_pos) = rest.find(':') {
             if let Ok(line_num) = rest[..colon_pos].trim().parse::<usize>() {
-                return Some(line_num);
+                let stripped = rest[colon_pos + 1..].trim_start().to_string();
+                return (Some(line_num), stripped);
             }
         }
     }
-    // Pattern: "Lines N-M:" - return first line
+    // Pattern: "Lines N-M: rest" - return first line
     if let Some(rest) = description.strip_prefix("Lines ") {
         if let Some(dash_pos) = rest.find('-') {
             if let Ok(line_num) = rest[..dash_pos].trim().parse::<usize>() {
-                return Some(line_num);
+                if let Some(colon_pos) = rest.find(':') {
+                    let stripped = rest[colon_pos + 1..].trim_start().to_string();
+                    return (Some(line_num), stripped);
+                }
             }
         }
     }
-    None
+    (None, description.to_string())
 }
 
 /// Remove unanswered questions whose trigger conditions no longer exist.
@@ -208,8 +216,10 @@ fn question_description_matches(line: &str, valid: &HashSet<String>) -> bool {
     // Question format: "- [ ] `@q[type]` Description text"
     // Extract description after the @q[...] tag
     if let Some(pos) = line.find("]` ") {
-        let desc = &line[pos + 3..];
-        return valid.contains(desc);
+        let raw_desc = &line[pos + 3..];
+        // Strip "Line N: " prefix to match generator descriptions
+        let (_, stripped) = extract_line_ref_and_strip(raw_desc);
+        return valid.contains(&stripped);
     }
     // If we can't parse it, keep it (conservative)
     true
@@ -667,9 +677,11 @@ Line 3
 "#;
         let result = parse_review_queue(content).unwrap();
         assert_eq!(result.len(), 1);
+        assert_eq!(result[0].line_ref, Some(5));
+        // Description has "Line N:" prefix stripped to match generator output
         assert_eq!(
             result[0].description,
-            "Line 5: \"Started at Acme Corp\" - when did this role begin?"
+            "\"Started at Acme Corp\" - when did this role begin?"
         );
     }
 

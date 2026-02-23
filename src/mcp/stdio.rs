@@ -3,6 +3,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::llm::LlmProvider;
 use crate::mcp::protocol::initialize_result;
 use crate::mcp::tools::{handle_tool_call, tools_list, McpRequest, McpResponse};
+use futures::FutureExt;
 use serde_json::Value;
 use std::io::{self, BufRead, Write};
 use tracing::{debug, error};
@@ -107,7 +108,10 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                         (None, None)
                     };
 
-                    let tool_fut = handle_tool_call(db, embedding, llm, request, progress);
+                    let tool_fut = std::panic::AssertUnwindSafe(
+                        handle_tool_call(db, embedding, llm, request, progress),
+                    )
+                    .catch_unwind();
                     tokio::pin!(tool_fut);
 
                     if let Some(mut rx) = tx {
@@ -132,17 +136,21 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                                         let _ = write_progress(&mut writer, &token, p, t, m);
                                     }
                                     break match result {
-                                        Ok(resp) => resp,
-                                        Err(e) => Some(McpResponse::error(-32603, format!("Internal error: {e}"))),
+                                        Ok(Ok(resp)) => resp,
+                                        Ok(Err(e)) => Some(McpResponse::error(-32603, format!("Internal error: {e}"))),
+                                        Err(_) => Some(McpResponse::error(-32603, "Internal error: tool panicked".into())),
                                     };
                                 }
                             }
                         }
                     } else {
                         match tool_fut.await {
-                            Ok(resp) => resp,
-                            Err(e) => {
+                            Ok(Ok(resp)) => resp,
+                            Ok(Err(e)) => {
                                 Some(McpResponse::error(-32603, format!("Internal error: {e}")))
+                            }
+                            Err(_) => {
+                                Some(McpResponse::error(-32603, "Internal error: tool panicked".into()))
                             }
                         }
                     }

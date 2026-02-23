@@ -1,6 +1,6 @@
 {
   "name": "@everyonce/factbase-darwin-x64",
-  "version": "0.4.3",
+  "version": "0.5.1",
   "description": "factbase binary for macOS Intel",
   "license": "MIT",
   "os": [

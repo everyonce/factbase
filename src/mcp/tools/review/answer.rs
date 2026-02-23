@@ -113,11 +113,22 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         (false, answer)
     };
 
-    // Get the document
+    // Get the document (for file_path metadata)
     let doc = db.require_document(&doc_id)?;
 
+    // Read content from disk (source of truth) to avoid reverting edits made
+    // since the last scan/DB sync.
+    let file_path = PathBuf::from(&doc.file_path);
+    if !file_path.exists() {
+        return Err(FactbaseError::not_found(format!(
+            "File not found: {}",
+            file_path.display()
+        )));
+    }
+    let content = fs::read_to_string(&file_path)?;
+
     // Parse the review queue
-    let questions = parse_review_queue(&doc.content).ok_or_else(|| {
+    let questions = parse_review_queue(&content).ok_or_else(|| {
         FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
     })?;
 
@@ -140,7 +151,6 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
 
     // Find and modify the question in the document content
-    let content = &doc.content;
     let marker = "<!-- factbase:review -->";
     let marker_pos = content
         .find(marker)
@@ -157,14 +167,6 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Reconstruct the document
     let new_content = format!("{before_marker}{marker}{modified_queue}");
 
-    // Write to file
-    let file_path = PathBuf::from(&doc.file_path);
-    if !file_path.exists() {
-        return Err(FactbaseError::not_found(format!(
-            "File not found: {}",
-            file_path.display()
-        )));
-    }
     fs::write(&file_path, &new_content)?;
 
     // Sync updated content back to database so subsequent queries see the answer
@@ -275,12 +277,22 @@ pub fn bulk_answer_questions(
             .push((question_index, answer_text));
     }
 
-    // Validate all documents and questions exist before making any changes
-    let mut doc_contents: HashMap<String, (crate::models::Document, String)> = HashMap::new();
+    // Validate all documents and questions exist before making any changes.
+    // Read content from disk (source of truth) to avoid reverting edits made
+    // since the last scan/DB sync.
+    let mut doc_disk_content: HashMap<String, (PathBuf, String)> = HashMap::new();
     for (doc_id, answers_for_doc) in &by_doc {
         let doc = db.require_document(doc_id)?;
+        let file_path = PathBuf::from(&doc.file_path);
+        if !file_path.exists() {
+            return Err(FactbaseError::not_found(format!(
+                "File not found: {}",
+                file_path.display()
+            )));
+        }
+        let disk_content = fs::read_to_string(&file_path)?;
 
-        let questions = parse_review_queue(&doc.content).ok_or_else(|| {
+        let questions = parse_review_queue(&disk_content).ok_or_else(|| {
             FactbaseError::not_found(format!("No Review Queue found in document: {doc_id}"))
         })?;
 
@@ -301,16 +313,16 @@ pub fn bulk_answer_questions(
             }
         }
 
-        doc_contents.insert(doc_id.clone(), (doc, questions.len().to_string()));
+        doc_disk_content.insert(doc_id.clone(), (file_path, disk_content));
     }
 
     // Now apply all changes
     let mut results: Vec<Value> = Vec::new();
     let total_docs = by_doc.len();
     for (i, (doc_id, answers_for_doc)) in by_doc.iter().enumerate() {
-        let (doc, _) = doc_contents
+        let (file_path, disk_content) = doc_disk_content
             .get(doc_id)
-            .ok_or_else(|| FactbaseError::internal(format!("missing doc_contents for {doc_id}")))?;
+            .ok_or_else(|| FactbaseError::internal(format!("missing disk content for {doc_id}")))?;
 
         progress.report(
             i + 1,
@@ -326,7 +338,7 @@ pub fn bulk_answer_questions(
         let mut sorted_answers = answers_for_doc.clone();
         sorted_answers.sort_by(|a, b| b.0.cmp(&a.0));
 
-        let mut content = doc.content.clone();
+        let mut content = disk_content.clone();
         let marker = "<!-- factbase:review -->";
 
         for (question_index, answer_text) in &sorted_answers {
@@ -357,14 +369,7 @@ pub fn bulk_answer_questions(
         }
 
         // Write to file
-        let file_path = PathBuf::from(&doc.file_path);
-        if !file_path.exists() {
-            return Err(FactbaseError::not_found(format!(
-                "File not found: {}",
-                file_path.display()
-            )));
-        }
-        fs::write(&file_path, &content)?;
+        fs::write(file_path, &content)?;
 
         // Sync updated content back to database
         let new_hash = content_hash(&content);

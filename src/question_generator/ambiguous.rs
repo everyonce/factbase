@@ -22,8 +22,28 @@ const REVIEWED_SKIP_DAYS: i64 = 180;
 ///
 /// Returns a list of `ReviewQuestion` with `question_type = Ambiguous`.
 pub fn generate_ambiguous_questions(content: &str) -> Vec<ReviewQuestion> {
+    generate_ambiguous_questions_with_type(content, None)
+}
+
+/// Generate ambiguous questions, optionally skipping acronym detection for definition documents.
+pub fn generate_ambiguous_questions_with_type(
+    content: &str,
+    doc_type: Option<&str>,
+) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
+
+    // Skip acronym detection for glossary/definition documents
+    let skip_acronyms = doc_type.is_some_and(|t| {
+        let lower = t.to_lowercase();
+        lower == "definition" || lower == "glossary"
+    }) || content
+        .lines()
+        .take(3)
+        .any(|l| {
+            let lower = l.to_lowercase();
+            lower.contains("# glossary") || lower.contains("# definitions")
+        });
 
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker
@@ -36,7 +56,13 @@ pub fn generate_ambiguous_questions(content: &str) -> Vec<ReviewQuestion> {
         let ambiguity = detect_ambiguous_location(&fact_text)
             .or_else(|| detect_ambiguous_relationship(&fact_text))
             .map(String::from)
-            .or_else(|| detect_undefined_acronym(&fact_text));
+            .or_else(|| {
+                if skip_acronyms {
+                    None
+                } else {
+                    detect_undefined_acronym(&fact_text)
+                }
+            });
 
         if let Some(ambiguity) = ambiguity {
             questions.push(ReviewQuestion::new(

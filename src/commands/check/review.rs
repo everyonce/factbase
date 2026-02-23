@@ -6,8 +6,9 @@
 
 use factbase::{
     generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_missing_questions, generate_required_field_questions,
-    generate_source_quality_questions, generate_stale_questions, generate_temporal_questions,
+    generate_duplicate_role_questions, generate_missing_questions,
+    generate_required_field_questions, generate_source_quality_questions,
+    generate_stale_questions, generate_temporal_questions,
     parse_review_queue, prune_stale_questions, ReviewQuestion,
 };
 #[cfg(test)]
@@ -62,6 +63,9 @@ pub fn generate_questions_for_content(
     // Generate conflict questions (overlapping dates)
     new_questions.extend(generate_conflict_questions(content));
 
+    // Generate duplicate role questions (same role appearing multiple times)
+    new_questions.extend(generate_duplicate_role_questions(content));
+
     // Generate missing source questions
     new_questions.extend(generate_missing_questions(content));
 
@@ -110,6 +114,7 @@ pub fn generate_and_prune(
     // Generate all questions (before dedup) to get the "valid" set
     let mut all_generated = generate_temporal_questions(content);
     all_generated.extend(generate_conflict_questions(content));
+    all_generated.extend(generate_duplicate_role_questions(content));
     all_generated.extend(generate_missing_questions(content));
     all_generated.extend(generate_source_quality_questions(content));
     all_generated.extend(generate_ambiguous_questions(content));
@@ -231,11 +236,11 @@ mod tests {
 - [ ] `@q[temporal]` Line 3: "Some fact" - when was this true?
   > 
 "#;
-        // The description in the parsed question includes the full text after @q[type]
+        // The description in the parsed question has "Line N:" stripped
         let questions = vec![ReviewQuestion {
             question_type: factbase::QuestionType::Temporal,
             line_ref: Some(3),
-            description: "Line 3: \"Some fact\" - when was this true?".to_string(),
+            description: "\"Some fact\" - when was this true?".to_string(),
             answered: false,
             answer: None,
             line_number: 0,

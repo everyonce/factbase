@@ -31,6 +31,7 @@ pub struct ReviewStatsResponse {
     pub total: u64,
     pub answered: u64,
     pub unanswered: u64,
+    pub deferred: u64,
 }
 
 /// Response for organize stats endpoint.
@@ -99,11 +100,16 @@ fn compute_review_stats(db: &Database) -> Result<ReviewStatsResponse, FactbaseEr
         .get("unanswered")
         .and_then(Value::as_u64)
         .unwrap_or(0);
+    let deferred = result
+        .get("deferred")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
 
     Ok(ReviewStatsResponse {
         total,
         answered,
         unanswered,
+        deferred,
     })
 }
 
@@ -168,11 +174,13 @@ mod tests {
             total: 15,
             answered: 5,
             unanswered: 10,
+            deferred: 2,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"total\":15"));
         assert!(json.contains("\"answered\":5"));
         assert!(json.contains("\"unanswered\":10"));
+        assert!(json.contains("\"deferred\":2"));
     }
 
     #[test]
@@ -210,6 +218,7 @@ mod tests {
             total: 10,
             answered: 10,
             unanswered: 0,
+            deferred: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"unanswered\":0"));
@@ -221,6 +230,7 @@ mod tests {
             total: 10,
             answered: 0,
             unanswered: 10,
+            deferred: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"answered\":0"));

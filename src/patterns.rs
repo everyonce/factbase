@@ -90,6 +90,52 @@ pub static FACT_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // =============================================================================
+// LLM meta-commentary detection
+// =============================================================================
+
+/// Detects LLM self-referential meta-commentary artifacts that were erroneously
+/// included in document content. These are not factual claims and should be
+/// skipped during question generation.
+///
+/// Matches patterns like:
+/// - "Rewrite ... as factual content"
+/// - "I'll update the document..."
+/// - "Let me clarify this section..."
+/// - "Here is the updated version..."
+/// - "Note: I've rephrased..."
+pub static META_COMMENTARY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:^[-*]\s+)?(?:(?:I'(?:ll|ve|m|d)|I (?:will|have|can|should|would|need to)|let me|here (?:is|are)|note(?::|\s+that))\s+.{0,60}(?:rewrit|rephras|clarif|updat|revis|summariz|merg|reorganiz|edit|modif|format|correct|adjust|document|section|content|entry|fact|the (?:above|below|following))|(?:rewrit|rephras|updat|revis|merg|reorganiz|edit|modif|format|correct|adjust)(?:e|ed|ing|ten)?\s+.{0,40}(?:as (?:if|though)|(?:factual|document|entry|section) content|this (?:document|section|entry|fact)))").expect("meta commentary regex should be valid")
+});
+
+/// Detects corruption artifacts from failed `apply_review_answers` runs.
+///
+/// These are process/system phrases that should never appear in factual document
+/// content. When multiple matches are found in a document, the content is likely
+/// corrupted and should be flagged rather than checked for quality.
+///
+/// Matches phrases like:
+/// - "apply_review_answers"
+/// - "CHANGES specification"
+/// - "logical impossibility"
+/// - "corruption metadata"
+/// - "the answer format"
+/// - "the question format"
+static CORRUPTION_ARTIFACT_PHRASES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:apply_review_answers|CHANGES\s+specification|logical\s+impossibility|corruption\s+(?:metadata|artifact)|the\s+(?:question|answer)\s+format\b|Changes\s+\d+[-–]\d+\s+ask\b)")
+        .expect("corruption artifact regex should be valid")
+});
+
+/// Minimum number of corruption artifact matches to flag a document as corrupted.
+const CORRUPTION_THRESHOLD: usize = 2;
+
+/// Returns `true` if the document content contains corruption artifacts from a
+/// failed `apply_review_answers` run (e.g. meta-commentary about changes,
+/// corruption metadata, format mismatches).
+pub fn has_corruption_artifacts(content: &str) -> bool {
+    CORRUPTION_ARTIFACT_PHRASES.find_iter(content).count() >= CORRUPTION_THRESHOLD
+}
+
+// =============================================================================
 // Date extraction patterns
 // =============================================================================
 
@@ -465,5 +511,104 @@ mod tests {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
         let result = add_or_update_reviewed_marker(line, &date);
         assert_eq!(result, "- Works at Acme Corp <!-- reviewed:2026-02-15 -->");
+    }
+
+    // =========================================================================
+    // META_COMMENTARY_REGEX tests
+    // =========================================================================
+
+    #[test]
+    fn test_meta_commentary_rewrite_as_factual() {
+        assert!(META_COMMENTARY_REGEX.is_match(
+            "- Rewrite my own clarification text as if it were factual content"
+        ));
+    }
+
+    #[test]
+    fn test_meta_commentary_ill_update() {
+        assert!(META_COMMENTARY_REGEX.is_match("- I'll update the document with corrections"));
+    }
+
+    #[test]
+    fn test_meta_commentary_let_me_clarify() {
+        assert!(META_COMMENTARY_REGEX.is_match("- Let me clarify this section"));
+    }
+
+    #[test]
+    fn test_meta_commentary_here_is_updated() {
+        assert!(META_COMMENTARY_REGEX.is_match("- Here is the updated content"));
+    }
+
+    #[test]
+    fn test_meta_commentary_ive_revised() {
+        assert!(META_COMMENTARY_REGEX.is_match("- I've revised the entry to correct the facts"));
+    }
+
+    #[test]
+    fn test_meta_commentary_note_rephrased() {
+        assert!(META_COMMENTARY_REGEX.is_match("- Note: I've rephrased the document"));
+    }
+
+    #[test]
+    fn test_meta_commentary_does_not_match_real_facts() {
+        assert!(!META_COMMENTARY_REGEX.is_match("- VP of Engineering at Acme Corp @t[2020..]"));
+    }
+
+    #[test]
+    fn test_meta_commentary_does_not_match_person_name() {
+        assert!(!META_COMMENTARY_REGEX.is_match("- Lives in San Francisco @t[~2024]"));
+    }
+
+    #[test]
+    fn test_meta_commentary_does_not_match_note_fact() {
+        // "Note:" followed by a real fact, not editing language
+        assert!(!META_COMMENTARY_REGEX.is_match("- Notable for pioneering work in AI"));
+    }
+
+    // =========================================================================
+    // has_corruption_artifacts tests
+    // =========================================================================
+
+    #[test]
+    fn test_corruption_artifacts_detected() {
+        let content = "# Anupam Kumar\n\n\
+            - Changes 1-3 ask when was this true\n\
+            - The question format (when/what) does not match the answer format\n\
+            - Senior Engineer at Acme Corp\n";
+        assert!(has_corruption_artifacts(content));
+    }
+
+    #[test]
+    fn test_corruption_artifacts_apply_review_and_changes_spec() {
+        let content = "# Some Doc\n\n\
+            - apply_review_answers produced corruption metadata\n\
+            - CHANGES specification was malformed\n";
+        assert!(has_corruption_artifacts(content));
+    }
+
+    #[test]
+    fn test_corruption_artifacts_logical_impossibility() {
+        let content = "# Doc\n\
+            - This is a logical impossibility given the dates\n\
+            - corruption artifact from previous run\n";
+        assert!(has_corruption_artifacts(content));
+    }
+
+    #[test]
+    fn test_no_corruption_in_normal_doc() {
+        let content = "# Jane Smith\n\n\
+            - VP of Engineering at Acme Corp @t[2020..]\n\
+            - Lives in San Francisco @t[~2024]\n\
+            - Previously at Google @t[2015..2020] [^1]\n";
+        assert!(!has_corruption_artifacts(content));
+    }
+
+    #[test]
+    fn test_single_match_below_threshold() {
+        // One match alone shouldn't flag — could be a legitimate mention
+        let content = "# Doc\n\n\
+            - The apply_review_answers command was run\n\
+            - Normal fact about a person\n";
+        assert!(!has_corruption_artifacts(content));
     }
 }
