@@ -11,6 +11,7 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::organize::fs_helpers::{read_file, write_file};
 use crate::patterns::ID_REGEX;
+use crate::processor::normalize_type;
 
 /// Comment format for type override in markdown files.
 /// Format: `<!-- factbase:type:typename -->`
@@ -79,16 +80,6 @@ pub fn execute_retype(
         new_type: normalized_type,
         persisted_to_file: persisted,
     })
-}
-
-/// Normalize type name (lowercase, singularize).
-fn normalize_type(type_name: &str) -> String {
-    let lower = type_name.to_lowercase();
-    if lower.ends_with('s') && lower.len() > 1 {
-        lower[..lower.len() - 1].to_string()
-    } else {
-        lower
-    }
 }
 
 /// Persist type override to file by adding/updating type comment.

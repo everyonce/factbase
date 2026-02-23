@@ -248,6 +248,60 @@ impl<E: EmbeddingProvider> EmbeddingProvider for CachedEmbedding<E> {
 }
 
 #[cfg(test)]
+pub(crate) mod test_helpers {
+    use super::*;
+
+    /// Mock embedding provider that returns a constant vector of configurable dimension.
+    pub struct MockEmbedding {
+        dim: usize,
+    }
+
+    impl MockEmbedding {
+        pub fn new(dim: usize) -> Self {
+            Self { dim }
+        }
+    }
+
+    impl EmbeddingProvider for MockEmbedding {
+        fn generate<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
+            Box::pin(async move { Ok(vec![0.1; self.dim]) })
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+
+    /// Mock embedding that returns a deterministic vector based on text hash,
+    /// so identical names produce identical embeddings.
+    pub struct HashEmbedding;
+
+    impl EmbeddingProvider for HashEmbedding {
+        fn generate<'a>(&'a self, text: &'a str) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
+            Box::pin(async move {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut h = DefaultHasher::new();
+                text.hash(&mut h);
+                let seed = h.finish();
+                let mut emb = vec![0.0f32; 16];
+                for (i, v) in emb.iter_mut().enumerate() {
+                    *v = ((seed.wrapping_add(i as u64) % 1000) as f32) / 1000.0;
+                }
+                Ok(emb)
+            })
+        }
+
+        fn dimension(&self) -> usize {
+            16
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -295,32 +349,7 @@ mod tests {
         assert_eq!(cap, 50);
     }
 
-    /// Mock embedding provider for testing cache behavior
-    struct MockEmbedding {
-        dim: usize,
-    }
-
-    impl MockEmbedding {
-        fn new(dim: usize) -> Self {
-            Self { dim }
-        }
-    }
-
-    impl EmbeddingProvider for MockEmbedding {
-        fn generate<'a>(
-            &'a self,
-            _text: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
-            Box::pin(async move {
-                // Return a simple embedding based on dimension
-                Ok(vec![0.1; self.dim])
-            })
-        }
-
-        fn dimension(&self) -> usize {
-            self.dim
-        }
-    }
+    use crate::embedding::test_helpers::MockEmbedding;
 
     #[tokio::test]
     async fn test_cached_embedding_cache_hit() {

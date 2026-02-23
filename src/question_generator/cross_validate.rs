@@ -209,24 +209,11 @@ pub async fn cross_validate_document(
 mod tests {
     use super::*;
     use crate::database::tests::test_db;
-    use crate::error::FactbaseError;
+    use crate::embedding::test_helpers::MockEmbedding;
     use std::future::Future;
     use std::pin::Pin;
 
     type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
-
-    struct MockEmbedding;
-    impl EmbeddingProvider for MockEmbedding {
-        fn generate<'a>(
-            &'a self,
-            _text: &'a str,
-        ) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
-            Box::pin(async { Ok(vec![0.1; 1024]) })
-        }
-        fn dimension(&self) -> usize {
-            1024
-        }
-    }
 
     struct MockLlm;
     impl LlmProvider for MockLlm {
@@ -241,7 +228,7 @@ mod tests {
     #[tokio::test]
     async fn test_empty_content_returns_no_questions() {
         let (db, _tmp) = test_db();
-        let questions = cross_validate_document("", "abc123", &db, &MockEmbedding, &MockLlm)
+        let questions = cross_validate_document("", "abc123", &db, &MockEmbedding::new(1024), &MockLlm)
             .await
             .unwrap();
         assert!(questions.is_empty());
@@ -251,7 +238,7 @@ mod tests {
     async fn test_no_list_items_returns_no_questions() {
         let (db, _tmp) = test_db();
         let content = "# Title\n\nJust paragraphs here.";
-        let questions = cross_validate_document(content, "abc123", &db, &MockEmbedding, &MockLlm)
+        let questions = cross_validate_document(content, "abc123", &db, &MockEmbedding::new(1024), &MockLlm)
             .await
             .unwrap();
         assert!(questions.is_empty());
@@ -261,7 +248,7 @@ mod tests {
     async fn test_no_relevant_results_returns_no_questions() {
         let (db, _tmp) = test_db();
         let content = "# Person\n\n- VP Engineering at Acme\n- Based in Seattle";
-        let questions = cross_validate_document(content, "abc123", &db, &MockEmbedding, &MockLlm)
+        let questions = cross_validate_document(content, "abc123", &db, &MockEmbedding::new(1024), &MockLlm)
             .await
             .unwrap();
         assert!(questions.is_empty());

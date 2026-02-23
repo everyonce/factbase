@@ -43,11 +43,12 @@ pub use models::{
 };
 pub use ollama::create_http_client;
 pub use organize::{
-    cleanup, create_snapshot, detect_merge_candidates, detect_misplaced, detect_split_candidates,
-    execute_merge, execute_move, execute_split, extract_sections, has_orphans, load_orphan_entries,
-    plan_merge, plan_split, process_orphan_answers, rollback, verify_merge, verify_split,
-    MergeCandidate, MergePlan, MergeResult, MisplacedCandidate, MoveResult, SplitCandidate,
-    SplitPlan, SplitResult, SplitSection, VerificationResult,
+    assess_staleness, cleanup, create_snapshot, detect_duplicate_entries, detect_merge_candidates,
+    detect_misplaced, detect_split_candidates, execute_merge, execute_move, execute_split,
+    extract_sections, generate_stale_entry_questions, has_orphans, load_orphan_entries, plan_merge,
+    plan_split, process_orphan_answers, rollback, verify_merge, verify_split, DuplicateEntry,
+    EntryLocation, MergeCandidate, MergePlan, MergeResult, MisplacedCandidate, MoveResult,
+    SplitCandidate, SplitPlan, SplitResult, SplitSection, StaleDuplicate, VerificationResult,
 };
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
 pub use patterns::MANUAL_LINK_REGEX;

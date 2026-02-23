@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1247_passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1364_passing-brightgreen.svg)]()
 
 Filesystem-based knowledge management with semantic search for AI agents.
 
@@ -148,6 +148,7 @@ Factbase exposes these MCP tools on `localhost:3000`:
 | `bulk_create_documents` | Create multiple documents atomically (max 100) |
 | `workflow_start` | Start a guided workflow — resolve issues, ingest data, or enrich documents |
 | `workflow_next` | Get the next step in an active workflow |
+| `get_duplicate_entries` | Detect entity entries duplicated across documents |
 
 ## Document Format
 

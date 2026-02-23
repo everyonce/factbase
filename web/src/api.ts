@@ -29,6 +29,7 @@ export interface ReviewStats {
 export interface OrganizeStats {
   merge_candidates: number;
   misplaced_candidates: number;
+  duplicate_entry_count: number;
   orphan_count: number;
 }
 
@@ -87,7 +88,21 @@ export interface MisplacedCandidate {
 export interface SuggestionsResponse {
   merge: MergeCandidate[];
   misplaced: MisplacedCandidate[];
+  duplicate_entries: DuplicateEntry[];
   total: number;
+}
+
+export interface DuplicateEntry {
+  entity_name: string;
+  entries: EntryLocation[];
+}
+
+export interface EntryLocation {
+  doc_id: string;
+  doc_title: string;
+  section: string;
+  line_start: number;
+  facts: string[];
 }
 
 export interface OrphanEntry {

@@ -43,6 +43,7 @@ mod stats;
 mod temporal;
 
 // Re-export core types and functions
+pub(crate) use core::normalize_type;
 pub use core::DocumentProcessor;
 
 // Re-export temporal types and functions

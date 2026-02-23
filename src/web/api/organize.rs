@@ -9,8 +9,8 @@ use crate::error::FactbaseError;
 use crate::organize::fs_helpers::{read_file, write_file};
 use crate::organize::{
     detect_merge_candidates, detect_misplaced, load_orphan_entries, orphan_file_path,
-    process_orphan_answers, validate_orphan_answer, MergeCandidate, MisplacedCandidate,
-    OrphanEntry,
+    process_orphan_answers, validate_orphan_answer, DuplicateEntry, MergeCandidate,
+    MisplacedCandidate, OrphanEntry,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -37,11 +37,14 @@ pub struct SuggestionsQuery {
 
 /// Combined suggestions response.
 ///
-/// Note: `split` is always empty in web API. Use CLI for split detection.
+/// Note: `split` and `duplicate_entries` are always empty in web API.
+/// Use CLI `factbase organize analyze` for split and duplicate detection
+/// (they require an embedding provider).
 #[derive(Debug, Serialize)]
 pub struct SuggestionsResponse {
     pub merge: Vec<MergeCandidate>,
     pub misplaced: Vec<MisplacedCandidate>,
+    pub duplicate_entries: Vec<DuplicateEntry>,
     pub total: usize,
 }
 
@@ -149,8 +152,8 @@ pub async fn list_suggestions(
             Some("misplaced") => {
                 misplaced = detect_misplaced(&db, repo_ref)?;
             }
-            Some("split") => {
-                // Split detection requires embedding provider - not available via web API
+            Some("split") | Some("duplicate") => {
+                // Split/duplicate detection requires embedding provider - not available via web API
                 // Return empty result with note
             }
             _ => {
@@ -165,6 +168,7 @@ pub async fn list_suggestions(
         Ok(SuggestionsResponse {
             merge,
             misplaced,
+            duplicate_entries: Vec::new(),
             total,
         })
     })
@@ -200,6 +204,7 @@ pub async fn get_document_suggestions(
         Ok(SuggestionsResponse {
             merge,
             misplaced,
+            duplicate_entries: Vec::new(),
             total,
         })
     })
@@ -437,11 +442,13 @@ mod tests {
         let response = SuggestionsResponse {
             merge: vec![],
             misplaced: vec![],
+            duplicate_entries: vec![],
             total: 0,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"total\":0"));
         assert!(json.contains("\"merge\":[]"));
+        assert!(json.contains("\"duplicate_entries\":[]"));
     }
 
     #[test]

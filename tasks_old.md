@@ -1667,3 +1667,23 @@ Key Features:
 - Only runs when `!opts.dry_run`
 
 **Test counts:** 973 lib + 354 binary = 1327 (with all features). Zero clippy warnings. Commit: d899ec5.
+
+## Phase 45 Task 6: MCP and Workflow Integration (2/2 Complete - 2026-02-10)
+
+**Summary**: Threaded `LlmProvider` through the MCP infrastructure so `generate_questions` can run cross-document fact validation. Updated the resolve workflow to guide agents on handling cross-document conflicts.
+
+**Key considerations:**
+- `AppState` gains `llm: Option<Box<dyn LlmProvider>>` — optional because tests use `None`
+- `McpServer::new` takes an additional `llm: Option<Box<dyn LlmProvider>>` parameter (last position)
+- `handle_tool_call` gains `llm: Option<&dyn LlmProvider>` parameter, threaded from both HTTP and stdio transports
+- `generate_questions` changed from sync to async — dispatch changed from `blocking_tool!` macro to direct async call with `embedding` and `llm` parameters
+- Cross-validation runs after all sync generators and only when LLM is available (`if let Some(llm)`)
+- Graceful degradation: cross-validation failures are logged as warnings, not fatal errors
+- Both `cmd_serve` and `cmd_mcp` create an LLM provider via `setup_llm_with_timeout` and pass it through
+- Resolve workflow step 2 now explains cross-document conflicts and instructs agents to use `get_entity` to read the referenced source document
+
+**Test counts:** 973 lib + 354 binary = 1327 (with all features). Zero clippy warnings.
+
+**Phase 45 fully complete (6 tasks, all subtasks done).** Cross-document fact validation is now available via CLI (`lint --cross-check`), MCP (`generate_questions`), and workflow guidance (`resolve` workflow).
+
+---

@@ -157,6 +157,30 @@ pub struct FactAssignment {
     pub reason: Option<String>,
 }
 
+/// Location of an entity entry within a specific document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntryLocation {
+    /// Parent document ID.
+    pub doc_id: String,
+    /// Parent document title.
+    pub doc_title: String,
+    /// Section containing the entry (e.g., "Team").
+    pub section: String,
+    /// Start line (1-indexed, inclusive).
+    pub line_start: usize,
+    /// Child list items (fact text).
+    pub facts: Vec<String>,
+}
+
+/// A named entity that appears as an entry in multiple documents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateEntry {
+    /// Canonical entity name.
+    pub entity_name: String,
+    /// All locations where this entity appears.
+    pub entries: Vec<EntryLocation>,
+}
+
 /// Ledger tracking all facts through a reorganization operation.
 ///
 /// The key invariant is: `source_facts.len() == assignments.len()`

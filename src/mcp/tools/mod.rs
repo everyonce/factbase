@@ -23,6 +23,7 @@
 mod document;
 mod entity;
 mod helpers;
+mod organize;
 mod review;
 mod schema;
 mod search;
@@ -40,6 +41,7 @@ pub use document::{bulk_create_documents, create_document, delete_document, upda
 pub use entity::{
     get_document_stats, get_entity, get_perspective, list_entities, list_repositories,
 };
+pub use organize::get_duplicate_entries;
 pub use review::{answer_question, bulk_answer_questions, generate_questions, get_review_queue};
 pub use search::{search_content, search_knowledge, search_temporal};
 
@@ -176,10 +178,9 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "search_content" => blocking_tool!(db, args, search_content),
                 "get_review_queue" => blocking_tool!(db, args, get_review_queue),
                 "answer_question" => blocking_tool!(db, args, answer_question),
-                "generate_questions" => {
-                    generate_questions(db, embedding, llm, &args).await?
-                }
+                "generate_questions" => generate_questions(db, embedding, llm, &args).await?,
                 "bulk_answer_questions" => blocking_tool!(db, args, bulk_answer_questions),
+                "get_duplicate_entries" => get_duplicate_entries(db, embedding, &args).await?,
                 "workflow_start" => blocking_tool!(db, args, workflow::workflow_start),
                 "workflow_next" => blocking_tool!(db, args, workflow::workflow_next),
                 _ => {
@@ -307,6 +308,7 @@ mod tests {
             "answer_question",
             "generate_questions",
             "bulk_answer_questions",
+            "get_duplicate_entries",
             "workflow_start",
             "workflow_next",
         ]
