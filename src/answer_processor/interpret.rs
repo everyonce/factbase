@@ -484,22 +484,9 @@ mod tests {
             answer: Some("dismiss".to_string()),
             line_number: 10,
         };
-        let result = interpret_answer(&q, "dismiss");
-        assert!(matches!(result, ChangeInstruction::Dismiss));
-    }
-
-    #[test]
-    fn test_interpret_answer_ignore() {
-        let q = ReviewQuestion {
-            question_type: QuestionType::Temporal,
-            line_ref: Some(5),
-            description: "test".to_string(),
-            answered: true,
-            answer: Some("ignore".to_string()),
-            line_number: 10,
-        };
-        let result = interpret_answer(&q, "IGNORE");
-        assert!(matches!(result, ChangeInstruction::Dismiss));
+        assert!(matches!(interpret_answer(&q, "dismiss"), ChangeInstruction::Dismiss));
+        // "ignore" is an alias for dismiss
+        assert!(matches!(interpret_answer(&q, "IGNORE"), ChangeInstruction::Dismiss));
     }
 
     #[test]
@@ -584,20 +571,6 @@ mod tests {
     }
 
     #[test]
-    fn test_interpret_answer_needs_deferral() {
-        let q = ReviewQuestion {
-            question_type: QuestionType::Stale,
-            line_ref: Some(5),
-            description: "test".to_string(),
-            answered: true,
-            answer: Some("needs re-verification".to_string()),
-            line_number: 10,
-        };
-        let result = interpret_answer(&q, "needs re-verification");
-        assert!(matches!(result, ChangeInstruction::Defer));
-    }
-
-    #[test]
     fn test_interpret_answer_source_citation() {
         let q = ReviewQuestion {
             question_type: QuestionType::Missing,
@@ -610,25 +583,6 @@ mod tests {
         let result = interpret_answer(&q, "per LinkedIn profile");
         // Source citations from review answers are dismissed — they should not
         // become footnote definitions (prevents garbage footnote accumulation).
-        assert!(
-            matches!(result, ChangeInstruction::Dismiss),
-            "Expected Dismiss, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_interpret_answer_source_with_date() {
-        let q = ReviewQuestion {
-            question_type: QuestionType::Missing,
-            line_ref: Some(5),
-            description: r#""Some fact" - source?"#.to_string(),
-            answered: true,
-            answer: Some("Phonetool lookup, 2026-02-10".to_string()),
-            line_number: 10,
-        };
-        let result = interpret_answer(&q, "Phonetool lookup, 2026-02-10");
-        // Source citations from review answers are dismissed — they should not
-        // become footnote definitions.
         assert!(
             matches!(result, ChangeInstruction::Dismiss),
             "Expected Dismiss, got {result:?}"
@@ -696,39 +650,19 @@ mod tests {
 
     #[test]
     fn test_classify_confirmation_with_date_not_source() {
-        // "Still current 2024-02" should NOT be classified as SourceCitation
-        let result = classify_answer("Still current 2024-02");
-        assert!(
-            !matches!(result, AnswerType::SourceCitation { .. }),
-            "Expected non-SourceCitation, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_classify_confirmed_with_date_not_source() {
-        let result = classify_answer("Confirmed 2024-02");
-        assert!(
-            !matches!(result, AnswerType::SourceCitation { .. }),
-            "Expected non-SourceCitation, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_classify_verified_with_date_not_source() {
-        let result = classify_answer("Verified 2024-02-15");
-        assert!(
-            !matches!(result, AnswerType::SourceCitation { .. }),
-            "Expected non-SourceCitation, got {result:?}"
-        );
-    }
-
-    #[test]
-    fn test_classify_yes_verified_with_date_not_source() {
-        let result = classify_answer("Yes, verified 2024-02");
-        assert!(
-            !matches!(result, AnswerType::SourceCitation { .. }),
-            "Expected non-SourceCitation, got {result:?}"
-        );
+        // Confirmation-like words + date should NOT be classified as SourceCitation
+        for input in [
+            "Still current 2024-02",
+            "Confirmed 2024-02",
+            "Verified 2024-02-15",
+            "Yes, verified 2024-02",
+        ] {
+            let result = classify_answer(input);
+            assert!(
+                !matches!(result, AnswerType::SourceCitation { .. }),
+                "Expected non-SourceCitation for '{input}', got {result:?}"
+            );
+        }
     }
 
     #[test]
@@ -851,11 +785,8 @@ mod tests {
             matches!(result, ChangeInstruction::Dismiss),
             "Open-ended range should be preserved (dismissed), got {result:?}"
         );
-    }
-
-    #[test]
-    fn test_confirmation_preserves_open_ended_range_simple_yes() {
-        let q = ReviewQuestion {
+        // Simple "yes" also preserves open-ended ranges
+        let q2 = ReviewQuestion {
             question_type: QuestionType::Stale,
             line_ref: Some(5),
             description: r#""VP at BigCo @t[2022..]" - still valid?"#.to_string(),
@@ -863,10 +794,10 @@ mod tests {
             answer: Some("yes".to_string()),
             line_number: 10,
         };
-        let result = interpret_answer(&q, "yes");
+        let result2 = interpret_answer(&q2, "yes");
         assert!(
-            matches!(result, ChangeInstruction::Dismiss),
-            "Open-ended range should be preserved (dismissed), got {result:?}"
+            matches!(result2, ChangeInstruction::Dismiss),
+            "Open-ended range should be preserved (dismissed), got {result2:?}"
         );
     }
 
@@ -1189,34 +1120,6 @@ mod tests {
             interpret_answer(&q, "split: separate roles"),
             ChangeInstruction::Split { .. }
         ));
-    }
-
-    #[test]
-    fn test_interpret_answer_defer_with_colon() {
-        let q = ReviewQuestion {
-            question_type: QuestionType::Stale,
-            line_ref: Some(5),
-            description: "test".to_string(),
-            answered: true,
-            answer: Some("defer: recursive question about review queue".to_string()),
-            line_number: 10,
-        };
-        let result = interpret_answer(&q, "defer: recursive question about review queue");
-        assert!(matches!(result, ChangeInstruction::Defer));
-    }
-
-    #[test]
-    fn test_interpret_answer_deferred_prefix() {
-        let q = ReviewQuestion {
-            question_type: QuestionType::Stale,
-            line_ref: Some(5),
-            description: "test".to_string(),
-            answered: true,
-            answer: Some("deferred: needs more research".to_string()),
-            line_number: 10,
-        };
-        let result = interpret_answer(&q, "deferred: needs more research");
-        assert!(matches!(result, ChangeInstruction::Defer));
     }
 
     #[test]

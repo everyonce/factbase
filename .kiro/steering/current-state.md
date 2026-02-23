@@ -2,7 +2,7 @@
 
 ## Project Status
 
-**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v50.5.0.
+**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v50.41.0.
 
 ### Active Work
 - No active phases. All work through Phase 50 is complete.
@@ -142,7 +142,7 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: ~1326 lib tests (default features); ~1391 lib tests (with all features including web)
+- Currently: ~1298 lib tests (default features); ~1363 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
@@ -165,7 +165,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Playwright with Chromium
 - Currently: 12 tests
 
-### Total: ~1703 unit/binary tests (default features), ~1775 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
+### Total: ~1675 unit/binary tests (default features), ~1747 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
 
 ## Codebase Structure
 

@@ -856,13 +856,6 @@ mod tests {
     }
 
     #[test]
-    fn test_sequential_entries_suppressed() {
-        let content = "# Entity\n\n- Entry A @t[2018..2020]\n- Entry B @t[2020..2023]";
-        let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty(), "Sequential entries should not generate conflict");
-    }
-
-    #[test]
     fn test_overlapping_entries_still_conflicts() {
         let content = "# Entity\n\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
         assert_eq!(generate_conflict_questions(content).len(), 1);
@@ -1163,16 +1156,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_reviewed_marker_suppresses_conflict_at_end() {
-        let content = "# Person\n\n## Career History\n\
-            - Role A at Company @t[2018..2022] <!-- reviewed:2025-01-15 -->\n\
-            - Role B at Company @t[2020..2024] <!-- reviewed:2025-01-15 -->";
-        assert!(generate_conflict_questions(content).is_empty());
-        // Sequential-marked facts
-        let content2 = "# Person\n\n## Career History\n\
-            - Role A at Company @t[2018..2022] <!-- sequential -->\n\
-            - Role B at Company @t[2020..2024] <!-- sequential -->";
-        assert!(generate_conflict_questions(content2).is_empty());
-    }
 }

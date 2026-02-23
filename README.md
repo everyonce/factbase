@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1425_passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1675_passing-brightgreen.svg)]()
 
 Filesystem-based knowledge management with semantic search for AI agents.
 

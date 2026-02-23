@@ -47,39 +47,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_count_facts_dash_list() {
-        let content = "# Title\n- Fact one\n- Fact two\n- Fact three";
-        assert_eq!(count_facts(content), 3);
-    }
-
-    #[test]
-    fn test_count_facts_asterisk_list() {
-        let content = "# Title\n* Fact one\n* Fact two";
-        assert_eq!(count_facts(content), 2);
-    }
-
-    #[test]
-    fn test_count_facts_numbered_list() {
-        let content = "# Title\n1. First\n2. Second\n3. Third";
-        assert_eq!(count_facts(content), 3);
-    }
-
-    #[test]
-    fn test_count_facts_numbered_paren() {
-        let content = "# Title\n1) First\n2) Second";
-        assert_eq!(count_facts(content), 2);
-    }
-
-    #[test]
     fn test_count_facts_mixed() {
-        let content = "# Title\n- Dash item\n* Star item\n1. Numbered\n2) Paren";
-        assert_eq!(count_facts(content), 4);
-    }
-
-    #[test]
-    fn test_count_facts_indented() {
-        let content = "# Title\n- Top level\n  - Nested\n    - Deep nested";
-        assert_eq!(count_facts(content), 3);
+        // All list marker formats counted
+        assert_eq!(count_facts("# Title\n- Dash item\n* Star item\n1. Numbered\n2) Paren"), 4);
+        // Indented items counted
+        assert_eq!(count_facts("# Title\n- Top level\n  - Nested\n    - Deep nested"), 3);
     }
 
     #[test]

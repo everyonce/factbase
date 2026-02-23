@@ -839,6 +839,12 @@ Content here
         // Non-list lines should not get markers
         assert!(!result.contains("## Career <!-- reviewed"));
         assert!(!result.contains("Some text <!-- reviewed"));
+        // Asterisk facts also stamped
+        let section2 = "* Fact A\n* Fact B\nNot a fact";
+        let result2 = stamp_reviewed_markers(section2, &date);
+        assert!(result2.contains("* Fact A <!-- reviewed:2026-02-15 -->"));
+        assert!(result2.contains("* Fact B <!-- reviewed:2026-02-15 -->"));
+        assert!(!result2.contains("Not a fact <!-- reviewed"));
     }
 
     #[test]
@@ -883,31 +889,18 @@ Content here
     // ==================== stamp_reviewed_lines with non-dash facts ====================
 
     #[test]
-    fn test_stamp_reviewed_lines_asterisk_facts() {
-        let content = "# Title\n\n* Fact one\n* Fact two";
+    fn test_stamp_reviewed_lines_alternate_markers() {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
+        // Asterisk facts
+        let content = "# Title\n\n* Fact one\n* Fact two";
         let result = stamp_reviewed_lines(content, &[3], &date);
         assert!(result.contains("* Fact one <!-- reviewed:2026-02-15 -->"));
         assert!(!result.contains("* Fact two <!-- reviewed"));
-    }
-
-    #[test]
-    fn test_stamp_reviewed_lines_numbered_facts() {
-        let content = "# Title\n\n1. First fact\n2. Second fact";
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
-        let result = stamp_reviewed_lines(content, &[3, 4], &date);
-        assert!(result.contains("1. First fact <!-- reviewed:2026-02-15 -->"));
-        assert!(result.contains("2. Second fact <!-- reviewed:2026-02-15 -->"));
-    }
-
-    #[test]
-    fn test_stamp_reviewed_markers_asterisk_facts() {
-        let section = "* Fact A\n* Fact B\nNot a fact";
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
-        let result = stamp_reviewed_markers(section, &date);
-        assert!(result.contains("* Fact A <!-- reviewed:2026-02-15 -->"));
-        assert!(result.contains("* Fact B <!-- reviewed:2026-02-15 -->"));
-        assert!(!result.contains("Not a fact <!-- reviewed"));
+        // Numbered facts
+        let content2 = "# Title\n\n1. First fact\n2. Second fact";
+        let result2 = stamp_reviewed_lines(content2, &[3, 4], &date);
+        assert!(result2.contains("1. First fact <!-- reviewed:2026-02-15 -->"));
+        assert!(result2.contains("2. Second fact <!-- reviewed:2026-02-15 -->"));
     }
 
     // ==================== stamp_reviewed_by_text tests ====================
@@ -937,24 +930,6 @@ Content here
         let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
         let result = stamp_reviewed_by_text(content, &[], &date);
         assert_eq!(result, content);
-    }
-
-    // ==================== stamp_sequential with non-dash facts ====================
-
-    #[test]
-    fn test_stamp_sequential_lines_asterisk_facts() {
-        let content = "# Title\n\n* Fact one @t[2020..2022]\n* Fact two @t[2022..]";
-        let result = stamp_sequential_lines(content, &[3]);
-        assert!(result.contains("* Fact one @t[2020..2022] <!-- sequential -->"));
-        assert!(!result.contains("* Fact two @t[2022..] <!-- sequential"));
-    }
-
-    #[test]
-    fn test_stamp_sequential_by_text_asterisk_facts() {
-        let content = "* Fact A @t[2020..2022]\n* Fact B @t[2022..]";
-        let result = stamp_sequential_by_text(content, &["Fact A"]);
-        assert!(result.contains("* Fact A @t[2020..2022] <!-- sequential -->"));
-        assert!(!result.contains("* Fact B @t[2022..] <!-- sequential"));
     }
 
     // ==================== uncheck_deferred_questions tests ====================
@@ -1114,6 +1089,11 @@ Content here
         assert!(result.contains("<!-- sequential -->"));
         assert!(result.lines().nth(2).unwrap().contains("<!-- sequential -->"));
         assert!(result.lines().nth(3).unwrap().contains("<!-- sequential -->"));
+        // Asterisk facts also stamped
+        let content2 = "# Title\n\n* Fact one @t[2020..2022]\n* Fact two @t[2022..]";
+        let result2 = stamp_sequential_lines(content2, &[3]);
+        assert!(result2.contains("* Fact one @t[2020..2022] <!-- sequential -->"));
+        assert!(!result2.contains("* Fact two @t[2022..] <!-- sequential"));
     }
 
     #[test]
@@ -1138,6 +1118,11 @@ Content here
         let result = stamp_sequential_by_text(content, &["VP at Acme", "Director at Acme"]);
         assert!(result.lines().nth(2).unwrap().contains("<!-- sequential -->"));
         assert!(result.lines().nth(3).unwrap().contains("<!-- sequential -->"));
+        // Asterisk facts also stamped
+        let content2 = "* Fact A @t[2020..2022]\n* Fact B @t[2022..]";
+        let result2 = stamp_sequential_by_text(content2, &["Fact A"]);
+        assert!(result2.contains("* Fact A @t[2020..2022] <!-- sequential -->"));
+        assert!(!result2.contains("* Fact B @t[2022..] <!-- sequential"));
     }
 
     #[test]
