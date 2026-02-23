@@ -1,0 +1,30 @@
+{
+  "name": "@everyonce/factbase",
+  "version": "0.4.3",
+  "description": "Filesystem-based knowledge management with semantic search for AI agents",
+  "repository": {
+    "type": "git",
+    "url": "https://gitea.home.everyonce.com/daniel/factbase.git"
+  },
+  "license": "MIT",
+  "bin": {
+    "factbase": "bin/factbase"
+  },
+  "files": [
+    "bin/factbase"
+  ],
+  "optionalDependencies": {
+    "@everyonce/factbase-linux-x64": "0.4.3",
+    "@everyonce/factbase-darwin-arm64": "0.4.3",
+    "@everyonce/factbase-darwin-x64": "0.4.3",
+    "@everyonce/factbase-win32-x64": "0.4.3"
+  },
+  "keywords": [
+    "factbase",
+    "knowledge-management",
+    "semantic-search",
+    "mcp",
+    "ai-agents",
+    "markdown"
+  ]
+}

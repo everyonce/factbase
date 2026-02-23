@@ -1,26 +1,37 @@
 use crate::error::FactbaseError;
 use crate::models::Repository;
 use glob::Pattern;
-use notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_mini::{new_debouncer, DebouncedEventKind, Debouncer};
+use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
 pub struct FileWatcher {
-    debouncer: Debouncer<RecommendedWatcher>,
-    receiver: Receiver<Result<Vec<notify_debouncer_mini::DebouncedEvent>, notify::Error>>,
+    watcher: RecommendedWatcher,
+    receiver: Receiver<Vec<PathBuf>>,
     ignore_patterns: Vec<Pattern>,
 }
 
 impl FileWatcher {
     pub fn new(debounce_ms: u64, ignore_patterns: &[String]) -> Result<Self, FactbaseError> {
-        let (tx, rx) = channel();
-        let debouncer = new_debouncer(Duration::from_millis(debounce_ms), tx)
-            .map_err(|e| FactbaseError::Watcher(e.to_string()))?;
+        let (raw_tx, raw_rx) = channel::<Event>();
+        let (debounced_tx, debounced_rx) = channel::<Vec<PathBuf>>();
+
+        let watcher = RecommendedWatcher::new(
+            move |res: Result<Event, notify::Error>| match res {
+                Ok(event) => {
+                    let _ = raw_tx.send(event);
+                }
+                Err(e) => warn!("Watcher error: {}", e),
+            },
+            notify::Config::default(),
+        )?;
+
+        let debounce = Duration::from_millis(debounce_ms);
+        std::thread::spawn(move || debounce_loop(raw_rx, debounced_tx, debounce));
 
         let patterns = ignore_patterns
             .iter()
@@ -28,48 +39,36 @@ impl FileWatcher {
             .collect();
 
         Ok(Self {
-            debouncer,
-            receiver: rx,
+            watcher,
+            receiver: debounced_rx,
             ignore_patterns: patterns,
         })
     }
 
     pub fn watch_directory(&mut self, path: &Path) -> Result<(), FactbaseError> {
-        self.debouncer
-            .watcher()
-            .watch(path, RecursiveMode::Recursive)
-            .map_err(|e| FactbaseError::Watcher(e.to_string()))?;
+        self.watcher.watch(path, RecursiveMode::Recursive)?;
         info!("Watching directory: {}", path.display());
         Ok(())
     }
 
     pub fn unwatch_directory(&mut self, path: &Path) -> Result<(), FactbaseError> {
-        self.debouncer
-            .watcher()
-            .unwatch(path)
-            .map_err(|e| FactbaseError::Watcher(e.to_string()))?;
+        self.watcher.unwatch(path)?;
         info!("Stopped watching: {}", path.display());
         Ok(())
     }
 
     pub fn try_recv(&self) -> Option<Vec<PathBuf>> {
         match self.receiver.try_recv() {
-            Ok(Ok(events)) => {
-                let paths: Vec<PathBuf> = events
+            Ok(paths) => {
+                let filtered: Vec<PathBuf> = paths
                     .into_iter()
-                    .filter(|e| e.kind == DebouncedEventKind::Any)
-                    .map(|e| e.path)
                     .filter(|p| self.should_process(p))
                     .collect();
-                if paths.is_empty() {
+                if filtered.is_empty() {
                     None
                 } else {
-                    Some(paths)
+                    Some(filtered)
                 }
-            }
-            Ok(Err(e)) => {
-                warn!("Watcher error: {}", e);
-                None
             }
             Err(_) => None,
         }
@@ -89,6 +88,52 @@ impl FileWatcher {
             }
         }
         true
+    }
+}
+
+/// Collects raw notify events over a debounce window and sends batched paths.
+fn debounce_loop(raw_rx: Receiver<Event>, debounced_tx: Sender<Vec<PathBuf>>, debounce: Duration) {
+    use std::collections::HashSet;
+
+    loop {
+        // Block until first event (or channel closed)
+        let first = match raw_rx.recv() {
+            Ok(event) => event,
+            Err(_) => return, // channel closed
+        };
+
+        let mut paths = HashSet::new();
+        for p in first.paths {
+            paths.insert(p);
+        }
+
+        // Collect additional events within the debounce window
+        let deadline = std::time::Instant::now() + debounce;
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match raw_rx.recv_timeout(remaining) {
+                Ok(event) => {
+                    for p in event.paths {
+                        paths.insert(p);
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    // Send what we have, then exit
+                    if !paths.is_empty() {
+                        let _ = debounced_tx.send(paths.into_iter().collect());
+                    }
+                    return;
+                }
+            }
+        }
+
+        if !paths.is_empty() && debounced_tx.send(paths.into_iter().collect()).is_err() {
+            return; // receiver dropped
+        }
     }
 }
 
@@ -130,12 +175,10 @@ impl Default for ScanCoordinator {
 
 /// Find which repository contains the given path.
 pub fn find_repo_for_path<'a>(path: &Path, repos: &'a [Repository]) -> Option<&'a Repository> {
-    for repo in repos {
-        if path.starts_with(&repo.path) {
-            return Some(repo);
-        }
-    }
-    None
+    repos
+        .iter()
+        .find(|&repo| path.starts_with(&repo.path))
+        .map(|v| v as _)
 }
 
 #[cfg(test)]
@@ -181,6 +224,7 @@ mod tests {
                 perspective: None,
                 created_at: Utc::now(),
                 last_indexed_at: None,
+                last_lint_at: None,
             },
             Repository {
                 id: "repo2".into(),
@@ -189,6 +233,7 @@ mod tests {
                 perspective: None,
                 created_at: Utc::now(),
                 last_indexed_at: None,
+                last_lint_at: None,
             },
         ];
 

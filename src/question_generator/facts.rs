@@ -1,0 +1,253 @@
+//! Fact extraction for cross-document validation.
+//!
+//! Extracts ALL list items from markdown content (any indentation level),
+//! not just temporally-tagged ones. Used by cross-validation to search
+//! each fact against the rest of the factbase.
+
+use crate::patterns::FACT_LINE_REGEX;
+
+/// A single fact line extracted from a document.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FactLine {
+    /// 1-indexed line number in the source document.
+    pub line_number: usize,
+    /// Cleaned fact text (bullets, checkboxes, and leading whitespace removed).
+    /// NOT truncated — full text is needed for embedding generation.
+    pub text: String,
+    /// The `## H2` section heading this fact appears under, if any.
+    pub section: Option<String>,
+}
+
+/// Extract all fact lines (list items at any indentation level) from markdown content.
+///
+/// Tracks `## H2` section headings so each fact knows which section it belongs to.
+/// Reuses `FACT_LINE_REGEX` for list-item detection and strips markdown bullets,
+/// numbered markers, and checkbox markers (`[ ]`, `[x]`, `[X]`).
+pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
+    let mut facts = Vec::new();
+    let mut current_section: Option<String> = None;
+
+    for (line_idx, line) in content.lines().enumerate() {
+        // Track section headings
+        if line.starts_with("## ") {
+            current_section = Some(line.trim_start_matches('#').trim().to_string());
+            continue;
+        }
+
+        if !FACT_LINE_REGEX.is_match(line) {
+            continue;
+        }
+
+        let text = clean_fact_text(line);
+        if text.is_empty() {
+            continue;
+        }
+
+        facts.push(FactLine {
+            line_number: line_idx + 1,
+            text,
+            section: current_section.clone(),
+        });
+    }
+
+    facts
+}
+
+/// Clean a list-item line by removing the bullet/number marker and any checkbox prefix.
+/// Does NOT truncate — returns the full text for embedding use.
+fn clean_fact_text(line: &str) -> String {
+    let trimmed = line.trim();
+
+    // Remove list markers: -, *, 1., 1)
+    let text = if let Some(rest) = trimmed.strip_prefix("- ") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix("* ") {
+        rest
+    } else if let Some(rest) = trimmed.strip_prefix(|c: char| c.is_ascii_digit()) {
+        let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+        if let Some(rest) = rest.strip_prefix(". ") {
+            rest
+        } else if let Some(rest) = rest.strip_prefix(") ") {
+            rest
+        } else {
+            trimmed
+        }
+    } else {
+        trimmed
+    };
+
+    // Remove checkbox markers: [ ], [x], [X]
+    let text = text
+        .strip_prefix("[ ] ")
+        .or_else(|| text.strip_prefix("[x] "))
+        .or_else(|| text.strip_prefix("[X] "))
+        .unwrap_or(text);
+
+    text.trim().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- clean_fact_text tests ---
+
+    #[test]
+    fn test_clean_dash_item() {
+        assert_eq!(clean_fact_text("- Simple fact"), "Simple fact");
+    }
+
+    #[test]
+    fn test_clean_asterisk_item() {
+        assert_eq!(clean_fact_text("* Another fact"), "Another fact");
+    }
+
+    #[test]
+    fn test_clean_numbered_dot() {
+        assert_eq!(clean_fact_text("1. Numbered fact"), "Numbered fact");
+    }
+
+    #[test]
+    fn test_clean_numbered_paren() {
+        assert_eq!(clean_fact_text("2) Paren fact"), "Paren fact");
+    }
+
+    #[test]
+    fn test_clean_checkbox_unchecked() {
+        assert_eq!(clean_fact_text("- [ ] Todo item"), "Todo item");
+    }
+
+    #[test]
+    fn test_clean_checkbox_checked() {
+        assert_eq!(clean_fact_text("- [x] Done item"), "Done item");
+    }
+
+    #[test]
+    fn test_clean_checkbox_checked_upper() {
+        assert_eq!(clean_fact_text("- [X] Done item"), "Done item");
+    }
+
+    #[test]
+    fn test_clean_indented() {
+        assert_eq!(clean_fact_text("  - Indented fact"), "Indented fact");
+    }
+
+    #[test]
+    fn test_clean_does_not_truncate() {
+        let long = "- ".to_string() + &"x".repeat(200);
+        let result = clean_fact_text(&long);
+        assert_eq!(result.len(), 200);
+        assert!(!result.ends_with("..."));
+    }
+
+    // --- extract_all_facts tests ---
+
+    #[test]
+    fn test_extract_plain_list_items() {
+        let content = "# Title\n\n- Fact one\n- Fact two";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].text, "Fact one");
+        assert_eq!(facts[0].line_number, 3);
+        assert_eq!(facts[0].section, None);
+        assert_eq!(facts[1].text, "Fact two");
+        assert_eq!(facts[1].line_number, 4);
+    }
+
+    #[test]
+    fn test_extract_nested_items() {
+        let content = "- Top level\n  - Nested level\n    - Deep nested";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 3);
+        assert_eq!(facts[0].text, "Top level");
+        assert_eq!(facts[1].text, "Nested level");
+        assert_eq!(facts[2].text, "Deep nested");
+    }
+
+    #[test]
+    fn test_extract_with_temporal_tags() {
+        let content = "- VP Engineering @t[2020..]\n- Based in Seattle";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].text, "VP Engineering @t[2020..]");
+        assert_eq!(facts[1].text, "Based in Seattle");
+    }
+
+    #[test]
+    fn test_extract_without_temporal_tags() {
+        let content = "- No tags here\n- Also no tags";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_section_tracking() {
+        let content = "## Career\n\n- Job one\n\n## Education\n\n- Degree one";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].section, Some("Career".to_string()));
+        assert_eq!(facts[0].text, "Job one");
+        assert_eq!(facts[1].section, Some("Education".to_string()));
+        assert_eq!(facts[1].text, "Degree one");
+    }
+
+    #[test]
+    fn test_extract_non_list_lines_excluded() {
+        let content = "# Title\n\nParagraph text here.\n\n- Only fact\n\nMore paragraph.";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].text, "Only fact");
+    }
+
+    #[test]
+    fn test_extract_mixed_markers() {
+        let content = "- Dash item\n* Star item\n1. Numbered item";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 3);
+        assert_eq!(facts[0].text, "Dash item");
+        assert_eq!(facts[1].text, "Star item");
+        assert_eq!(facts[2].text, "Numbered item");
+    }
+
+    #[test]
+    fn test_extract_section_persists_until_next() {
+        let content = "## Section A\n\n- Fact A1\n- Fact A2\n\n## Section B\n\n- Fact B1";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 3);
+        assert_eq!(facts[0].section, Some("Section A".to_string()));
+        assert_eq!(facts[1].section, Some("Section A".to_string()));
+        assert_eq!(facts[2].section, Some("Section B".to_string()));
+    }
+
+    #[test]
+    fn test_extract_no_section_before_first_h2() {
+        let content = "# Title\n\n- Orphan fact\n\n## Section\n\n- Sectioned fact";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 2);
+        assert_eq!(facts[0].section, None);
+        assert_eq!(facts[1].section, Some("Section".to_string()));
+    }
+
+    #[test]
+    fn test_extract_checkboxes() {
+        let content = "- [ ] Unchecked\n- [x] Checked\n- [X] Also checked";
+        let facts = extract_all_facts(content);
+        assert_eq!(facts.len(), 3);
+        assert_eq!(facts[0].text, "Unchecked");
+        assert_eq!(facts[1].text, "Checked");
+        assert_eq!(facts[2].text, "Also checked");
+    }
+
+    #[test]
+    fn test_extract_empty_content() {
+        let facts = extract_all_facts("");
+        assert!(facts.is_empty());
+    }
+
+    #[test]
+    fn test_extract_no_list_items() {
+        let content = "# Title\n\nJust paragraphs.\n\nNo lists here.";
+        let facts = extract_all_facts(content);
+        assert!(facts.is_empty());
+    }
+}

@@ -1,0 +1,539 @@
+//! Database module for SQLite operations.
+//!
+//! This module provides the [`Database`] struct for all database operations
+//! including document storage, embedding management, search, and statistics.
+//!
+//! # Module Organization
+//!
+//! The database module is split into focused submodules:
+//!
+//! - `schema` - Schema initialization and migrations
+//! - `documents` - Document CRUD operations
+//! - `repositories` - Repository CRUD operations
+//! - `links` - Document link operations
+//! - `embeddings` - Embedding storage and retrieval
+//! - `search` - Search operations (semantic, title, content)
+//! - `stats` - Statistics and caching
+//!
+//! # Public API
+//!
+//! All public items are re-exported from this module.
+//!
+//! ## Structs (2)
+//!
+//! - [`Database`] - Main database connection and operations
+//! - [`EmbeddingStatus`] - Result of checking embedding coverage
+//!
+//! ## Methods (48 total)
+//!
+//! ### Constructor & Pool Management (4)
+//! - [`Database::new`] - Default constructor (pool_size=4, no compression)
+//! - [`Database::with_pool_size`] - Constructor with custom pool size
+//! - [`Database::with_options`] - Full constructor (pool_size + compression)
+//! - [`Database::pool_stats`] - Get pool statistics
+//!
+//! ### Repository Operations (8)
+//! - [`Database::upsert_repository`] - Insert or update repository
+//! - [`Database::get_repository`] - Get repository by ID
+//! - [`Database::list_repositories`] - List all repositories
+//! - [`Database::add_repository`] - Add new repository
+//! - [`Database::remove_repository`] - Remove repository and docs
+//! - [`Database::get_repository_by_path`] - Find repo by filesystem path
+//! - [`Database::list_repositories_with_stats`] - List repos with doc counts
+//! - [`Database::update_last_lint_at`] - Update lint timestamp
+//!
+//! ### Document Operations (10)
+//! - [`Database::upsert_document`] - Insert or update document
+//! - [`Database::update_document_hash`] - Update content hash
+//! - [`Database::needs_update`] - Check if doc needs re-indexing
+//! - [`Database::get_document`] - Get document by ID
+//! - [`Database::require_document`] - Get document by ID or error
+//! - [`Database::get_document_by_path`] - Get document by file path
+//! - [`Database::get_documents_for_repo`] - Get all docs in repository
+//! - [`Database::mark_deleted`] - Mark document as deleted
+//! - [`Database::hard_delete_document`] - Permanent delete
+//! - [`Database::list_documents`] - List docs with filters
+//!
+//! ### Transaction Control (2)
+//! - [`Database::begin_transaction`] - Start transaction
+//! - [`Database::commit_transaction`] - Commit transaction
+//!
+//! ### Statistics & Caching (7)
+//! - [`Database::get_stats`] - Basic repo stats
+//! - [`Database::get_detailed_stats`] - Extended stats
+//! - [`Database::invalidate_stats_cache`] - Clear cached stats
+//! - [`Database::compute_temporal_stats`] - Temporal tag statistics
+//! - [`Database::compute_source_stats`] - Source reference statistics
+//! - [`Database::health_check`] - Verify DB connectivity
+//! - [`Database::vacuum`] - Optimize database
+//!
+//! ### Embedding Operations (6)
+//! - [`Database::upsert_embedding`] - Store document embedding
+//! - [`Database::upsert_embedding_chunk`] - Store chunked embedding
+//! - [`Database::delete_embedding`] - Remove embedding
+//! - [`Database::get_chunk_metadata`] - Get chunk info for doc
+//! - [`Database::check_embedding_status`] - Check embedding coverage
+//! - [`Database::get_embedding_dimension`] - Get vector dimension
+//!
+//! ### Search Operations (5)
+//! - [`Database::find_similar_documents`] - Find duplicates by similarity
+//! - [`Database::search_semantic_with_query`] - Vector similarity search
+//! - [`Database::search_semantic_paginated`] - Paginated semantic search
+//! - [`Database::search_by_title`] - Title-based search
+//! - [`Database::search_content`] - Full-text grep search
+//!
+//! ### Link Operations (4)
+//! - [`Database::get_all_document_titles`] - Get titles for link detection
+//! - [`Database::update_links`] - Update document links
+//! - [`Database::get_links_from`] - Get outgoing links
+//! - [`Database::get_links_to`] - Get incoming links
+
+// Submodules (placeholders for future extraction)
+mod documents;
+mod embeddings;
+mod links;
+mod repositories;
+mod schema;
+mod search;
+mod stats;
+
+pub(crate) use crate::error::doc_not_found;
+pub(crate) use crate::error::repo_not_found;
+use crate::error::FactbaseError;
+use crate::models::{DetailedStats, RepoStats, SourceStats, TemporalStats};
+use base64::Engine;
+use chrono::{DateTime, Utc};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+
+/// Type alias for a pooled SQLite connection, used across all database submodules.
+pub(crate) type DbConn = r2d2::PooledConnection<SqliteConnectionManager>;
+
+/// Shared base64 engine constant, replacing repeated `base64::engine::general_purpose::STANDARD`.
+pub(crate) const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
+use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
+use std::sync::{Arc, RwLock};
+
+/// Compression prefix for zstd-compressed content
+#[cfg(feature = "compression")]
+const ZSTD_PREFIX: &[u8] = b"ZSTD:";
+
+/// Compress content using zstd (pub(crate) for submodule access)
+#[cfg(feature = "compression")]
+pub(crate) fn compress_content(content: &str) -> Vec<u8> {
+    let mut result = ZSTD_PREFIX.to_vec();
+    let compressed =
+        zstd::encode_all(content.as_bytes(), 3).unwrap_or_else(|_| content.as_bytes().to_vec());
+    result.extend(compressed);
+    result
+}
+
+/// No-op compression when feature disabled (pub(crate) for submodule access)
+#[cfg(not(feature = "compression"))]
+pub(crate) fn compress_content(content: &str) -> Vec<u8> {
+    content.as_bytes().to_vec()
+}
+
+/// Decompress content, auto-detecting if compressed (pub(crate) for submodule access)
+#[cfg(feature = "compression")]
+pub(crate) fn decompress_content(data: &[u8]) -> Result<String, FactbaseError> {
+    if data.starts_with(ZSTD_PREFIX) {
+        let compressed = &data[ZSTD_PREFIX.len()..];
+        let decompressed = zstd::decode_all(compressed)
+            .map_err(|e| FactbaseError::internal(format!("decompression failed: {}", e)))?;
+        String::from_utf8(decompressed).map_err(|e| {
+            FactbaseError::internal(format!("invalid UTF-8 after decompression: {}", e))
+        })
+    } else {
+        // Uncompressed - treat as UTF-8 string
+        String::from_utf8(data.to_vec())
+            .map_err(|e| FactbaseError::internal(format!("invalid UTF-8: {}", e)))
+    }
+}
+
+/// Decode content, auto-detecting if it's compressed (base64-encoded zstd)
+pub(crate) fn decode_content(stored: &str) -> Result<String, FactbaseError> {
+    // Try to decode as base64 - if it succeeds and starts with ZSTD prefix, decompress
+    if let Ok(decoded) = B64.decode(stored) {
+        #[cfg(feature = "compression")]
+        {
+            if decoded.starts_with(ZSTD_PREFIX) {
+                return decompress_content(&decoded);
+            }
+        }
+        // If we got valid base64 but it's not compressed, try to interpret as UTF-8
+        if let Ok(s) = String::from_utf8(decoded) {
+            return Ok(s);
+        }
+    }
+    // Not compressed, return as-is
+    Ok(stored.to_string())
+}
+
+/// Decode content, returning the original string if decoding fails.
+pub(crate) fn decode_content_lossy(stored: String) -> String {
+    decode_content(&stored).unwrap_or(stored)
+}
+
+/// Parse an RFC 3339 timestamp string to `DateTime<Utc>`, falling back to `Utc::now()`.
+pub(crate) fn parse_rfc3339_utc(s: &str) -> DateTime<Utc> {
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
+}
+
+/// Parse an RFC 3339 timestamp string to `Option<DateTime<Utc>>`.
+pub(crate) fn parse_rfc3339_utc_opt(s: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
+}
+
+/// Cached statistics for a repository
+#[derive(Clone)]
+pub(crate) struct CachedStats {
+    pub(crate) stats: RepoStats,
+    pub(crate) detailed: DetailedStats,
+    pub(crate) temporal: Option<TemporalStats>,
+    pub(crate) source: Option<SourceStats>,
+}
+
+/// Result of checking embedding status for a repository
+#[derive(Debug, Clone)]
+pub struct EmbeddingStatus {
+    /// Document IDs that have embeddings
+    pub with_embeddings: Vec<String>,
+    /// Documents missing embeddings: (id, title)
+    pub without_embeddings: Vec<(String, String)>,
+    /// Orphaned embedding document IDs (deleted or non-existent docs)
+    pub orphaned: Vec<String>,
+}
+
+#[derive(Clone)]
+pub struct Database {
+    pool: Pool<SqliteConnectionManager>,
+    stats_cache: Arc<RwLock<HashMap<String, CachedStats>>>,
+    compression: bool,
+}
+
+impl Database {
+    /// Creates a new database connection with default settings.
+    ///
+    /// Uses a pool size of 4 connections and no compression.
+    /// Creates parent directories if they don't exist.
+    ///
+    /// # Errors
+    /// Returns `FactbaseError::Database` if the connection cannot be established.
+    pub fn new(path: &Path) -> Result<Self, FactbaseError> {
+        Self::with_options(path, 4, false)
+    }
+
+    /// Creates a new database connection with a custom pool size.
+    ///
+    /// Pool size is clamped to 1-32 connections.
+    ///
+    /// # Errors
+    /// Returns `FactbaseError::Database` if the connection cannot be established.
+    pub fn with_pool_size(path: &Path, pool_size: u32) -> Result<Self, FactbaseError> {
+        Self::with_options(path, pool_size, false)
+    }
+
+    /// Creates a new database connection with full configuration options.
+    ///
+    /// Initializes the SQLite database with WAL mode, runs migrations,
+    /// and sets up the connection pool.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the SQLite database file
+    /// * `pool_size` - Number of connections (clamped to 1-32)
+    /// * `compression` - Enable zstd compression for document content
+    ///
+    /// # Errors
+    /// Returns `FactbaseError::Database` if the connection cannot be established
+    /// or migrations fail.
+    pub fn with_options(
+        path: &Path,
+        pool_size: u32,
+        compression: bool,
+    ) -> Result<Self, FactbaseError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        // Load sqlite-vec as auto extension before opening any connection
+        #[allow(clippy::missing_transmute_annotations)]
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+
+        let manager = SqliteConnectionManager::file(path).with_init(|conn| {
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+            Ok(())
+        });
+
+        // Validate pool_size (1-32)
+        let size = pool_size.clamp(1, 32);
+
+        let pool = Pool::builder().max_size(size).build(manager).map_err(|e| {
+            FactbaseError::Database(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some(e.to_string()),
+            ))
+        })?;
+
+        let db = Self {
+            pool,
+            stats_cache: Arc::new(RwLock::new(HashMap::new())),
+            compression,
+        };
+        tracing::debug!("Database opened: {}", path.display());
+        db.init_schema()?;
+        Ok(db)
+    }
+
+    /// Get a connection from the pool.
+    ///
+    /// This is used internally by submodules for database operations.
+    pub(crate) fn get_conn(&self) -> Result<DbConn, FactbaseError> {
+        self.pool.get().map_err(|e| {
+            FactbaseError::Database(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(1),
+                Some(e.to_string()),
+            ))
+        })
+    }
+
+    /// Begin a transaction for batch operations
+    pub fn begin_transaction(&self) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute("BEGIN TRANSACTION", [])?;
+        Ok(())
+    }
+
+    /// Commit a transaction
+    pub fn commit_transaction(&self) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute("COMMIT", [])?;
+        Ok(())
+    }
+
+    // Stats operations are in stats.rs
+
+    /// Lists documents with optional filtering.
+    ///
+    /// Returns full document records (including content) for MCP tools.
+    /// Results are ordered by title.
+    ///
+    /// # Arguments
+    /// * `doc_type` - Optional filter by document type
+    /// * `repo_id` - Optional filter by repository
+    /// * `title_filter` - Optional SQL LIKE pattern for title
+    /// * `limit` - Maximum number of results
+    ///
+    /// # Errors
+    /// Returns `FactbaseError::Database` on SQL errors.
+    /// Run VACUUM and ANALYZE to optimize database
+    pub fn health_check(&self) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.query_row("SELECT 1", [], |_| Ok(()))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::models::{Document, Repository};
+    use tempfile::TempDir;
+
+    pub(crate) fn test_db() -> (Database, TempDir) {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let db_path = tmp.path().join("test.db");
+        let db = Database::new(&db_path).expect("failed to create database");
+        (db, tmp)
+    }
+
+    #[test]
+    fn test_with_pool_size_clamps_values() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        // Test that pool_size 0 gets clamped to 1
+        let db_path = tmp.path().join("test1.db");
+        let db = Database::with_pool_size(&db_path, 0).expect("pool_size 0 should clamp to 1");
+        drop(db);
+        // Test that pool_size 100 gets clamped to 32
+        let db_path = tmp.path().join("test2.db");
+        let db = Database::with_pool_size(&db_path, 100).expect("pool_size 100 should clamp to 32");
+        drop(db);
+        // Test normal pool_size works
+        let db_path = tmp.path().join("test3.db");
+        let db = Database::with_pool_size(&db_path, 8).expect("pool_size 8 should work");
+        drop(db);
+    }
+
+    #[test]
+    fn test_health_check_succeeds() {
+        let (db, _tmp) = test_db();
+        db.health_check().expect("health check should succeed");
+    }
+
+    pub(crate) fn test_repo_in_db(db: &Database, id: &str, path: &std::path::Path) {
+        let repo = Repository {
+            id: id.to_string(),
+            name: id.to_string(),
+            path: path.to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        };
+        db.upsert_repository(&repo).expect("create repo");
+    }
+
+    pub(crate) fn test_repo() -> Repository {
+        Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: std::path::PathBuf::from("/tmp/test"),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        }
+    }
+
+    pub(crate) fn test_repo_with_id(id: &str) -> Repository {
+        Repository {
+            id: id.to_string(),
+            name: format!("Test Repo {}", id),
+            path: std::path::PathBuf::from(format!("/tmp/{}", id)),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        }
+    }
+
+    pub(crate) fn test_doc(id: &str, title: &str) -> Document {
+        Document {
+            id: id.to_string(),
+            file_path: format!("{}.md", id),
+            title: title.to_string(),
+            doc_type: Some("document".to_string()),
+            content: format!("# {}\n\nContent here.", title),
+            ..Document::test_default()
+        }
+    }
+
+    pub(crate) fn test_doc_with_repo(id: &str, repo_id: &str, title: &str) -> Document {
+        Document {
+            id: id.to_string(),
+            repo_id: repo_id.to_string(),
+            file_path: format!("{}.md", id),
+            title: title.to_string(),
+            doc_type: Some("document".to_string()),
+            content: format!("# {}\n\nContent here.", title),
+            ..Document::test_default()
+        }
+    }
+
+    #[test]
+    fn test_database_new_creates_tables() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        // Should not error - tables exist
+        db.upsert_repository(&repo)
+            .expect("upsert_repository should succeed");
+    }
+
+    // Stats tests are in stats.rs
+    // Embedding tests are in embeddings.rs
+    // Search tests are in search.rs
+
+    #[test]
+    #[cfg(feature = "compression")]
+    fn test_compress_decompress_roundtrip() {
+        let original =
+            "This is some test content that should be compressed and decompressed correctly.";
+        let compressed = super::compress_content(original);
+
+        // Compressed data should start with ZSTD prefix
+        assert!(
+            compressed.starts_with(super::ZSTD_PREFIX),
+            "Compressed data should have ZSTD prefix"
+        );
+
+        // Decompress should return original
+        let decompressed =
+            super::decompress_content(&compressed).expect("decompression should succeed");
+        assert_eq!(decompressed, original, "Roundtrip should preserve content");
+    }
+
+    #[test]
+    #[cfg(feature = "compression")]
+    fn test_decompress_uncompressed_data() {
+        let plain = "Plain text without compression";
+        let result =
+            super::decompress_content(plain.as_bytes()).expect("should handle uncompressed data");
+        assert_eq!(result, plain, "Uncompressed data should pass through");
+    }
+
+    #[test]
+    #[cfg(feature = "compression")]
+    fn test_decode_content_compressed() {
+        let original = "Test content for compression";
+        let compressed = super::compress_content(original);
+        let encoded = B64.encode(&compressed);
+
+        let decoded = decode_content(&encoded).expect("decode should succeed");
+        assert_eq!(
+            decoded, original,
+            "Encoded compressed content should decode correctly"
+        );
+    }
+
+    #[test]
+    fn test_decode_content_uncompressed() {
+        let plain = "Plain text content";
+        let decoded = decode_content(plain).expect("decode should succeed");
+        assert_eq!(decoded, plain, "Plain text should pass through unchanged");
+    }
+
+    #[test]
+    fn test_decode_content_lossy_plain() {
+        let plain = "Plain text content".to_string();
+        assert_eq!(decode_content_lossy(plain), "Plain text content");
+    }
+
+    #[test]
+    fn test_database_with_compression() {
+        let tmp = TempDir::new().expect("failed to create temp dir");
+        let db_path = tmp.path().join("compressed.db");
+        let db =
+            Database::with_options(&db_path, 4, true).expect("should create db with compression");
+
+        // Create a repository first
+        let repo = test_repo();
+        db.upsert_repository(&repo)
+            .expect("upsert repo should succeed");
+
+        // Create a test document
+        let doc = test_doc("abc123", "Test Doc");
+        db.upsert_document(&doc).expect("upsert should succeed");
+
+        // Read it back
+        let retrieved = db
+            .get_document("abc123")
+            .expect("get should succeed")
+            .expect("doc should exist");
+        assert_eq!(
+            retrieved.content, doc.content,
+            "Content should match after compression roundtrip"
+        );
+    }
+
+    // Note: Schema version tests moved to schema.rs
+}

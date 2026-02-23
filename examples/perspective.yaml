@@ -1,0 +1,61 @@
+# Factbase Perspective Configuration
+# 
+# This file defines metadata and constraints for your knowledge base.
+# Place it in the root of your repository as `perspective.yaml`.
+#
+# All fields except `type` are optional.
+
+# Required: The type of knowledge base
+# Common values: knowledge-base, wiki, notes, documentation
+type: knowledge-base
+
+# Optional: Organization or team name
+# Used for context in AI agent interactions
+organization: Acme Corp
+
+# Optional: Focus area or domain
+# Helps AI agents understand the scope of the knowledge base
+focus: Product documentation and team knowledge
+
+# Optional: Allowed document types
+# When specified, scanning will warn about documents with unknown types.
+# Types are derived from parent folder names (e.g., people/ -> "person")
+# Types are automatically normalized to lowercase and singular form.
+#
+# Example folder structure:
+#   myrepo/
+#     people/       -> type: "person"
+#     projects/     -> type: "project"
+#     concepts/     -> type: "concept"
+#     notes/        -> type: "note"
+#
+# Uncomment to enable type validation:
+# allowed_types:
+#   - person
+#   - project
+#   - concept
+#   - note
+#   - meeting
+#   - decision
+
+# Optional: Review system configuration
+# Per-repository settings for the review workflow
+#
+# review:
+#   # Override global stale_days threshold (default: 365)
+#   stale_days: 180
+#
+#   # Required fields per document type
+#   # Generate @q[missing] questions for documents missing these fields
+#   required_fields:
+#     person:
+#       - current_role
+#       - location
+#     project:
+#       - status
+#       - owner
+#
+#   # Glob patterns for files to skip during review
+#   ignore_patterns:
+#     - "*.draft.md"
+#     - "templates/*"

@@ -1,36 +1,86 @@
 [package]
 name = "factbase"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
+description = "Filesystem-based knowledge management with semantic search for AI agents"
+license = "MIT"
+repository = "https://gitea.home.everyonce.com/daniel/factbase"
+homepage = "https://gitea.home.everyonce.com/daniel/factbase"
+readme = "README.md"
+keywords = ["knowledge-base", "semantic-search", "mcp", "markdown", "ai"]
+categories = ["command-line-utilities", "database", "text-processing"]
+authors = ["Factbase Contributors"]
+
+[features]
+default = ["full"]
+full = ["progress", "compression", "mcp", "bedrock"]
+progress = ["dep:indicatif"]
+compression = ["dep:zstd", "dep:tar"]
+mcp = ["dep:axum", "dep:tower-http"]
+web = ["dep:axum", "dep:rust-embed", "dep:mime_guess"]
+bedrock = ["dep:aws-sdk-bedrockruntime", "dep:aws-config"]
+minimal = []  # CLI-only, no MCP server, no compression, no progress bars
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+futures = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde_yaml_ng = "0.10"
 clap = { version = "4", features = ["derive"] }
 regex = "1"
 sha2 = "0.10"
 hex = "0.4"
-walkdir = "2"
 chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rand = "0.8"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+getrandom = "0.2"
 glob = "0.3"
-dirs = "5"
+dirs = "6"
 shellexpand = "3"
-reqwest = { version = "0.11", features = ["json"] }
-async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 sqlite-vec = "0.1"
-zerocopy = "0.7"
+zerocopy = "0.8"
 notify = "6"
-notify-debouncer-mini = "0.4"
-axum = { version = "0.7", features = ["macros"] }
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+axum = { version = "0.7", features = ["macros"], optional = true }
+tower-http = { version = "0.6", features = ["trace"], optional = true }
+r2d2 = "0.8.10"
+r2d2_sqlite = { version = "0.24", features = ["bundled"] }
+clap_complete = "4.5.65"
+lru = "0.12"
+rayon = "1.10"
+zstd = { version = "0.13.3", optional = true }
+base64 = "0.22.1"
+tar = { version = "0.4", optional = true }
+
+# Optional dependencies
+indicatif = { version = "0.18.3", optional = true }
+rust-embed = { version = "8", optional = true }
+mime_guess = { version = "2", optional = true }
+aws-sdk-bedrockruntime = { version = "1", optional = true }
+aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "parsing"
+harness = false
+
+[[bench]]
+name = "search"
+harness = false
+
+[[bench]]
+name = "links"
+harness = false
+
+[profile.release]
+strip = true
+lto = "fat"
+opt-level = "z"
+codegen-units = 1
