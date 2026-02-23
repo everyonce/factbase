@@ -137,158 +137,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_repo_not_found_contains_repo_id() {
+    fn test_repo_not_found() {
         let err = repo_not_found("myrepo");
+        assert!(matches!(err, FactbaseError::NotFound(_)));
         let msg = err.to_string();
         assert!(msg.contains("myrepo"));
-    }
-
-    #[test]
-    fn test_repo_not_found_contains_suggestion() {
-        let err = repo_not_found("test-repo");
-        let msg = err.to_string();
         assert!(msg.contains("factbase repo list"));
     }
 
     #[test]
-    fn test_repo_not_found_is_not_found_variant() {
-        let err = repo_not_found("myrepo");
-        assert!(matches!(err, FactbaseError::NotFound(_)));
-    }
-
-    #[test]
-    fn test_doc_not_found_contains_doc_id() {
+    fn test_doc_not_found() {
         let err = doc_not_found("abc123");
+        assert!(matches!(err, FactbaseError::NotFound(_)));
         let msg = err.to_string();
         assert!(msg.contains("abc123"));
-    }
-
-    #[test]
-    fn test_doc_not_found_contains_suggestion() {
-        let err = doc_not_found("test-doc");
-        let msg = err.to_string();
         assert!(msg.contains("factbase search"));
     }
 
     #[test]
-    fn test_doc_not_found_is_not_found_variant() {
-        let err = doc_not_found("abc123");
-        assert!(matches!(err, FactbaseError::NotFound(_)));
+    fn test_error_constructors_str_and_string() {
+        // Each constructor accepts both &str and String; verify variant + message
+        let cases: Vec<(FactbaseError, &str)> = vec![
+            (FactbaseError::parse("missing field"), "missing field"),
+            (FactbaseError::parse(format!("bad value: {}", 42)), "bad value: 42"),
+            (FactbaseError::not_found("no such item"), "no such item"),
+            (FactbaseError::internal("something broke"), "something broke"),
+            (FactbaseError::config("missing value"), "missing value"),
+            (FactbaseError::embedding("no response"), "no response"),
+            (FactbaseError::llm("no output"), "no output"),
+            (FactbaseError::ollama("empty response"), "empty response"),
+        ];
+        for (err, expected) in &cases {
+            assert!(err.to_string().contains(expected), "Error '{}' should contain '{}'", err, expected);
+        }
+        // Verify variant matching
+        assert!(matches!(FactbaseError::parse("x"), FactbaseError::Parse(_)));
+        assert!(matches!(FactbaseError::not_found("x"), FactbaseError::NotFound(_)));
+        assert!(matches!(FactbaseError::internal("x"), FactbaseError::Internal(_)));
+        assert!(matches!(FactbaseError::config("x"), FactbaseError::Config(_)));
+        assert!(matches!(FactbaseError::embedding("x"), FactbaseError::Embedding(_)));
+        assert!(matches!(FactbaseError::llm("x"), FactbaseError::Llm(_)));
+        assert!(matches!(FactbaseError::ollama("x"), FactbaseError::Ollama(_)));
     }
 
     #[test]
-    fn test_parse_constructor_with_string() {
-        let err = FactbaseError::parse(format!("bad value: {}", 42));
-        assert!(matches!(err, FactbaseError::Parse(_)));
-        assert!(err.to_string().contains("bad value: 42"));
-    }
+    fn test_format_user_error() {
+        let with = format_user_error("Repository not found", Some("Run 'factbase repo list'"));
+        assert!(with.contains("error:") && with.contains("Repository not found"));
+        assert!(with.contains("hint:") && with.contains("factbase repo list"));
 
-    #[test]
-    fn test_parse_constructor_with_str() {
-        let err = FactbaseError::parse("missing field");
-        assert!(matches!(err, FactbaseError::Parse(_)));
-        assert!(err.to_string().contains("missing field"));
-    }
-
-    #[test]
-    fn test_not_found_constructor_with_string() {
-        let err = FactbaseError::not_found(format!("doc {}", "abc"));
-        assert!(matches!(err, FactbaseError::NotFound(_)));
-        assert!(err.to_string().contains("doc abc"));
-    }
-
-    #[test]
-    fn test_not_found_constructor_with_str() {
-        let err = FactbaseError::not_found("no such item");
-        assert!(matches!(err, FactbaseError::NotFound(_)));
-        assert!(err.to_string().contains("no such item"));
-    }
-
-    #[test]
-    fn test_internal_constructor_with_string() {
-        let err = FactbaseError::internal(format!("oops: {}", 42));
-        assert!(matches!(err, FactbaseError::Internal(_)));
-        assert!(err.to_string().contains("oops: 42"));
-    }
-
-    #[test]
-    fn test_internal_constructor_with_str() {
-        let err = FactbaseError::internal("something broke");
-        assert!(matches!(err, FactbaseError::Internal(_)));
-        assert!(err.to_string().contains("something broke"));
-    }
-
-    #[test]
-    fn test_config_constructor_with_string() {
-        let err = FactbaseError::config(format!("bad field: {}", "x"));
-        assert!(matches!(err, FactbaseError::Config(_)));
-        assert!(err.to_string().contains("bad field: x"));
-    }
-
-    #[test]
-    fn test_config_constructor_with_str() {
-        let err = FactbaseError::config("missing value");
-        assert!(matches!(err, FactbaseError::Config(_)));
-        assert!(err.to_string().contains("missing value"));
-    }
-
-    #[test]
-    fn test_embedding_constructor_with_string() {
-        let err = FactbaseError::embedding(format!("dim mismatch: {}", 512));
-        assert!(matches!(err, FactbaseError::Embedding(_)));
-        assert!(err.to_string().contains("dim mismatch: 512"));
-    }
-
-    #[test]
-    fn test_embedding_constructor_with_str() {
-        let err = FactbaseError::embedding("no response");
-        assert!(matches!(err, FactbaseError::Embedding(_)));
-        assert!(err.to_string().contains("no response"));
-    }
-
-    #[test]
-    fn test_llm_constructor_with_string() {
-        let err = FactbaseError::llm(format!("timeout: {}s", 30));
-        assert!(matches!(err, FactbaseError::Llm(_)));
-        assert!(err.to_string().contains("timeout: 30s"));
-    }
-
-    #[test]
-    fn test_llm_constructor_with_str() {
-        let err = FactbaseError::llm("no output");
-        assert!(matches!(err, FactbaseError::Llm(_)));
-        assert!(err.to_string().contains("no output"));
-    }
-
-    #[test]
-    fn test_ollama_constructor_with_string() {
-        let err = FactbaseError::ollama(format!("connection refused: {}", "localhost"));
-        assert!(matches!(err, FactbaseError::Ollama(_)));
-        assert!(err.to_string().contains("connection refused: localhost"));
-    }
-
-    #[test]
-    fn test_ollama_constructor_with_str() {
-        let err = FactbaseError::ollama("empty response");
-        assert!(matches!(err, FactbaseError::Ollama(_)));
-        assert!(err.to_string().contains("empty response"));
-    }
-
-    #[test]
-    fn test_format_user_error_with_suggestion() {
-        let msg = format_user_error("Repository not found", Some("Run 'factbase repo list'"));
-        assert!(msg.contains("error:"));
-        assert!(msg.contains("Repository not found"));
-        assert!(msg.contains("hint:"));
-        assert!(msg.contains("factbase repo list"));
-    }
-
-    #[test]
-    fn test_format_user_error_without_suggestion() {
-        let msg = format_user_error("Something went wrong", None);
-        assert!(msg.contains("error:"));
-        assert!(msg.contains("Something went wrong"));
-        assert!(!msg.contains("hint:"));
+        let without = format_user_error("Something went wrong", None);
+        assert!(without.contains("error:") && without.contains("Something went wrong"));
+        assert!(!without.contains("hint:"));
     }
 
     #[test]

@@ -16,6 +16,9 @@ See the docs folder for complete specifications:
 @t[2020..]       Started, ongoing
 @t[..2022]       Unknown start, ended
 @t[?]            Unknown / unverified
+@t[=331 BCE]     BCE suffix notation (→ -0331)
+@t[=-330]        Negative year (→ -0330)
+@t[-490..-479]   BCE range
 ```
 
 ### Source Footnotes

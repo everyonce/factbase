@@ -4,6 +4,7 @@
 //! and avoid duplication.
 
 use regex::Regex;
+use std::cmp::Ordering;
 use std::sync::LazyLock;
 
 // =============================================================================
@@ -26,6 +27,9 @@ pub(crate) static DOC_ID_REGEX: LazyLock<Regex> =
 /// Full temporal tag regex with capture groups for parsing.
 /// Matches all valid @t[...] formats and captures components.
 ///
+/// Year pattern: positive years require 4 digits; negative (BCE) years allow 1-4 digits.
+/// e.g., `2024`, `-0330`, `-330`, `-5`
+///
 /// Capture groups:
 /// - Group 1: prefix (`=` or `~`)
 /// - Group 2: start date (YYYY, YYYY-QN, YYYY-MM, YYYY-MM-DD)
@@ -33,9 +37,22 @@ pub(crate) static DOC_ID_REGEX: LazyLock<Regex> =
 /// - Group 4: end date only (for `DATE..DATE` format)
 /// - Group 5: end date (for `..DATE` historical format)
 pub(crate) static TEMPORAL_TAG_FULL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"@t\[(?:([=~])?(\d{4}(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)(\.\.(\d{4}(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)?)?|\.\.(\d{4}(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)|\?)\]"
-    ).expect("temporal tag regex should be valid")
+    // YEAR = (?:-\d{1,4}|\d{4})  — negative years 1-4 digits, positive years exactly 4
+    // DATE = YEAR(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?
+    Regex::new(concat!(
+        r"@t\[(?:",
+            r"([=~])?",                                                    // G1: prefix
+            r"((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)",     // G2: start date
+            r"(",                                                           // G3: range part
+                r"\.\.",
+                r"((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)?", // G4: end date
+            r")?",
+        r"|",
+            r"\.\.((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)", // G5: historical
+        r"|",
+            r"\?",
+        r")\]",
+    )).expect("temporal tag regex should be valid")
 });
 
 /// Simple temporal tag detection regex (no capture groups).
@@ -48,9 +65,9 @@ pub(crate) static TEMPORAL_TAG_DETECT_REGEX: LazyLock<Regex> = LazyLock::new(|| 
 pub(crate) static MALFORMED_TAG_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@t\[[^\]]*\]").expect("malformed tag regex should be valid"));
 
-/// Regex to detect ongoing temporal tags like @t[2020..] or @t[2020-03..]
+/// Regex to detect ongoing temporal tags like @t[2020..] or @t[2020-03..] or @t[-330..]
 pub(crate) static ONGOING_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@t\[(\d{4}(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)\.\.\]")
+    Regex::new(r"@t\[((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)\.\.\]")
         .expect("ongoing tag regex should compile")
 });
 
@@ -150,7 +167,7 @@ pub fn has_corruption_artifacts(content: &str) -> bool {
 
 /// Date extraction regex - matches YYYY-MM-DD, YYYY-MM, or YYYY in various contexts.
 pub(crate) static DATE_EXTRACT_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(\d{4}-\d{2}-\d{2}|\d{4}-\d{2}|\d{4})")
+    Regex::new(r"(-?\d{4}-\d{2}-\d{2}|-?\d{4}-\d{2}|-?\d{4})")
         .expect("date extraction regex should be valid")
 });
 
@@ -294,20 +311,63 @@ static SEQUENTIAL_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // =============================================================================
-// Date normalization functions
+// Date normalization and comparison functions
 // =============================================================================
 
+/// Zero-pad a negative year to 4 digits. Positive dates pass through unchanged.
+/// e.g., "-330" → "-0330", "-5" → "-0005", "-0490" → "-0490", "2024" → "2024"
+/// For dates with suffixes (e.g., "-330-03"), only the year part is padded.
+pub(crate) fn pad_negative_year(date: &str) -> String {
+    if !date.starts_with('-') {
+        return date.to_string();
+    }
+    // Find where the year digits end (first '-' after the leading '-')
+    let rest = &date[1..];
+    let (year_str, suffix) = match rest.find('-') {
+        Some(pos) => (&rest[..pos], &rest[pos..]),
+        None => (rest, ""),
+    };
+    if year_str.len() >= 4 {
+        return date.to_string();
+    }
+    format!("-{:0>4}{suffix}", year_str)
+}
+
+/// Compare two normalized date strings, correctly handling negative (BCE) years.
+///
+/// For positive dates, lexicographic comparison works because they are zero-padded.
+/// For negative dates, the absolute values must be compared in reverse order
+/// (e.g., -0490 < -0031 numerically, but "-0490" > "-0031" lexicographically).
+pub(crate) fn date_cmp(a: &str, b: &str) -> Ordering {
+    let a_neg = a.starts_with('-');
+    let b_neg = b.starts_with('-');
+    match (a_neg, b_neg) {
+        (false, false) => a.cmp(b),
+        (true, true) => b[1..].cmp(&a[1..]),
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+    }
+}
+
 /// Normalize a date string for comparison by padding to YYYY-MM-DD format (start of period).
+/// Handles negative (BCE) years like -0490, -0490-03, -0490-Q2.
 ///
 /// - YYYY -> YYYY-01-01
 /// - YYYY-QN -> YYYY-MM-01 (Q1=01, Q2=04, Q3=07, Q4=10)
 /// - YYYY-MM -> YYYY-MM-01
 /// - YYYY-MM-DD -> as-is
 pub(crate) fn normalize_date_for_comparison(date: &str) -> String {
+    let date = pad_negative_year(date);
+    let (prefix, rest) = if date.starts_with('-') {
+        ("-", &date[1..])
+    } else {
+        ("", date.as_str())
+    };
+
     // Handle quarter format: YYYY-QN -> YYYY-MM (Q1=01, Q2=04, Q3=07, Q4=10)
-    if date.len() == 7 && date.chars().nth(5) == Some('Q') {
-        let year = &date[0..4];
-        let quarter = &date[6..7];
+    if rest.len() == 7 && rest.chars().nth(5) == Some('Q') {
+        let year = &rest[0..4];
+        let quarter = &rest[6..7];
         let month = match quarter {
             "2" => "04",
             "3" => "07",
@@ -315,28 +375,36 @@ pub(crate) fn normalize_date_for_comparison(date: &str) -> String {
             // Q1 and any unrecognized quarter default to January
             _ => "01",
         };
-        return format!("{year}-{month}-01");
+        return format!("{prefix}{year}-{month}-01");
     }
 
-    match date.len() {
-        4 => format!("{date}-01-01"), // YYYY -> YYYY-01-01
-        7 => format!("{date}-01"),    // YYYY-MM -> YYYY-MM-01
+    match rest.len() {
+        4 => format!("{prefix}{rest}-01-01"),  // YYYY -> YYYY-01-01
+        7 => format!("{prefix}{rest}-01"),      // YYYY-MM -> YYYY-MM-01
         // YYYY-MM-DD and unknown formats returned as-is
         _ => date.to_string(),
     }
 }
 
 /// Normalize a date string to end of period for range comparisons.
+/// Handles negative (BCE) years like -0490, -0490-03, -0490-Q2.
 ///
 /// - YYYY -> YYYY-12-31
 /// - YYYY-QN -> end of quarter
 /// - YYYY-MM -> YYYY-MM-{last day}
 /// - YYYY-MM-DD -> as-is
 pub(crate) fn normalize_date_to_end(date: &str) -> String {
+    let date = pad_negative_year(date);
+    let (prefix, rest) = if date.starts_with('-') {
+        ("-", &date[1..])
+    } else {
+        ("", date.as_str())
+    };
+
     // Handle quarter format: YYYY-QN -> end of quarter
-    if date.len() == 7 && date.chars().nth(5) == Some('Q') {
-        let year = &date[0..4];
-        let quarter = &date[6..7];
+    if rest.len() == 7 && rest.chars().nth(5) == Some('Q') {
+        let year = &rest[0..4];
+        let quarter = &rest[6..7];
         let (month, day) = match quarter {
             "1" => ("03", "31"), // Q1 ends March 31
             "2" => ("06", "30"), // Q2 ends June 30
@@ -344,15 +412,15 @@ pub(crate) fn normalize_date_to_end(date: &str) -> String {
             // Q4 and any unrecognized quarter default to December 31
             _ => ("12", "31"),
         };
-        return format!("{year}-{month}-{day}");
+        return format!("{prefix}{year}-{month}-{day}");
     }
 
-    match date.len() {
-        4 => format!("{date}-12-31"), // YYYY -> YYYY-12-31
+    match rest.len() {
+        4 => format!("{prefix}{rest}-12-31"), // YYYY -> YYYY-12-31
         7 => {
             // YYYY-MM -> YYYY-MM-{last day}
-            let year: i32 = date[0..4].parse().unwrap_or(2000);
-            let month: u32 = date[5..7].parse().unwrap_or(1);
+            let year: i32 = rest[0..4].parse().unwrap_or(2000);
+            let month: u32 = rest[5..7].parse().unwrap_or(1);
             let last_day = match month {
                 4 | 6 | 9 | 11 => 30,
                 2 => {
@@ -366,7 +434,7 @@ pub(crate) fn normalize_date_to_end(date: &str) -> String {
                 // Months with 31 days and any unrecognized month
                 _ => 31,
             };
-            format!("{date}-{last_day:02}")
+            format!("{prefix}{rest}-{last_day:02}")
         }
         // YYYY-MM-DD and unknown formats returned as-is
         _ => date.to_string(),
@@ -411,6 +479,15 @@ mod tests {
         assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[2020..]"));
         assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[..2022]"));
         assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[?]"));
+        // BCE (negative year) formats
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[=-0031]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[~-0031]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-0490..-0479]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-0031..0014]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[..-0479]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-0490..]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-0490-03]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-0490-Q2]"));
         // Should not match empty or invalid
         assert!(!TEMPORAL_TAG_FULL_REGEX.is_match("@t[]"));
         assert!(!TEMPORAL_TAG_FULL_REGEX.is_match("@t[..]"));
@@ -464,68 +541,64 @@ mod tests {
 
     // Date normalization tests
     #[test]
-    fn test_normalize_date_for_comparison_year() {
+    fn test_normalize_date_for_comparison() {
         assert_eq!(normalize_date_for_comparison("2024"), "2024-01-01");
-    }
-
-    #[test]
-    fn test_normalize_date_for_comparison_year_month() {
         assert_eq!(normalize_date_for_comparison("2024-03"), "2024-03-01");
-    }
-
-    #[test]
-    fn test_normalize_date_for_comparison_full() {
         assert_eq!(normalize_date_for_comparison("2024-03-15"), "2024-03-15");
-    }
-
-    #[test]
-    fn test_normalize_date_for_comparison_quarter() {
         assert_eq!(normalize_date_for_comparison("2024-Q1"), "2024-01-01");
         assert_eq!(normalize_date_for_comparison("2024-Q2"), "2024-04-01");
         assert_eq!(normalize_date_for_comparison("2024-Q3"), "2024-07-01");
         assert_eq!(normalize_date_for_comparison("2024-Q4"), "2024-10-01");
+        // BCE dates
+        assert_eq!(normalize_date_for_comparison("-0490"), "-0490-01-01");
+        assert_eq!(normalize_date_for_comparison("-0490-03"), "-0490-03-01");
+        assert_eq!(normalize_date_for_comparison("-0490-Q2"), "-0490-04-01");
+        assert_eq!(normalize_date_for_comparison("-0031-03-15"), "-0031-03-15");
     }
 
     #[test]
-    fn test_normalize_date_to_end_year() {
+    fn test_normalize_date_to_end() {
         assert_eq!(normalize_date_to_end("2024"), "2024-12-31");
-    }
-
-    #[test]
-    fn test_normalize_date_to_end_year_month() {
         assert_eq!(normalize_date_to_end("2024-01"), "2024-01-31");
         assert_eq!(normalize_date_to_end("2024-04"), "2024-04-30");
         assert_eq!(normalize_date_to_end("2024-02"), "2024-02-29"); // Leap year
         assert_eq!(normalize_date_to_end("2023-02"), "2023-02-28"); // Non-leap year
-    }
-
-    #[test]
-    fn test_normalize_date_to_end_full() {
         assert_eq!(normalize_date_to_end("2024-03-15"), "2024-03-15");
-    }
-
-    #[test]
-    fn test_normalize_date_to_end_quarter() {
         assert_eq!(normalize_date_to_end("2024-Q1"), "2024-03-31");
         assert_eq!(normalize_date_to_end("2024-Q2"), "2024-06-30");
         assert_eq!(normalize_date_to_end("2024-Q3"), "2024-09-30");
         assert_eq!(normalize_date_to_end("2024-Q4"), "2024-12-31");
+        // BCE dates
+        assert_eq!(normalize_date_to_end("-0490"), "-0490-12-31");
+        assert_eq!(normalize_date_to_end("-0490-03"), "-0490-03-31");
+        assert_eq!(normalize_date_to_end("-0490-Q1"), "-0490-03-31");
     }
 
     #[test]
-    fn test_extract_reviewed_date_valid() {
+    fn test_date_cmp() {
+        // Positive vs positive
+        assert_eq!(date_cmp("2020-01-01", "2022-01-01"), Ordering::Less);
+        assert_eq!(date_cmp("2022-01-01", "2020-01-01"), Ordering::Greater);
+        assert_eq!(date_cmp("2020-01-01", "2020-01-01"), Ordering::Equal);
+        // Negative vs positive (BCE < CE)
+        assert_eq!(date_cmp("-0031-01-01", "0014-01-01"), Ordering::Less);
+        assert_eq!(date_cmp("0014-01-01", "-0031-01-01"), Ordering::Greater);
+        // Negative vs negative (-0490 < -0031 numerically)
+        assert_eq!(date_cmp("-0490-01-01", "-0031-01-01"), Ordering::Less);
+        assert_eq!(date_cmp("-0031-01-01", "-0490-01-01"), Ordering::Greater);
+        assert_eq!(date_cmp("-0031-01-01", "-0031-01-01"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_extract_reviewed_date() {
+        // Valid date
         let line = "- VP of Engineering @t[~2026-02] [^1] <!-- reviewed:2026-02-15 -->";
-        let date = extract_reviewed_date(line).unwrap();
-        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap());
-    }
-
-    #[test]
-    fn test_extract_reviewed_date_no_marker() {
+        assert_eq!(extract_reviewed_date(line).unwrap(), chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap());
+        // With explanation text
+        let line2 = "- CTO @t[2020..] <!-- reviewed:2026-02-21 Not a conflict: advisory role -->";
+        assert_eq!(extract_reviewed_date(line2).unwrap(), chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap());
+        // No marker / invalid date
         assert!(extract_reviewed_date("- Some fact @t[~2026-02]").is_none());
-    }
-
-    #[test]
-    fn test_extract_reviewed_date_invalid_date() {
         assert!(extract_reviewed_date("<!-- reviewed:2026-13-45 -->").is_none());
     }
 
@@ -537,51 +610,28 @@ mod tests {
     }
 
     #[test]
-    fn test_add_reviewed_marker_new() {
-        let line = "- VP of Engineering @t[~2026-02] [^1]";
+    fn test_add_or_update_reviewed_marker() {
         let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
-        let result = add_or_update_reviewed_marker(line, &date);
+        // New marker
         assert_eq!(
-            result,
+            add_or_update_reviewed_marker("- VP of Engineering @t[~2026-02] [^1]", &date),
             "- VP of Engineering @t[~2026-02] [^1] <!-- reviewed:2026-02-15 -->"
         );
-    }
-
-    #[test]
-    fn test_add_reviewed_marker_update_existing() {
-        let line = "- VP of Engineering @t[~2026-02] <!-- reviewed:2025-01-01 -->";
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
-        let result = add_or_update_reviewed_marker(line, &date);
+        // Update existing
         assert_eq!(
-            result,
+            add_or_update_reviewed_marker("- VP of Engineering @t[~2026-02] <!-- reviewed:2025-01-01 -->", &date),
             "- VP of Engineering @t[~2026-02] <!-- reviewed:2026-02-15 -->"
         );
-    }
-
-    #[test]
-    fn test_add_reviewed_marker_no_existing_tags() {
-        let line = "- Works at Acme Corp";
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
-        let result = add_or_update_reviewed_marker(line, &date);
-        assert_eq!(result, "- Works at Acme Corp <!-- reviewed:2026-02-15 -->");
-    }
-
-    #[test]
-    fn test_add_reviewed_marker_preserves_explanation() {
-        let line = "- CTO at TechCo @t[2020..] <!-- reviewed:2025-01-01 Not a conflict: advisory role -->";
-        let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
-        let result = add_or_update_reviewed_marker(line, &date);
+        // No existing tags
         assert_eq!(
-            result,
+            add_or_update_reviewed_marker("- Works at Acme Corp", &date),
+            "- Works at Acme Corp <!-- reviewed:2026-02-15 -->"
+        );
+        // Preserves explanation
+        assert_eq!(
+            add_or_update_reviewed_marker("- CTO at TechCo @t[2020..] <!-- reviewed:2025-01-01 Not a conflict: advisory role -->", &date),
             "- CTO at TechCo @t[2020..] <!-- reviewed:2026-02-15 Not a conflict: advisory role -->"
         );
-    }
-
-    #[test]
-    fn test_extract_reviewed_date_with_explanation() {
-        let line = "- CTO @t[2020..] <!-- reviewed:2026-02-21 Not a conflict: advisory role -->";
-        let date = extract_reviewed_date(line).unwrap();
-        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap());
     }
 
     // =========================================================================
@@ -620,51 +670,26 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_meta_commentary_rewrite_as_factual() {
-        assert!(META_COMMENTARY_REGEX.is_match(
-            "- Rewrite my own clarification text as if it were factual content"
-        ));
-    }
-
-    #[test]
-    fn test_meta_commentary_ill_update() {
-        assert!(META_COMMENTARY_REGEX.is_match("- I'll update the document with corrections"));
-    }
-
-    #[test]
-    fn test_meta_commentary_let_me_clarify() {
-        assert!(META_COMMENTARY_REGEX.is_match("- Let me clarify this section"));
-    }
-
-    #[test]
-    fn test_meta_commentary_here_is_updated() {
-        assert!(META_COMMENTARY_REGEX.is_match("- Here is the updated content"));
-    }
-
-    #[test]
-    fn test_meta_commentary_ive_revised() {
-        assert!(META_COMMENTARY_REGEX.is_match("- I've revised the entry to correct the facts"));
-    }
-
-    #[test]
-    fn test_meta_commentary_note_rephrased() {
-        assert!(META_COMMENTARY_REGEX.is_match("- Note: I've rephrased the document"));
-    }
-
-    #[test]
-    fn test_meta_commentary_does_not_match_real_facts() {
-        assert!(!META_COMMENTARY_REGEX.is_match("- VP of Engineering at Acme Corp @t[2020..]"));
-    }
-
-    #[test]
-    fn test_meta_commentary_does_not_match_person_name() {
-        assert!(!META_COMMENTARY_REGEX.is_match("- Lives in San Francisco @t[~2024]"));
-    }
-
-    #[test]
-    fn test_meta_commentary_does_not_match_note_fact() {
-        // "Note:" followed by a real fact, not editing language
-        assert!(!META_COMMENTARY_REGEX.is_match("- Notable for pioneering work in AI"));
+    fn test_meta_commentary_matches() {
+        // Positive cases: editing/meta language
+        for text in [
+            "- Rewrite my own clarification text as if it were factual content",
+            "- I'll update the document with corrections",
+            "- Let me clarify this section",
+            "- Here is the updated content",
+            "- I've revised the entry to correct the facts",
+            "- Note: I've rephrased the document",
+        ] {
+            assert!(META_COMMENTARY_REGEX.is_match(text), "Should match: {}", text);
+        }
+        // Negative cases: real facts
+        for text in [
+            "- VP of Engineering at Acme Corp @t[2020..]",
+            "- Lives in San Francisco @t[~2024]",
+            "- Notable for pioneering work in AI",
+        ] {
+            assert!(!META_COMMENTARY_REGEX.is_match(text), "Should NOT match: {}", text);
+        }
     }
 
     // =========================================================================
@@ -719,27 +744,52 @@ mod tests {
     // =========================================================================
 
     #[test]
-    fn test_body_end_offset_with_marker() {
-        let content = "# Title\n\n- fact\n\n<!-- factbase:review -->\n- [ ] question";
-        assert_eq!(body_end_offset(content), content.find("<!-- factbase:review -->").unwrap());
+    fn test_body_end_offset() {
+        // With marker
+        let c1 = "# Title\n\n- fact\n\n<!-- factbase:review -->\n- [ ] question";
+        assert_eq!(body_end_offset(c1), c1.find("<!-- factbase:review -->").unwrap());
+        // With heading only
+        let c2 = "# Title\n\n- fact\n\n## Review Queue\n\n- [ ] question";
+        assert_eq!(body_end_offset(c2), c2.find("## Review Queue").unwrap());
+        // Heading before marker
+        let c3 = "# Title\n\n- fact\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] q";
+        assert_eq!(body_end_offset(c3), c3.find("## Review Queue").unwrap());
+        // No review section
+        let c4 = "# Title\n\n- fact one\n- fact two\n";
+        assert_eq!(body_end_offset(c4), c4.len());
+    }
+
+    // =========================================================================
+    // pad_negative_year tests
+    // =========================================================================
+
+    #[test]
+    fn test_pad_negative_year() {
+        assert_eq!(pad_negative_year("-330"), "-0330");
+        assert_eq!(pad_negative_year("-31"), "-0031");
+        assert_eq!(pad_negative_year("-5"), "-0005");
+        assert_eq!(pad_negative_year("-0490"), "-0490");
+        assert_eq!(pad_negative_year("2024"), "2024");
+        assert_eq!(pad_negative_year("-330-03"), "-0330-03");
+        assert_eq!(pad_negative_year("-5-Q2"), "-0005-Q2");
+        assert_eq!(pad_negative_year("-490-03-15"), "-0490-03-15");
     }
 
     #[test]
-    fn test_body_end_offset_with_heading_only() {
-        let content = "# Title\n\n- fact\n\n## Review Queue\n\n- [ ] question";
-        assert_eq!(body_end_offset(content), content.find("## Review Queue").unwrap());
+    fn test_normalize_unpadded_bce_dates() {
+        assert_eq!(normalize_date_for_comparison("-330"), "-0330-01-01");
+        assert_eq!(normalize_date_for_comparison("-31-06"), "-0031-06-01");
+        assert_eq!(normalize_date_to_end("-490"), "-0490-12-31");
+        assert_eq!(normalize_date_to_end("-31-03"), "-0031-03-31");
     }
 
     #[test]
-    fn test_body_end_offset_heading_before_marker() {
-        let content = "# Title\n\n- fact\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] q";
-        // Heading comes first
-        assert_eq!(body_end_offset(content), content.find("## Review Queue").unwrap());
-    }
-
-    #[test]
-    fn test_body_end_offset_no_review_section() {
-        let content = "# Title\n\n- fact one\n- fact two\n";
-        assert_eq!(body_end_offset(content), content.len());
+    fn test_temporal_tag_full_regex_unpadded_bce() {
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[=-330]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[~-31]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-490..-479]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-5..]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[..-479]"));
+        assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-490-03]"));
     }
 }

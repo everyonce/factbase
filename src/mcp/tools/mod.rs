@@ -56,7 +56,7 @@ pub use search::{search_content, search_knowledge};
 // Re-export helpers for submodules
 pub(crate) use helpers::{
     extract_type_repo_filters, get_bool_arg, get_str_arg, get_str_arg_required, get_u64_arg,
-    get_u64_arg_required, run_blocking,
+    get_u64_arg_required, load_perspective, run_blocking,
 };
 
 // Re-export schema

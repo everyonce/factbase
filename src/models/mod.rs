@@ -16,7 +16,7 @@ mod temporal;
 pub use document::{word_count, Document};
 pub use link::Link;
 pub use question::{QuestionType, ReviewQuestion};
-pub use repository::{Perspective, Repository, ReviewPerspective};
+pub use repository::{load_perspective_from_file, Perspective, Repository, ReviewPerspective, PERSPECTIVE_TEMPLATE};
 pub use scan::{DuplicatePair, FileTimingInfo, ScanResult, ScanStats, TemporalScanStats};
 pub use search::{ContentMatch, ContentSearchResult, PaginatedSearchResult, SearchResult};
 pub use stats::{

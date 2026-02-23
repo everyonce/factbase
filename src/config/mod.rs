@@ -248,238 +248,120 @@ mod tests {
 
     #[test]
     fn test_validate_default_config() {
-        let config = valid_config();
-        assert!(config.validate().is_ok());
+        assert!(valid_config().validate().is_ok());
     }
 
     #[test]
-    fn test_validate_pool_size_zero() {
-        let mut config = valid_config();
-        config.database.pool_size = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("pool_size"));
+    fn test_validate_database_fields() {
+        let mut c = valid_config();
+        c.database.pool_size = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("pool_size"));
+        c.database.pool_size = 33;
+        assert!(c.validate().unwrap_err().to_string().contains("pool_size"));
+
+        let mut c = valid_config();
+        c.database.compression = "invalid".to_string();
+        assert!(c.validate().unwrap_err().to_string().contains("compression"));
+        c.database.compression = "none".to_string();
+        assert!(c.validate().is_ok());
+        c.database.compression = "zstd".to_string();
+        assert!(c.validate().is_ok());
     }
 
     #[test]
-    fn test_validate_pool_size_too_large() {
-        let mut config = valid_config();
-        config.database.pool_size = 33;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("pool_size"));
+    fn test_validate_rate_limit_fields() {
+        let mut c = valid_config();
+        c.rate_limit.per_second = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("per_second"));
+        let mut c = valid_config();
+        c.rate_limit.burst_size = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("burst_size"));
     }
 
     #[test]
-    fn test_validate_rate_limit_zero() {
-        let mut config = valid_config();
-        config.rate_limit.per_second = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("per_second"));
+    fn test_validate_embedding_fields() {
+        let mut c = valid_config();
+        c.embedding.dimension = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("dimension"));
+        let mut c = valid_config();
+        c.embedding.cache_size = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("cache_size"));
+        c.embedding.cache_size = 10001;
+        assert!(c.validate().unwrap_err().to_string().contains("cache_size"));
+        let mut c = valid_config();
+        c.embedding.timeout_secs = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("embedding.timeout_secs"));
     }
 
     #[test]
-    fn test_validate_burst_size_zero() {
-        let mut config = valid_config();
-        config.rate_limit.burst_size = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("burst_size"));
+    fn test_validate_llm_timeout() {
+        let mut c = valid_config();
+        c.llm.timeout_secs = 301;
+        assert!(c.validate().unwrap_err().to_string().contains("llm.timeout_secs"));
     }
 
     #[test]
-    fn test_validate_embedding_dimension_zero() {
-        let mut config = valid_config();
-        config.embedding.dimension = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("dimension"));
+    fn test_validate_temporal_min_coverage() {
+        let mut c = valid_config();
+        for valid in [0.0, 0.5, 1.0] {
+            c.temporal.min_coverage = valid;
+            assert!(c.validate().is_ok());
+        }
+        c.temporal.min_coverage = -0.1;
+        assert!(c.validate().unwrap_err().to_string().contains("min_coverage"));
+        c.temporal.min_coverage = 1.1;
+        assert!(c.validate().unwrap_err().to_string().contains("min_coverage"));
     }
 
     #[test]
-    fn test_validate_cache_size_zero() {
-        let mut config = valid_config();
-        config.embedding.cache_size = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("cache_size"));
+    fn test_validate_ollama_fields() {
+        let mut c = valid_config();
+        // max_retries: 0 and 10 valid, 11 invalid
+        c.ollama.max_retries = 0;
+        assert!(c.validate().is_ok());
+        c.ollama.max_retries = 10;
+        assert!(c.validate().is_ok());
+        c.ollama.max_retries = 11;
+        assert!(c.validate().unwrap_err().to_string().contains("max_retries"));
+        c.ollama.max_retries = 3; // reset
+        // retry_delay_ms: 100 and 60000 valid, 99 and 60001 invalid
+        c.ollama.retry_delay_ms = 100;
+        assert!(c.validate().is_ok());
+        c.ollama.retry_delay_ms = 60000;
+        assert!(c.validate().is_ok());
+        c.ollama.retry_delay_ms = 99;
+        assert!(c.validate().unwrap_err().to_string().contains("retry_delay_ms"));
+        c.ollama.retry_delay_ms = 60001;
+        assert!(c.validate().unwrap_err().to_string().contains("retry_delay_ms"));
     }
 
     #[test]
-    fn test_validate_cache_size_too_large() {
-        let mut config = valid_config();
-        config.embedding.cache_size = 10001;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("cache_size"));
+    fn test_validate_web_port() {
+        let mut c = valid_config();
+        c.web.port = 0;
+        assert!(c.validate().unwrap_err().to_string().contains("web.port"));
+        c.web.port = 8080;
+        assert!(c.validate().is_ok());
     }
 
     #[test]
-    fn test_validate_embedding_timeout_zero() {
-        let mut config = valid_config();
-        config.embedding.timeout_secs = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("embedding.timeout_secs"));
-    }
-
-    #[test]
-    fn test_validate_llm_timeout_too_large() {
-        let mut config = valid_config();
-        config.llm.timeout_secs = 301;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("llm.timeout_secs"));
-    }
-
-    #[test]
-    fn test_validate_compression_invalid() {
-        let mut config = valid_config();
-        config.database.compression = "invalid".to_string();
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("compression"));
-    }
-
-    #[test]
-    fn test_validate_compression_valid_none() {
-        let mut config = valid_config();
-        config.database.compression = "none".to_string();
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_compression_valid_zstd() {
-        let mut config = valid_config();
-        config.database.compression = "zstd".to_string();
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_temporal_min_coverage_valid() {
-        let mut config = valid_config();
-        config.temporal.min_coverage = 0.5;
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_temporal_min_coverage_zero() {
-        let mut config = valid_config();
-        config.temporal.min_coverage = 0.0;
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_temporal_min_coverage_one() {
-        let mut config = valid_config();
-        config.temporal.min_coverage = 1.0;
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_temporal_min_coverage_negative() {
-        let mut config = valid_config();
-        config.temporal.min_coverage = -0.1;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("min_coverage"));
-    }
-
-    #[test]
-    fn test_validate_temporal_min_coverage_too_large() {
-        let mut config = valid_config();
-        config.temporal.min_coverage = 1.1;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("min_coverage"));
-    }
-
-    #[test]
-    fn test_review_model_default_uses_llm_model() {
+    fn test_review_model() {
         let config = valid_config();
         assert_eq!(config.review_model(), config.llm.model);
-    }
-
-    #[test]
-    fn test_review_model_uses_custom_when_set() {
         let mut config = valid_config();
         config.review.model = Some("custom-review-model".to_string());
         assert_eq!(config.review_model(), "custom-review-model");
     }
 
     #[test]
-    fn test_review_config_default() {
-        let config = ReviewConfig::default();
-        assert!(config.model.is_none());
-    }
-
-    #[test]
-    fn test_ollama_config_default() {
-        let config = OllamaConfig::default();
-        assert_eq!(config.max_retries, 3);
-        assert_eq!(config.retry_delay_ms, 1000);
-    }
-
-    #[test]
-    fn test_validate_ollama_max_retries_zero() {
-        let mut config = valid_config();
-        config.ollama.max_retries = 0;
-        assert!(config.validate().is_ok()); // 0 is valid (no retries)
-    }
-
-    #[test]
-    fn test_validate_ollama_max_retries_max() {
-        let mut config = valid_config();
-        config.ollama.max_retries = 10;
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_ollama_max_retries_too_large() {
-        let mut config = valid_config();
-        config.ollama.max_retries = 11;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("max_retries"));
-    }
-
-    #[test]
-    fn test_validate_ollama_retry_delay_min() {
-        let mut config = valid_config();
-        config.ollama.retry_delay_ms = 100;
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_ollama_retry_delay_max() {
-        let mut config = valid_config();
-        config.ollama.retry_delay_ms = 60000;
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_validate_ollama_retry_delay_too_small() {
-        let mut config = valid_config();
-        config.ollama.retry_delay_ms = 99;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("retry_delay_ms"));
-    }
-
-    #[test]
-    fn test_validate_ollama_retry_delay_too_large() {
-        let mut config = valid_config();
-        config.ollama.retry_delay_ms = 60001;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("retry_delay_ms"));
-    }
-
-    #[test]
-    fn test_web_config_default() {
-        let config = WebConfig::default();
-        assert!(!config.enabled);
-        assert_eq!(config.port, 3001);
-    }
-
-    #[test]
-    fn test_validate_web_port_zero() {
-        let mut config = valid_config();
-        config.web.port = 0;
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("web.port"));
-    }
-
-    #[test]
-    fn test_validate_web_port_valid() {
-        let mut config = valid_config();
-        config.web.port = 8080;
-        assert!(config.validate().is_ok());
+    fn test_config_defaults() {
+        let review = ReviewConfig::default();
+        assert!(review.model.is_none());
+        let ollama = OllamaConfig::default();
+        assert_eq!(ollama.max_retries, 3);
+        assert_eq!(ollama.retry_delay_ms, 1000);
+        let web = WebConfig::default();
+        assert!(!web.enabled);
+        assert_eq!(web.port, 3001);
     }
 }

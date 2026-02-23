@@ -37,7 +37,7 @@ pub(crate) fn default_persistent_cache_size() -> usize {
 }
 
 pub(crate) fn default_timeout_secs() -> u64 {
-    30
+    60
 }
 
 fn default_provider() -> String {
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(config.dimension, 1024);
         assert_eq!(config.cache_size, 100);
         assert_eq!(config.persistent_cache_size, 1000);
-        assert_eq!(config.timeout_secs, 30);
+        assert_eq!(config.timeout_secs, 60);
     }
 
     #[test]
@@ -207,7 +207,7 @@ mod tests {
             assert_eq!(config.effective_base_url(), "http://localhost:11434");
             assert_eq!(config.model, "rnj-1-extended");
         }
-        assert_eq!(config.timeout_secs, 30);
+        assert_eq!(config.timeout_secs, 60);
     }
 
     #[test]
@@ -221,7 +221,7 @@ mod tests {
     fn test_default_helper_functions() {
         assert_eq!(default_cache_size(), 100);
         assert_eq!(default_persistent_cache_size(), 1000);
-        assert_eq!(default_timeout_secs(), 30);
+        assert_eq!(default_timeout_secs(), 60);
         assert_eq!(default_max_retries(), 3);
         assert_eq!(default_retry_delay_ms(), 1000);
     }

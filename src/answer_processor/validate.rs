@@ -3,11 +3,13 @@
 //! Validates LLM-rewritten sections and full documents before writing to disk,
 //! preventing document corruption from malformed LLM output.
 
-use crate::patterns::{FACT_LINE_REGEX, ID_REGEX, SOURCE_DEF_REGEX};
+use crate::output::truncate_str;
+use crate::patterns::{FACT_LINE_REGEX, ID_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX};
 
 /// Errors detected during output validation.
 #[derive(Debug, Clone)]
 pub struct ValidationError {
+    #[allow(dead_code)] // used in tests for assertion matching
     pub kind: ValidationErrorKind,
     pub detail: String,
 }
@@ -161,8 +163,15 @@ fn content_line_count(text: &str) -> usize {
 }
 
 fn count_fact_lines(content: &str) -> usize {
-    content
-        .lines()
+    // Only count fact lines in the document body, excluding the review queue
+    // section. Review queue items (e.g. `- [x] @q[temporal] ...`) match the
+    // fact-line regex but are not actual facts — removing answered questions
+    // would otherwise trigger a false-positive content-loss validation error.
+    let body = match content.find(REVIEW_QUEUE_MARKER) {
+        Some(pos) => &content[..pos],
+        None => content,
+    };
+    body.lines()
         .filter(|l| FACT_LINE_REGEX.is_match(l))
         .count()
 }
@@ -190,19 +199,11 @@ fn check_footnote_definitions(text: &str, errors: &mut Vec<ValidationError>) {
             if trimmed.starts_with("[^") {
                 errors.push(ValidationError {
                     kind: ValidationErrorKind::MalformedFootnote,
-                    detail: format!("Malformed footnote definition: '{}'", truncate(trimmed, 80)),
+                    detail: format!("Malformed footnote definition: '{}'", truncate_str(trimmed, 80)),
                 });
                 return; // One is enough
             }
         }
-    }
-}
-
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
     }
 }
 
@@ -349,5 +350,61 @@ mod tests {
         let new_content = "<!-- factbase:abc123 -->\n\nUpdated content\n";
         let errors = validate_document(original, new_content);
         assert!(!errors.iter().any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
+    }
+
+    #[test]
+    fn test_removing_review_questions_not_counted_as_fact_loss() {
+        // Simulates the bug: document with facts + many review queue items.
+        // After applying answers, the review queue items are removed.
+        // This should NOT trigger content loss.
+        let original = "<!-- factbase:abc123 -->\n# Battle of Actium\n\n\
+            - Octavian defeated Antony in 31 BCE\n\
+            - Naval battle near Greece\n\
+            - Resulted in end of Roman Republic\n\
+            \n---\n\n## Review Queue\n<!-- factbase:review -->\n\
+            - [x] @q[temporal] When exactly did the battle occur? > 2 September 31 BCE\n\
+            - [x] @q[missing] What sources confirm this? > Plutarch, Cassius Dio\n\
+            - [x] @q[temporal] When did Antony flee? > During the battle\n\
+            - [x] @q[conflict] Was it 31 or 30 BCE? > 31 BCE is correct\n\
+            - [x] @q[stale] Is this still accurate? > Yes\n\
+            - [x] @q[ambiguous] Which Octavian? > Gaius Octavius, later Augustus\n";
+        // After applying: review questions removed, facts preserved
+        let new_content = "<!-- factbase:abc123 -->\n# Battle of Actium\n\n\
+            - Octavian defeated Antony in 31 BCE\n\
+            - Naval battle near Greece\n\
+            - Resulted in end of Roman Republic\n";
+        let errors = validate_document(original, new_content);
+        assert!(
+            !errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
+            "Removing review questions should not trigger content loss: {:?}",
+            errors
+        );
+    }
+
+    #[test]
+    fn test_real_fact_loss_still_detected_with_review_queue() {
+        // Even with a review queue, actual fact loss should still be caught
+        let original = "<!-- factbase:abc123 -->\n# Topic\n\n\
+            - Fact 1\n- Fact 2\n- Fact 3\n- Fact 4\n- Fact 5\n- Fact 6\n\
+            \n---\n\n## Review Queue\n<!-- factbase:review -->\n\
+            - [x] @q[temporal] Question? > Answer\n";
+        // Both facts AND review questions lost
+        let new_content = "<!-- factbase:abc123 -->\n# Topic\n\n- Fact 1\n";
+        let errors = validate_document(original, new_content);
+        assert!(
+            errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
+            "Real fact loss should still be detected"
+        );
+    }
+
+    #[test]
+    fn test_count_fact_lines_excludes_review_queue() {
+        let content = "# Doc\n\n\
+            - Fact A\n\
+            - Fact B\n\
+            \n---\n\n## Review Queue\n<!-- factbase:review -->\n\
+            - [x] @q[temporal] Q1? > A1\n\
+            - [x] @q[conflict] Q2? > A2\n";
+        assert_eq!(count_fact_lines(content), 2);
     }
 }

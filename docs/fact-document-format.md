@@ -45,6 +45,25 @@ Dates support multiple granularities:
 - Month: `2024-03`
 - Day: `2024-03-15`
 
+#### BCE / Negative Years
+
+For historical dates before the Common Era, two notations are supported:
+
+| Notation | Example | Stored As |
+|----------|---------|-----------|
+| BCE suffix | `@t[=331 BCE]` | `-0331` |
+| Negative year | `@t[=-330]` | `-0330` |
+| Padded negative | `@t[=-0330]` | `-0330` |
+
+BCE notation is converted to negative years internally. Negative years are zero-padded to 4 digits.
+
+```markdown
+- Battle of Gaugamela @t[=331 BCE]
+- Greco-Persian Wars @t[490 BCE..479 BCE]
+- Augustus reign @t[-31..14]
+- Founded circa @t[=-0753]
+```
+
 ### Examples
 
 ```markdown

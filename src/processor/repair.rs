@@ -7,6 +7,7 @@
 //! - Orphaned footnote definitions (unreferenced)
 //! - Duplicate fact lines
 
+use crate::output::truncate_str;
 use crate::patterns::{
     body_end_offset, FACT_LINE_REGEX, SOURCE_DEF_REGEX, SOURCE_REF_CAPTURE_REGEX,
     TEMPORAL_TAG_DETECT_REGEX,
@@ -115,7 +116,7 @@ fn repair_garbage_footnotes(lines: &mut Vec<String>, result: &mut RepairResult) 
                     result.descriptions.push(format!(
                         "Removed garbage footnote [^{}]: {}",
                         &cap[1],
-                        truncate(&cap[2], 60)
+                        truncate_str(&cap[2], 60)
                     ));
                     break;
                 }
@@ -207,7 +208,7 @@ fn repair_duplicate_fact_lines(lines: &mut Vec<String>, result: &mut RepairResul
             result.fixes += 1;
             result
                 .descriptions
-                .push(format!("Removed duplicate fact: {}", truncate(line.trim(), 60)));
+                .push(format!("Removed duplicate fact: {}", truncate_str(line.trim(), 60)));
         }
     }
     remove_lines(lines, &to_remove);
@@ -218,18 +219,6 @@ fn remove_lines(lines: &mut Vec<String>, indices: &[usize]) {
         if i < lines.len() {
             lines.remove(i);
         }
-    }
-}
-
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        let mut end = max;
-        while end > 0 && !s.is_char_boundary(end) {
-            end -= 1;
-        }
-        &s[..end]
     }
 }
 

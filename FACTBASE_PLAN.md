@@ -789,7 +789,7 @@ Factbase uses a global configuration file at `~/.config/factbase/config.yaml`.
 ```yaml
 # Repositories (multi-repo support)
 repositories:
-  - id: "main"
+  - id: "default"
     name: "Main Knowledge Base"
     path: "./knowledge-base"
   - id: "sales"

@@ -104,15 +104,15 @@ pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database
     std::fs::create_dir_all(&factbase_dir)?;
     let perspective_path = dir.join("perspective.yaml");
     if !perspective_path.exists() {
-        std::fs::write(&perspective_path, "# Factbase perspective\n")?;
+        std::fs::write(&perspective_path, factbase::PERSPECTIVE_TEMPLATE)?;
     }
     let config = Config::load(None)?;
     let db_path = factbase_dir.join("factbase.db");
     let db = config.open_database(&db_path)?;
     let name = dir
         .file_name()
-        .map_or_else(|| "main".into(), |s| s.to_string_lossy().to_string());
-    let repo = super::create_repository("main", &name, dir);
+        .map_or_else(|| factbase::DEFAULT_REPO_ID.into(), |s| s.to_string_lossy().to_string());
+    let repo = super::create_repository(factbase::DEFAULT_REPO_ID, &name, dir);
     db.upsert_repository(&repo)?;
     tracing::info!("Auto-initialized factbase at {}", dir.display());
     Ok((config, db, repo))

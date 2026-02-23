@@ -43,32 +43,44 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
         args.path.clone()
     });
     let factbase_dir = path.join(".factbase");
-    if factbase_dir.exists() {
-        if args.json {
-            let json = serde_json::json!({
-                "config_path": factbase_dir.display().to_string(),
-                "created": false,
-                "message": format!("Already initialized: {}", path.display())
-            });
-            println!("{}", format_json(&json)?);
+    let db_path = factbase_dir.join("factbase.db");
+
+    // Tolerate pre-existing .factbase dir (e.g. user created config.yaml).
+    // Only error if a repo is already registered in the database.
+    if db_path.exists() {
+        let config = Config::default();
+        if let Ok(db) = config.open_database(&db_path) {
+            if let Ok(repos) = db.list_repositories() {
+                if !repos.is_empty() {
+                    if args.json {
+                        let json = serde_json::json!({
+                            "config_path": factbase_dir.display().to_string(),
+                            "created": false,
+                            "message": format!("Already initialized: {}", path.display())
+                        });
+                        println!("{}", format_json(&json)?);
+                    }
+                    anyhow::bail!("Already initialized: {}", path.display());
+                }
+            }
         }
-        anyhow::bail!("Already initialized: {}", path.display());
     }
     fs::create_dir_all(&factbase_dir)?;
 
     let perspective_path = path.join("perspective.yaml");
     if !perspective_path.exists() {
-        fs::write(&perspective_path, "# Factbase perspective — tells agents what this knowledge base is about\n\n# What this knowledge base focuses on\n# Examples:\n#   focus: Mycology field research and species identification\n#   focus: Ancient Mediterranean civilizations and trade routes\n#   focus: Customer relationship intelligence for solutions architects\n\n# Allowed document types (derived from folder names)\n# Examples for different domains:\n#   allowed_types: [species, habitat, region]           # biology\n#   allowed_types: [civilization, event, artifact]       # history\n#   allowed_types: [person, company, project]            # business\n\n# Review quality settings\n# review:\n#   stale_days: 180\n#   required_fields:\n#     species: [classification, habitat, edibility]\n#     civilization: [period, region, key_figures]\n#     person: [current_role, location]\n")?;
+        fs::write(&perspective_path, factbase::PERSPECTIVE_TEMPLATE)?;
     }
 
-    let db_path = factbase_dir.join("factbase.db");
     let config = Config::default();
     let db = config.open_database(&db_path)?;
 
-    let repo_id = args.id.unwrap_or_else(|| "main".into());
+    let repo_id = args
+        .id
+        .unwrap_or_else(|| factbase::DEFAULT_REPO_ID.into());
     let repo_name = args.name.unwrap_or_else(|| {
         path.file_name()
-            .map_or_else(|| "main".into(), |s| s.to_string_lossy().to_string())
+            .map_or_else(|| factbase::DEFAULT_REPO_ID.into(), |s| s.to_string_lossy().to_string())
     });
     let repo = create_repository(&repo_id, &repo_name, &path);
     db.upsert_repository(&repo)?;
@@ -174,7 +186,7 @@ mod tests {
         let db = Database::new(&tmp.path().join(".factbase/factbase.db")).unwrap();
         let repos = db.list_repositories().unwrap();
         assert_eq!(repos.len(), 1);
-        assert_eq!(repos[0].id, "main");
+        assert_eq!(repos[0].id, factbase::DEFAULT_REPO_ID);
     }
 
     #[test]
@@ -219,6 +231,54 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Already initialized"));
+    }
+
+    #[test]
+    fn test_init_tolerates_preexisting_factbase_dir_with_config() {
+        let tmp = TempDir::new().unwrap();
+        let factbase_dir = tmp.path().join(".factbase");
+        fs::create_dir_all(&factbase_dir).unwrap();
+        fs::write(
+            factbase_dir.join("config.yaml"),
+            "embedding:\n  provider: bedrock\n",
+        )
+        .unwrap();
+
+        let args = InitArgs {
+            path: tmp.path().to_path_buf(),
+            name: None,
+            id: None,
+            json: false,
+            config: false,
+        };
+        cmd_init(args).unwrap();
+
+        // DB created and repo registered
+        let db = Database::new(&factbase_dir.join("factbase.db")).unwrap();
+        let repos = db.list_repositories().unwrap();
+        assert_eq!(repos.len(), 1);
+
+        // Pre-existing config.yaml preserved
+        assert!(factbase_dir.join("config.yaml").exists());
+    }
+
+    #[test]
+    fn test_init_tolerates_preexisting_empty_factbase_dir() {
+        let tmp = TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join(".factbase")).unwrap();
+
+        let args = InitArgs {
+            path: tmp.path().to_path_buf(),
+            name: None,
+            id: None,
+            json: false,
+            config: false,
+        };
+        cmd_init(args).unwrap();
+
+        let db = Database::new(&tmp.path().join(".factbase/factbase.db")).unwrap();
+        let repos = db.list_repositories().unwrap();
+        assert_eq!(repos.len(), 1);
     }
 
     #[test]

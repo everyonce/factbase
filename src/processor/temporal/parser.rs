@@ -1,20 +1,45 @@
 //! Temporal tag parsing.
 
 use crate::models::{TemporalTag, TemporalTagType};
-use crate::patterns::{MALFORMED_TAG_REGEX, TEMPORAL_TAG_FULL_REGEX};
+use crate::patterns::{pad_negative_year, MALFORMED_TAG_REGEX, TEMPORAL_TAG_FULL_REGEX};
 use regex::Regex;
 use std::sync::LazyLock;
 
 /// Regex to find range tags where the end date is missing the year (e.g., @t[2025-Q3..Q4])
 static SHORT_RANGE_END_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@t\[(\d{4})(-(?:Q[1-4]|\d{2}(?:-\d{2})?))\.\.(Q[1-4]|\d{2}(?:-\d{2})?)\]")
+    Regex::new(r"@t\[((?:-\d{1,4}|\d{4}))(-(?:Q[1-4]|\d{2}(?:-\d{2})?))\.\.(Q[1-4]|\d{2}(?:-\d{2})?)\]")
         .expect("short range end regex should compile")
 });
 
-/// Normalize shorthand range end dates by inheriting the year from the start date.
-/// e.g., `@t[2025-Q3..Q4]` → `@t[2025-Q3..2025-Q4]`
+/// Regex to match @t[...] tags containing BCE notation for normalization.
+static BCE_TAG_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@t\[[^\]]*\d{1,4}\s*BCE[^\]]*\]").expect("bce tag regex should compile")
+});
+
+/// Regex to match year (with optional date suffix) followed by BCE.
+static BCE_YEAR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(\d{1,4}(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)\s*BCE")
+        .expect("bce year regex should compile")
+});
+
+/// Normalize shorthand temporal tags:
+/// - Short range ends: `@t[2025-Q3..Q4]` → `@t[2025-Q3..2025-Q4]`
+/// - BCE notation: `@t[=331 BCE]` → `@t[=-331]`, `@t[490 BCE..479 BCE]` → `@t[-490..-479]`
 fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
-    SHORT_RANGE_END_REGEX.replace_all(line, "@t[$1$2..$1-$3]")
+    let result = SHORT_RANGE_END_REGEX.replace_all(line, "@t[$1$2..$1-$3]");
+    // Convert BCE notation to negative years within @t[...] tags
+    if !result.contains("BCE") {
+        return result;
+    }
+    let converted = BCE_TAG_REGEX.replace_all(&result, |caps: &regex::Captures| {
+        let tag = caps.get(0).unwrap().as_str();
+        BCE_YEAR_REGEX
+            .replace_all(tag, |inner: &regex::Captures| {
+                format!("-{}", inner.get(1).unwrap().as_str())
+            })
+            .to_string()
+    });
+    std::borrow::Cow::Owned(converted.into_owned())
 }
 
 /// Parse all temporal tags from document content.
@@ -73,14 +98,14 @@ fn parse_tag_components(
         return (
             TemporalTagType::Historical,
             None,
-            Some(end_date.as_str().to_string()),
+            Some(pad_negative_year(end_date.as_str())),
         );
     }
 
     let prefix = cap.get(1).map(|m| m.as_str());
-    let start_date = cap.get(2).map(|m| m.as_str().to_string());
+    let start_date = cap.get(2).map(|m| pad_negative_year(m.as_str()));
     let has_range = cap.get(3).is_some();
-    let end_date = cap.get(4).map(|m| m.as_str().to_string());
+    let end_date = cap.get(4).map(|m| pad_negative_year(m.as_str()));
 
     let tag_type = match (prefix, has_range, &end_date) {
         (Some("~"), false, None) => TemporalTagType::LastSeen,
@@ -191,5 +216,168 @@ mod tests {
         let line = "- Role @t[2020..2022]";
         let normalized = normalize_temporal_tags(line);
         assert_eq!(normalized, "- Role @t[2020..2022]");
+    }
+
+    #[test]
+    fn test_bce_point_in_time() {
+        let content = "- Battle of Actium @t[=-0031]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::PointInTime);
+        assert_eq!(tags[0].start_date, Some("-0031".to_string()));
+        assert_eq!(tags[0].raw_text, "@t[=-0031]");
+    }
+
+    #[test]
+    fn test_bce_range() {
+        let content = "- Greco-Persian Wars @t[-0490..-0479]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("-0490".to_string()));
+        assert_eq!(tags[0].end_date, Some("-0479".to_string()));
+    }
+
+    #[test]
+    fn test_bce_to_ce_range() {
+        let content = "- Augustus reign @t[-0031..0014]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("-0031".to_string()));
+        assert_eq!(tags[0].end_date, Some("0014".to_string()));
+    }
+
+    #[test]
+    fn test_bce_last_seen() {
+        let content = "- State as of @t[~-0031]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::LastSeen);
+        assert_eq!(tags[0].start_date, Some("-0031".to_string()));
+    }
+
+    #[test]
+    fn test_bce_ongoing() {
+        let content = "- Ongoing since @t[-0490..]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Ongoing);
+        assert_eq!(tags[0].start_date, Some("-0490".to_string()));
+    }
+
+    #[test]
+    fn test_bce_historical() {
+        let content = "- Ended by @t[..-0479]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Historical);
+        assert_eq!(tags[0].end_date, Some("-0479".to_string()));
+    }
+
+    #[test]
+    fn test_bce_with_month() {
+        let content = "- Event @t[=-0490-03]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].start_date, Some("-0490-03".to_string()));
+    }
+
+    // --- Unpadded negative year tests ---
+
+    #[test]
+    fn test_unpadded_negative_year_point() {
+        let content = "- Battle of Gaugamela @t[=-331]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::PointInTime);
+        assert_eq!(tags[0].start_date, Some("-0331".to_string()));
+    }
+
+    #[test]
+    fn test_unpadded_negative_year_range() {
+        let content = "- Wars @t[-490..-479]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("-0490".to_string()));
+        assert_eq!(tags[0].end_date, Some("-0479".to_string()));
+    }
+
+    #[test]
+    fn test_unpadded_negative_year_with_month() {
+        let content = "- Event @t[=-490-03]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].start_date, Some("-0490-03".to_string()));
+    }
+
+    #[test]
+    fn test_unpadded_negative_year_ongoing() {
+        let content = "- Since @t[-5..]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Ongoing);
+        assert_eq!(tags[0].start_date, Some("-0005".to_string()));
+    }
+
+    #[test]
+    fn test_unpadded_negative_year_historical() {
+        let content = "- Before @t[..-479]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Historical);
+        assert_eq!(tags[0].end_date, Some("-0479".to_string()));
+    }
+
+    // --- BCE notation tests ---
+
+    #[test]
+    fn test_bce_notation_point() {
+        let content = "- Battle of Gaugamela @t[=331 BCE]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::PointInTime);
+        assert_eq!(tags[0].start_date, Some("-0331".to_string()));
+    }
+
+    #[test]
+    fn test_bce_notation_no_space() {
+        let content = "- Event @t[=331BCE]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].start_date, Some("-0331".to_string()));
+    }
+
+    #[test]
+    fn test_bce_notation_range() {
+        let content = "- Wars @t[490 BCE..479 BCE]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("-0490".to_string()));
+        assert_eq!(tags[0].end_date, Some("-0479".to_string()));
+    }
+
+    #[test]
+    fn test_bce_notation_with_month() {
+        let content = "- Battle @t[=490-03 BCE]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].start_date, Some("-0490-03".to_string()));
+    }
+
+    #[test]
+    fn test_bce_not_flagged_malformed() {
+        let content = "- Event @t[=331 BCE]";
+        let malformed = find_malformed_tags(content);
+        assert!(malformed.is_empty());
+    }
+
+    #[test]
+    fn test_bce_normalize_preserves_non_bce() {
+        let line = "- Modern event @t[=2024-03]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Modern event @t[=2024-03]");
     }
 }

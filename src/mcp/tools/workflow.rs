@@ -13,11 +13,11 @@ use crate::llm::LlmProvider;
 use crate::models::Perspective;
 use serde_json::Value;
 
-use super::helpers::{build_quality_stats, detect_weak_identification};
+use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective};
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
 /// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
-const FORMAT_RULES: &str = "\n\n**Format rules (quick ref):**\n- Temporal tags on every dynamic fact: `@t[=2024-03]` point in time, `@t[2020..2023]` range, `@t[2024..]` ongoing, `@t[~2024]` approximate/last-verified, `@t[?]` unknown\n- Source footnotes on every fact: `[^1]` inline, then `---\\n[^1]: Source description, date` at bottom\n- Every fact that can change needs a temporal tag; every fact needs a source\n- Call get_authoring_guide for the full format reference";
+const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put descriptions or text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG: `@t[bright red when young]` `@t[seasonal]` `@t[since ancient times]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall get_authoring_guide for the full format reference";
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -60,17 +60,6 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             "error": format!("Unknown workflow '{}'. Call workflow with workflow='list' to see available workflows.", workflow)
         })),
     }
-}
-
-/// Load perspective from the first (or specified) repository.
-fn load_perspective(db: &Database, repo_id: Option<&str>) -> Option<Perspective> {
-    let repos = db.list_repositories().ok()?;
-    let repo = if let Some(id) = repo_id {
-        repos.into_iter().find(|r| r.id == id)
-    } else {
-        repos.into_iter().next()
-    };
-    repo.and_then(|r| r.perspective)
 }
 
 /// Build a context string from perspective for embedding in instructions.
@@ -121,40 +110,77 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
 
 fn setup_step(step: usize, args: &Value) -> Value {
     let path = get_str_arg(args, "path").unwrap_or("the target directory");
-    let total = 5;
+    let total = 6;
     match step {
         1 => serde_json::json!({
             "workflow": "setup",
             "step": 1, "total_steps": total,
-            "instruction": format!("Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions."),
+            "title": "Step 1 of 6: Initialize Repository",
+            "instruction": format!("Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)"),
             "next_tool": "init_repository",
             "suggested_args": {"path": path},
-            "when_done": "Call workflow with workflow='setup', step=2"
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 6"
         }),
         2 => serde_json::json!({
             "workflow": "setup",
             "step": 2, "total_steps": total,
-            "instruction": format!("Configure the repository's perspective. Read the perspective.yaml file in '{path}' and update it with:\n\n1. **focus**: What this knowledge base is about (e.g., 'Mycology research and species identification', 'Customer relationship tracking')\n2. **organization**: Who maintains it (optional)\n3. **allowed_types**: Suggested document types as folder names (e.g., ['species', 'habitats', 'researchers'] or ['people', 'companies', 'projects'])\n\nThe perspective helps factbase tailor quality checks and workflows to the domain. Write the updated perspective.yaml back to disk.\n\nAlso plan the folder structure — each top-level folder becomes a document type. For example:\n```\n{path}/\n  species/\n  habitats/\n  field-notes/\n  definitions/\n```"),
-            "note": "Use your file-writing tools to update perspective.yaml. The folder structure will be created as documents are added.",
-            "when_done": "Call workflow with workflow='setup', step=3"
+            "title": "Step 2 of 6: Configure Perspective",
+            "instruction": format!("Configure the repository's perspective. Write the file `{path}/perspective.yaml` with YAML content like this:\n\n```yaml\nfocus: \"What this knowledge base is about\"\norganization: \"Who maintains it (optional)\"\nallowed_types:\n  - type1\n  - type2\n  - type3\nreview:\n  stale_days: 180\n  required_fields:\n    type1: [field1, field2]\n    type2: [field1, field2]\n```\n\nIf you ran bootstrap first, use the perspective values it suggested. Otherwise choose values appropriate for the domain.\n\n⚠️ This MUST be valid YAML written to `perspective.yaml` (not .md, not .json). The file goes in the repository root, not in .factbase/.\n\nAlso plan the folder structure — each allowed_type becomes a top-level folder. Documents are placed in type folders (e.g., `species/amanita-muscaria.md`).\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=3)"),
+            "note": "Write perspective.yaml as YAML to the repository root directory. Do NOT create perspective.md — factbase only reads perspective.yaml.",
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=3) to continue to Step 3 of 6"
         }),
-        3 => serde_json::json!({
-            "workflow": "setup",
-            "step": 3, "total_steps": total,
-            "instruction": format!("Create 2-3 example documents using create_document.\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{FORMAT_RULES}"),
-            "next_tool": "create_document",
-            "when_done": "Call workflow with workflow='setup', step=4"
-        }),
+        3 => {
+            // Validate perspective.yaml was written correctly
+            let perspective = crate::models::load_perspective_from_file(std::path::Path::new(path));
+            let (status, detail) = match &perspective {
+                Some(p) => {
+                    let mut fields = Vec::new();
+                    if let Some(f) = &p.focus { fields.push(format!("focus: {f}")); }
+                    if let Some(o) = &p.organization { fields.push(format!("organization: {o}")); }
+                    if let Some(t) = &p.allowed_types { fields.push(format!("allowed_types: {}", t.join(", "))); }
+                    if p.review.is_some() { fields.push("review: configured".into()); }
+                    ("ok".to_string(), fields.join("\n  "))
+                }
+                None => ("error".to_string(), "perspective.yaml is missing, empty, or has invalid YAML. Go back to step 2 and fix it.".into()),
+            };
+            serde_json::json!({
+                "workflow": "setup",
+                "step": 3, "total_steps": total,
+                "title": "Step 3 of 6: Validate Perspective",
+                "perspective_status": status,
+                "perspective_parsed": detail,
+                "instruction": if status == "ok" {
+                    format!("✅ perspective.yaml parsed successfully:\n  {detail}\n\nIf this looks correct, proceed to the next step.\n\n⚠️ NEXT: Call workflow(workflow='setup', step=4)")
+                } else {
+                    format!("❌ {detail}\n\n⚠️ NEXT: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again to re-validate.")
+                },
+                "when_done": if status == "ok" {
+                    "⚠️ REQUIRED: Call workflow(workflow='setup', step=4) to continue to Step 4 of 6"
+                } else {
+                    "⚠️ REQUIRED: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again"
+                }
+            })
+        },
         4 => serde_json::json!({
             "workflow": "setup",
             "step": 4, "total_steps": total,
-            "instruction": "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. Then call check_repository to see initial quality.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.",
-            "next_tool": "scan_repository",
-            "when_done": "Call workflow with workflow='setup', step=5"
+            "title": "Step 4 of 6: Create Documents",
+            "instruction": format!("Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{FORMAT_RULES}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)"),
+            "next_tool": "get_authoring_guide",
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=5) to continue to Step 5 of 6"
         }),
         5 => serde_json::json!({
             "workflow": "setup",
             "step": 5, "total_steps": total,
+            "title": "Step 5 of 6: Scan & Verify",
+            "instruction": "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. Then call check_repository to see initial quality.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)",
+            "next_tool": "scan_repository",
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
+        }),
+        6 => serde_json::json!({
+            "workflow": "setup",
+            "step": 6, "total_steps": total,
+            "title": "Step 6 of 6: Complete",
             "instruction": "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.",
             "complete": true
         }),
@@ -198,6 +224,7 @@ Generate a JSON object with these fields:
 
 6. "perspective": object with:
    - "focus": one-line description of what this knowledge base tracks
+   - "organization": who maintains this knowledge base (optional, omit if unknown)
    - "allowed_types": array of the document type names
 
 7. "examples": array of 1-2 fully worked example documents as markdown strings, using the templates above with realistic domain content. Include temporal tags and source footnotes.
@@ -224,7 +251,7 @@ pub async fn bootstrap(
 ) -> Result<Value, FactbaseError> {
     let domain = get_str_arg_required(args, "domain")?;
     let entity_types = get_str_arg(args, "entity_types");
-    let path = get_str_arg(args, "path").unwrap_or("the target directory");
+    let _path = get_str_arg(args, "path");
 
     let prompt = build_bootstrap_prompt(&domain, entity_types);
     let response = llm.complete(&prompt).await?;
@@ -248,15 +275,13 @@ pub async fn bootstrap(
             ])
         } else {
             serde_json::json!([
-                format!("1. Call init_repository with path='{path}' to create the repository"),
-                "2. Write the suggested perspective to perspective.yaml (use the 'perspective' field from suggestions)",
-                "3. Create the folder structure listed in suggestions.folder_structure",
-                "4. Create 1-2 starter documents using the templates and examples provided",
-                "5. Call scan_repository to index everything",
-                "6. Use workflow='update' to verify quality",
+                "Use the suggestions above as reference when configuring perspective.yaml (YAML format, not markdown) and creating documents.",
+                "⚠️ REQUIRED NEXT: Call workflow(workflow='setup', step=1) to begin the guided setup process. The setup workflow will walk you through each step (init → configure → create docs → scan → verify).",
+                "Do NOT skip the setup workflow — it provides step-by-step guidance including format rules for temporal tags and source footnotes."
             ])
         },
-        "note": "These are suggestions — adapt them to your needs. The templates and folder structure can be modified at any time."
+        "note": "These are suggestions — adapt them to your needs. The templates and folder structure can be modified at any time.",
+        "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=1) to begin guided setup"
     }))
 }
 
@@ -328,7 +353,7 @@ fn resolve_step(
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
+            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Research the answer using your available tools:\n   - **Web search** for current data: try '{{entity name}} {{fact}} {{current year}}' for stale questions, '{{entity name}} {{date/timeline}}' for temporal questions\n   - **Read full pages** when a search snippet looks promising — don't rely on snippets alone\n   - **Cross-reference**: verify critical facts against 2+ sources\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source citation. Research when the fact was/is true, then answer: '@t[YYYY] per [source name] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges, '@t[YYYY..] per [source]' for ongoing. Use @t[?] only when no date is findable at all. Examples: '@t[=480-BCE] per Herodotus (Histories VII); verified via Britannica 2024-03-15', '@t[2020..2023] per annual report 2023'. Just citing a source in prose without providing the @t[...] tag does NOT resolve the question — the tag must appear in your answer. Every datable fact gets a tag regardless of domain, era, or how well-known it is. NEVER answer with bare dismissals like 'static fact', 'well-known', 'historical constant', or 'doesn\\'t change' — these provide no audit trail and will be rejected\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
             "next_tool": "answer_question",
             "conflict_patterns": {
                 "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
@@ -378,14 +403,14 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         2 => serde_json::json!({
             "workflow": "ingest",
             "step": 2, "total_steps": total,
-            "instruction": format!("Research '{topic}' using your other tools (web search, APIs, files, etc.). Gather facts, dates, sources, and relationships.{ctx}"),
+            "instruction": format!("Research '{topic}' using your available tools. Strategies:\n- **Web search**: Search for recent, authoritative information. Try specific queries like '{{entity name}} {{fact type}} {{year}}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the URL, author, publication, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}"),
             "note": "This step uses your non-factbase tools. When you have enough information, proceed to step 3.",
             "when_done": "Call workflow with workflow='ingest', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers{fields}{FORMAT_RULES}"),
+            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward{fields}{FORMAT_RULES}"),
             "next_tool": "create_document",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
@@ -497,14 +522,14 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists in the data (check the weak_identification field in entity_quality), update the title via update_document\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too{fields}"),
+            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists in the data (check the weak_identification field in entity_quality), update the title via update_document\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too\n- Poor file organization: if a file is in the wrong type folder or has an unclear filename, plan to rename/move it (you can do this with file tools, then run scan_repository){fields}"),
             "next_tool": "get_entity",
             "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": format!("Research the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them{ctx}{FORMAT_RULES}"),
+            "instruction": format!("Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{{entity name}} {{missing fact}}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index{ctx}{FORMAT_RULES}"),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
@@ -614,7 +639,7 @@ fn improve_step(
             "step_name": "resolve",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": format!("Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: Research the date\n- ambiguous: Clarify the term or create a definitions document\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, call apply_review_answers with doc_id to apply changes to the document.{ctx}"),
+            "instruction": format!("Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, call apply_review_answers with doc_id to apply changes to the document.{ctx}"),
             "next_tool": "get_review_queue",
             "suggested_args": {"doc_id": doc_arg, "include_context": true},
             "policy": {"stale_days": stale},
@@ -626,7 +651,7 @@ fn improve_step(
             "step_name": "enrich",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": format!("Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title{fields}\n\nResearch the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely{ctx}"),
+            "instruction": format!("Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Web search for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run scan_repository afterward to re-index{ctx}"),
             "next_tool": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
@@ -805,6 +830,29 @@ mod tests {
         assert!(patterns["same_entity_transition"].is_string());
         assert!(patterns["date_imprecision"].is_string());
         assert!(patterns["unknown"].is_string());
+    }
+
+    #[test]
+    fn test_resolve_step2_temporal_requires_tag_in_answer() {
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("MISSING an @t[...]"), "temporal guidance must explain the fact line is missing a tag");
+        assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
+        assert!(instruction.contains("verified"), "temporal guidance must require verification date");
+        assert!(instruction.contains("NEVER answer with bare dismissals"), "must reject bare dismissals");
+        assert!(instruction.contains("static fact"), "must explicitly name 'static fact' as rejected");
+        assert!(instruction.contains("no audit trail"), "must explain why dismissals are rejected");
+    }
+
+    #[test]
+    fn test_improve_resolve_temporal_requires_tag_in_answer() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(2, Some("abc123"), &None, &[], &db);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("MISSING an @t[...]"), "improve/resolve temporal guidance must explain the fact line is missing a tag");
+        assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
+        assert!(instruction.contains("static fact"), "improve/resolve must reject 'static fact' dismissals");
+        assert!(instruction.contains("no audit trail"), "improve/resolve must explain why dismissals are rejected");
     }
 
     // --- improve workflow tests ---
@@ -1042,7 +1090,7 @@ mod tests {
         let step = setup_step(1, &serde_json::json!({"path": "/tmp/mushrooms"}));
         assert_eq!(step["workflow"], "setup");
         assert_eq!(step["step"], 1);
-        assert_eq!(step["total_steps"], 5);
+        assert_eq!(step["total_steps"], 6);
         assert!(step["instruction"]
             .as_str()
             .unwrap()
@@ -1070,21 +1118,43 @@ mod tests {
     }
 
     #[test]
-    fn test_setup_step3_create_documents() {
-        let step = setup_step(3, &serde_json::json!({}));
-        assert_eq!(step["step"], 3);
-        assert_eq!(step["next_tool"], "create_document");
+    fn test_setup_step3_validates_perspective() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+
+        // No perspective.yaml → error
+        let step = setup_step(3, &serde_json::json!({"path": path}));
+        assert_eq!(step["perspective_status"], "error");
+
+        // Write valid perspective
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: Mycology\nallowed_types:\n  - species\n",
+        )
+        .unwrap();
+        let step = setup_step(3, &serde_json::json!({"path": path}));
+        assert_eq!(step["perspective_status"], "ok");
+        let parsed = step["perspective_parsed"].as_str().unwrap();
+        assert!(parsed.contains("Mycology"));
+        assert!(parsed.contains("species"));
+    }
+
+    #[test]
+    fn test_setup_step4_create_documents() {
+        let step = setup_step(4, &serde_json::json!({}));
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["next_tool"], "get_authoring_guide");
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("create_document"));
-        assert!(instruction.contains("@t[=2024-03]"));
+        assert!(instruction.contains("@t[=2024]"));
         assert!(instruction.contains("[^1]"));
         assert!(instruction.contains("get_authoring_guide"));
     }
 
     #[test]
-    fn test_setup_step4_scan_and_verify() {
-        let step = setup_step(4, &serde_json::json!({}));
-        assert_eq!(step["step"], 4);
+    fn test_setup_step5_scan_and_verify() {
+        let step = setup_step(5, &serde_json::json!({}));
+        assert_eq!(step["step"], 5);
         assert_eq!(step["next_tool"], "scan_repository");
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("scan_repository"));
@@ -1093,9 +1163,9 @@ mod tests {
 
     #[test]
     fn test_format_rules_inlined_in_document_creation_steps() {
-        // Setup step 3, ingest step 3, and enrich step 3 should all inline format rules
+        // Setup step 4, ingest step 3, and enrich step 3 should all inline format rules
         // so weaker models don't need a separate get_authoring_guide call.
-        let setup = setup_step(3, &serde_json::json!({}));
+        let setup = setup_step(4, &serde_json::json!({}));
         let ingest = ingest_step(3, &serde_json::json!({}), &None);
         let (db, _tmp) = test_db();
         let enrich = enrich_step(3, &serde_json::json!({}), &None, &db);
@@ -1103,24 +1173,24 @@ mod tests {
         for (name, step) in [("setup", setup), ("ingest", ingest), ("enrich", enrich)] {
             let instruction = step["instruction"].as_str().unwrap();
             assert!(
-                instruction.contains("@t[=2024-03]"),
-                "{name} step 3 missing temporal tag examples"
+                instruction.contains("@t[=2024]"),
+                "{name} step missing temporal tag examples"
             );
             assert!(
                 instruction.contains("[^1]"),
-                "{name} step 3 missing source footnote examples"
+                "{name} step missing source footnote examples"
             );
             assert!(
                 instruction.contains("get_authoring_guide"),
-                "{name} step 3 should still mention get_authoring_guide"
+                "{name} step should still mention get_authoring_guide"
             );
         }
     }
 
     #[test]
-    fn test_setup_step5_next_steps() {
-        let step = setup_step(5, &serde_json::json!({}));
-        assert_eq!(step["step"], 5);
+    fn test_setup_step6_next_steps() {
+        let step = setup_step(6, &serde_json::json!({}));
+        assert_eq!(step["step"], 6);
         assert!(step["complete"].as_bool().unwrap());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("ingest"));
@@ -1197,7 +1267,10 @@ mod tests {
         assert!(result["suggestions"]["source_types"].is_array());
         assert!(result["next_steps"].is_array());
         let steps = result["next_steps"].as_array().unwrap();
-        assert!(steps[0].as_str().unwrap().contains("/tmp/mushrooms"));
+        // next_steps should route into setup workflow, not list raw tool calls
+        let all_steps = steps.iter().map(|s| s.as_str().unwrap_or("")).collect::<Vec<_>>().join(" ");
+        assert!(all_steps.contains("workflow"), "next_steps should mention workflow");
+        assert!(all_steps.contains("setup"), "next_steps should route to setup workflow");
     }
 
     #[tokio::test]

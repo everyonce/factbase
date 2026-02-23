@@ -6,6 +6,7 @@
 use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
+use crate::output::truncate_str;
 use crate::patterns::{extract_reviewed_date, SOURCE_REF_DETECT_REGEX};
 use crate::processor::{parse_source_definitions, parse_source_references};
 
@@ -71,7 +72,7 @@ pub fn generate_source_quality_questions(content: &str) -> Vec<ReviewQuestion> {
                 format!(
                     "Source [^{}] \"{}\" lacks traceability — add date, URL, channel, or other identifier to locate the original data",
                     d.number,
-                    truncate(&d.context, 80),
+                    truncate_str(&d.context, 80),
                 ),
             )
         })
@@ -112,14 +113,6 @@ fn is_untraceable_source(context: &str) -> bool {
     }
 
     false
-}
-
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..s.floor_char_boundary(max)]
-    }
 }
 
 #[cfg(test)]

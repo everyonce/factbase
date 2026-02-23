@@ -112,11 +112,7 @@ pub(crate) fn extract_fact_text(line: &str) -> String {
     // Truncate long facts for readability
     let text = text.trim();
     if text.len() > 80 {
-        let mut end = 77;
-        while end > 0 && !text.is_char_boundary(end) {
-            end -= 1;
-        }
-        format!("{}...", &text[..end])
+        format!("{}...", &text[..text.floor_char_boundary(77)])
     } else {
         text.to_string()
     }
