@@ -106,8 +106,23 @@ pub fn check_document_links(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::check::execute::test_helpers::make_test_doc_with_id;
     use chrono::Utc;
+    use factbase::Document;
+
+    fn make_test_doc_with_id(id: &str, content: &str) -> Document {
+        Document {
+            id: id.to_string(),
+            title: format!("Test {}", id),
+            content: content.to_string(),
+            doc_type: Some("note".to_string()),
+            file_path: format!("/test_{}.md", id),
+            file_hash: "hash".to_string(),
+            repo_id: "test-repo".to_string(),
+            indexed_at: Utc::now(),
+            file_modified_at: Some(Utc::now()),
+            is_deleted: false,
+        }
+    }
 
     #[test]
     fn test_check_document_links_orphan() {

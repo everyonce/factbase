@@ -44,13 +44,19 @@ const META_PATTERNS: &[&str] = &[
     "REWRITTEN SECTION:",
 ];
 
+/// Shared validation checks: meta-text and footnote definitions.
+fn check_common(text: &str, errors: &mut Vec<ValidationError>) {
+    check_meta_text(text, errors);
+    check_footnote_definitions(text, errors);
+}
+
 /// Validate an LLM-rewritten section against the original.
 ///
 /// Returns a list of validation errors (empty = valid).
 pub fn validate_rewrite(original: &str, rewritten: &str) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    // 1. Check for dramatic content loss (>50% line reduction)
+    // Check for dramatic content loss (>50% line reduction)
     let orig_lines = content_line_count(original);
     let new_lines = content_line_count(rewritten);
     if orig_lines > 2 && new_lines < orig_lines / 2 {
@@ -63,12 +69,7 @@ pub fn validate_rewrite(original: &str, rewritten: &str) -> Vec<ValidationError>
         });
     }
 
-    // 2. Check for meta-text / JSON / classification labels
-    check_meta_text(rewritten, &mut errors);
-
-    // 3. Check that any footnote definitions in the output are well-formed
-    check_footnote_definitions(rewritten, &mut errors);
-
+    check_common(rewritten, &mut errors);
     errors
 }
 
@@ -79,7 +80,7 @@ pub fn validate_rewrite(original: &str, rewritten: &str) -> Vec<ValidationError>
 pub fn validate_document(original: &str, new_content: &str) -> Vec<ValidationError> {
     let mut errors = Vec::new();
 
-    // 1. Factbase ID header must be preserved
+    // Factbase ID header must be preserved
     let orig_id = extract_header_id(original);
     let new_id = extract_header_id(new_content);
     if let Some(oid) = &orig_id {
@@ -95,7 +96,7 @@ pub fn validate_document(original: &str, new_content: &str) -> Vec<ValidationErr
         }
     }
 
-    // 2. Title must be preserved (first # heading)
+    // Title must be preserved (first # heading)
     let orig_title = extract_title(original);
     let new_title = extract_title(new_content);
     if let Some(ot) = &orig_title {
@@ -116,7 +117,7 @@ pub fn validate_document(original: &str, new_content: &str) -> Vec<ValidationErr
         }
     }
 
-    // 3. Fact count should not decrease dramatically
+    // Fact count should not decrease dramatically
     let orig_facts = count_fact_lines(original);
     let new_facts = count_fact_lines(new_content);
     if orig_facts > 2 && new_facts < orig_facts / 2 {
@@ -129,12 +130,7 @@ pub fn validate_document(original: &str, new_content: &str) -> Vec<ValidationErr
         });
     }
 
-    // 4. Check for meta-text in the output
-    check_meta_text(new_content, &mut errors);
-
-    // 5. Check footnote definitions are well-formed
-    check_footnote_definitions(new_content, &mut errors);
-
+    check_common(new_content, &mut errors);
     errors
 }
 

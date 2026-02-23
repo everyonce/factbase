@@ -2,7 +2,7 @@ use crate::config::RateLimitConfig;
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::llm::LlmProvider;
-use crate::mcp::protocol::initialize_result;
+use crate::mcp::initialize_result;
 use crate::mcp::tools::{handle_tool_call, McpRequest, McpResponse};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};

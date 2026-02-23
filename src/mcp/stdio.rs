@@ -1,7 +1,7 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::llm::LlmProvider;
-use crate::mcp::protocol::initialize_result;
+use crate::mcp::initialize_result;
 use crate::mcp::tools::{handle_tool_call, tools_list, McpRequest, McpResponse};
 use futures::FutureExt;
 use serde_json::Value;
@@ -134,6 +134,7 @@ fn write_progress(
 /// Reads newline-delimited JSON-RPC messages, dispatches them,
 /// and writes single-line JSON-RPC responses. Exits on EOF.
 /// Used by tests with in-memory buffers.
+#[cfg(test)]
 async fn run_stdio_io<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,

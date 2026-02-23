@@ -10,26 +10,26 @@
 //! - `watch` - Watch mode logic
 
 mod args;
-mod filters;
 mod output;
-pub(crate) mod test_helpers;
-mod watch;
 
 // Re-export public items
 pub use args::SearchArgs;
 
+use crate::commands::filters::{
+    apply_exclude_filters, apply_include_filters, parse_filter_expr, FilterExpr,
+};
 use crate::commands::{filter_by_excluded_types, find_repo_with_config, setup_cached_embedding};
+use crate::commands::watch_helper::{run_async_watch_loop, WatchContext};
+use crate::commands::{setup_database, resolve_repos};
 use factbase::{
     calculate_recency_boost, config::validate_timeout, format_json, overlaps_point, overlaps_range,
     parse_temporal_tags, EmbeddingProvider, TemporalTagType,
 };
-use filters::{apply_exclude_filters, apply_include_filters, parse_filter_expr, FilterExpr};
 use output::{
     compute_search_summary, print_compact_results, print_detailed_results, print_search_summary,
 };
 use std::cmp::Ordering;
 use std::fs;
-use watch::run_search_watch_mode;
 
 #[tracing::instrument(
     name = "cmd_search",
@@ -39,7 +39,19 @@ use watch::run_search_watch_mode;
 pub async fn cmd_search(args: SearchArgs) -> anyhow::Result<()> {
     // Watch mode: re-run search when files change
     if args.watch {
-        return run_search_watch_mode(args).await;
+        let (config, db) = setup_database()?;
+        let repos = resolve_repos(db.list_repositories()?, args.repo.as_deref())?;
+        let mut ctx = WatchContext::new(&config, repos)?;
+        let query = args.query.clone();
+        return run_async_watch_loop(
+            &mut ctx,
+            || {
+                println!("Searching for: \"{query}\"");
+                println!("{}", "=".repeat(50));
+            },
+            || run_single_search(&args),
+        )
+        .await;
     }
 
     // Single search execution
@@ -265,9 +277,24 @@ pub(crate) async fn run_single_search(args: &SearchArgs) -> anyhow::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::test_helpers::tests::make_result;
+pub(crate) mod tests {
+    use factbase::SearchResult;
     use std::cmp::Ordering;
+
+    pub(crate) fn make_result(id: &str, title: &str, doc_type: Option<&str>, score: f32) -> SearchResult {
+        SearchResult {
+            id: id.to_string(),
+            title: title.to_string(),
+            doc_type: doc_type.map(String::from),
+            file_path: format!("{id}.md"),
+            relevance_score: score,
+            snippet: String::new(),
+            highlighted_snippet: None,
+            chunk_index: None,
+            chunk_start: None,
+            chunk_end: None,
+        }
+    }
 
     #[test]
     fn test_sort_by_title() {

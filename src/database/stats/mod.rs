@@ -32,7 +32,25 @@ use super::{decode_content_lossy, Database, DbConn};
 use crate::cache::DocumentMetadata;
 use crate::error::FactbaseError;
 use crate::models::{DetailedStats, PoolStats, RepoStats};
+use crate::patterns::{date_cmp, normalize_date_for_comparison};
 use chrono::{DateTime, Utc};
+
+/// Update oldest/newest date tracking. Used by temporal and source stats.
+pub(crate) fn update_date_range(
+    date: &str,
+    oldest: &mut Option<String>,
+    newest: &mut Option<String>,
+) {
+    let normalized = normalize_date_for_comparison(date);
+    match oldest {
+        Some(ref old) if date_cmp(&normalized, &normalize_date_for_comparison(old)) != std::cmp::Ordering::Less => {}
+        _ => *oldest = Some(date.to_string()),
+    }
+    match newest {
+        Some(ref new) if date_cmp(&normalized, &normalize_date_for_comparison(new)) != std::cmp::Ordering::Greater => {}
+        _ => *newest = Some(date.to_string()),
+    }
+}
 
 // Shared query for fetching content-only from active documents in a repo.
 pub(crate) const CONTENT_ONLY_QUERY: &str =

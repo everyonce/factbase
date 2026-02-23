@@ -1,25 +1,36 @@
 //! LLM provider traits and implementations.
-//!
-//! This module provides the LLM abstraction layer for factbase:
-//!
-//! - `LlmProvider` trait for async text completion
-//! - `OllamaLlm` implementation using Ollama API
-//! - `ReviewLlm` wrapper for review operations
-//! - `LinkDetector` service for entity detection
-//!
-//! # Module Organization
-//!
-//! - `ollama` - OllamaLlm implementation
-//! - `review` - ReviewLlm wrapper
-//! - `link_detector` - LinkDetector service and DetectedLink struct
 
 mod link_detector;
 mod ollama;
-mod review;
 
 pub use link_detector::{DetectedLink, LinkDetector};
 pub use ollama::{LlmProvider, OllamaLlm};
-pub use review::ReviewLlm;
+
+use crate::error::FactbaseError;
+use crate::BoxFuture;
+
+/// LLM provider for review operations (question generation, answer processing).
+/// Uses review.model from config if set, otherwise falls back to llm.model.
+pub struct ReviewLlm {
+    inner: Box<dyn LlmProvider>,
+    model_name: String,
+}
+
+impl ReviewLlm {
+    pub fn new(inner: Box<dyn LlmProvider>, model_name: String) -> Self {
+        Self { inner, model_name }
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model_name
+    }
+}
+
+impl LlmProvider for ReviewLlm {
+    fn complete<'a>(&'a self, prompt: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
+        self.inner.complete(prompt)
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod test_helpers {
@@ -53,5 +64,17 @@ pub(crate) mod test_helpers {
         ) -> BoxFuture<'a, Result<String, FactbaseError>> {
             Box::pin(async move { Ok(self.response.clone()) })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_helpers::MockLlm;
+
+    #[test]
+    fn test_review_llm_model_name() {
+        let review = ReviewLlm::new(Box::new(MockLlm::new("mock")), "test-model".into());
+        assert_eq!(review.model(), "test-model");
     }
 }

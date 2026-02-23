@@ -25,6 +25,36 @@ use tracing::{info, warn};
 /// Days within which a reviewed marker suppresses question generation.
 const REVIEWED_SKIP_DAYS: i64 = 180;
 
+/// Run all rule-based question generators on a document body.
+///
+/// `full` controls whether to include generators that don't interact with
+/// reviewed markers (duplicate entries, source quality, corruption).  The
+/// "unrestricted" re-generation pass for suppression counting skips those
+/// since they don't change between stripped/unstripped content.
+pub fn run_generators(
+    body: &str,
+    doc_type: Option<&str>,
+    defined_terms: &HashSet<String>,
+    stale_days: i64,
+    full: bool,
+) -> Vec<ReviewQuestion> {
+    let mut questions = generate_temporal_questions(body);
+    questions.extend(generate_conflict_questions(body));
+    if full {
+        questions.extend(generate_duplicate_entry_questions(body));
+    }
+    questions.extend(generate_missing_questions(body));
+    if full {
+        questions.extend(generate_source_quality_questions(body));
+    }
+    questions.extend(generate_ambiguous_questions_with_type(body, doc_type, defined_terms));
+    questions.extend(generate_stale_questions(body, stale_days));
+    if full {
+        questions.extend(generate_corruption_questions(body));
+    }
+    questions
+}
+
 /// Configuration for the shared lint loop.
 pub struct CheckConfig {
     pub stale_days: i64,
@@ -143,14 +173,7 @@ pub async fn check_all_documents(
                     // treat review entries as document facts.
                     let body = crate::patterns::content_body(content);
 
-                    let mut questions = generate_temporal_questions(body);
-                    questions.extend(generate_conflict_questions(body));
-                    questions.extend(generate_duplicate_entry_questions(body));
-                    questions.extend(generate_missing_questions(body));
-                    questions.extend(generate_source_quality_questions(body));
-                    questions.extend(generate_ambiguous_questions_with_type(body, doc.doc_type.as_deref(), defined_terms_ref));
-                    questions.extend(generate_stale_questions(body, config.stale_days));
-                    questions.extend(generate_corruption_questions(body));
+                    let mut questions = run_generators(body, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, true);
 
                     // Check for duplicate titles
                     if let Some(dupes) = title_map_ref.get(&doc.title.to_lowercase()) {
@@ -244,11 +267,7 @@ pub async fn check_all_documents(
                     // Count questions suppressed by reviewed markers.
                     // Strip reviewed markers from body and re-generate to measure the delta.
                     let stripped = crate::patterns::strip_reviewed_markers(body);
-                    let mut unrestricted = generate_temporal_questions(&stripped);
-                    unrestricted.extend(generate_conflict_questions(&stripped));
-                    unrestricted.extend(generate_missing_questions(&stripped));
-                    unrestricted.extend(generate_ambiguous_questions_with_type(&stripped, doc.doc_type.as_deref(), defined_terms_ref));
-                    unrestricted.extend(generate_stale_questions(&stripped, config.stale_days));
+                    let mut unrestricted = run_generators(&stripped, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, false);
                     filter_sequential_conflicts(&stripped, &mut unrestricted);
                     let suppressed_by_review = unrestricted.len().saturating_sub(questions.len());
 

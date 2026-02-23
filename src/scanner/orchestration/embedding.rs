@@ -9,7 +9,7 @@ use std::time::Instant;
 use crate::{chunk_document, Database, Document, EmbeddingProvider};
 use crate::progress::ProgressReporter;
 
-use super::types::{ChunkInfo, PendingDoc};
+use super::{ChunkInfo, PendingDoc};
 use crate::scanner::progress::OptionalProgress;
 
 /// Input parameters for the embedding phase

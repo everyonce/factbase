@@ -154,207 +154,140 @@ fn has_correction_indicators(lower: &str) -> bool {
         || lower.contains("actually")
 }
 
+/// Refresh last-seen temporal tag from a confirmation or source citation answer.
+/// Extracts verification date (month precision+) from the answer, falling back
+/// to today's date.  Preserves open-ended ranges (e.g. @t[2023-08..]).
+fn confirmation_to_temporal(
+    answer: &str,
+    line_text: String,
+    old_tag: &Option<String>,
+) -> ChangeInstruction {
+    let date_str = extract_verification_date(answer)
+        .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
+    if let Some(old) = old_tag {
+        let inner = old
+            .strip_prefix("@t[")
+            .and_then(|s| s.strip_suffix("]"))
+            .unwrap_or("");
+        if inner.ends_with("..") {
+            ChangeInstruction::Dismiss
+        } else {
+            ChangeInstruction::UpdateTemporal {
+                line_text,
+                old_tag: old.clone(),
+                new_tag: format!("@t[~{date_str}]"),
+            }
+        }
+    } else {
+        ChangeInstruction::AddTemporal {
+            line_text,
+            tag: format!("@t[~{date_str}]"),
+        }
+    }
+}
+
+/// Try to extract date info from a correction answer and produce a temporal
+/// update.  Returns `None` if no dates found (caller decides fallback).
+fn correction_to_temporal(
+    answer: &str,
+    line_text: &str,
+    old_tag: &Option<String>,
+) -> Option<ChangeInstruction> {
+    let dates = extract_dates_from_answer(answer)?;
+    Some(if let Some(old) = old_tag {
+        ChangeInstruction::UpdateTemporal {
+            line_text: line_text.to_string(),
+            old_tag: old.clone(),
+            new_tag: format_temporal_tag(&dates, old),
+        }
+    } else {
+        ChangeInstruction::AddTemporal {
+            line_text: line_text.to_string(),
+            tag: format_new_temporal_tag(&dates),
+        }
+    })
+}
+
+/// Try to interpret a correction as a "split:" instruction.
+fn try_split(detail: &str, line_text: &str) -> Option<ChangeInstruction> {
+    let lower = detail.to_lowercase();
+    lower.starts_with("split:").then(|| ChangeInstruction::Split {
+        line_text: line_text.to_string(),
+        instruction: detail["split:".len()..].trim().to_string(),
+    })
+}
+
 /// Interpret an answer to determine the change instruction.
 ///
 /// Calls `classify_answer()` first, then maps `AnswerType` → `ChangeInstruction`.
 pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstruction {
     let line_text = extract_quoted_text(&question.description).unwrap_or_default();
     let old_tag = extract_temporal_tag(&question.description);
-
     let answer_type = classify_answer(answer);
 
-    // Conflict questions ("were both true simultaneously?") should only produce
-    // Dismiss, Defer, Delete, or date corrections.  Source citations and generic
-    // corrections are meaningless for conflicts and cause footnote pollution.
-    if question.question_type == crate::models::QuestionType::Conflict {
-        return match answer_type {
-            AnswerType::Dismissal | AnswerType::Confirmation => ChangeInstruction::Dismiss,
-            AnswerType::Deferral => ChangeInstruction::Defer,
-            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
+    // Universal handling: Dismiss, Defer, Delete are the same for all question types.
+    match &answer_type {
+        AnswerType::Dismissal => return ChangeInstruction::Dismiss,
+        AnswerType::Deferral => return ChangeInstruction::Defer,
+        AnswerType::Deletion => return ChangeInstruction::Delete { line_text },
+        _ => {}
+    }
+
+    use crate::models::QuestionType::*;
+    match question.question_type {
+        // Conflict: only date corrections are meaningful
+        Conflict => match answer_type {
             AnswerType::Correction { .. } => {
-                // Only apply if it contains actual date info; otherwise dismiss
-                if let Some(dates) = extract_dates_from_answer(answer) {
-                    if let Some(ref old) = old_tag {
-                        let new_tag = format_temporal_tag(&dates, old);
-                        return ChangeInstruction::UpdateTemporal {
-                            line_text,
-                            old_tag: old.clone(),
-                            new_tag,
-                        };
-                    }
-                    let tag = format_new_temporal_tag(&dates);
-                    return ChangeInstruction::AddTemporal { line_text, tag };
-                }
-                ChangeInstruction::Dismiss
+                correction_to_temporal(answer, &line_text, &old_tag)
+                    .unwrap_or(ChangeInstruction::Dismiss)
             }
-            // Source citations are never meaningful for conflict answers
-            AnswerType::SourceCitation { .. } => ChangeInstruction::Dismiss,
-        };
-    }
+            _ => ChangeInstruction::Dismiss,
+        },
 
-    // Missing-source questions ("what is the source for this fact?") should only
-    // produce Dismiss, Defer, or Delete.  Source citations from review answers
-    // must NOT become footnote definitions — they cause garbage footnote
-    // accumulation when questions are re-generated and re-answered.  Answers
-    // belong in the review queue section, not as source citations.
-    if question.question_type == crate::models::QuestionType::Missing {
-        return match answer_type {
-            AnswerType::Dismissal | AnswerType::Confirmation | AnswerType::SourceCitation { .. } => {
-                ChangeInstruction::Dismiss
-            }
-            AnswerType::Deferral => ChangeInstruction::Defer,
-            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
-            // Anything else (Correction fallback, etc.) is not a source — dismiss
-            AnswerType::Correction { .. } => ChangeInstruction::Dismiss,
-        };
-    }
+        // Missing: nothing meaningful beyond dismiss/defer/delete (handled above)
+        Missing => ChangeInstruction::Dismiss,
 
-    // Stale questions ("is this still current?") should produce temporal updates
-    // or dismissals.  Source citations are misclassified confirmations — long
-    // answers with dates that corroborate a fact are confirmations, not new sources.
-    if question.question_type == crate::models::QuestionType::Stale {
-        return match answer_type {
-            AnswerType::Dismissal => ChangeInstruction::Dismiss,
-            AnswerType::Deferral => ChangeInstruction::Defer,
-            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
-            // Treat source citations as confirmations — the user is confirming
-            // the fact is still current with evidence, not providing a new source.
-            // Use verification date (month precision+) to avoid extracting
-            // publication years from citations like "Beard (1998)".
+        // Stale: confirmations refresh last-seen date, corrections update temporal
+        Stale => match answer_type {
             AnswerType::Confirmation | AnswerType::SourceCitation { .. } => {
-                let date_str = extract_verification_date(answer)
-                    .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
-                if let Some(ref old) = old_tag {
-                    let inner = old
-                        .strip_prefix("@t[")
-                        .and_then(|s| s.strip_suffix("]"))
-                        .unwrap_or("");
-                    if inner.ends_with("..") {
-                        ChangeInstruction::Dismiss
-                    } else {
-                        ChangeInstruction::UpdateTemporal {
-                            line_text,
-                            old_tag: old.clone(),
-                            new_tag: format!("@t[~{date_str}]"),
-                        }
-                    }
-                } else {
-                    ChangeInstruction::AddTemporal {
-                        line_text,
-                        tag: format!("@t[~{date_str}]"),
-                    }
-                }
+                confirmation_to_temporal(answer, line_text, &old_tag)
             }
             AnswerType::Correction { .. } => {
-                // Try to extract date information for temporal updates
-                if let Some(dates) = extract_dates_from_answer(answer) {
-                    if let Some(ref old) = old_tag {
-                        let new_tag = format_temporal_tag(&dates, old);
-                        return ChangeInstruction::UpdateTemporal {
-                            line_text,
-                            old_tag: old.clone(),
-                            new_tag,
-                        };
-                    }
-                    let tag = format_new_temporal_tag(&dates);
-                    return ChangeInstruction::AddTemporal { line_text, tag };
-                }
-                ChangeInstruction::Dismiss
+                correction_to_temporal(answer, &line_text, &old_tag)
+                    .unwrap_or(ChangeInstruction::Dismiss)
             }
-        };
-    }
+            _ => ChangeInstruction::Dismiss,
+        },
 
-    // Ambiguous questions ("which X is this?") are informational — the answer
-    // clarifies meaning but should never modify document body text.  Injecting
-    // answer prose into content causes corruption (e.g. "Antiochus III" becoming
-    // "Antiochus III — the 3rd ruler of that name").
-    // Exception: explicit "split:" corrections are allowed since they restructure
-    // the document rather than injecting answer text.
-    if question.question_type == crate::models::QuestionType::Ambiguous {
-        // Allow "split:" corrections through — they restructure, not inject
-        if let AnswerType::Correction { ref detail } = answer_type {
-            if detail.to_lowercase().starts_with("split:") {
-                return ChangeInstruction::Split {
-                    line_text,
-                    instruction: detail["split:".len()..].trim().to_string(),
-                };
+        // Ambiguous: informational only, except explicit "split:" corrections
+        Ambiguous => {
+            if let AnswerType::Correction { ref detail } = answer_type {
+                if let Some(split) = try_split(detail, &line_text) {
+                    return split;
+                }
             }
+            ChangeInstruction::Dismiss
         }
-        return match answer_type {
-            AnswerType::Dismissal | AnswerType::Confirmation | AnswerType::SourceCitation { .. } | AnswerType::Correction { .. } => {
-                ChangeInstruction::Dismiss
-            }
-            AnswerType::Deferral => ChangeInstruction::Defer,
-            AnswerType::Deletion => ChangeInstruction::Delete { line_text },
-        };
-    }
 
-    match answer_type {
-        AnswerType::Dismissal => ChangeInstruction::Dismiss,
-        AnswerType::Deferral => ChangeInstruction::Defer,
-        AnswerType::Deletion => ChangeInstruction::Delete { line_text },
-        // Source citations from review answers must NOT become footnote
-        // definitions — they cause garbage footnote accumulation.  Answers
-        // belong in the review queue section, not as source citations.
-        AnswerType::SourceCitation { .. } => ChangeInstruction::Dismiss,
-        AnswerType::Confirmation => {
-            // Use verification date (month precision+) from the answer if provided
-            // (e.g. "Still current 2024-02"), otherwise fall back to today's date.
-            // Bare years are excluded to avoid extracting publication years from
-            // citations like "Beard (1998)".
-            let date_str = extract_verification_date(answer)
-                .unwrap_or_else(|| chrono::Local::now().format("%Y-%m-%d").to_string());
-            if let Some(ref old) = old_tag {
-                // Preserve open-ended ranges: confirming @t[2023-08..] means
-                // the range is still valid and ongoing — don't replace with ~date
-                let inner = old
-                    .strip_prefix("@t[")
-                    .and_then(|s| s.strip_suffix("]"))
-                    .unwrap_or("");
-                if inner.ends_with("..") {
-                    ChangeInstruction::Dismiss
-                } else {
-                    let new_tag = format!("@t[~{date_str}]");
-                    ChangeInstruction::UpdateTemporal {
-                        line_text,
-                        old_tag: old.clone(),
-                        new_tag,
-                    }
+        // Default: temporal/stale/duplicate/corruption and any future types
+        _ => match answer_type {
+            AnswerType::SourceCitation { .. } => ChangeInstruction::Dismiss,
+            AnswerType::Confirmation => confirmation_to_temporal(answer, line_text, &old_tag),
+            AnswerType::Correction { detail } => {
+                if let Some(split) = try_split(&detail, &line_text) {
+                    return split;
                 }
-            } else {
-                ChangeInstruction::AddTemporal {
-                    line_text,
-                    tag: format!("@t[~{date_str}]"),
-                }
+                correction_to_temporal(answer, &line_text, &old_tag).unwrap_or(
+                    ChangeInstruction::Generic {
+                        description: format!(
+                            "Apply answer '{}' to: {}",
+                            answer, question.description
+                        ),
+                    },
+                )
             }
-        }
-        AnswerType::Correction { detail } => {
-            // Handle "split:" prefix within corrections
-            if detail.to_lowercase().starts_with("split:") {
-                return ChangeInstruction::Split {
-                    line_text,
-                    instruction: detail["split:".len()..].trim().to_string(),
-                };
-            }
-
-            // Try to extract date information for temporal updates
-            if let Some(dates) = extract_dates_from_answer(answer) {
-                if let Some(ref old) = old_tag {
-                    let new_tag = format_temporal_tag(&dates, old);
-                    return ChangeInstruction::UpdateTemporal {
-                        line_text,
-                        old_tag: old.clone(),
-                        new_tag,
-                    };
-                }
-                let tag = format_new_temporal_tag(&dates);
-                return ChangeInstruction::AddTemporal { line_text, tag };
-            }
-
-            ChangeInstruction::Generic {
-                description: format!("Apply answer '{}' to: {}", answer, question.description),
-            }
-        }
+            _ => ChangeInstruction::Dismiss,
+        },
     }
 }
 

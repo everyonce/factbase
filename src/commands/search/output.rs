@@ -166,7 +166,7 @@ pub fn print_detailed_results(results: &[SearchResult]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::search::test_helpers::tests::make_result;
+    use crate::commands::search::tests::make_result;
 
     #[test]
     fn test_calculate_relevance_stats_empty() {

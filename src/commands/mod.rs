@@ -1,19 +1,9 @@
 //! CLI command implementations
-//!
-//! This module contains all CLI command implementations and shared utilities.
-//!
-//! # Submodules
-//!
-//! - `errors` - Error helper functions
-//! - `paths` - Path validation functions
-//! - `setup` - Database and service setup functions
-//! - `utils` - Utility functions (output formatting, filtering, date parsing)
 
 pub mod completions;
 pub mod db;
 pub mod doctor;
 pub mod embeddings;
-pub mod errors;
 pub mod export;
 pub mod filters;
 pub mod grep;
@@ -24,7 +14,6 @@ pub mod check;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod organize;
-pub mod paths;
 pub mod repair;
 pub mod repo;
 pub mod review;
@@ -90,8 +79,6 @@ pub use status::cmd_status;
 pub use version::cmd_version;
 
 // Re-export helper functions from submodules for internal use via `super::`
-pub use errors::repo_path_not_found_error;
-pub use paths::{validate_directory_path, validate_file_path};
 pub use setup::{
     auto_init_repo, clean_canonicalize, find_repo, find_repo_with_config, setup_cached_embedding,
     setup_database, setup_database_checked, setup_database_only, setup_embedding_with_timeout,
@@ -100,8 +87,9 @@ pub use setup::{
 #[cfg(feature = "mcp")]
 pub use setup::{setup_embedding, setup_link_detector};
 pub use utils::{
-    confirm_prompt, create_repository, filter_by_excluded_types, parse_since, parse_since_filter,
-    print_output, resolve_repos, setup_db_and_resolve_repos,
+    confirm_prompt, create_repository, filter_by_excluded_types,
+    parse_since, parse_since_filter, print_output, repo_path_not_found_error, resolve_repos,
+    setup_db_and_resolve_repos, validate_directory_path, validate_file_path,
 };
 
 #[cfg(test)]
