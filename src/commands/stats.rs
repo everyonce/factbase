@@ -78,8 +78,8 @@ pub fn cmd_stats(args: StatsArgs) -> anyhow::Result<()> {
     } else {
         println!("Factbase Stats");
         println!("==============");
-        println!("Repositories: {total_repos}");
-        println!("Documents:    {total_docs}");
+        println!("Repositories: {}", total_repos);
+        println!("Documents:    {}", total_docs);
         println!("Database:     {}", format_bytes(db_size));
         if let Some(ts) = last_scan {
             println!("Last scan:    {}", ts.format("%Y-%m-%d %H:%M:%S"));

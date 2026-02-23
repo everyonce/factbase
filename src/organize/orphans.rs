@@ -66,24 +66,16 @@ pub fn write_orphans(
     }
 
     // Add section for this operation
-    {
-        writeln_str!(
-            content,
-            "## {} {} ({})\n",
-            operation,
-            operation_id,
-            timestamp
-        );
+    content.push_str(&format!(
+        "## {} {} ({})\n\n",
+        operation, operation_id, timestamp
+    ));
 
-        for fact in orphans {
-            writeln_str!(
-                content,
-                "- {} @r[orphan] <!-- from {} line {} -->",
-                fact.content,
-                fact.source_doc,
-                fact.source_line
-            );
-        }
+    for fact in orphans {
+        content.push_str(&format!(
+            "- {} @r[orphan] <!-- from {} line {} -->\n",
+            fact.content, fact.source_doc, fact.source_line
+        ));
     }
 
     write_file(&orphan_path, &content)?;

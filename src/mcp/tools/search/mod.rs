@@ -6,6 +6,7 @@ mod search_temporal;
 
 pub use search_content::search_content;
 pub use search_knowledge::search_knowledge;
+pub use search_temporal::search_temporal;
 
 use crate::database::Database;
 use crate::error::FactbaseError;

@@ -7,7 +7,6 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::organize::{SplitCandidate, SplitSection};
-use crate::ProgressReporter;
 
 /// Minimum content length for a section to be considered for embedding.
 const MIN_SECTION_CONTENT: usize = 50;
@@ -116,17 +115,12 @@ pub async fn detect_split_candidates(
     embedding: &dyn EmbeddingProvider,
     threshold: f32,
     repo_id: Option<&str>,
-    progress: &ProgressReporter,
 ) -> Result<Vec<SplitCandidate>, FactbaseError> {
     let docs = collect_active_documents(db, repo_id)?;
 
-    progress.phase("Detecting split candidates");
-
     let mut candidates = Vec::new();
-    let total = docs.len();
 
-    for (i, doc) in docs.iter().enumerate() {
-        progress.report(i + 1, total, &doc.title);
+    for doc in docs {
         // Extract sections from document
         let sections = extract_sections(&doc.content);
 

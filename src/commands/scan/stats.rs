@@ -123,7 +123,7 @@ pub(super) fn cmd_scan_stats_only(
                 let type_str: Vec<_> = types
                     .iter()
                     .take(5)
-                    .map(|(t, c)| format!("{t}: {c}"))
+                    .map(|(t, c)| format!("{}: {}", t, c))
                     .collect();
                 println!("  Types: {}", type_str.join(", "));
                 if types.len() > 5 {
@@ -194,7 +194,7 @@ pub(super) fn cmd_scan_check(
         if result.valid {
             println!("✓ {} documents indexed", result.total_documents);
             if let Some(dim) = result.embedding_dimension {
-                println!("✓ All embeddings valid ({dim} dimensions)");
+                println!("✓ All embeddings valid ({} dimensions)", dim);
             }
             println!("✓ No orphaned entries");
         } else {

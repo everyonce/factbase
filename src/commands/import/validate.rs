@@ -26,7 +26,8 @@ pub fn validate_import_document(content: &str, filename: &str) -> Option<ImportV
                 let id = &after_prefix[..end];
                 if id.len() != 6 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
                     errors.push(format!(
-                        "Invalid factbase ID format '{id}' (expected 6 hex characters)"
+                        "Invalid factbase ID format '{}' (expected 6 hex characters)",
+                        id
                     ));
                 }
             } else {

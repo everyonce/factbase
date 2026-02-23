@@ -7,7 +7,6 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::mcp::tools::get_review_queue;
 use crate::organize::{detect_merge_candidates, detect_misplaced};
-use crate::ProgressReporter;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
 use serde_json::Value;
@@ -38,7 +37,6 @@ pub struct ReviewStatsResponse {
 pub struct OrganizeStatsResponse {
     pub merge_candidates: usize,
     pub misplaced_candidates: usize,
-    pub duplicate_entry_count: usize,
     pub orphan_count: usize,
 }
 
@@ -89,9 +87,8 @@ fn compute_aggregate_stats(db: &Database) -> Result<AggregateStatsResponse, Fact
 
 /// Compute review queue stats.
 fn compute_review_stats(db: &Database) -> Result<ReviewStatsResponse, FactbaseError> {
-    // Use high limit to disable early termination — stats need accurate totals
-    let args = serde_json::json!({"limit": 1000000, "status": "all"});
-    let result = get_review_queue(db, &args, &ProgressReporter::Silent)?;
+    let args = serde_json::json!({});
+    let result = get_review_queue(db, &args)?;
 
     let total = result.get("total").and_then(Value::as_u64).unwrap_or(0);
     let answered = result.get("answered").and_then(Value::as_u64).unwrap_or(0);
@@ -110,11 +107,10 @@ fn compute_review_stats(db: &Database) -> Result<ReviewStatsResponse, FactbaseEr
 /// Compute organize suggestion stats.
 fn compute_organize_stats(db: &Database) -> Result<OrganizeStatsResponse, FactbaseError> {
     // Count merge candidates (default threshold 0.85)
-    let merge_candidates =
-        detect_merge_candidates(db, 0.85, None, &crate::ProgressReporter::Silent)?.len();
+    let merge_candidates = detect_merge_candidates(db, 0.85, None)?.len();
 
     // Count misplaced candidates
-    let misplaced_candidates = detect_misplaced(db, None, &crate::ProgressReporter::Silent)?.len();
+    let misplaced_candidates = detect_misplaced(db, None)?.len();
 
     // Count orphans across all repos
     let repos = db.list_repositories()?;
@@ -126,7 +122,6 @@ fn compute_organize_stats(db: &Database) -> Result<OrganizeStatsResponse, Factba
     Ok(OrganizeStatsResponse {
         merge_candidates,
         misplaced_candidates,
-        duplicate_entry_count: 0, // Requires embedding provider — use CLI or MCP
         orphan_count,
     })
 }
@@ -180,13 +175,11 @@ mod tests {
         let resp = OrganizeStatsResponse {
             merge_candidates: 3,
             misplaced_candidates: 2,
-            duplicate_entry_count: 1,
             orphan_count: 5,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"merge_candidates\":3"));
         assert!(json.contains("\"misplaced_candidates\":2"));
-        assert!(json.contains("\"duplicate_entry_count\":1"));
         assert!(json.contains("\"orphan_count\":5"));
     }
 
@@ -231,7 +224,6 @@ mod tests {
         let resp = OrganizeStatsResponse {
             merge_candidates: 0,
             misplaced_candidates: 0,
-            duplicate_entry_count: 0,
             orphan_count: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();

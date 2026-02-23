@@ -6,7 +6,6 @@ use super::{
 };
 use crate::commands::setup_database;
 use chrono::{DateTime, Utc};
-use factbase::{ContentSearchParams, ProgressReporter};
 use regex::RegexBuilder;
 use serde::Serialize;
 
@@ -16,18 +15,15 @@ pub(super) fn run_single_grep(args: &GrepArgs) -> anyhow::Result<()> {
     let since: Option<DateTime<Utc>> = parse_since_filter(&args.since)?;
 
     let db = setup_database_only()?;
-    let progress = ProgressReporter::Cli { quiet: args.quiet };
 
-    let params = ContentSearchParams {
-        pattern: &args.pattern,
-        limit: args.limit,
-        doc_type: args.doc_type.as_deref(),
-        repo_id: args.repo.as_deref(),
-        context_lines: args.context,
+    let results = db.search_content(
+        &args.pattern,
+        args.limit,
+        args.doc_type.as_deref(),
+        args.repo.as_deref(),
+        args.context,
         since,
-        progress: &progress,
-    };
-    let results = db.search_content(&params)?;
+    )?;
 
     // Apply --exclude-type filtering
     let results = if let Some(ref exclude_types) = args.exclude_type {
@@ -45,7 +41,7 @@ pub(super) fn run_single_grep(args: &GrepArgs) -> anyhow::Result<()> {
         let pattern = args.pattern.clone();
         print_output(format, &stats, || {
             if stats.total_matches == 0 {
-                println!("No matches found for '{pattern}'");
+                println!("No matches found for '{}'", pattern);
             } else {
                 println!(
                     "{} matches in {} documents across {} repositories",
@@ -78,7 +74,7 @@ pub(super) fn run_single_grep(args: &GrepArgs) -> anyhow::Result<()> {
                 count: total_matches,
             },
             || {
-                println!("{total_matches}");
+                println!("{}", total_matches);
             },
         )?;
         return Ok(());
@@ -93,7 +89,7 @@ pub(super) fn run_single_grep(args: &GrepArgs) -> anyhow::Result<()> {
     print_output(format, &results, || {
         if results.is_empty() {
             if !quiet {
-                println!("No matches found for '{pattern}'");
+                println!("No matches found for '{}'", pattern);
             }
         } else {
             // Build regex for highlighting
@@ -122,7 +118,7 @@ pub(super) fn run_single_grep(args: &GrepArgs) -> anyhow::Result<()> {
                             } else {
                                 context_line.to_string()
                             };
-                            println!("  {highlighted}");
+                            println!("  {}", highlighted);
                         }
                     } else {
                         // No context - just show the matching line
@@ -158,7 +154,7 @@ pub(super) fn run_grep_watch_mode(args: &GrepArgs) -> anyhow::Result<()> {
     run_sync_watch_loop(
         &mut ctx,
         || {
-            println!("Searching for: \"{pattern}\"");
+            println!("Searching for: \"{}\"", pattern);
             println!("{}", "=".repeat(50));
         },
         || run_single_grep(args),

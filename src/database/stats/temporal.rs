@@ -75,7 +75,6 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::content_hash;
     use crate::database::tests::{test_db, test_doc, test_repo};
 
     #[test]
@@ -86,7 +85,7 @@ mod tests {
 
         let mut doc = test_doc("abc123", "Test Doc");
         doc.content = "- Fact one @t[2020..2022]\n- Fact two @t[2023..]".to_string();
-        doc.file_hash = content_hash(&doc.content);
+        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats1 = db.compute_temporal_stats(&repo.id).expect("compute");
@@ -98,7 +97,7 @@ mod tests {
         assert_eq!(stats2.facts_with_tags, stats1.facts_with_tags);
 
         doc.content = "- Fact one @t[2020..2022]\n- Fact two\n- Fact three".to_string();
-        doc.file_hash = content_hash(&doc.content);
+        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats3 = db.compute_temporal_stats(&repo.id).expect("compute");
@@ -129,7 +128,7 @@ mod tests {
 
         let mut doc = test_doc("abc123", "Test Doc");
         doc.content = "- Fact one\n- Fact two\n- Fact three".to_string();
-        doc.file_hash = content_hash(&doc.content);
+        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats = db.compute_temporal_stats(&repo.id).expect("compute");
@@ -155,7 +154,7 @@ mod tests {
                        - Historical @t[..2019]\n\
                        - Unknown @t[?]"
             .to_string();
-        doc.file_hash = content_hash(&doc.content);
+        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats = db.compute_temporal_stats(&repo.id).expect("compute");
@@ -178,7 +177,7 @@ mod tests {
                        - Middle fact @t[2020..2022]\n\
                        - Recent fact @t[2024-12-15]"
             .to_string();
-        doc.file_hash = content_hash(&doc.content);
+        doc.file_hash = crate::processor::DocumentProcessor::compute_hash(&doc.content);
         db.upsert_document(&doc).expect("upsert");
 
         let stats = db.compute_temporal_stats(&repo.id).expect("compute");

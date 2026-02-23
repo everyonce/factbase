@@ -24,7 +24,7 @@
 
 use chrono::Utc;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use factbase::{ContentSearchParams, Database, Document, ProgressReporter, Repository};
+use factbase::{Database, Document, Repository};
 use tempfile::TempDir;
 
 /// Create a test database with N documents and embeddings
@@ -162,16 +162,8 @@ fn bench_content_search_simple(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(num_docs), &db, |b, db| {
             b.iter(|| {
-                db.search_content(&ContentSearchParams {
-                    pattern: black_box("TODO"),
-                    limit: 10,
-                    doc_type: None,
-                    repo_id: None,
-                    context_lines: 2,
-                    since: None,
-                    progress: &ProgressReporter::Silent,
-                })
-                .expect("Search failed")
+                db.search_content(black_box("TODO"), 10, None, None, 2, None)
+                    .expect("Search failed")
             })
         });
     }
@@ -194,16 +186,8 @@ fn bench_content_search_pattern(c: &mut Criterion) {
     for (name, pattern) in patterns {
         group.bench_with_input(BenchmarkId::from_parameter(name), &pattern, |b, pattern| {
             b.iter(|| {
-                db.search_content(&ContentSearchParams {
-                    pattern: black_box(pattern),
-                    limit: 10,
-                    doc_type: None,
-                    repo_id: None,
-                    context_lines: 2,
-                    since: None,
-                    progress: &ProgressReporter::Silent,
-                })
-                .expect("Search failed")
+                db.search_content(black_box(pattern), 10, None, None, 2, None)
+                    .expect("Search failed")
             })
         });
     }

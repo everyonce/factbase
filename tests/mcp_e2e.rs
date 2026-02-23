@@ -5,10 +5,15 @@ mod common;
 
 use chrono::Utc;
 use common::ollama_helpers::require_ollama;
-use common::TestScanSetup;
 use factbase::{
-    config::Config, database::Database, embedding::OllamaEmbedding, mcp::McpServer,
-    models::Repository, scanner::full_scan,
+    config::Config,
+    database::Database,
+    embedding::OllamaEmbedding,
+    llm::{LinkDetector, OllamaLlm},
+    mcp::McpServer,
+    models::Repository,
+    processor::DocumentProcessor,
+    scanner::{full_scan, ScanOptions, Scanner},
 };
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -20,30 +25,30 @@ use tokio::sync::oneshot;
 
 /// Helper to set up a test repo with real embeddings
 async fn setup_indexed_repo() -> (TempDir, Database, OllamaEmbedding, Repository, Config) {
-    let temp_dir = TempDir::new().unwrap();
+    let temp_dir = TempDir::new().expect("operation should succeed");
     let repo_path = temp_dir.path().join("repo");
-    fs::create_dir_all(repo_path.join("people")).unwrap();
-    fs::create_dir_all(repo_path.join("projects")).unwrap();
+    fs::create_dir_all(repo_path.join("people")).expect("operation should succeed");
+    fs::create_dir_all(repo_path.join("projects")).expect("operation should succeed");
 
     // Create test documents
     fs::write(
         repo_path.join("people/alice.md"),
         "# Alice Chen\nAlice is a senior backend engineer specializing in Rust and distributed systems.",
     )
-    .unwrap();
+    .expect("operation should succeed");
     fs::write(
         repo_path.join("people/bob.md"),
         "# Bob Martinez\nBob is a frontend developer with expertise in React and TypeScript.",
     )
-    .unwrap();
+    .expect("operation should succeed");
     fs::write(
         repo_path.join("projects/api.md"),
         "# API Gateway\nA high-performance API gateway built with Rust. Team: Alice Chen leads the backend.",
     )
-    .unwrap();
+    .expect("operation should succeed");
 
     let db_path = temp_dir.path().join("test.db");
-    let db = Database::new(&db_path).unwrap();
+    let db = Database::new(&db_path).expect("operation should succeed");
 
     let repo = Repository {
         id: "test".into(),
@@ -60,12 +65,49 @@ async fn setup_indexed_repo() -> (TempDir, Database, OllamaEmbedding, Repository
         last_indexed_at: None,
         last_lint_at: None,
     };
-    db.add_repository(&repo).unwrap();
+    db.add_repository(&repo).expect("operation should succeed");
 
-    let setup = TestScanSetup::new();
-    full_scan(&repo, &db, &setup.context()).await.unwrap();
+    let config = Config::default();
+    let embedding = OllamaEmbedding::new(
+        &config.embedding.base_url,
+        &config.embedding.model,
+        config.embedding.dimension,
+    );
 
-    (temp_dir, db, setup.embedding, repo, setup.config)
+    // Run full scan with real embeddings
+    let scanner = Scanner::new(&config.watcher.ignore_patterns);
+    let processor = DocumentProcessor::new();
+    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
+    let link_detector = LinkDetector::new(Box::new(llm));
+
+    let opts = ScanOptions {
+        chunk_size: 100_000,
+        chunk_overlap: 2_000,
+        verbose: false,
+        dry_run: false,
+        show_progress: false,
+        check_duplicates: false,
+        collect_stats: false,
+        since: None,
+        min_coverage: 0.8,
+        embedding_batch_size: 10,
+        force_reindex: false,
+        skip_links: false,
+    };
+
+    full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("operation should succeed");
+
+    (temp_dir, db, embedding, repo, config)
 }
 
 /// Test 6.1: MCP search with real embeddings
@@ -84,7 +126,6 @@ async fn test_mcp_search_with_real_embeddings() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -97,7 +138,7 @@ async fn test_mcp_search_with_real_embeddings() {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .unwrap();
+        .expect("operation should succeed");
 
     // Test semantic search for "backend engineer"
     let resp = client
@@ -110,12 +151,14 @@ async fn test_mcp_search_with_real_embeddings() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let results = resp["result"]["results"].as_array().unwrap();
+    let results = resp["result"]["results"]
+        .as_array()
+        .expect("operation should succeed");
     assert!(
         !results.is_empty(),
         "Should find results for backend engineer"
@@ -124,12 +167,17 @@ async fn test_mcp_search_with_real_embeddings() {
     // Alice should be top result (she's a backend engineer)
     let top_result = &results[0];
     assert!(
-        top_result["title"].as_str().unwrap().contains("Alice"),
+        top_result["title"]
+            .as_str()
+            .expect("operation should succeed")
+            .contains("Alice"),
         "Alice should be top result for backend engineer query"
     );
 
     // Verify relevance score is reasonable
-    let score = top_result["relevance_score"].as_f64().unwrap();
+    let score = top_result["relevance_score"]
+        .as_f64()
+        .expect("operation should succeed");
     assert!(
         score > 0.0 && score <= 1.0,
         "Relevance score should be between 0 and 1"
@@ -146,16 +194,19 @@ async fn test_mcp_search_with_real_embeddings() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let results = resp["result"]["results"].as_array().unwrap();
+    let results = resp["result"]["results"]
+        .as_array()
+        .expect("operation should succeed");
     assert!(
-        results
-            .iter()
-            .any(|r| r["title"].as_str().unwrap().contains("Bob")),
+        results.iter().any(|r| r["title"]
+            .as_str()
+            .expect("operation should succeed")
+            .contains("Bob")),
         "Bob should be found for frontend React query"
     );
 
@@ -170,12 +221,14 @@ async fn test_mcp_search_with_real_embeddings() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let results = resp["result"]["results"].as_array().unwrap();
+    let results = resp["result"]["results"]
+        .as_array()
+        .expect("operation should succeed");
     for r in results {
         assert_eq!(r["type"], "person", "All results should be person type");
     }
@@ -198,7 +251,6 @@ async fn test_all_8_mcp_tools() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -211,7 +263,7 @@ async fn test_all_8_mcp_tools() {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .unwrap();
+        .expect("operation should succeed");
 
     // 1. search_knowledge
     let resp = client
@@ -223,18 +275,20 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert!(
         resp["result"]["results"].is_array(),
         "search_knowledge should return results array"
     );
 
     // 2. get_entity
-    let docs = db.get_documents_for_repo("test").unwrap();
-    let first_id = docs.keys().next().unwrap();
+    let docs = db
+        .get_documents_for_repo("test")
+        .expect("operation should succeed");
+    let first_id = docs.keys().next().expect("operation should succeed");
     let resp = client
         .post(format!("{}/mcp", base_url))
         .json(&json!({
@@ -244,12 +298,14 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert_eq!(
-        resp["result"]["id"].as_str().unwrap(),
+        resp["result"]["id"]
+            .as_str()
+            .expect("operation should succeed"),
         first_id,
         "get_entity should return correct document"
     );
@@ -264,11 +320,13 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
-    let entities = resp["result"]["entities"].as_array().unwrap();
+        .expect("operation should succeed");
+    let entities = resp["result"]["entities"]
+        .as_array()
+        .expect("operation should succeed");
     assert_eq!(entities.len(), 3, "list_entities should return 3 documents");
 
     // 4. get_perspective
@@ -281,10 +339,10 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert_eq!(
         resp["result"]["id"], "test",
         "get_perspective should return repo info"
@@ -300,11 +358,13 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
-    let repos = resp["result"]["repositories"].as_array().unwrap();
+        .expect("operation should succeed");
+    let repos = resp["result"]["repositories"]
+        .as_array()
+        .expect("operation should succeed");
     assert_eq!(repos.len(), 1, "list_repositories should return 1 repo");
 
     // 6. create_document
@@ -322,20 +382,22 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert!(
         resp["result"]["id"].is_string(),
         "create_document should return new document ID"
     );
-    let new_id = resp["result"]["id"].as_str().unwrap();
+    let new_id = resp["result"]["id"]
+        .as_str()
+        .expect("operation should succeed");
 
     // Verify file created
     let file_path = repo.path.join("people/carol.md");
     assert!(file_path.exists(), "New document file should exist");
-    let content = fs::read_to_string(&file_path).unwrap();
+    let content = fs::read_to_string(&file_path).expect("operation should succeed");
     assert!(content.contains("Carol Davis"), "File should contain title");
 
     // 7. update_document
@@ -351,17 +413,17 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert_eq!(
         resp["result"]["id"], new_id,
         "update_document should return updated document ID"
     );
 
     // Verify file updated
-    let content = fs::read_to_string(&file_path).unwrap();
+    let content = fs::read_to_string(&file_path).expect("operation should succeed");
     assert!(
         content.contains("Kubernetes"),
         "File should contain updated content"
@@ -377,10 +439,10 @@ async fn test_all_8_mcp_tools() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert_eq!(
         resp["result"]["id"], new_id,
         "delete_document should return deleted document ID"
@@ -410,7 +472,6 @@ async fn test_mcp_concurrent_requests_real() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -424,7 +485,7 @@ async fn test_mcp_concurrent_requests_real() {
         Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
-            .unwrap(),
+            .expect("operation should succeed"),
     );
 
     // Send 20 concurrent search requests
@@ -462,7 +523,7 @@ async fn test_mcp_concurrent_requests_real() {
     let mut total_duration = Duration::ZERO;
 
     for handle in handles {
-        let (i, ok, duration) = handle.await.unwrap();
+        let (i, ok, duration) = handle.await.expect("operation should succeed");
         if ok {
             success_count += 1;
             total_duration += duration;
@@ -507,7 +568,6 @@ async fn test_mcp_write_operations_update_index() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -520,7 +580,7 @@ async fn test_mcp_write_operations_update_index() {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .unwrap();
+        .expect("operation should succeed");
 
     // Create a new document via MCP
     let resp = client
@@ -537,16 +597,46 @@ async fn test_mcp_write_operations_update_index() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let new_id = resp["result"]["id"].as_str().unwrap().to_string();
+    let new_id = resp["result"]["id"]
+        .as_str()
+        .expect("operation should succeed")
+        .to_string();
 
     // Run scan to generate embedding for new document
-    let scan_setup = TestScanSetup::new();
-    full_scan(&repo, &db, &scan_setup.context()).await.unwrap();
+    let scanner = Scanner::new(&config.watcher.ignore_patterns);
+    let processor = DocumentProcessor::new();
+    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
+    let link_detector = LinkDetector::new(Box::new(llm));
+    let opts = ScanOptions {
+        chunk_size: 100_000,
+        chunk_overlap: 2_000,
+        verbose: false,
+        dry_run: false,
+        show_progress: false,
+        check_duplicates: false,
+        collect_stats: false,
+        since: None,
+        min_coverage: 0.8,
+        embedding_batch_size: 10,
+        force_reindex: false,
+        skip_links: false,
+    };
+    full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("operation should succeed");
 
     // Search for the new document
     let resp = client
@@ -558,16 +648,19 @@ async fn test_mcp_write_operations_update_index() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let results = resp["result"]["results"].as_array().unwrap();
+    let results = resp["result"]["results"]
+        .as_array()
+        .expect("operation should succeed");
     assert!(
-        results
-            .iter()
-            .any(|r| r["title"].as_str().unwrap().contains("Dave")),
+        results.iter().any(|r| r["title"]
+            .as_str()
+            .expect("operation should succeed")
+            .contains("Dave")),
         "Dave should be searchable after scan"
     );
 
@@ -584,14 +677,24 @@ async fn test_mcp_write_operations_update_index() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
     assert!(resp["error"].is_null(), "Update should succeed");
 
     // Rescan to update embedding
-    full_scan(&repo, &db, &scan_setup.context()).await.unwrap();
+    full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("operation should succeed");
 
     // Search for updated content
     let resp = client
@@ -601,13 +704,16 @@ async fn test_mcp_write_operations_update_index() {
             "method": "tools/call",
             "params": {"name": "search_knowledge", "arguments": {"query": "computer vision image recognition"}}
         }))
-        .send().await.unwrap().json::<Value>().await.unwrap();
+        .send().await.expect("operation should succeed").json::<Value>().await.expect("operation should succeed");
 
-    let results = resp["result"]["results"].as_array().unwrap();
+    let results = resp["result"]["results"]
+        .as_array()
+        .expect("operation should succeed");
     assert!(
-        results
-            .iter()
-            .any(|r| r["title"].as_str().unwrap().contains("Dave")),
+        results.iter().any(|r| r["title"]
+            .as_str()
+            .expect("operation should succeed")
+            .contains("Dave")),
         "Dave should be found with updated content"
     );
 
@@ -621,10 +727,20 @@ async fn test_mcp_write_operations_update_index() {
         }))
         .send()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
     // Rescan to process deletion
-    full_scan(&repo, &db, &scan_setup.context()).await.unwrap();
+    full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("operation should succeed");
 
     // Verify deleted document not in search results
     let resp = client
@@ -636,16 +752,19 @@ async fn test_mcp_write_operations_update_index() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let results = resp["result"]["results"].as_array().unwrap();
+    let results = resp["result"]["results"]
+        .as_array()
+        .expect("operation should succeed");
     assert!(
-        !results
-            .iter()
-            .any(|r| r["title"].as_str().unwrap().contains("Dave")),
+        !results.iter().any(|r| r["title"]
+            .as_str()
+            .expect("operation should succeed")
+            .contains("Dave")),
         "Deleted document should not appear in search"
     );
 
@@ -665,7 +784,6 @@ async fn test_tools_list_endpoint() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -678,7 +796,7 @@ async fn test_tools_list_endpoint() {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
-        .unwrap();
+        .expect("operation should succeed");
 
     let resp = client
         .post(format!("{}/mcp", base_url))
@@ -690,15 +808,20 @@ async fn test_tools_list_endpoint() {
         }))
         .send()
         .await
-        .unwrap()
+        .expect("operation should succeed")
         .json::<Value>()
         .await
-        .unwrap();
+        .expect("operation should succeed");
 
-    let tools = resp["result"]["tools"].as_array().unwrap();
+    let tools = resp["result"]["tools"]
+        .as_array()
+        .expect("operation should succeed");
     assert_eq!(tools.len(), 8, "Should have 8 MCP tools");
 
-    let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+    let tool_names: Vec<&str> = tools
+        .iter()
+        .map(|t| t["name"].as_str().expect("operation should succeed"))
+        .collect();
 
     assert!(tool_names.contains(&"search_knowledge"));
     assert!(tool_names.contains(&"get_entity"));

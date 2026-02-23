@@ -1,8 +1,13 @@
 //! Review LLM wrapper for review operations.
 
+use std::future::Future;
+use std::pin::Pin;
+
 use super::ollama::LlmProvider;
 use crate::error::FactbaseError;
-use crate::BoxFuture;
+
+/// Boxed future type alias for async trait methods.
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// LLM provider for review operations (question generation, answer processing).
 /// Uses review.model from config if set, otherwise falls back to llm.model.
@@ -32,11 +37,21 @@ impl LlmProvider for ReviewLlm {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_helpers::MockLlm;
+
+    struct MockLlm;
+
+    impl LlmProvider for MockLlm {
+        fn complete<'a>(
+            &'a self,
+            _prompt: &'a str,
+        ) -> BoxFuture<'a, Result<String, FactbaseError>> {
+            Box::pin(async { Ok("mock".into()) })
+        }
+    }
 
     #[test]
     fn test_review_llm_model_name() {
-        let review = ReviewLlm::new(Box::new(MockLlm::new("mock")), "test-model".into());
+        let review = ReviewLlm::new(Box::new(MockLlm), "test-model".into());
         assert_eq!(review.model(), "test-model");
     }
 }

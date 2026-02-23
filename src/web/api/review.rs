@@ -3,7 +3,6 @@
 //! Wraps existing MCP review tools for the web UI.
 
 use crate::mcp::tools::{answer_question, bulk_answer_questions, get_review_queue};
-use crate::ProgressReporter;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -73,10 +72,8 @@ pub async fn list_review_queue(
         args.insert("type".to_string(), Value::String(qtype));
     }
 
-    let result = super::run_blocking_web(move || {
-        get_review_queue(&db, &Value::Object(args), &ProgressReporter::Silent)
-    })
-    .await?;
+    let result =
+        super::run_blocking_web(move || get_review_queue(&db, &Value::Object(args))).await?;
     Ok(Json(result))
 }
 
@@ -90,9 +87,7 @@ pub async fn get_document_questions(
     // Build args with doc_id filter
     let args = serde_json::json!({ "doc_id": doc_id });
 
-    let result =
-        super::run_blocking_web(move || get_review_queue(&db, &args, &ProgressReporter::Silent))
-            .await?;
+    let result = super::run_blocking_web(move || get_review_queue(&db, &args)).await?;
     Ok(Json(result))
 }
 
@@ -136,10 +131,7 @@ pub async fn post_bulk_answer(
 
     let args = serde_json::json!({ "answers": answers });
 
-    let result = super::run_blocking_web(move || {
-        bulk_answer_questions(&db, &args, &crate::ProgressReporter::Silent)
-    })
-    .await?;
+    let result = super::run_blocking_web(move || bulk_answer_questions(&db, &args)).await?;
     Ok(Json(result))
 }
 
@@ -151,10 +143,7 @@ pub async fn get_review_status(
     let db = state.db.clone();
 
     // Build args for MCP function - reuse get_review_queue which returns counts
-    // Use high limit + status=all to disable early termination — status needs accurate totals
     let mut args = serde_json::Map::new();
-    args.insert("limit".to_string(), Value::Number(1000000.into()));
-    args.insert("status".to_string(), Value::String("all".to_string()));
     if let Some(repo) = query.repo {
         args.insert("repo".to_string(), Value::String(repo));
     }
@@ -162,10 +151,8 @@ pub async fn get_review_status(
         args.insert("type".to_string(), Value::String(qtype));
     }
 
-    let result = super::run_blocking_web(move || {
-        get_review_queue(&db, &Value::Object(args), &ProgressReporter::Silent)
-    })
-    .await?;
+    let result =
+        super::run_blocking_web(move || get_review_queue(&db, &Value::Object(args))).await?;
 
     // Extract just the summary fields
     let status = serde_json::json!({

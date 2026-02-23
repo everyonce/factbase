@@ -9,8 +9,8 @@ use crate::error::FactbaseError;
 use crate::organize::fs_helpers::{read_file, write_file};
 use crate::organize::{
     detect_merge_candidates, detect_misplaced, load_orphan_entries, orphan_file_path,
-    process_orphan_answers, validate_orphan_answer, DuplicateEntry, MergeCandidate,
-    MisplacedCandidate, OrphanEntry,
+    process_orphan_answers, validate_orphan_answer, MergeCandidate, MisplacedCandidate,
+    OrphanEntry,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -37,14 +37,11 @@ pub struct SuggestionsQuery {
 
 /// Combined suggestions response.
 ///
-/// Note: `split` and `duplicate_entries` are always empty in web API.
-/// Use CLI `factbase organize analyze` for split and duplicate detection
-/// (they require an embedding provider).
+/// Note: `split` is always empty in web API. Use CLI for split detection.
 #[derive(Debug, Serialize)]
 pub struct SuggestionsResponse {
     pub merge: Vec<MergeCandidate>,
     pub misplaced: Vec<MisplacedCandidate>,
-    pub duplicate_entries: Vec<DuplicateEntry>,
     pub total: usize,
 }
 
@@ -147,29 +144,19 @@ pub async fn list_suggestions(
         // Fetch based on type filter or all
         match suggestion_type.as_deref() {
             Some("merge") => {
-                merge = detect_merge_candidates(
-                    &db,
-                    threshold,
-                    repo_ref,
-                    &crate::ProgressReporter::Silent,
-                )?;
+                merge = detect_merge_candidates(&db, threshold, repo_ref)?;
             }
             Some("misplaced") => {
-                misplaced = detect_misplaced(&db, repo_ref, &crate::ProgressReporter::Silent)?;
+                misplaced = detect_misplaced(&db, repo_ref)?;
             }
-            Some("split") | Some("duplicate") => {
-                // Split/duplicate detection requires embedding provider - not available via web API
+            Some("split") => {
+                // Split detection requires embedding provider - not available via web API
                 // Return empty result with note
             }
             _ => {
                 // Fetch all types (except split which requires embedding)
-                merge = detect_merge_candidates(
-                    &db,
-                    threshold,
-                    repo_ref,
-                    &crate::ProgressReporter::Silent,
-                )?;
-                misplaced = detect_misplaced(&db, repo_ref, &crate::ProgressReporter::Silent)?;
+                merge = detect_merge_candidates(&db, threshold, repo_ref)?;
+                misplaced = detect_misplaced(&db, repo_ref)?;
             }
         }
 
@@ -178,7 +165,6 @@ pub async fn list_suggestions(
         Ok(SuggestionsResponse {
             merge,
             misplaced,
-            duplicate_entries: Vec::new(),
             total,
         })
     })
@@ -196,8 +182,8 @@ pub async fn get_document_suggestions(
 
     let result = super::run_blocking_web(move || {
         // Get all suggestions and filter to those involving this document
-        let all_merge = detect_merge_candidates(&db, 0.95, None, &crate::ProgressReporter::Silent)?;
-        let all_misplaced = detect_misplaced(&db, None, &crate::ProgressReporter::Silent)?;
+        let all_merge = detect_merge_candidates(&db, 0.95, None)?;
+        let all_misplaced = detect_misplaced(&db, None)?;
 
         let merge: Vec<_> = all_merge
             .into_iter()
@@ -214,7 +200,6 @@ pub async fn get_document_suggestions(
         Ok(SuggestionsResponse {
             merge,
             misplaced,
-            duplicate_entries: Vec::new(),
             total,
         })
     })
@@ -335,7 +320,8 @@ pub async fn assign_orphan(
 
         if line_idx >= lines.len() {
             return Err(FactbaseError::not_found(format!(
-                "Line {line_number} not found in orphan file"
+                "Line {} not found in orphan file",
+                line_number
             )));
         }
 
@@ -346,14 +332,15 @@ pub async fn assign_orphan(
             // Simple format: `- content @r[orphan] <!-- from doc line N -->`
             // Convert to: `- [x] content @r[orphan] <!-- from doc line N --> → answer`
             let new_line = line.replacen("- ", "- [x] ", 1);
-            lines[line_idx] = format!("{new_line} → {target}");
+            lines[line_idx] = format!("{} → {}", new_line, target);
         } else if line.contains("[ ]") {
             // Checkbox format unchecked: mark as checked and add answer
             let new_line = line.replace("[ ]", "[x]");
-            lines[line_idx] = format!("{new_line} → {target}");
+            lines[line_idx] = format!("{} → {}", new_line, target);
         } else {
             return Err(FactbaseError::parse(format!(
-                "Line {line_number} is not a valid orphan entry"
+                "Line {} is not a valid orphan entry",
+                line_number
             )));
         }
 
@@ -450,13 +437,11 @@ mod tests {
         let response = SuggestionsResponse {
             merge: vec![],
             misplaced: vec![],
-            duplicate_entries: vec![],
             total: 0,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"total\":0"));
         assert!(json.contains("\"merge\":[]"));
-        assert!(json.contains("\"duplicate_entries\":[]"));
     }
 
     #[test]

@@ -5,7 +5,6 @@ use rayon::prelude::*;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::processor::content_hash;
 use crate::DocumentProcessor;
 
 use super::types::PreReadFile;
@@ -20,7 +19,7 @@ pub(super) fn pre_read_files(files: Vec<PathBuf>) -> Vec<PreReadFile> {
         .map(|path| {
             let content = fs::read_to_string(&path).map_err(|e| e.to_string());
             let (hash, existing_id) = if let Ok(ref c) = content {
-                let h = content_hash(c);
+                let h = DocumentProcessor::compute_hash(c);
                 let id = DocumentProcessor::extract_id_static(c);
                 (Some(h), id)
             } else {

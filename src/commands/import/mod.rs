@@ -18,7 +18,6 @@ mod validate;
 pub use args::ImportArgs;
 
 use super::{setup_database_only, validate_file_path};
-use factbase::ProgressReporter;
 use formats::{import_directory, import_json};
 
 #[cfg(feature = "compression")]
@@ -32,19 +31,18 @@ pub fn cmd_import(args: ImportArgs) -> anyhow::Result<()> {
 
     validate_file_path(&args.input)?;
 
-    let progress = ProgressReporter::Cli { quiet: false };
     let input_str = args.input.to_string_lossy();
 
     #[cfg(feature = "compression")]
     {
         if input_str.ends_with(".tar.zst") {
-            return import_tar_zst(&args, &repo, &progress);
+            return import_tar_zst(&args, &repo);
         }
         if input_str.ends_with(".json.zst") {
-            return import_json_zst(&args, &repo, &progress);
+            return import_json_zst(&args, &repo);
         }
         if input_str.ends_with(".md.zst") {
-            return import_md_zst(&args, &repo, &progress);
+            return import_md_zst(&args, &repo);
         }
     }
     #[cfg(not(feature = "compression"))]
@@ -59,8 +57,8 @@ pub fn cmd_import(args: ImportArgs) -> anyhow::Result<()> {
         }
     }
     if input_str.ends_with(".json") {
-        return import_json(&args, &repo, &progress);
+        return import_json(&args, &repo);
     }
 
-    import_directory(&args, &repo, &progress)
+    import_directory(&args, &repo)
 }

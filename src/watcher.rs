@@ -75,7 +75,7 @@ impl FileWatcher {
     }
 
     fn should_process(&self, path: &Path) -> bool {
-        if path.extension().is_none_or(|e| e != "md") {
+        if path.extension().map(|e| e != "md").unwrap_or(true) {
             debug!("Ignoring non-markdown file: {}", path.display());
             return false;
         }
@@ -97,7 +97,10 @@ fn debounce_loop(raw_rx: Receiver<Event>, debounced_tx: Sender<Vec<PathBuf>>, de
 
     loop {
         // Block until first event (or channel closed)
-        let Ok(first) = raw_rx.recv() else { return };
+        let first = match raw_rx.recv() {
+            Ok(event) => event,
+            Err(_) => return, // channel closed
+        };
 
         let mut paths = HashSet::new();
         for p in first.paths {

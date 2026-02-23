@@ -3,11 +3,9 @@
 //! Tests chunking behavior for large documents and search result deduplication.
 //! Requires Ollama running with qwen3-embedding:0.6b model.
 
-mod common;
-
 use factbase::{
     chunk_document, full_scan, Config, Database, DocumentProcessor, EmbeddingProvider,
-    LinkDetector, OllamaEmbedding, OllamaLlm, Repository, ScanContext, ScanOptions, Scanner,
+    LinkDetector, OllamaEmbedding, OllamaLlm, Repository, ScanOptions, Scanner,
 };
 use std::fs;
 use tempfile::TempDir;
@@ -32,7 +30,15 @@ fn setup_test_repo(temp: &TempDir, files: &[(&str, &str)]) -> Repository {
         fs::write(&full_path, content).expect("write file");
     }
 
-    common::test_repo("test", temp.path().to_path_buf())
+    Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: temp.path().to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    }
 }
 
 #[test]
@@ -63,7 +69,10 @@ fn test_chunk_document_large_creates_multiple_chunks() {
 
     // Verify chunks cover the entire document
     assert_eq!(chunks[0].start, 0);
-    assert_eq!(chunks.last().unwrap().end, content.len());
+    assert_eq!(
+        chunks.last().expect("operation should succeed").end,
+        content.len()
+    );
 
     // Verify overlap exists between consecutive chunks
     for i in 1..chunks.len() {
@@ -140,17 +149,17 @@ async fn test_scan_with_chunking() {
         ..Default::default()
     };
 
-    let ctx = ScanContext {
-        scanner: &scanner,
-        processor: &processor,
-        embedding: &embedding,
-        link_detector: &link_detector,
-        opts: &opts,
-        progress: &factbase::ProgressReporter::Silent,
-    };
-    let result = full_scan(&repo, &db, &ctx)
-        .await
-        .expect("scan should succeed");
+    let result = full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("scan should succeed");
 
     assert_eq!(result.added, 2, "Should add 2 documents");
 
@@ -202,17 +211,17 @@ async fn test_search_deduplicates_chunks() {
         ..Default::default()
     };
 
-    let ctx = ScanContext {
-        scanner: &scanner,
-        processor: &processor,
-        embedding: &embedding,
-        link_detector: &link_detector,
-        opts: &opts,
-        progress: &factbase::ProgressReporter::Silent,
-    };
-    full_scan(&repo, &db, &ctx)
-        .await
-        .expect("scan should succeed");
+    full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("scan should succeed");
 
     // Search for content that appears in multiple chunks
     let query_embedding = embedding.generate("quick brown fox").await.expect("embed");
@@ -269,17 +278,17 @@ async fn test_search_returns_best_chunk() {
         ..Default::default()
     };
 
-    let ctx = ScanContext {
-        scanner: &scanner,
-        processor: &processor,
-        embedding: &embedding,
-        link_detector: &link_detector,
-        opts: &opts,
-        progress: &factbase::ProgressReporter::Silent,
-    };
-    full_scan(&repo, &db, &ctx)
-        .await
-        .expect("scan should succeed");
+    full_scan(
+        &repo,
+        &db,
+        &scanner,
+        &processor,
+        &embedding,
+        &link_detector,
+        &opts,
+    )
+    .await
+    .expect("scan should succeed");
 
     // Search for content in the middle section
     let query_embedding = embedding

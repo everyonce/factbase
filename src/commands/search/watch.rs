@@ -16,7 +16,7 @@ pub async fn run_search_watch_mode(args: SearchArgs) -> anyhow::Result<()> {
     run_async_watch_loop(
         &mut ctx,
         || {
-            println!("Searching for: \"{query}\"");
+            println!("Searching for: \"{}\"", query);
             println!("{}", "=".repeat(50));
         },
         || run_single_search(&args),

@@ -27,14 +27,17 @@ pub fn generate_review_questions(
         .as_ref()
         .and_then(|p| p.review.as_ref())
         .and_then(|r| r.ignore_patterns.as_ref())
-        .is_some_and(|patterns| {
+        .map(|patterns| {
             let file_path = Path::new(&doc.file_path);
             let relative = file_path.strip_prefix(&repo.path).unwrap_or(file_path);
             let rel_str = relative.to_string_lossy();
-            patterns
-                .iter()
-                .any(|p| Pattern::new(p).is_ok_and(|pat| pat.matches(&rel_str)))
-        });
+            patterns.iter().any(|p| {
+                Pattern::new(p)
+                    .map(|pat| pat.matches(&rel_str))
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false);
 
     if should_skip {
         if opts.is_table_format {
@@ -76,9 +79,7 @@ pub fn generate_review_questions(
         info!(
             "Using perspective.review.required_fields for repo {} ({} types configured)",
             repo.id,
-            required_fields
-                .as_ref()
-                .map_or(0, std::collections::HashMap::len)
+            required_fields.as_ref().map(|f| f.len()).unwrap_or(0)
         );
     }
 
@@ -138,7 +139,7 @@ pub fn generate_review_questions(
             for q in &questions_to_add {
                 let line_info = q
                     .line_ref
-                    .map(|l| format!("Line {l}: "))
+                    .map(|l| format!("Line {}: ", l))
                     .unwrap_or_default();
                 println!(
                     "    @q[{}] {}{}",

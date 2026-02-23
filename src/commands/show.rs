@@ -58,13 +58,13 @@ pub fn cmd_show(args: ShowArgs) -> anyhow::Result<()> {
         println!("Document: {}", output.id);
         println!("Title:    {}", output.title);
         if let Some(ref t) = output.doc_type {
-            println!("Type:     {t}");
+            println!("Type:     {}", t);
         }
         println!("File:     {}", output.file_path);
         println!("Repo:     {}", output.repo_id);
         println!("Indexed:  {}", output.indexed_at);
         if let Some(ref m) = output.file_modified_at {
-            println!("Modified: {m}");
+            println!("Modified: {}", m);
         }
 
         if !output.links_to.is_empty() {

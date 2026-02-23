@@ -114,7 +114,8 @@ pub fn validate_orphan_answer(answer: &str) -> Result<OrphanAnswer, FactbaseErro
     }
 
     Err(FactbaseError::parse(format!(
-        "Invalid orphan answer '{answer}'. Expected document ID (6-char hex) or 'dismiss'"
+        "Invalid orphan answer '{}'. Expected document ID (6-char hex) or 'dismiss'",
+        answer
     )))
 }
 
@@ -225,9 +226,7 @@ fn append_fact_to_document(doc_path: &Path, fact_content: &str) -> Result<(), Fa
 
     // Append fact as list item (remove @r[orphan] marker if present)
     let clean_fact = fact_content.replace("@r[orphan]", "").trim().to_string();
-    {
-        writeln_str!(content, "- {clean_fact}");
-    }
+    content.push_str(&format!("- {}\n", clean_fact));
 
     write_file(doc_path, &content)?;
 

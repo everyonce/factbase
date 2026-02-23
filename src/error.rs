@@ -94,14 +94,16 @@ impl From<serde_json::Error> for FactbaseError {
 /// Create a "Repository not found" error with helpful suggestion (for MCP tools)
 pub fn repo_not_found(repo_id: &str) -> FactbaseError {
     FactbaseError::not_found(format!(
-        "Repository not found: {repo_id}\nRun 'factbase repo list' to see available repositories"
+        "Repository not found: {}\nRun 'factbase repo list' to see available repositories",
+        repo_id
     ))
 }
 
 /// Create a "Document not found" error with helpful suggestion (for MCP tools)
 pub fn doc_not_found(doc_id: &str) -> FactbaseError {
     FactbaseError::not_found(format!(
-        "Document not found: {doc_id}\nRun 'factbase search' to find documents"
+        "Document not found: {}\nRun 'factbase search' to find documents",
+        doc_id
     ))
 }
 

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 // Re-export public items
 pub use options::ScanOptions;
-pub use orchestration::{full_scan, scan_all_repositories, ScanContext};
+pub use orchestration::{full_scan, scan_all_repositories};
 
 /// Scanner for finding markdown files in a directory
 pub struct Scanner {
@@ -39,16 +39,17 @@ impl Scanner {
         let mut files = Vec::new();
         let mut stack = vec![root.to_path_buf()];
         while let Some(dir) = stack.pop() {
-            let Ok(entries) = std::fs::read_dir(&dir) else {
-                continue;
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(_) => continue,
             };
-            for entry in entries.filter_map(Result::ok) {
+            for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
                 if path.is_dir() {
                     stack.push(path);
                     continue;
                 }
-                if path.extension().is_none_or(|e| e != "md") {
+                if path.extension().map(|e| e != "md").unwrap_or(true) {
                     continue;
                 }
                 let relative = path.strip_prefix(root).unwrap_or(&path);

@@ -11,7 +11,6 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::organize::fs_helpers::{read_file, write_file};
 use crate::patterns::ID_REGEX;
-use crate::processor::normalize_type;
 
 /// Comment format for type override in markdown files.
 /// Format: `<!-- factbase:type:typename -->`
@@ -82,6 +81,16 @@ pub fn execute_retype(
     })
 }
 
+/// Normalize type name (lowercase, singularize).
+fn normalize_type(type_name: &str) -> String {
+    let lower = type_name.to_lowercase();
+    if lower.ends_with('s') && lower.len() > 1 {
+        lower[..lower.len() - 1].to_string()
+    } else {
+        lower
+    }
+}
+
 /// Persist type override to file by adding/updating type comment.
 fn persist_type_to_file(file_path: &Path, new_type: &str) -> Result<(), FactbaseError> {
     let content = read_file(file_path)?;
@@ -93,7 +102,10 @@ fn persist_type_to_file(file_path: &Path, new_type: &str) -> Result<(), Factbase
 /// Update or insert type override comment in content.
 /// Places it on the line after the factbase ID comment.
 fn update_type_comment(content: &str, new_type: &str) -> String {
-    let type_comment = format!("{TYPE_OVERRIDE_PREFIX}{new_type}{TYPE_OVERRIDE_SUFFIX}");
+    let type_comment = format!(
+        "{}{}{}",
+        TYPE_OVERRIDE_PREFIX, new_type, TYPE_OVERRIDE_SUFFIX
+    );
     let mut lines: Vec<&str> = content.lines().collect();
 
     // Find existing type comment
@@ -113,7 +125,7 @@ fn update_type_comment(content: &str, new_type: &str) -> String {
     }
 
     // No ID line found, prepend type comment
-    format!("{type_comment}\n{content}")
+    format!("{}\n{}", type_comment, content)
 }
 
 /// Extract type override from content if present.

@@ -89,7 +89,7 @@ pub fn format_bytes(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.1} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{bytes} B")
+        format!("{} B", bytes)
     }
 }
 
@@ -109,11 +109,12 @@ pub fn highlight_text(text: &str, pattern: &str) -> String {
         return text.to_string();
     }
     // Case-insensitive replacement
-    let Ok(regex) = regex::RegexBuilder::new(&regex::escape(pattern))
+    let regex = match regex::RegexBuilder::new(&regex::escape(pattern))
         .case_insensitive(true)
         .build()
-    else {
-        return text.to_string();
+    {
+        Ok(r) => r,
+        Err(_) => return text.to_string(),
     };
     regex
         .replace_all(text, |caps: &regex::Captures| {
@@ -136,7 +137,7 @@ pub(crate) fn truncate_at_word_boundary(text: &str, max_len: usize) -> String {
     if let Some(last_space) = truncated.rfind(' ') {
         format!("{}...", &truncated[..last_space])
     } else {
-        format!("{truncated}...")
+        format!("{}...", truncated)
     }
 }
 

@@ -15,29 +15,38 @@ pub fn format_changes_for_llm(instructions: &[InterpretedAnswer]) -> String {
         let change_text = match &ia.instruction {
             ChangeInstruction::Dismiss => continue,
             ChangeInstruction::Delete { line_text } => {
-                format!("Delete line containing \"{line_text}\"")
+                format!("Delete line containing \"{}\"", line_text)
             }
             ChangeInstruction::UpdateTemporal {
                 line_text,
                 old_tag,
                 new_tag,
             } => {
-                format!("Line containing \"{line_text}\": change {old_tag} to {new_tag}")
+                format!(
+                    "Line containing \"{}\": change {} to {}",
+                    line_text, old_tag, new_tag
+                )
             }
             ChangeInstruction::Split {
                 line_text,
                 instruction,
             } => {
-                format!("Split line containing \"{line_text}\" into separate facts: {instruction}")
+                format!(
+                    "Split line containing \"{}\" into separate facts: {}",
+                    line_text, instruction
+                )
             }
             ChangeInstruction::AddTemporal { line_text, tag } => {
-                format!("Line containing \"{line_text}\": add {tag} at end")
+                format!("Line containing \"{}\": add {} at end", line_text, tag)
             }
             ChangeInstruction::AddSource {
                 line_text,
                 source_info,
             } => {
-                format!("Line containing \"{line_text}\": add source reference for {source_info}")
+                format!(
+                    "Line containing \"{}\": add source reference for {}",
+                    line_text, source_info
+                )
             }
             ChangeInstruction::Generic { description } => description.clone(),
         };
@@ -54,10 +63,10 @@ pub fn build_rewrite_prompt(section: &str, changes: &str) -> String {
         r#"Rewrite this section with the exact changes specified.
 
 ORIGINAL:
-{section}
+{}
 
 CHANGES:
-{changes}
+{}
 
 RULES:
 1. Apply ALL changes exactly as specified
@@ -70,7 +79,8 @@ RULES:
 5. If change says "delete line", remove that line entirely
 6. If change says "split into", create separate list items
 
-Output the complete rewritten section only:"#
+Output the complete rewritten section only:"#,
+        section, changes
     )
 }
 

@@ -38,7 +38,6 @@ pub mod cross_validate;
 mod duplicate;
 pub(crate) mod facts;
 mod fields;
-pub mod lint;
 mod missing;
 mod stale;
 mod temporal;

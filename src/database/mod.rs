@@ -8,8 +8,7 @@
 //! The database module is split into focused submodules:
 //!
 //! - `schema` - Schema initialization and migrations
-//! - `compression` - Content compression and encoding helpers
-//! - `documents/` - Document operations (crud, list, batch submodules)
+//! - `documents` - Document CRUD operations
 //! - `repositories` - Repository CRUD operations
 //! - `links` - Document link operations
 //! - `embeddings` - Embedding storage and retrieval
@@ -25,7 +24,7 @@
 //! - [`Database`] - Main database connection and operations
 //! - [`EmbeddingStatus`] - Result of checking embedding coverage
 //!
-//! ## Methods (55 total)
+//! ## Methods (48 total)
 //!
 //! ### Constructor & Pool Management (4)
 //! - [`Database::new`] - Default constructor (pool_size=4, no compression)
@@ -43,30 +42,17 @@
 //! - [`Database::list_repositories_with_stats`] - List repos with doc counts
 //! - [`Database::update_last_lint_at`] - Update lint timestamp
 //!
-//! ### Document Operations (17) — `documents/` submodule
-//!
-//! #### CRUD (`documents/crud.rs`) — 10 methods
+//! ### Document Operations (10)
 //! - [`Database::upsert_document`] - Insert or update document
-//! - [`Database::update_document_content`] - Update content and FTS5 index
 //! - [`Database::update_document_hash`] - Update content hash
-//! - [`Database::update_document_type`] - Update document type
 //! - [`Database::needs_update`] - Check if doc needs re-indexing
 //! - [`Database::get_document`] - Get document by ID
 //! - [`Database::require_document`] - Get document by ID or error
 //! - [`Database::get_document_by_path`] - Get document by file path
+//! - [`Database::get_documents_for_repo`] - Get all docs in repository
 //! - [`Database::mark_deleted`] - Mark document as deleted
 //! - [`Database::hard_delete_document`] - Permanent delete
-//!
-//! #### Listing (`documents/list.rs`) — 3 methods
-//! - [`Database::get_documents_for_repo`] - Get all docs in repository
-//! - [`Database::get_documents_with_review_queue`] - Get docs with review content
 //! - [`Database::list_documents`] - List docs with filters
-//!
-//! #### Batch (`documents/batch.rs`) — 4 methods
-//! - [`Database::needs_cross_check`] - Check if doc needs cross-validation
-//! - [`Database::set_cross_check_hash`] - Mark doc as cross-checked
-//! - [`Database::clear_cross_check_hashes`] - Reset cross-check state for docs
-//! - [`Database::backfill_word_counts`] - Populate word counts for existing docs
 //!
 //! ### Transaction Control (2)
 //! - [`Database::begin_transaction`] - Start transaction
@@ -102,8 +88,7 @@
 //! - [`Database::get_links_from`] - Get outgoing links
 //! - [`Database::get_links_to`] - Get incoming links
 
-// Submodules
-mod compression;
+// Submodules (placeholders for future extraction)
 mod documents;
 mod embeddings;
 mod links;
@@ -112,16 +97,11 @@ mod schema;
 mod search;
 mod stats;
 
-pub use search::ContentSearchParams;
-
-pub(crate) use compression::{compress_content, decode_content, decode_content_lossy};
-#[cfg(feature = "compression")]
-pub(crate) use compression::{decompress_content, ZSTD_PREFIX};
-
 pub(crate) use crate::error::doc_not_found;
 pub(crate) use crate::error::repo_not_found;
 use crate::error::FactbaseError;
 use crate::models::{DetailedStats, RepoStats, SourceStats, TemporalStats};
+use base64::Engine;
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -136,9 +116,72 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 
+/// Compression prefix for zstd-compressed content
+#[cfg(feature = "compression")]
+const ZSTD_PREFIX: &[u8] = b"ZSTD:";
+
+/// Compress content using zstd (pub(crate) for submodule access)
+#[cfg(feature = "compression")]
+pub(crate) fn compress_content(content: &str) -> Vec<u8> {
+    let mut result = ZSTD_PREFIX.to_vec();
+    let compressed =
+        zstd::encode_all(content.as_bytes(), 3).unwrap_or_else(|_| content.as_bytes().to_vec());
+    result.extend(compressed);
+    result
+}
+
+/// No-op compression when feature disabled (pub(crate) for submodule access)
+#[cfg(not(feature = "compression"))]
+pub(crate) fn compress_content(content: &str) -> Vec<u8> {
+    content.as_bytes().to_vec()
+}
+
+/// Decompress content, auto-detecting if compressed (pub(crate) for submodule access)
+#[cfg(feature = "compression")]
+pub(crate) fn decompress_content(data: &[u8]) -> Result<String, FactbaseError> {
+    if data.starts_with(ZSTD_PREFIX) {
+        let compressed = &data[ZSTD_PREFIX.len()..];
+        let decompressed = zstd::decode_all(compressed)
+            .map_err(|e| FactbaseError::internal(format!("decompression failed: {}", e)))?;
+        String::from_utf8(decompressed).map_err(|e| {
+            FactbaseError::internal(format!("invalid UTF-8 after decompression: {}", e))
+        })
+    } else {
+        // Uncompressed - treat as UTF-8 string
+        String::from_utf8(data.to_vec())
+            .map_err(|e| FactbaseError::internal(format!("invalid UTF-8: {}", e)))
+    }
+}
+
+/// Decode content, auto-detecting if it's compressed (base64-encoded zstd)
+pub(crate) fn decode_content(stored: &str) -> Result<String, FactbaseError> {
+    // Try to decode as base64 - if it succeeds and starts with ZSTD prefix, decompress
+    if let Ok(decoded) = B64.decode(stored) {
+        #[cfg(feature = "compression")]
+        {
+            if decoded.starts_with(ZSTD_PREFIX) {
+                return decompress_content(&decoded);
+            }
+        }
+        // If we got valid base64 but it's not compressed, try to interpret as UTF-8
+        if let Ok(s) = String::from_utf8(decoded) {
+            return Ok(s);
+        }
+    }
+    // Not compressed, return as-is
+    Ok(stored.to_string())
+}
+
+/// Decode content, returning the original string if decoding fails.
+pub(crate) fn decode_content_lossy(stored: String) -> String {
+    decode_content(&stored).unwrap_or(stored)
+}
+
 /// Parse an RFC 3339 timestamp string to `DateTime<Utc>`, falling back to `Utc::now()`.
 pub(crate) fn parse_rfc3339_utc(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s).map_or_else(|_| Utc::now(), |d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now())
 }
 
 /// Parse an RFC 3339 timestamp string to `Option<DateTime<Utc>>`.
@@ -228,9 +271,7 @@ impl Database {
         }
 
         let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            conn.execute_batch(
-                "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;",
-            )?;
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
             Ok(())
         });
 
@@ -367,8 +408,8 @@ pub(crate) mod tests {
     pub(crate) fn test_repo_with_id(id: &str) -> Repository {
         Repository {
             id: id.to_string(),
-            name: format!("Test Repo {id}"),
-            path: std::path::PathBuf::from(format!("/tmp/{id}")),
+            name: format!("Test Repo {}", id),
+            path: std::path::PathBuf::from(format!("/tmp/{}", id)),
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
@@ -379,10 +420,10 @@ pub(crate) mod tests {
     pub(crate) fn test_doc(id: &str, title: &str) -> Document {
         Document {
             id: id.to_string(),
-            file_path: format!("{id}.md"),
+            file_path: format!("{}.md", id),
             title: title.to_string(),
             doc_type: Some("document".to_string()),
-            content: format!("# {title}\n\nContent here."),
+            content: format!("# {}\n\nContent here.", title),
             ..Document::test_default()
         }
     }
@@ -391,10 +432,10 @@ pub(crate) mod tests {
         Document {
             id: id.to_string(),
             repo_id: repo_id.to_string(),
-            file_path: format!("{id}.md"),
+            file_path: format!("{}.md", id),
             title: title.to_string(),
             doc_type: Some("document".to_string()),
-            content: format!("# {title}\n\nContent here."),
+            content: format!("# {}\n\nContent here.", title),
             ..Document::test_default()
         }
     }
@@ -411,7 +452,61 @@ pub(crate) mod tests {
     // Stats tests are in stats.rs
     // Embedding tests are in embeddings.rs
     // Search tests are in search.rs
-    // Compression tests are in compression.rs
+
+    #[test]
+    #[cfg(feature = "compression")]
+    fn test_compress_decompress_roundtrip() {
+        let original =
+            "This is some test content that should be compressed and decompressed correctly.";
+        let compressed = super::compress_content(original);
+
+        // Compressed data should start with ZSTD prefix
+        assert!(
+            compressed.starts_with(super::ZSTD_PREFIX),
+            "Compressed data should have ZSTD prefix"
+        );
+
+        // Decompress should return original
+        let decompressed =
+            super::decompress_content(&compressed).expect("decompression should succeed");
+        assert_eq!(decompressed, original, "Roundtrip should preserve content");
+    }
+
+    #[test]
+    #[cfg(feature = "compression")]
+    fn test_decompress_uncompressed_data() {
+        let plain = "Plain text without compression";
+        let result =
+            super::decompress_content(plain.as_bytes()).expect("should handle uncompressed data");
+        assert_eq!(result, plain, "Uncompressed data should pass through");
+    }
+
+    #[test]
+    #[cfg(feature = "compression")]
+    fn test_decode_content_compressed() {
+        let original = "Test content for compression";
+        let compressed = super::compress_content(original);
+        let encoded = B64.encode(&compressed);
+
+        let decoded = decode_content(&encoded).expect("decode should succeed");
+        assert_eq!(
+            decoded, original,
+            "Encoded compressed content should decode correctly"
+        );
+    }
+
+    #[test]
+    fn test_decode_content_uncompressed() {
+        let plain = "Plain text content";
+        let decoded = decode_content(plain).expect("decode should succeed");
+        assert_eq!(decoded, plain, "Plain text should pass through unchanged");
+    }
+
+    #[test]
+    fn test_decode_content_lossy_plain() {
+        let plain = "Plain text content".to_string();
+        assert_eq!(decode_content_lossy(plain), "Plain text content");
+    }
 
     #[test]
     fn test_database_with_compression() {

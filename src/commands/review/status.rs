@@ -61,9 +61,13 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
     let mut filtered_count = 0usize;
 
     for repo in &repos_to_process {
-        let docs = db.get_documents_with_review_queue(Some(&repo.id))?;
+        let docs = db.get_documents_for_repo(&repo.id)?;
 
-        for doc in &docs {
+        for doc in docs.values() {
+            if doc.is_deleted {
+                continue;
+            }
+
             // Filter by modification time if --since is specified
             if let Some(ref since) = since_filter {
                 let abs_path = repo.path.join(&doc.file_path);
@@ -114,7 +118,7 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
             .iter()
             .map(|(k, (t, a))| {
                 (
-                    format!("{k:?}").to_lowercase(),
+                    format!("{:?}", k).to_lowercase(),
                     TypeStats {
                         total: *t,
                         answered: *a,
@@ -136,24 +140,24 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
     let quiet = args.quiet;
     print_output(format, &output, || {
         if filtered_count > 0 && !quiet {
-            println!("(Filtered {filtered_count} document(s) by --since)");
+            println!("(Filtered {} document(s) by --since)", filtered_count);
         }
 
         if total > 0 {
             println!("Review Status");
             println!("=============");
-            println!("Total questions: {total}");
-            println!("  Answered:   {answered} (ready to apply)");
+            println!("Total questions: {}", total);
+            println!("  Answered:   {} (ready to apply)", answered);
             println!("  Unanswered: {}", total - answered);
             println!();
             println!("By type:");
             for (qtype, (t, a)) in &by_type {
-                println!("  {qtype:?}: {t} ({a} answered)");
+                println!("  {:?}: {} ({} answered)", qtype, t, a);
             }
             println!();
             println!("Documents with questions:");
             for (id, title, t, a) in &docs_with_questions {
-                println!("  {title} [{id}]: {t} ({a} answered)");
+                println!("  {} [{}]: {} ({} answered)", title, id, t, a);
             }
         } else {
             println!("No review questions found.");

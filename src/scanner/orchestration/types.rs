@@ -12,6 +12,7 @@ pub(super) struct PendingDoc {
     pub title: String,
     pub doc_type: String,
     pub path: PathBuf,
+    pub size_bytes: u64,
 }
 
 /// Pre-read file data from parallel I/O phase

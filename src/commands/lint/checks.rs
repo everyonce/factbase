@@ -71,7 +71,8 @@ pub fn lint_document_content(
     if content_len < opts.min_length {
         result.is_stub = true;
         result.messages.push(format!(
-            "  WARN: Stub document ({content_len} chars): {doc_title} [{doc_id}]"
+            "  WARN: Stub document ({} chars): {} [{}]",
+            content_len, doc_title, doc_id
         ));
         result.warnings += 1;
     }
@@ -82,7 +83,8 @@ pub fn lint_document_content(
         if !allowed.iter().any(|t| t.to_lowercase() == doc_type_str) {
             result.is_unknown_type = true;
             result.messages.push(format!(
-                "  WARN: Unknown type '{doc_type_str}': {doc_title} [{doc_id}]"
+                "  WARN: Unknown type '{}': {} [{}]",
+                doc_type_str, doc_title, doc_id
             ));
             result.warnings += 1;
         }
@@ -97,7 +99,8 @@ pub fn lint_document_content(
             result.is_stale = true;
             result.stale_days = Some(age_days);
             result.messages.push(format!(
-                "  WARN: Stale document ({age_days} days old): {doc_title} [{doc_id}]"
+                "  WARN: Stale document ({} days old): {} [{}]",
+                age_days, doc_title, doc_id
             ));
             result.warnings += 1;
         }

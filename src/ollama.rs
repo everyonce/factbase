@@ -124,7 +124,7 @@ impl OllamaClient {
             let status = resp.status();
             if !status.is_success() {
                 let status_code = status.as_u16();
-                last_error = format!("status {status}");
+                last_error = format!("status {}", status);
                 error_kind = if status_code == 404 {
                     OllamaErrorKind::ModelNotFound
                 } else if status.is_client_error() {
@@ -148,7 +148,7 @@ impl OllamaClient {
             match resp.json().await {
                 Ok(b) => return Ok(b),
                 Err(e) => {
-                    last_error = format!("parse error: {e}");
+                    last_error = format!("parse error: {}", e);
                     error_kind = OllamaErrorKind::ParseError;
                     warn!(error = %e, "Failed to parse Ollama response");
                     continue;
@@ -170,7 +170,10 @@ impl OllamaClient {
 /// Classify a reqwest error into a specific error kind
 fn classify_reqwest_error(e: &reqwest::Error) -> (String, OllamaErrorKind) {
     if e.is_timeout() {
-        (format!("request timed out: {e}"), OllamaErrorKind::Timeout)
+        (
+            format!("request timed out: {}", e),
+            OllamaErrorKind::Timeout,
+        )
     } else if e.is_connect() {
         let msg = e.to_string();
         // Check for common connection refused patterns
@@ -179,14 +182,14 @@ fn classify_reqwest_error(e: &reqwest::Error) -> (String, OllamaErrorKind) {
             || msg.contains("ConnectError")
         {
             (
-                format!("connection refused: {e}"),
+                format!("connection refused: {}", e),
                 OllamaErrorKind::ConnectionRefused,
             )
         } else {
-            (format!("connection failed: {e}"), OllamaErrorKind::Other)
+            (format!("connection failed: {}", e), OllamaErrorKind::Other)
         }
     } else {
-        (format!("request failed: {e}"), OllamaErrorKind::Other)
+        (format!("request failed: {}", e), OllamaErrorKind::Other)
     }
 }
 
@@ -201,25 +204,26 @@ fn format_ollama_error(
 ) -> FactbaseError {
     let (summary, suggestion) = match kind {
         OllamaErrorKind::ConnectionRefused => (
-            format!("Cannot connect to Ollama at {base_url}"),
+            format!("Cannot connect to Ollama at {}", base_url),
             "Start Ollama with: ollama serve".to_string(),
         ),
         OllamaErrorKind::Timeout => (
-            format!("Request timed out after {timeout_secs}s"),
+            format!("Request timed out after {}s", timeout_secs),
             format!(
-                "Increase timeout in config: embedding.timeout_secs or llm.timeout_secs (current: {timeout_secs})"
+                "Increase timeout in config: embedding.timeout_secs or llm.timeout_secs (current: {})",
+                timeout_secs
             ),
         ),
         OllamaErrorKind::ModelNotFound => (
-            format!("Model '{model}' not found"),
-            format!("Pull the model with: ollama pull {model}"),
+            format!("Model '{}' not found", model),
+            format!("Pull the model with: ollama pull {}", model),
         ),
         OllamaErrorKind::ClientError(status) => (
-            format!("Ollama returned client error {status}"),
+            format!("Ollama returned client error {}", status),
             "Check request parameters. Run 'factbase doctor' to diagnose.".to_string(),
         ),
         OllamaErrorKind::ServerError(status) => (
-            format!("Ollama returned server error {status} after {max_attempts} attempts"),
+            format!("Ollama returned server error {} after {} attempts", status, max_attempts),
             "Check Ollama logs for details. Run 'factbase doctor' to diagnose.".to_string(),
         ),
         OllamaErrorKind::ParseError => (
@@ -227,14 +231,18 @@ fn format_ollama_error(
             "This may indicate a version mismatch. Try updating Ollama.".to_string(),
         ),
         OllamaErrorKind::Other => (
-            format!("Ollama request failed after {max_attempts} attempts"),
+            format!("Ollama request failed after {} attempts", max_attempts),
             format!(
-                "Ensure Ollama is running (ollama serve) and model '{model}' is available (ollama pull {model})"
+                "Ensure Ollama is running (ollama serve) and model '{}' is available (ollama pull {})",
+                model, model
             ),
         ),
     };
 
-    FactbaseError::ollama(format!("{summary} ({last_error})\nhint: {suggestion}"))
+    FactbaseError::ollama(format!(
+        "{} ({})\nhint: {}",
+        summary, last_error, suggestion
+    ))
 }
 
 #[cfg(test)]

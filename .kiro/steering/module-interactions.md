@@ -51,7 +51,6 @@ src/
 ├── output.rs            # Output formatting helpers
 ├── shutdown.rs          # Graceful shutdown coordination
 ├── patterns.rs          # Regex patterns for parsing
-├── progress.rs          # ProgressReporter enum (Cli/Mcp/Silent), ProgressSender type alias
 │
 ├── config/              # Configuration (modular)
 │   ├── mod.rs           # Config struct, loading, defaults
@@ -74,14 +73,9 @@ src/
 │   └── question.rs      # QuestionType, ReviewQuestion
 │
 ├── database/            # SQLite operations (modular)
-│   ├── mod.rs           # Database struct, constructors, transactions
-│   ├── compression.rs   # Compression/decompression helpers (zstd, base64)
+│   ├── mod.rs           # Database struct, constructors, compression
 │   ├── schema.rs        # Schema init, migrations
-│   ├── documents/       # Document operations
-│   │   ├── mod.rs       # Shared: DOCUMENT_COLUMNS, row_to_document
-│   │   ├── crud.rs      # Upsert, get, update, delete
-│   │   ├── list.rs      # List, filter, get_documents_for_repo
-│   │   └── batch.rs     # Cross-check hashes, backfill word counts
+│   ├── documents.rs     # Document CRUD
 │   ├── repositories.rs  # Repository CRUD
 │   ├── links.rs         # Link operations
 │   ├── embeddings.rs    # Embedding storage/retrieval
@@ -142,8 +136,7 @@ src/
 │   ├── duplicate.rs     # Duplicate questions
 │   ├── fields.rs        # Field extraction
 │   ├── facts.rs         # Fact extraction for cross-validation
-│   ├── cross_validate.rs # Cross-document fact validation
-│   └── lint.rs          # Shared lint-all-documents loop (MCP + CLI)
+│   └── cross_validate.rs # Cross-document fact validation
 │
 ├── answer_processor/    # Review answer processing
 │   ├── mod.rs           # Main processor
@@ -164,9 +157,7 @@ src/
 │   │   ├── mod.rs
 │   │   ├── merge.rs     # Merge candidate detection
 │   │   ├── split.rs     # Split candidate detection
-│   │   ├── misplaced.rs # Misplaced document detection
-│   │   ├── entity_entries.rs  # Entity entry extraction from documents
-│   │   └── duplicate_entries.rs # Cross-document duplicate entry detection
+│   │   └── misplaced.rs # Misplaced document detection
 │   ├── plan/            # Planning operations
 │   │   ├── mod.rs
 │   │   ├── merge.rs     # Merge planning with LLM
@@ -331,10 +322,9 @@ web/
 
 ### `database/` (modular)
 - SQLite connection management with `r2d2` pool
-- Schema initialization (documents, embeddings, links, repositories, FTS5 content index)
+- Schema initialization (documents, embeddings, links, repositories)
 - CRUD operations for all tables
 - Vector search via sqlite-vec
-- Full-text search via FTS5 (`document_content_fts` virtual table)
 - Split into 8 submodules: mod, schema, documents, repositories, links, embeddings, search, stats
 - **Performance optimizations:**
   - Batch link fetching via `get_links_for_documents()` (eliminates N+1 queries)
@@ -394,13 +384,6 @@ web/
 - Graceful shutdown coordination
 - Signal handling (Ctrl+C)
 - Used by: main, serve, watcher
-
-### `progress.rs`
-- `ProgressReporter` enum: `Cli { quiet }`, `Mcp { sender }`, `Silent`
-- Three methods: `report(current, total, message)`, `phase(name)`, `log(message)`
-- CLI variant writes to stderr; MCP variant sends JSON via unbounded channel + eprintln; Silent is no-op
-- `ProgressSender` type alias (`UnboundedSender<Value>`) for MCP channel
-- Used by: scanner, lint, review apply, search_content, organize, export/import, bulk MCP operations
 
 ### `question_generator.rs`
 - Generates review questions for documents

@@ -17,7 +17,7 @@ pub fn cmd_grep(args: GrepArgs) -> anyhow::Result<()> {
         .case_insensitive(true)
         .build()
     {
-        anyhow::bail!("Invalid regex pattern: {e}");
+        anyhow::bail!("Invalid regex pattern: {}", e);
     }
 
     // Handle watch mode
@@ -40,11 +40,14 @@ pub fn cmd_grep(args: GrepArgs) -> anyhow::Result<()> {
             None => (repos.len(), repos.iter().map(|(_, c)| *c).sum::<usize>()),
         };
         let since_msg = if let Some(ref s) = args.since {
-            format!(" (modified since {s})")
+            format!(" (modified since {})", s)
         } else {
             String::new()
         };
-        println!("Would search {doc_count} document(s) in {repo_count} repository(ies){since_msg}");
+        println!(
+            "Would search {} document(s) in {} repository(ies){}",
+            doc_count, repo_count, since_msg
+        );
         return Ok(());
     }
 

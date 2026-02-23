@@ -2,7 +2,7 @@
 
 use super::args::ImportArgs;
 use super::validate::{extract_factbase_id, validate_import_document, ImportValidationError};
-use factbase::{ProgressReporter, Repository};
+use factbase::Repository;
 use std::collections::HashSet;
 use std::fs;
 
@@ -19,7 +19,7 @@ pub fn build_final_content(content: &str, id: &str) -> String {
     if content.contains("<!-- factbase:") {
         content.to_string()
     } else if !id.is_empty() {
-        format!("<!-- factbase:{id} -->\n{content}")
+        format!("<!-- factbase:{} -->\n{}", id, content)
     } else {
         content.to_string()
     }
@@ -27,11 +27,7 @@ pub fn build_final_content(content: &str, id: &str) -> String {
 
 /// Import from a compressed tar.zst archive.
 #[cfg(feature = "compression")]
-pub fn import_tar_zst(
-    args: &ImportArgs,
-    repo: &Repository,
-    progress: &ProgressReporter,
-) -> anyhow::Result<()> {
+pub fn import_tar_zst(args: &ImportArgs, repo: &Repository) -> anyhow::Result<()> {
     use std::io::Read;
 
     let file = fs::File::open(&args.input)?;
@@ -66,10 +62,9 @@ pub fn import_tar_zst(
 
         let dest_path = repo.path.join(&path);
         let filename = path.display().to_string();
-        progress.log(&format!("Importing {filename}"));
 
         if dest_path.exists() && !args.overwrite {
-            println!("Skipped (exists): {filename}");
+            println!("Skipped (exists): {}", filename);
             skipped += 1;
             continue;
         }
@@ -98,7 +93,7 @@ pub fn import_tar_zst(
 
             // Skip actual import in dry-run mode
             if args.dry_run {
-                println!("Would import: {filename}");
+                println!("Would import: {}", filename);
                 imported += 1;
                 continue;
             }
@@ -108,12 +103,12 @@ pub fn import_tar_zst(
                 fs::create_dir_all(parent)?;
             }
             fs::write(&dest_path, content)?;
-            println!("Imported: {filename}");
+            println!("Imported: {}", filename);
             imported += 1;
         } else {
             // No validation - use original unpack logic
             if args.dry_run {
-                println!("Would import: {filename}");
+                println!("Would import: {}", filename);
                 imported += 1;
                 continue;
             }
@@ -122,7 +117,7 @@ pub fn import_tar_zst(
                 fs::create_dir_all(parent)?;
             }
             entry.unpack(&dest_path)?;
-            println!("Imported: {filename}");
+            println!("Imported: {}", filename);
             imported += 1;
         }
     }
@@ -133,7 +128,7 @@ pub fn import_tar_zst(
         for err in &validation_errors {
             println!("  {}:", err.filename);
             for e in &err.errors {
-                println!("    - {e}");
+                println!("    - {}", e);
             }
         }
         anyhow::bail!(
@@ -147,31 +142,26 @@ pub fn import_tar_zst(
     } else {
         "Imported"
     };
-    println!("\n{action} {imported} files from archive, skipped {skipped} (run scan to index)");
+    println!(
+        "\n{} {} files from archive, skipped {} (run scan to index)",
+        action, imported, skipped
+    );
     Ok(())
 }
 
 /// Import from a compressed JSON file.
 #[cfg(feature = "compression")]
-pub fn import_json_zst(
-    args: &ImportArgs,
-    repo: &Repository,
-    progress: &ProgressReporter,
-) -> anyhow::Result<()> {
+pub fn import_json_zst(args: &ImportArgs, repo: &Repository) -> anyhow::Result<()> {
     let compressed = fs::read(&args.input)?;
     let decompressed = zstd::decode_all(compressed.as_slice())?;
     let json_str = String::from_utf8(decompressed)?;
-    import_json_content(&json_str, args, repo, progress)
+    import_json_content(&json_str, args, repo)
 }
 
 /// Import from an uncompressed JSON file.
-pub fn import_json(
-    args: &ImportArgs,
-    repo: &Repository,
-    progress: &ProgressReporter,
-) -> anyhow::Result<()> {
+pub fn import_json(args: &ImportArgs, repo: &Repository) -> anyhow::Result<()> {
     let json_str = fs::read_to_string(&args.input)?;
-    import_json_content(&json_str, args, repo, progress)
+    import_json_content(&json_str, args, repo)
 }
 
 /// Import documents from JSON content.
@@ -179,7 +169,6 @@ pub fn import_json_content(
     json_str: &str,
     args: &ImportArgs,
     repo: &Repository,
-    progress: &ProgressReporter,
 ) -> anyhow::Result<()> {
     let docs: Vec<serde_json::Value> = serde_json::from_str(json_str)?;
 
@@ -189,17 +178,15 @@ pub fn import_json_content(
         .map(|p| glob::Pattern::new(p))
         .transpose()?;
 
-    let total = docs.len();
     let mut imported = 0;
     let mut skipped = 0;
     // Pre-allocate for typical case of ~8 validation errors
     let mut validation_errors: Vec<ImportValidationError> = Vec::with_capacity(8);
     let mut seen_ids: HashSet<String> = HashSet::new();
 
-    for (i, doc) in docs.iter().enumerate() {
+    for doc in docs {
         let id = doc["id"].as_str().unwrap_or("");
         let title = doc["title"].as_str().unwrap_or("Untitled");
-        progress.report(i + 1, total, title);
         let content = doc["content"].as_str().unwrap_or("");
 
         let filename = format!("{}.md", sanitize_filename(title));
@@ -213,7 +200,7 @@ pub fn import_json_content(
         let dest_path = repo.path.join(&filename);
 
         if dest_path.exists() && !args.overwrite {
-            println!("Skipped (exists): {filename}");
+            println!("Skipped (exists): {}", filename);
             skipped += 1;
             continue;
         }
@@ -242,13 +229,13 @@ pub fn import_json_content(
 
         // Skip actual import in dry-run mode
         if args.dry_run {
-            println!("Would import: {filename}");
+            println!("Would import: {}", filename);
             imported += 1;
             continue;
         }
 
         fs::write(&dest_path, final_content)?;
-        println!("Imported: {filename}");
+        println!("Imported: {}", filename);
         imported += 1;
     }
 
@@ -258,7 +245,7 @@ pub fn import_json_content(
         for err in &validation_errors {
             println!("  {}:", err.filename);
             for e in &err.errors {
-                println!("    - {e}");
+                println!("    - {}", e);
             }
         }
         anyhow::bail!(
@@ -272,17 +259,16 @@ pub fn import_json_content(
     } else {
         "Imported"
     };
-    println!("\n{action} {imported} documents from JSON, skipped {skipped} (run scan to index)");
+    println!(
+        "\n{} {} documents from JSON, skipped {} (run scan to index)",
+        action, imported, skipped
+    );
     Ok(())
 }
 
 /// Import from a compressed markdown file.
 #[cfg(feature = "compression")]
-pub fn import_md_zst(
-    args: &ImportArgs,
-    repo: &Repository,
-    progress: &ProgressReporter,
-) -> anyhow::Result<()> {
+pub fn import_md_zst(args: &ImportArgs, repo: &Repository) -> anyhow::Result<()> {
     let compressed = fs::read(&args.input)?;
     let decompressed = zstd::decode_all(compressed.as_slice())?;
     let content = String::from_utf8(decompressed)?;
@@ -291,26 +277,22 @@ pub fn import_md_zst(
         .input
         .file_stem()
         .and_then(|s| s.to_str())
-        .map_or("imported", |s| s.strip_suffix(".md").unwrap_or(s));
-    progress.report(1, 1, filename);
-    let dest_path = repo.path.join(format!("{filename}.md"));
+        .map(|s| s.strip_suffix(".md").unwrap_or(s))
+        .unwrap_or("imported");
+    let dest_path = repo.path.join(format!("{}.md", filename));
 
     if dest_path.exists() && !args.overwrite {
-        println!("Skipped (exists): {filename}.md");
+        println!("Skipped (exists): {}.md", filename);
         return Ok(());
     }
 
     fs::write(&dest_path, content)?;
-    println!("Imported: {filename}.md (run scan to index)");
+    println!("Imported: {}.md (run scan to index)", filename);
     Ok(())
 }
 
 /// Import from a directory of markdown files.
-pub fn import_directory(
-    args: &ImportArgs,
-    repo: &Repository,
-    progress: &ProgressReporter,
-) -> anyhow::Result<()> {
+pub fn import_directory(args: &ImportArgs, repo: &Repository) -> anyhow::Result<()> {
     let pattern = args
         .include
         .as_ref()
@@ -326,10 +308,11 @@ pub fn import_directory(
     let mut md_files = Vec::new();
     let mut stack = vec![args.input.clone()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => continue,
         };
-        for entry in entries.filter_map(std::result::Result::ok) {
+        for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
@@ -342,9 +325,7 @@ pub fn import_directory(
     }
     md_files.sort();
 
-    let total = md_files.len();
-    for (i, path) in md_files.iter().enumerate() {
-        progress.report(i + 1, total, &path.display().to_string());
+    for path in &md_files {
         let rel_path = path.strip_prefix(&args.input)?;
 
         if let Some(ref pat) = pattern {
@@ -357,7 +338,7 @@ pub fn import_directory(
         let filename = rel_path.display().to_string();
 
         if dest_path.exists() && !args.overwrite {
-            println!("Skipped (exists): {filename}");
+            println!("Skipped (exists): {}", filename);
             skipped += 1;
             continue;
         }
@@ -387,7 +368,7 @@ pub fn import_directory(
 
         // Skip actual import in dry-run mode
         if args.dry_run {
-            println!("Would import: {filename}");
+            println!("Would import: {}", filename);
             imported += 1;
             continue;
         }
@@ -396,7 +377,7 @@ pub fn import_directory(
             fs::create_dir_all(parent)?;
         }
         fs::copy(path, &dest_path)?;
-        println!("Imported: {filename}");
+        println!("Imported: {}", filename);
         imported += 1;
     }
 
@@ -406,7 +387,7 @@ pub fn import_directory(
         for err in &validation_errors {
             println!("  {}:", err.filename);
             for e in &err.errors {
-                println!("    - {e}");
+                println!("    - {}", e);
             }
         }
         anyhow::bail!(
@@ -420,7 +401,10 @@ pub fn import_directory(
     } else {
         "Imported"
     };
-    println!("\n{action} {imported} files, skipped {skipped} (run scan to index)");
+    println!(
+        "\n{} {} files, skipped {} (run scan to index)",
+        action, imported, skipped
+    );
     Ok(())
 }
 

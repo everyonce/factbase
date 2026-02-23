@@ -3,15 +3,15 @@
 
 mod common;
 
+use common::cosine_similarity;
 use common::create_test_db;
 use common::ollama_helpers::require_ollama;
 use factbase::{
     config::Config,
-    cosine_similarity,
     database::Database,
     embedding::OllamaEmbedding,
     llm::{LinkDetector, OllamaLlm},
-    models::Document,
+    models::{Document, Repository},
     processor::DocumentProcessor,
     scanner::Scanner,
     EmbeddingProvider,
@@ -186,7 +186,15 @@ async fn test_full_scan_with_embeddings() {
     std::fs::create_dir_all(repo_path.join(".factbase")).expect("create .factbase dir");
     let db = Database::new(&db_path).expect("create database");
 
-    let repo = common::test_repo("test", repo_path.to_path_buf());
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: repo_path.to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo)
         .expect("upsert repository should succeed");
 
@@ -283,7 +291,15 @@ async fn test_search_finds_relevant_documents() {
     std::fs::create_dir_all(repo_path.join(".factbase")).expect("create .factbase dir");
     let db = Database::new(&db_path).expect("create database");
 
-    let repo = common::test_repo("test", repo_path.to_path_buf());
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test".to_string(),
+        path: repo_path.to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo)
         .expect("upsert repository should succeed");
 
@@ -369,7 +385,15 @@ async fn test_search_with_type_filter() {
     std::fs::create_dir_all(repo_path.join(".factbase")).expect("create .factbase dir");
     let db = Database::new(&db_path).expect("create database");
 
-    let repo = common::test_repo("test", repo_path.to_path_buf());
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test".to_string(),
+        path: repo_path.to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo)
         .expect("upsert repository should succeed");
 
@@ -459,7 +483,15 @@ async fn test_search_no_results() {
     std::fs::create_dir_all(repo_path.join(".factbase")).expect("create .factbase dir");
     let db = Database::new(&db_path).expect("create database");
 
-    let repo = common::test_repo("test", repo_path.to_path_buf());
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test".to_string(),
+        path: repo_path.to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo)
         .expect("upsert repository should succeed");
 
@@ -543,7 +575,15 @@ async fn test_scan_100_documents() {
     std::fs::create_dir_all(repo_path.join(".factbase")).expect("create .factbase dir");
     let db = Database::new(&db_path).expect("create database");
 
-    let repo = common::test_repo("perf", repo_path.to_path_buf());
+    let repo = Repository {
+        id: "perf".to_string(),
+        name: "Performance Test".to_string(),
+        path: repo_path.to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo)
         .expect("upsert repository should succeed");
 
@@ -626,7 +666,15 @@ async fn test_search_latency() {
     std::fs::create_dir_all(repo_path.join(".factbase")).expect("create .factbase dir");
     let db = Database::new(&db_path).expect("create database");
 
-    let repo = common::test_repo("perf", repo_path.to_path_buf());
+    let repo = Repository {
+        id: "perf".to_string(),
+        name: "Perf".to_string(),
+        path: repo_path.to_path_buf(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo)
         .expect("upsert repository should succeed");
 
@@ -759,7 +807,15 @@ async fn test_merge_planning() {
     let (db, _temp) = create_test_db();
 
     // Create a test repository
-    let repo = common::test_repo("test", std::path::PathBuf::from("/tmp/test"));
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: std::path::PathBuf::from("/tmp/test"),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo).expect("upsert repo");
 
     // Create two similar documents about the same person
@@ -849,7 +905,15 @@ async fn test_split_detection() {
     let (db, _temp) = create_test_db();
 
     // Create a test repository
-    let repo = common::test_repo("test", std::path::PathBuf::from("/tmp/test"));
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: std::path::PathBuf::from("/tmp/test"),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo).expect("upsert repo");
 
     // Create a document with distinct sections that should be split
@@ -930,14 +994,7 @@ and deployment. Tools include Docker, Kubernetes, and CI/CD pipelines.
 
     // Detect split candidates with threshold 0.5
     let start = std::time::Instant::now();
-    let candidates = detect_split_candidates(
-        &db,
-        &embedding,
-        0.5,
-        Some("test"),
-        &factbase::ProgressReporter::Silent,
-    )
-    .await;
+    let candidates = detect_split_candidates(&db, &embedding, 0.5, Some("test")).await;
     let elapsed = start.elapsed();
 
     println!("Split detection took: {:?}", elapsed);
@@ -995,7 +1052,15 @@ async fn test_split_planning() {
     let (db, _temp) = create_test_db();
 
     // Create a test repository
-    let repo = common::test_repo("test", std::path::PathBuf::from("/tmp/test"));
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: std::path::PathBuf::from("/tmp/test"),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo).expect("upsert repo");
 
     // Create a document with distinct sections to split
@@ -1094,7 +1159,15 @@ async fn test_split_execution() {
     let repo_path = temp.path().join("repo");
     fs::create_dir_all(&repo_path).expect("create repo dir");
 
-    let repo = common::test_repo("test", repo_path.clone());
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: repo_path.clone(),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo).expect("upsert repo");
 
     // Create a document file with distinct sections
@@ -1209,7 +1282,15 @@ async fn test_misplaced_detection() {
     let (db, _temp) = create_test_db();
 
     // Create a test repository
-    let repo = common::test_repo("test", std::path::PathBuf::from("/tmp/test"));
+    let repo = Repository {
+        id: "test".to_string(),
+        name: "Test Repo".to_string(),
+        path: std::path::PathBuf::from("/tmp/test"),
+        perspective: None,
+        created_at: chrono::Utc::now(),
+        last_indexed_at: None,
+        last_lint_at: None,
+    };
     db.upsert_repository(&repo).expect("upsert repo");
 
     // Create embedding provider
@@ -1326,7 +1407,7 @@ async fn test_misplaced_detection() {
 
     // Detect misplaced documents
     let start = std::time::Instant::now();
-    let candidates = detect_misplaced(&db, Some("test"), &factbase::ProgressReporter::Silent);
+    let candidates = detect_misplaced(&db, Some("test"));
     let elapsed = start.elapsed();
 
     println!("Misplaced detection took: {:?}", elapsed);

@@ -1,6 +1,6 @@
 [package]
 name = "factbase"
-version = "0.7.7"
+version = "0.4.3"
 edition = "2021"
 description = "Filesystem-based knowledge management with semantic search for AI agents"
 license = "MIT"
@@ -23,7 +23,6 @@ minimal = []  # CLI-only, no MCP server, no compression, no progress bars
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
-futures = "0.3"
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

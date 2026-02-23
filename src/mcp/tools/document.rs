@@ -4,7 +4,6 @@ use super::{get_str_arg, get_str_arg_required};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::processor::DocumentProcessor;
-use crate::ProgressReporter;
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -20,7 +19,8 @@ fn validate_title(title: &str) -> Result<(), FactbaseError> {
     }
     if trimmed.len() > MAX_TITLE_LENGTH {
         return Err(FactbaseError::parse(format!(
-            "Title exceeds {MAX_TITLE_LENGTH} characters"
+            "Title exceeds {} characters",
+            MAX_TITLE_LENGTH
         )));
     }
     Ok(())
@@ -29,7 +29,8 @@ fn validate_title(title: &str) -> Result<(), FactbaseError> {
 fn validate_content(content: &str) -> Result<(), FactbaseError> {
     if content.len() > MAX_CONTENT_SIZE {
         return Err(FactbaseError::parse(format!(
-            "Content exceeds {MAX_CONTENT_SIZE} bytes"
+            "Content exceeds {} bytes",
+            MAX_CONTENT_SIZE
         )));
     }
     Ok(())
@@ -68,7 +69,7 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let id = processor.generate_unique_id(db);
 
     // Build document content with header and title
-    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{content}");
+    let doc_content = format!("<!-- factbase:{} -->\n# {}\n\n{}", id, title, content);
 
     // Construct full file path
     let file_path: PathBuf = repo.path.join(&path);
@@ -157,7 +158,7 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
             .join("\n")
     };
 
-    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{body}");
+    let doc_content = format!("<!-- factbase:{} -->\n# {}\n\n{}", id, title, body);
     fs::write(&file_path, &doc_content)?;
 
     Ok(serde_json::json!({
@@ -219,12 +220,8 @@ pub fn delete_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 /// # Errors
 /// - `FactbaseError::NotFound` if repository doesn't exist
 /// - `FactbaseError::Parse` if documents array empty or exceeds limit
-#[instrument(name = "mcp_bulk_create_documents", skip(db, args, progress))]
-pub fn bulk_create_documents(
-    db: &Database,
-    args: &Value,
-    progress: &ProgressReporter,
-) -> Result<Value, FactbaseError> {
+#[instrument(name = "mcp_bulk_create_documents", skip(db, args))]
+pub fn bulk_create_documents(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let repo_id = get_str_arg_required(args, "repo")?;
     let documents = args
         .get("documents")
@@ -322,8 +319,7 @@ pub fn bulk_create_documents(
 
     // Create all documents using validated data
     let mut created: Vec<Value> = Vec::with_capacity(validated_docs.len());
-    let total = validated_docs.len();
-    for (i, validated) in validated_docs.iter().enumerate() {
+    for validated in validated_docs {
         let id = processor.generate_unique_id(db);
         let doc_content = format!(
             "<!-- factbase:{} -->\n# {}\n\n{}",
@@ -336,8 +332,6 @@ pub fn bulk_create_documents(
         }
 
         fs::write(&file_path, &doc_content)?;
-
-        progress.report(i + 1, total, validated.title);
 
         created.push(serde_json::json!({
             "id": id,

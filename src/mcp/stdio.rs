@@ -18,33 +18,6 @@ pub async fn run_stdio<E: EmbeddingProvider>(
     run_stdio_io(db, embedding, llm, io::stdin().lock(), io::stdout().lock()).await
 }
 
-/// Writes a progress notification for a long-running tool call.
-fn write_progress(
-    out: &mut impl Write,
-    token: &Value,
-    progress: u64,
-    total: u64,
-    message: Option<&str>,
-) -> anyhow::Result<()> {
-    let mut params = serde_json::json!({
-        "progressToken": token,
-        "progress": progress,
-        "total": total,
-    });
-    if let Some(msg) = message {
-        params["message"] = Value::String(msg.to_string());
-    }
-    let notification = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/progress",
-        "params": params,
-    });
-    let json = serde_json::to_string(&notification)?;
-    writeln!(out, "{json}")?;
-    out.flush()?;
-    Ok(())
-}
-
 /// Runs the MCP stdio transport loop on arbitrary reader/writer.
 ///
 /// Reads newline-delimited JSON-RPC messages, dispatches them,
@@ -93,60 +66,10 @@ async fn run_stdio_io<E: EmbeddingProvider>(
                 Some(McpResponse::success(id, tools_list()))
             }
             "tools/call" => match serde_json::from_value::<McpRequest>(msg.clone()) {
-                Ok(request) => {
-                    // Extract progressToken from params._meta.progressToken
-                    let progress_token = msg
-                        .pointer("/params/arguments/_meta/progressToken")
-                        .or_else(|| msg.pointer("/params/_meta/progressToken"))
-                        .cloned();
-
-                    let (tx, progress) = if progress_token.is_some() {
-                        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<serde_json::Value>();
-                        (Some(rx), Some(tx))
-                    } else {
-                        (None, None)
-                    };
-
-                    let tool_fut = handle_tool_call(db, embedding, llm, request, progress);
-                    tokio::pin!(tool_fut);
-
-                    if let Some(mut rx) = tx {
-                        // Safety: progress_token is guaranteed Some when tx channel exists
-                        let token = progress_token
-                            .expect("progress_token is Some when progress channel is created");
-                        loop {
-                            tokio::select! {
-                                biased;
-                                Some(msg) = rx.recv() => {
-                                    let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
-                                    let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
-                                    let m = msg.get("message").and_then(|v| v.as_str());
-                                    let _ = write_progress(&mut writer, &token, p, t, m);
-                                }
-                                result = &mut tool_fut => {
-                                    // Drain remaining progress
-                                    while let Ok(msg) = rx.try_recv() {
-                                        let p = msg.get("progress").and_then(Value::as_u64).unwrap_or(0);
-                                        let t = msg.get("total").and_then(Value::as_u64).unwrap_or(0);
-                                        let m = msg.get("message").and_then(|v| v.as_str());
-                                        let _ = write_progress(&mut writer, &token, p, t, m);
-                                    }
-                                    break match result {
-                                        Ok(resp) => resp,
-                                        Err(e) => Some(McpResponse::error(-32603, format!("Internal error: {e}"))),
-                                    };
-                                }
-                            }
-                        }
-                    } else {
-                        match tool_fut.await {
-                            Ok(resp) => resp,
-                            Err(e) => {
-                                Some(McpResponse::error(-32603, format!("Internal error: {e}")))
-                            }
-                        }
-                    }
-                }
+                Ok(request) => match handle_tool_call(db, embedding, llm, request).await {
+                    Ok(resp) => resp,
+                    Err(e) => Some(McpResponse::error(-32603, format!("Internal error: {e}"))),
+                },
                 Err(e) => Some(McpResponse::error(-32600, format!("Invalid request: {e}"))),
             },
             "ping" => {
