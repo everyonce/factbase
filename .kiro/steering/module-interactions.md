@@ -157,7 +157,9 @@ src/
 │   │   ├── mod.rs
 │   │   ├── merge.rs     # Merge candidate detection
 │   │   ├── split.rs     # Split candidate detection
-│   │   └── misplaced.rs # Misplaced document detection
+│   │   ├── misplaced.rs # Misplaced document detection
+│   │   ├── entity_entries.rs  # Entity entry extraction from documents
+│   │   └── duplicate_entries.rs # Cross-document duplicate entry detection
 │   ├── plan/            # Planning operations
 │   │   ├── mod.rs
 │   │   ├── merge.rs     # Merge planning with LLM

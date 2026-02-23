@@ -78,7 +78,7 @@ function updateUI(): void {
   const organizeCount = document.getElementById('organize-count');
   if (organizeCount) {
     const total = state.organize
-      ? state.organize.merge_candidates + state.organize.misplaced_candidates
+      ? state.organize.merge_candidates + state.organize.misplaced_candidates + state.organize.duplicate_entry_count
       : 0;
     organizeCount.textContent = state.loading ? '...' : total.toString();
   }

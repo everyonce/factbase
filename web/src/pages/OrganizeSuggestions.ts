@@ -32,7 +32,7 @@ const state: OrganizeSuggestionsState = {
   successMessage: null,
 };
 
-const SUGGESTION_TYPES = ['merge', 'misplaced'];
+const SUGGESTION_TYPES = ['merge', 'misplaced', 'duplicate'];
 
 function escapeHtml(text: string): string {
   const div = document.createElement('div');
@@ -103,6 +103,7 @@ function renderSummary(): string {
 
   const mergeCount = state.data.merge.length;
   const misplacedCount = state.data.misplaced.length;
+  const duplicateCount = state.data.duplicate_entries.length;
 
   const badges: string[] = [];
   if (mergeCount > 0) {
@@ -110,6 +111,9 @@ function renderSummary(): string {
   }
   if (misplacedCount > 0) {
     badges.push(`${renderSuggestionTypeBadge('misplaced')} <span class="ml-1 text-gray-600 dark:text-gray-400">${misplacedCount}</span>`);
+  }
+  if (duplicateCount > 0) {
+    badges.push(`${renderSuggestionTypeBadge('duplicate')} <span class="ml-1 text-gray-600 dark:text-gray-400">${duplicateCount}</span>`);
   }
 
   return `
@@ -160,6 +164,43 @@ function renderMisplacedSection(): string {
   `;
 }
 
+function renderDuplicateSection(): string {
+  if (!state.data || state.data.duplicate_entries.length === 0) return '';
+  if (state.filterType && state.filterType !== 'duplicate') return '';
+
+  const cards = state.data.duplicate_entries.map((d) => {
+    const entries = d.entries.map(e =>
+      `<li class="text-sm text-gray-600 dark:text-gray-400">
+        <span class="font-medium text-gray-900 dark:text-white">${escapeHtml(e.doc_title)}</span>
+        <span class="text-gray-400 dark:text-gray-500">(${escapeHtml(e.doc_id)})</span>
+        §${escapeHtml(e.section)} line ${e.line_start}, ${e.facts.length} fact${e.facts.length !== 1 ? 's' : ''}
+      </li>`
+    ).join('');
+
+    return `
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 border border-gray-200 dark:border-gray-700">
+        <div class="flex items-center space-x-2 mb-2">
+          ${renderSuggestionTypeBadge('duplicate')}
+          <span class="font-medium text-gray-900 dark:text-white">${escapeHtml(d.entity_name)}</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">in ${d.entries.length} documents</span>
+        </div>
+        <ul class="list-disc list-inside space-y-1">${entries}</ul>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="space-y-4">
+      <h3 class="text-lg font-medium text-gray-900 dark:text-white flex items-center space-x-2">
+        ${renderSuggestionTypeBadge('duplicate')}
+        <span>Duplicate Entries</span>
+        <span class="text-sm font-normal text-gray-500 dark:text-gray-400">(${state.data.duplicate_entries.length})</span>
+      </h3>
+      <div class="space-y-3">${cards}</div>
+    </div>
+  `;
+}
+
 function updateUI(): void {
   const content = document.getElementById('organize-content');
   if (!content) return;
@@ -204,8 +245,9 @@ function updateUI(): void {
 
   const mergeSection = renderMergeSection();
   const misplacedSection = renderMisplacedSection();
+  const duplicateSection = renderDuplicateSection();
 
-  if (!mergeSection && !misplacedSection) {
+  if (!mergeSection && !misplacedSection && !duplicateSection) {
     content.innerHTML = `
       <div class="text-center py-8">
         <span class="text-4xl">🔍</span>
@@ -220,6 +262,7 @@ function updateUI(): void {
     <div class="space-y-8">
       ${mergeSection}
       ${misplacedSection}
+      ${duplicateSection}
     </div>
   `;
 

@@ -2,20 +2,10 @@
 
 ## Project Status
 
-**Phases 1-45 complete (650+ tasks)**. Phase 46 pending. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3.
+**Phases 1-46 complete (670+ tasks)**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3.
 
 ### Active Work
-Phase 45: Cross-Document Fact Validation (tasks/phase45.md)
-- Task 1 complete: Fact extraction expansion (`question_generator/facts.rs` with `extract_all_facts`)
-- Task 2 complete: Per-fact semantic search (`question_generator/cross_validate.rs` with `cross_validate_document`)
-- Task 3 complete: LLM conflict detection (`cross_validate.rs` with `build_prompt`, `parse_llm_response`, `result_to_question`)
-- Task 4 complete: Integration into lint (`--cross-check` flag in `commands/lint/mod.rs`)
-- Task 5 complete: Re-check tracking (5.1 schema migration v5, 5.2 hash update after validation, 5.3 linked doc invalidation on change)
-- Task 6 pending: MCP and workflow integration
-
-Phase 46: Cross-Document Entity Deduplication (tasks/phase46.md)
-- Depends on Phase 45
-- All tasks pending
+No active tasks. All phases complete.
 
 ## Current Configuration
 
@@ -52,6 +42,7 @@ Phase 46: Cross-Document Entity Deduplication (tasks/phase46.md)
 - `factbase stats` - Quick aggregate stats
 - `factbase doctor` - Check inference backend connectivity
 - `factbase lint [--repo <id>]` - Quality checks
+- `factbase lint --cross-check` - Cross-document fact validation (requires inference backend)
 - `factbase grep <pattern>` - Content search (like grep)
 - `factbase export <repo> <output>` - Backup documents
 - `factbase import <repo> <input>` - Restore documents
@@ -69,7 +60,7 @@ Phase 46: Cross-Document Entity Deduplication (tasks/phase46.md)
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (18 total)
+## MCP Tools (19 total)
 
 ### Search Operations
 | Tool | Description |
@@ -109,6 +100,11 @@ Phase 46: Cross-Document Entity Deduplication (tasks/phase46.md)
 | `workflow_start` | Start a guided workflow (resolve, ingest, enrich) |
 | `workflow_next` | Get next step in an active workflow |
 
+### Organize Operations
+| Tool | Description |
+|------|-------------|
+| `get_duplicate_entries` | Detect entity entries duplicated across documents |
+
 ## Web API Endpoints (17 total, feature-gated)
 
 Requires `web` feature and `web.enabled = true` in config.
@@ -143,12 +139,12 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: 973 lib tests (with all features including web), 912 without web
+- Currently: 1011 lib tests (with all features including web), 950 without web
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
 - No external dependencies required
-- Currently: 354 bin tests (with all features including web), 347 without web
+- Currently: 355 bin tests (with all features including web), 348 without web
 
 ### Integration Tests (Require inference backend)
 - Run with: `cargo test -- --ignored`
@@ -160,7 +156,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Vitest with jsdom environment
 - Currently: 56 tests
 
-### Total: 1327 unit/binary tests (with all features) + 73+ integration tests + 56 frontend tests
+### Total: 1366 unit/binary tests (with all features) + 73+ integration tests + 56 frontend tests
 
 ## Codebase Structure
 

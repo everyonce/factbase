@@ -1,4 +1,7 @@
-use super::{find_repo_with_config, setup_cached_embedding, setup_embedding, setup_link_detector, setup_llm_with_timeout};
+use super::{
+    find_repo_with_config, setup_cached_embedding, setup_embedding, setup_link_detector,
+    setup_llm_with_timeout,
+};
 use crate::commands::utils::resolve_repos;
 use anyhow::Context;
 use clap::Parser;

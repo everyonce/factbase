@@ -14,15 +14,17 @@ function escapeHtml(text: string): string {
 /**
  * Render a badge for suggestion type.
  */
-export function renderSuggestionTypeBadge(type: 'merge' | 'misplaced'): string {
+export function renderSuggestionTypeBadge(type: 'merge' | 'misplaced' | 'duplicate'): string {
   const colors: Record<string, string> = {
     merge: 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200',
     misplaced: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+    duplicate: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
   };
 
   const icons: Record<string, string> = {
     merge: '🔗',
     misplaced: '📁',
+    duplicate: '👥',
   };
 
   return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${colors[type]}">

@@ -37,6 +37,7 @@ pub struct ReviewStatsResponse {
 pub struct OrganizeStatsResponse {
     pub merge_candidates: usize,
     pub misplaced_candidates: usize,
+    pub duplicate_entry_count: usize,
     pub orphan_count: usize,
 }
 
@@ -122,6 +123,7 @@ fn compute_organize_stats(db: &Database) -> Result<OrganizeStatsResponse, Factba
     Ok(OrganizeStatsResponse {
         merge_candidates,
         misplaced_candidates,
+        duplicate_entry_count: 0, // Requires embedding provider — use CLI or MCP
         orphan_count,
     })
 }
@@ -175,11 +177,13 @@ mod tests {
         let resp = OrganizeStatsResponse {
             merge_candidates: 3,
             misplaced_candidates: 2,
+            duplicate_entry_count: 1,
             orphan_count: 5,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"merge_candidates\":3"));
         assert!(json.contains("\"misplaced_candidates\":2"));
+        assert!(json.contains("\"duplicate_entry_count\":1"));
         assert!(json.contains("\"orphan_count\":5"));
     }
 
@@ -224,6 +228,7 @@ mod tests {
         let resp = OrganizeStatsResponse {
             merge_candidates: 0,
             misplaced_candidates: 0,
+            duplicate_entry_count: 0,
             orphan_count: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();

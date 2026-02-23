@@ -5,13 +5,19 @@
 //! - Split candidates: documents covering multiple distinct topics
 //! - Misplaced candidates: documents in wrong folders
 
+mod duplicate_entries;
+mod entity_entries;
 mod merge;
 mod misplaced;
 mod split;
+mod staleness;
 
+pub use duplicate_entries::detect_duplicate_entries;
+pub use entity_entries::{extract_entity_entries, EntityEntry};
 pub use merge::detect_merge_candidates;
 pub use misplaced::detect_misplaced;
 pub use split::{detect_split_candidates, extract_sections};
+pub use staleness::{assess_staleness, generate_stale_entry_questions, StaleDuplicate};
 
 use crate::database::Database;
 use crate::error::FactbaseError;

@@ -88,24 +88,21 @@ impl DocumentProcessor {
         if let Some(parent) = relative.parent() {
             if let Some(folder) = parent.file_name().and_then(|s| s.to_str()) {
                 if !folder.is_empty() {
-                    return self.normalize_type(folder);
+                    return normalize_type(folder);
                 }
             }
         }
         "document".to_string()
     }
+}
 
-    fn normalize_type(&self, word: &str) -> String {
-        let lower = word.to_lowercase();
-        self.singularize(&lower)
-    }
-
-    fn singularize(&self, word: &str) -> String {
-        if word.ends_with('s') && word.len() > 1 {
-            word[..word.len() - 1].to_string()
-        } else {
-            word.to_string()
-        }
+/// Normalize a type name: lowercase and strip trailing 's' (naive singularization).
+pub(crate) fn normalize_type(word: &str) -> String {
+    let lower = word.to_lowercase();
+    if lower.ends_with('s') && lower.len() > 1 {
+        lower[..lower.len() - 1].to_string()
+    } else {
+        lower
     }
 }
 

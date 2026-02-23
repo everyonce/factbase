@@ -1,6 +1,6 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 16 MCP tools exposed by factbase.
+//! Contains the JSON schema for all 19 MCP tools exposed by factbase.
 
 use serde_json::Value;
 
@@ -264,6 +264,16 @@ pub fn tools_list() -> Value {
                     },
                     "required": ["workflow"]
                 }
+            },
+            {
+                "name": "get_duplicate_entries",
+                "description": "Detect entity entries duplicated across multiple documents. Finds named entities (e.g., people listed under company team sections) that appear in two or more documents, and identifies which entries are stale based on temporal tags or file modification dates.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" }
+                    }
+                }
             }
         ]
     })
@@ -278,7 +288,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 18, "should have 18 tools");
+        assert_eq!(tools.len(), 19, "should have 19 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -297,6 +307,7 @@ mod tests {
         assert!(names.contains(&"delete_document"));
         assert!(names.contains(&"bulk_create_documents"));
         assert!(names.contains(&"search_content"));
+        assert!(names.contains(&"get_duplicate_entries"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {

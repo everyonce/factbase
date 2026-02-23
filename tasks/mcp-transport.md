@@ -14,7 +14,7 @@ The MCP spec (2025-03-26) defines exactly two standard transports: **stdio** and
 
 https://modelcontextprotocol.io/specification/2025-03-26/basic/transports
 
-## Task 1: Stdio Transport (Priority — do this first)
+## Task 1: Stdio Transport ✅ COMPLETE (Phase 41)
 
 Add a `factbase mcp` subcommand that runs as a stdio MCP server.
 
@@ -100,7 +100,7 @@ When this works, kiro-cli config will be:
 }
 ```
 
-## Task 2: Streamable HTTP Transport
+## Task 2: Streamable HTTP Transport ✅ COMPLETE (Phase 41)
 
 Upgrade the existing `factbase serve` HTTP endpoint to comply with the Streamable HTTP spec.
 

@@ -2,9 +2,9 @@
 
 ## Project Status
 
-**Phases 1-45 complete (650+ tasks)**. Phase 46 pending. Releases: v0.1.0 through v0.4.3.
+**Phases 1-46 complete (670+ tasks)**. Releases: v0.1.0 through v0.4.3.
 
-## Key Learnings from Past Phases (1-45)
+## Key Learnings from Past Phases (1-46)
 
 ### Architecture & Patterns
 - Filesystem is truth — markdown files on disk are authoritative, SQLite is the index
@@ -96,7 +96,23 @@
 - Schema is the contract — when schema defines `"doc_type"` but handler reads `"type"`, agents silently get no filtering
 - Standardize all type filter params to `"doc_type"` across all tools
 - Schema/dispatch consistency tests prevent drift between tool definitions and handlers
+- Threading optional providers through MCP: `AppState` holds `Option<Box<dyn Provider>>`, handlers receive `Option<&dyn Provider>`, graceful degradation when `None`
+- Async MCP tools (e.g., `generate_questions` with cross-validation) use direct async dispatch instead of `blocking_tool!` macro
 
+### Entity Deduplication (Phase 46)
+- Two extraction patterns for entity entries: H3+ headings under H2 sections, and bold-name list items (`- **Name** - desc`)
+- Entries without child facts are filtered out (headings alone don't constitute an entity entry)
+- Consecutive bold-name list items: must finalize previous entry before starting new one
+- Two-phase matching: (1) exact normalized name grouping (lowercase, trim, collapse whitespace), (2) embedding-based fuzzy matching with 0.85 cosine similarity threshold
+- Only flag entries appearing in 2+ different documents — same-document entries are not duplicates
+- `upsert_document()` hardcodes `is_deleted = FALSE` — to test deleted docs, upsert first then `mark_deleted()`
+- `HashEmbedding` mock produces deterministic vectors from text hash for unit testing
+- Three-layer filtering: cross-reference-only entries (`[[id]]`), self-mentions (entry name = doc title), authoritative doc exclusion (title→doc_id map)
+- Staleness determination: Ongoing tags → today, LastSeen/PointInTime → start_date, Range/Historical → end_date; fall back to `file_modified_at` when no temporal tags
+- `generate_stale_entry_questions()` returns `HashMap<doc_id, Vec<ReviewQuestion>>` for downstream injection
+- `models::temporal` and `models::question` are private modules — import via `crate::models::TemporalTagType` re-export path
+- Same-date entries are not flagged as stale (no false positives)
+- Entries with no determinable date on any entry are skipped entirely
 ### Build & CI
 - Feature flags: `full` (default) = progress + compression + mcp + bedrock; `web` separate
 - CI: 7 jobs — clippy (all-features), test (default + bin), test-web, test-features matrix (5 combos), readme-validation
@@ -104,16 +120,13 @@
 
 ## Active Work
 
-- [x] Phase 45: Cross-Document Fact Validation — see [tasks/phase45.md](tasks/phase45.md)
-  - Task 1 complete (fact extraction expansion)
-  - Task 2 complete (per-fact semantic search)
-  - Task 3 complete (LLM conflict detection)
-  - Task 4 complete (lint integration with `--cross-check` flag)
-  - Task 5 complete (5.1 schema migration, 5.2 hash update after validation, 5.3 linked doc invalidation)
-  - Task 6 complete (MCP and workflow integration)
-- [ ] Phase 46: Cross-Document Entity Deduplication — see [tasks/phase46.md](tasks/phase46.md)
-  - Depends on Phase 45
-  - All tasks pending
+- [x] Phase 46: Cross-Document Entity Deduplication — see [tasks/phase46.md](tasks/phase46.md)
+  - Depends on Phase 45 (complete)
+  - [x] Task 1: Entity entry extraction (3/3 subtasks complete)
+  - [x] Task 2: Cross-document entry matching (3/3 subtasks)
+  - [x] Task 3: Staleness determination (2/2 subtasks)
+  - [x] Task 4: Integration into organize (3/3 subtasks complete)
+  - [x] Task 5: Post-phase cleanup and optimization (3/3 subtasks)
 
 ## Future Considerations
 
