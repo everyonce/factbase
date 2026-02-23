@@ -82,7 +82,8 @@ pub async fn lint_repository(
             .map(|(ci, doc)| {
                 let idx = chunk_start + ci;
                 async move {
-                    // Send progress notification
+                    // Log progress (always visible in stderr)
+                    info!("Linting [{}/{}] {}", idx + 1, total, doc.title);
                     if let Some(ref tx) = progress_ref {
                         let _ = tx.send(serde_json::json!({
                             "progress": idx,

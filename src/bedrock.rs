@@ -130,7 +130,7 @@ impl BedrockEmbedding {
             .body(Blob::new(body))
             .send()
             .await
-            .map_err(|e| embed_err("Bedrock invoke", e))?;
+            .map_err(|e| embed_err("Bedrock invoke", format!("{e:#}")))?;
 
         let raw = resp.body().as_ref();
 
@@ -223,7 +223,7 @@ impl LlmProvider for BedrockLlm {
                 .messages(msg)
                 .send()
                 .await
-                .map_err(|e| llm_err("Bedrock converse", e))?;
+                .map_err(|e| llm_err("Bedrock converse", format!("{e:#}")))?;
 
             let text = resp
                 .output()

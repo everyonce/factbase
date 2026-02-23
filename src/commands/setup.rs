@@ -33,14 +33,16 @@ use std::path::{Path, PathBuf};
 
 /// Print a one-time notice when no config file exists
 fn print_first_run_notice() {
-    if !Config::config_file_exists() {
-        eprintln!(
-            "Note: No config found at {}. Using defaults ({} provider).",
-            Config::default_path().display(),
-            Config::default().embedding.provider,
-        );
-        eprintln!("  Run `factbase doctor` to verify connectivity.\n");
+    let local = PathBuf::from(".factbase/config.yaml");
+    if local.exists() || Config::config_file_exists() {
+        return;
     }
+    eprintln!(
+        "Note: No config found at {} or .factbase/config.yaml. Using defaults ({} provider).",
+        Config::default_path().display(),
+        Config::default().embedding.provider,
+    );
+    eprintln!("  Run `factbase doctor` to verify connectivity.\n");
 }
 
 /// Load config and open database - common setup for most commands

@@ -271,7 +271,7 @@ impl Database {
         }
 
         let manager = SqliteConnectionManager::file(path).with_init(|conn| {
-            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
+            conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;")?;
             Ok(())
         });
 

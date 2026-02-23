@@ -149,13 +149,13 @@ database:
 
 embedding:
   provider: bedrock
-  model: amazon.titan-embed-text-v2:0
+  model: amazon.nova-2-multimodal-embeddings-v1:0
   dimension: 1024
   region: us-east-1    # AWS region (for bedrock) or base_url for ollama
 
 llm:
   provider: bedrock
-  model: us.anthropic.claude-3-5-haiku-20241022-v1:0
+  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
   region: us-east-1
 
 server:
