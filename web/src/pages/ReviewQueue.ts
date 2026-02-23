@@ -3,7 +3,7 @@
  * Lists all pending review questions grouped by document.
  */
 
-import { api, ReviewQueueResponse, DocumentReview, Repository, ApiRequestError } from '../api';
+import { api, ReviewQueueResponse, DocumentReview, Repository, ApiRequestError, ApplyResult } from '../api';
 import { renderQuestionCard, renderQuestionTypeBadge } from '../components/QuestionCard';
 import { setupAnswerFormHandlers, clearFormStates } from '../components/AnswerForm';
 import {
@@ -79,13 +79,17 @@ async function fetchData(): Promise<void> {
 function renderDocumentGroup(doc: DocumentReview): string {
   const unansweredCount = doc.questions.filter(q => !q.answered).length;
   const totalCount = doc.questions.length;
+  const isArchived = doc.file_path.includes('/archive/');
+  const archiveBadge = isArchived
+    ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 ml-2" title="Archived documents are excluded from checks">📦 archived</span>'
+    : '';
 
   return `
     <div class="document-group bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
       <div class="px-4 py-3 bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
         <div class="flex items-center justify-between">
           <div>
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white">${escapeHtml(doc.doc_title)}</h3>
+            <h3 class="text-lg font-medium text-gray-900 dark:text-white">${escapeHtml(doc.doc_title)}${archiveBadge}</h3>
             <p class="text-sm text-gray-500 dark:text-gray-400">${escapeHtml(doc.file_path)}</p>
           </div>
           <div class="flex items-center space-x-3">
@@ -179,6 +183,21 @@ function updateUI(): void {
   const summaryEl = document.getElementById('review-summary');
   if (summaryEl && state.data) {
     summaryEl.innerHTML = renderSummary();
+  }
+
+  // Update workflow stepper
+  const stepperEl = document.getElementById('workflow-stepper');
+  if (stepperEl) stepperEl.innerHTML = renderWorkflowStepper();
+
+  // Update deferred banner
+  const deferredEl = document.getElementById('deferred-banner');
+  if (deferredEl) deferredEl.innerHTML = renderDeferredBanner();
+
+  // Update apply bar
+  const applyEl = document.getElementById('apply-bar');
+  if (applyEl) {
+    applyEl.innerHTML = renderApplyBar();
+    setupApplyHandlers();
   }
 
   // Update bulk actions bar
@@ -347,6 +366,120 @@ function toggleBulkMode(): void {
   updateUI();
 }
 
+function renderWorkflowStepper(): string {
+  if (!state.data) return '';
+  const unanswered = state.data.unanswered;
+  const answered = state.data.answered;
+  // Determine current step: 1=review, 2=answer, 3=apply, 4=verify
+  let currentStep = 1;
+  if (unanswered === 0 && answered > 0) currentStep = 3;
+  else if (answered > 0) currentStep = 2;
+  else if (unanswered === 0 && answered === 0) currentStep = 4;
+
+  const steps = [
+    { num: 1, label: 'Review questions' },
+    { num: 2, label: 'Answer/defer' },
+    { num: 3, label: 'Apply answers' },
+    { num: 4, label: 'Verify' },
+  ];
+
+  return `
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+      <div class="flex items-center justify-between text-sm">
+        ${steps.map(s => {
+          const active = s.num === currentStep;
+          const done = s.num < currentStep;
+          const cls = active
+            ? 'text-blue-600 dark:text-blue-400 font-semibold'
+            : done
+              ? 'text-green-600 dark:text-green-400'
+              : 'text-gray-400 dark:text-gray-500';
+          const icon = done ? '✓' : s.num.toString();
+          return `<div class="flex items-center space-x-1 ${cls}"><span class="w-5 h-5 flex items-center justify-center rounded-full ${active ? 'bg-blue-100 dark:bg-blue-900' : done ? 'bg-green-100 dark:bg-green-900' : 'bg-gray-100 dark:bg-gray-700'} text-xs">${icon}</span><span class="hidden sm:inline">${s.label}</span></div>`;
+        }).join('<div class="flex-1 h-px bg-gray-200 dark:bg-gray-700 mx-2"></div>')}
+      </div>
+    </div>
+  `;
+}
+
+function renderDeferredBanner(): string {
+  if (!state.data) return '';
+  // Count deferred questions (answered=false but has answer text)
+  let deferredCount = 0;
+  for (const doc of state.data.documents) {
+    for (const q of doc.questions) {
+      if (!q.answered && q.answer && (q.answer.toLowerCase().startsWith('defer') || q.answer.toLowerCase().startsWith('needs '))) {
+        deferredCount++;
+      }
+    }
+  }
+  // Also check the deferred field from stats
+  if (deferredCount === 0) return '';
+
+  return `
+    <div class="bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+          <span class="text-amber-600 dark:text-amber-400">⚠</span>
+          <span class="text-sm font-medium text-amber-800 dark:text-amber-200">${deferredCount} item${deferredCount !== 1 ? 's' : ''} need${deferredCount === 1 ? 's' : ''} human attention</span>
+        </div>
+        <button id="filter-deferred-btn" class="text-sm text-amber-700 dark:text-amber-300 hover:underline">Show deferred</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderApplyBar(): string {
+  if (!state.data || state.data.answered === 0) return '';
+  return `
+    <div class="bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg p-4">
+      <div class="flex items-center justify-between">
+        <span class="text-sm text-green-800 dark:text-green-200">${state.data.answered} answered question${state.data.answered !== 1 ? 's' : ''} ready to apply</span>
+        <div class="flex items-center space-x-2">
+          <button id="apply-preview-btn" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md bg-green-100 dark:bg-green-800 text-green-700 dark:text-green-200 hover:bg-green-200 dark:hover:bg-green-700">Preview</button>
+          <button id="apply-btn" class="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">Apply Answers</button>
+        </div>
+      </div>
+      <div id="apply-result" class="mt-2"></div>
+    </div>
+  `;
+}
+
+async function handleApply(dryRun: boolean): Promise<void> {
+  const btn = document.getElementById(dryRun ? 'apply-preview-btn' : 'apply-btn') as HTMLButtonElement | null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ ...'; }
+
+  try {
+    const result: ApplyResult = await api.applyAnswers({ dry_run: dryRun });
+    const resultEl = document.getElementById('apply-result');
+    if (resultEl) {
+      if (result.total_applied === 0) {
+        resultEl.innerHTML = `<p class="text-sm text-gray-600 dark:text-gray-400">${result.message}</p>`;
+      } else {
+        const docs = result.documents.map(d =>
+          `<li class="text-sm"><span class="font-medium">${escapeHtml(d.doc_title)}</span>: ${d.questions_applied ?? 0} question${(d.questions_applied ?? 0) !== 1 ? 's' : ''} ${d.status}</li>`
+        ).join('');
+        resultEl.innerHTML = `<p class="text-sm font-medium mb-1">${result.message}</p><ul class="list-disc list-inside space-y-1">${docs}</ul>`;
+      }
+    }
+    if (!dryRun && result.total_applied > 0) {
+      toast.success(`Applied ${result.total_applied} answer(s)`);
+      fetchData();
+    }
+  } catch (e) {
+    if (e instanceof ApiRequestError && e.status === 503) {
+      toast.info(e.message);
+    } else {
+      toast.error(e instanceof Error ? e.message : 'Apply failed');
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = dryRun ? 'Preview' : 'Apply Answers';
+    }
+  }
+}
+
 export function renderReviewQueue(): string {
   const bulkModeLabel = state.bulkMode ? 'Exit bulk mode' : 'Bulk actions';
   const bulkModeClass = state.bulkMode
@@ -364,6 +497,9 @@ export function renderReviewQueue(): string {
           ${bulkModeLabel}
         </button>
       </div>
+      <div id="workflow-stepper">${renderWorkflowStepper()}</div>
+      <div id="deferred-banner">${renderDeferredBanner()}</div>
+      <div id="apply-bar">${renderApplyBar()}</div>
       <div id="review-message"></div>
       <div id="bulk-actions-container"></div>
       <div id="review-filters" class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
@@ -385,7 +521,19 @@ export function renderReviewQueue(): string {
 export function initReviewQueue(): void {
   setupFilterHandlers();
   setupBulkModeToggle();
+  setupApplyHandlers();
   fetchData();
+}
+
+function setupApplyHandlers(): void {
+  document.getElementById('apply-preview-btn')?.addEventListener('click', () => handleApply(true));
+  document.getElementById('apply-btn')?.addEventListener('click', () => handleApply(false));
+  document.getElementById('filter-deferred-btn')?.addEventListener('click', () => {
+    // Set filter to show deferred items
+    state.filterType = '';
+    // Refetch with deferred status - for now just show all and let user see deferred markers
+    toast.info('Deferred items are shown with ⚠ markers in the queue');
+  });
 }
 
 function setupBulkModeToggle(): void {

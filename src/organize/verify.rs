@@ -76,7 +76,7 @@ pub fn verify_merge(
     plan: &MergePlan,
     result: &MergeResult,
     db: &Database,
-    _repo_path: &Path,
+    repo_path: &Path,
 ) -> Result<VerificationResult, FactbaseError> {
     // Calculate expected counts from ledger
     let expected_doc_facts = plan
@@ -87,9 +87,12 @@ pub fn verify_merge(
         .count();
     let expected_orphans = plan.ledger.orphan_count();
 
-    // Count actual facts in kept document
+    // Count actual facts in kept document - read from filesystem since
+    // execute_merge writes the merged content to the file but doesn't update the DB
     let kept_doc = db.require_document(&result.kept_id)?;
-    let actual_doc_facts = extract_facts(&kept_doc.content, &result.kept_id).len();
+    let kept_path = repo_path.join(&kept_doc.file_path);
+    let kept_content = read_file(&kept_path)?;
+    let actual_doc_facts = extract_facts(&kept_content, &result.kept_id).len();
 
     // Count actual orphans if orphan file exists
     let actual_orphans = match &result.orphan_path {

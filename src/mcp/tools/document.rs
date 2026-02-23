@@ -3,6 +3,7 @@
 use super::{get_str_arg, get_str_arg_required};
 use crate::database::Database;
 use crate::error::FactbaseError;
+use crate::patterns::ID_REGEX;
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
@@ -12,6 +13,44 @@ use tracing::instrument;
 
 const MAX_TITLE_LENGTH: usize = 200;
 const MAX_CONTENT_SIZE: usize = 1_048_576; // 1MB
+
+/// Strip the `<!-- factbase:ID -->` header and first `# Title` line from content,
+/// returning only the body. Handles content with or without the header.
+fn strip_factbase_header(content: &str) -> String {
+    let mut lines = content.lines().peekable();
+
+    // Skip factbase header if present
+    if let Some(first) = lines.peek() {
+        if ID_REGEX.is_match(first) {
+            lines.next();
+        }
+    }
+
+    // Skip blank lines between header and title
+    while let Some(line) = lines.peek() {
+        if !line.trim().is_empty() {
+            break;
+        }
+        lines.next();
+    }
+
+    // Skip title line if present
+    if let Some(line) = lines.peek() {
+        if line.starts_with("# ") {
+            lines.next();
+        }
+    }
+
+    // Skip blank lines after title
+    while let Some(line) = lines.peek() {
+        if !line.trim().is_empty() {
+            break;
+        }
+        lines.next();
+    }
+
+    lines.collect::<Vec<_>>().join("\n")
+}
 
 fn validate_title(title: &str) -> Result<(), FactbaseError> {
     let trimmed = title.trim();
@@ -145,20 +184,20 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let title = new_title.unwrap_or(&doc.title);
     let content = new_content.unwrap_or(&doc.content);
 
-    // Strip existing header and title from content if updating content
-    let body = if new_content.is_some() {
-        content.to_string()
+    // Strip existing factbase header and title from content to avoid duplication
+    let body = strip_factbase_header(if new_content.is_some() {
+        content
     } else {
-        // Keep existing body (content after header and title)
-        doc.content
-            .lines()
-            .skip_while(|l| l.starts_with("<!--") || l.starts_with("# ") || l.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
+        &doc.content
+    });
 
     let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{body}");
     fs::write(&file_path, &doc_content)?;
+
+    // Sync content to database so subsequent tools (answer_questions, apply_review_answers)
+    // see the current content instead of stale pre-edit data.
+    let new_hash = crate::processor::content_hash(&doc_content);
+    db.update_document_content(&id, &doc_content, &new_hash)?;
 
     Ok(serde_json::json!({
         "id": id,
@@ -386,5 +425,50 @@ mod tests {
     fn test_validate_content_valid() {
         assert!(validate_content("").is_ok());
         assert!(validate_content("Normal content").is_ok());
+    }
+
+    #[test]
+    fn test_strip_factbase_header_with_header_and_title() {
+        let content = "<!-- factbase:a1cb2b -->\n# Stacey Lee\n\n- fact 1\n- fact 2";
+        assert_eq!(strip_factbase_header(content), "- fact 1\n- fact 2");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_without_header() {
+        let content = "- fact 1\n- fact 2";
+        assert_eq!(strip_factbase_header(content), "- fact 1\n- fact 2");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_title_only() {
+        let content = "# Stacey Lee\n\n- fact 1";
+        assert_eq!(strip_factbase_header(content), "- fact 1");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_preserves_html_comments() {
+        let content = "<!-- factbase:a1cb2b -->\n# Title\n\n<!-- important note -->\n- fact 1";
+        assert_eq!(
+            strip_factbase_header(content),
+            "<!-- important note -->\n- fact 1"
+        );
+    }
+
+    #[test]
+    fn test_strip_factbase_header_preserves_later_h1() {
+        let content = "<!-- factbase:a1cb2b -->\n# Title\n\n## Section\n# Another H1";
+        assert_eq!(
+            strip_factbase_header(content),
+            "## Section\n# Another H1"
+        );
+    }
+
+    #[test]
+    fn test_strip_factbase_header_non_factbase_comment() {
+        let content = "<!-- not a factbase header -->\n# Title\n\n- fact 1";
+        assert_eq!(
+            strip_factbase_header(content),
+            "<!-- not a factbase header -->\n# Title\n\n- fact 1"
+        );
     }
 }

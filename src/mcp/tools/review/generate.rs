@@ -5,11 +5,13 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::mcp::tools::{get_bool_arg, get_str_arg_required};
+use crate::patterns::has_corruption_artifacts;
 use crate::processor::{append_review_questions, parse_review_queue};
 use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
     generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_missing_questions, generate_stale_questions, generate_temporal_questions,
+    generate_duplicate_role_questions, generate_missing_questions, generate_stale_questions,
+    generate_temporal_questions,
 };
 use serde_json::Value;
 use std::collections::HashSet;
@@ -57,9 +59,23 @@ pub async fn generate_questions(
         )));
     }
 
+    // Skip documents with corruption artifacts from failed apply_review_answers
+    if has_corruption_artifacts(&doc.content) {
+        return Ok(serde_json::json!({
+            "doc_id": doc_id,
+            "doc_title": doc.title,
+            "questions_generated": 0,
+            "questions": [],
+            "dry_run": dry_run,
+            "corrupted": true,
+            "message": "Document contains corruption artifacts from a failed apply_review_answers run — rebuild content before checking"
+        }));
+    }
+
     // Generate all question types
     let mut new_questions = generate_temporal_questions(&doc.content);
     new_questions.extend(generate_conflict_questions(&doc.content));
+    new_questions.extend(generate_duplicate_role_questions(&doc.content));
     new_questions.extend(generate_missing_questions(&doc.content));
     new_questions.extend(generate_ambiguous_questions(&doc.content));
     new_questions.extend(generate_stale_questions(&doc.content, 365)); // Default 365 days

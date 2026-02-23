@@ -12,7 +12,7 @@ use std::fmt::Display;
 use tracing::debug;
 
 /// Build a Bedrock runtime client with optional region and profile override.
-async fn build_client(region: Option<&str>, profile: Option<&str>) -> Client {
+async fn build_client(region: Option<&str>, profile: Option<&str>, timeout_secs: u64) -> Client {
     let mut loader = aws_config::defaults(aws_config::BehaviorVersion::latest());
     if let Some(r) = region {
         loader = loader.region(aws_config::Region::new(r.to_string()));
@@ -22,8 +22,9 @@ async fn build_client(region: Option<&str>, profile: Option<&str>) -> Client {
     }
     let config = loader.load().await;
     let timeout = aws_sdk_bedrockruntime::config::timeout::TimeoutConfig::builder()
-        .operation_timeout(std::time::Duration::from_secs(60))
-        .operation_attempt_timeout(std::time::Duration::from_secs(30))
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .operation_timeout(std::time::Duration::from_secs(timeout_secs))
+        .operation_attempt_timeout(std::time::Duration::from_secs(timeout_secs))
         .build();
     Client::from_conf(
         aws_sdk_bedrockruntime::Config::from(&config)
@@ -136,9 +137,10 @@ impl BedrockEmbedding {
         dimension: usize,
         region: Option<&str>,
         profile: Option<&str>,
+        timeout_secs: u64,
     ) -> Self {
         Self {
-            client: build_client(region, profile).await,
+            client: build_client(region, profile, timeout_secs).await,
             model_id: model_id.to_string(),
             dim: dimension,
         }
@@ -244,9 +246,9 @@ pub struct BedrockLlm {
 }
 
 impl BedrockLlm {
-    pub async fn new(model_id: &str, region: Option<&str>, profile: Option<&str>) -> Self {
+    pub async fn new(model_id: &str, region: Option<&str>, profile: Option<&str>, timeout_secs: u64) -> Self {
         Self {
-            client: build_client(region, profile).await,
+            client: build_client(region, profile, timeout_secs).await,
             model_id: model_id.to_string(),
         }
     }

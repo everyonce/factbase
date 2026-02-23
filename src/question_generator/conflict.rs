@@ -4,7 +4,9 @@
 //! or contradictory facts.
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::{normalize_date_for_comparison, FACT_LINE_REGEX, MANUAL_LINK_REGEX};
+use crate::patterns::{
+    extract_reviewed_date, normalize_date_for_comparison, FACT_LINE_REGEX, MANUAL_LINK_REGEX,
+};
 use crate::processor::parse_temporal_tags;
 
 use super::extract_fact_text;
@@ -50,6 +52,8 @@ fn collect_facts_with_ranges(content: &str) -> Vec<FactWithRange> {
     let mut facts = Vec::new();
     let tags = parse_temporal_tags(content);
     let mut current_section: Option<String> = None;
+    let today = chrono::Local::now().date_naive();
+    const REVIEWED_SKIP_DAYS: i64 = 180;
 
     // Stop before the review queue section
     let end = content
@@ -67,6 +71,13 @@ fn collect_facts_with_ranges(content: &str) -> Vec<FactWithRange> {
 
         // Only process fact lines (list items)
         if !FACT_LINE_REGEX.is_match(line) {
+            continue;
+        }
+
+        // Skip facts with a recent reviewed marker
+        if extract_reviewed_date(line)
+            .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        {
             continue;
         }
 
@@ -171,6 +182,19 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
         return None;
     }
 
+    // Suppress conflicts for same-company roles: duplicate entries across sections
+    // or promotion sequences with boundary-month overlaps
+    if is_same_company_role(&fact1.text, &fact2.text, start1, end1, start2, end2) {
+        return None;
+    }
+
+    // Suppress boundary-month overlaps in sequential career roles (any company).
+    // LinkedIn always reports the transition month in both roles, e.g.
+    // Role A ends 2023-09, Role B starts 2023-09.  This is not a real conflict.
+    if is_boundary_month_sequential(start1, end1, start2, end2) {
+        return None;
+    }
+
     // Generate conflict question
     let description = format!(
         "\"{}\" @t[{}..{}] overlaps with \"{}\" @t[{}..{}] - were both true simultaneously?",
@@ -263,6 +287,146 @@ fn facts_may_conflict(text1: &str, text2: &str) -> bool {
     }
 
     false
+}
+
+/// Extract company name from a role fact like "CTO at Acme Corp" → "acme corp".
+/// Returns None if no " at " pattern found.
+fn extract_company(text: &str) -> Option<String> {
+    let lower = text.to_lowercase();
+    let at_pos = lower.find(" at ")?;
+    let company = lower[at_pos + 4..].trim();
+    // Strip trailing temporal/source markers
+    let company = company
+        .split(|c: char| c == '@' || c == '[')
+        .next()
+        .unwrap_or(company)
+        .trim();
+    if company.is_empty() {
+        None
+    } else {
+        Some(company.to_string())
+    }
+}
+
+/// Check if two facts describe roles at the same company.
+/// Suppresses conflicts for:
+/// 1. Duplicate entries (same role + same company)
+/// 2. Promotion sequences (different role, same company, sequential dates)
+fn is_same_company_role(
+    text1: &str,
+    text2: &str,
+    start1: &str,
+    end1: &str,
+    start2: &str,
+    end2: &str,
+) -> bool {
+    let Some(company1) = extract_company(text1) else {
+        return false;
+    };
+    let Some(company2) = extract_company(text2) else {
+        return false;
+    };
+    if company1 != company2 {
+        return false;
+    }
+    // Same company — check if duplicate entry (same text) or promotion (sequential dates)
+    let t1 = text1.to_lowercase();
+    let t2 = text2.to_lowercase();
+    if t1 == t2 {
+        return true; // exact duplicate
+    }
+    // Promotion: one role ends when the other starts (boundary overlap within 1 month)
+    let e1_norm = normalize_date_for_comparison(end1);
+    let s2_norm = normalize_date_for_comparison(start2);
+    let e2_norm = normalize_date_for_comparison(end2);
+    let s1_norm = normalize_date_for_comparison(start1);
+    // Check if end of one is near start of the other
+    dates_within_one_month(&e1_norm, &s2_norm) || dates_within_one_month(&e2_norm, &s1_norm)
+}
+
+/// Check if two normalized date strings are within one month of each other.
+fn dates_within_one_month(date_a: &str, date_b: &str) -> bool {
+    // Normalized dates are like "2020-01-01". Compare as strings — if they match
+    // or differ by at most one month, return true.
+    if date_a == date_b {
+        return true;
+    }
+    // Parse year-month from the normalized dates
+    let parse = |d: &str| -> Option<(i32, i32)> {
+        let parts: Vec<&str> = d.split('-').collect();
+        if parts.len() >= 2 {
+            Some((parts[0].parse().ok()?, parts[1].parse().ok()?))
+        } else {
+            None
+        }
+    };
+    let Some((y1, m1)) = parse(date_a) else {
+        return false;
+    };
+    let Some((y2, m2)) = parse(date_b) else {
+        return false;
+    };
+    let months1 = y1 * 12 + m1;
+    let months2 = y2 * 12 + m2;
+    (months1 - months2).abs() <= 1
+}
+
+/// Returns true when two date ranges are sequential with at most a boundary-month
+/// overlap (end of one equals start of the other).  LinkedIn always reports the
+/// transition month in both roles, so `@t[..2023-09]` + `@t[2023-09..]` is not
+/// a real conflict — it's a normal career transition.
+fn is_boundary_month_sequential(start1: &str, end1: &str, start2: &str, end2: &str) -> bool {
+    let e1 = normalize_date_for_comparison(end1);
+    let s2 = normalize_date_for_comparison(start2);
+    let e2 = normalize_date_for_comparison(end2);
+    let s1 = normalize_date_for_comparison(start1);
+    // Sequential: end of one matches start of the other (exactly, not "within 1 month")
+    // Use strict less-than to exclude point-in-time facts where start == end == boundary.
+    (e1 == s2 && s1 < s2) || (e2 == s1 && s2 < s1)
+}
+
+/// Detect duplicate role entries within a document.
+/// Returns pairs of (line1, line2, fact_text) for facts that appear to be
+/// the same role at the same company.
+pub fn find_duplicate_roles(content: &str) -> Vec<(usize, usize, String)> {
+    let facts = collect_facts_with_ranges(content);
+    let mut duplicates = Vec::new();
+    for i in 0..facts.len() {
+        for j in (i + 1)..facts.len() {
+            let Some(c1) = extract_company(&facts[i].text) else {
+                continue;
+            };
+            let Some(c2) = extract_company(&facts[j].text) else {
+                continue;
+            };
+            if c1 == c2 && facts[i].text.to_lowercase() == facts[j].text.to_lowercase() {
+                duplicates.push((
+                    facts[i].line_number,
+                    facts[j].line_number,
+                    facts[i].text.clone(),
+                ));
+            }
+        }
+    }
+    duplicates
+}
+
+/// Generate duplicate questions for role entries that appear multiple times
+/// within the same document.
+pub fn generate_duplicate_role_questions(content: &str) -> Vec<ReviewQuestion> {
+    find_duplicate_roles(content)
+        .into_iter()
+        .map(|(line1, line2, text)| {
+            ReviewQuestion::new(
+                QuestionType::Duplicate,
+                Some(line2),
+                format!(
+                    "Duplicate role entry: \"{}\" appears on lines {} and {} - remove the duplicate",
+                    text, line1, line2
+                ),
+            )
+        })
+        .collect()
 }
 
 /// Check if two texts mention different proper names (2+ consecutive capitalized words).
@@ -415,6 +579,14 @@ mod tests {
         assert_eq!(questions.len(), 1);
         // Line ref should point to the first fact in the conflict
         assert_eq!(questions[0].line_ref, Some(3));
+    }
+
+    #[test]
+    fn test_reviewed_facts_skip_conflict_detection() {
+        // Both facts have recent reviewed markers — should generate no conflicts
+        let content = "# Person\n\n- CTO at Acme @t[2020..2023] <!-- reviewed:2026-01-15 -->\n- CEO at Acme @t[2022..2024] <!-- reviewed:2026-01-15 -->";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(questions.len(), 0);
     }
 
     #[test]
@@ -576,5 +748,104 @@ mod tests {
         let content = "# Person\n\n- CTO at Acme @t[=2018]\n- CEO at BigCo @t[2022..2024]";
         let questions = generate_conflict_questions(content);
         assert!(questions.is_empty());
+    }
+
+    // --- is_same_company_role tests ---
+
+    #[test]
+    fn test_extract_company() {
+        assert_eq!(extract_company("CTO at Acme Corp"), Some("acme corp".into()));
+        assert_eq!(extract_company("Engineer at Google"), Some("google".into()));
+        assert_eq!(extract_company("Lives in NYC"), None);
+    }
+
+    #[test]
+    fn test_same_company_duplicate_suppresses_conflict() {
+        let content = "# Person\n\n## Career History\n- CTO at Acme @t[2020..2023]\n\n## Current Role\n- CTO at Acme @t[2020..2023]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "Duplicate role entries should not generate conflict questions");
+    }
+
+    #[test]
+    fn test_same_company_promotion_suppresses_conflict() {
+        let content = "# Person\n\n- Engineer at Acme @t[2018..2020]\n- CTO at Acme @t[2020..2023]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "Promotion at same company should not generate conflict");
+    }
+
+    #[test]
+    fn test_different_company_still_conflicts() {
+        let content = "# Person\n\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(questions.len(), 1, "Different companies with overlap should still conflict");
+    }
+
+    #[test]
+    fn test_same_company_non_sequential_still_conflicts() {
+        // Same company but roles overlap by more than a month boundary
+        let content = "# Person\n\n- Engineer at Acme @t[2018..2022]\n- CTO at Acme @t[2020..2023]";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(questions.len(), 1, "Same company with significant overlap should still conflict");
+    }
+
+    // --- duplicate role detection tests ---
+
+    #[test]
+    fn test_generate_duplicate_role_questions() {
+        let content = "# Person\n\n## Career\n- CTO at Acme @t[2020..2023]\n\n## Summary\n- CTO at Acme @t[2020..2023]";
+        let questions = generate_duplicate_role_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].question_type, QuestionType::Duplicate);
+        assert!(questions[0].description.contains("Duplicate role entry"));
+    }
+
+    #[test]
+    fn test_no_duplicate_role_for_different_roles() {
+        let content = "# Person\n\n- Engineer at Acme @t[2018..2020]\n- CTO at Acme @t[2020..2023]";
+        let questions = generate_duplicate_role_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_dates_within_one_month() {
+        assert!(dates_within_one_month("2020-01-01", "2020-01-01"));
+        assert!(dates_within_one_month("2020-01-01", "2020-02-01"));
+        assert!(!dates_within_one_month("2020-01-01", "2020-03-01"));
+    }
+
+    // --- boundary-month sequential suppression tests ---
+
+    #[test]
+    fn test_boundary_month_different_companies_suppressed() {
+        // LinkedIn pattern: Role A ends 2023-09, Role B starts 2023-09 at different company
+        let content = "# Person\n\n- Engineer at Acme @t[2020..2023-09]\n- CTO at BigCo @t[2023-09..2024]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "Boundary-month career transition should not generate conflict");
+    }
+
+    #[test]
+    fn test_boundary_month_year_granularity_suppressed() {
+        // Same pattern at year granularity
+        let content = "# Person\n\n- Engineer at Acme @t[2018..2020]\n- CTO at BigCo @t[2020..2023]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "Boundary-year career transition should not generate conflict");
+    }
+
+    #[test]
+    fn test_real_overlap_different_companies_still_conflicts() {
+        // Genuine multi-month overlap should still flag
+        let content = "# Person\n\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(questions.len(), 1, "Real overlap should still generate conflict");
+    }
+
+    #[test]
+    fn test_boundary_month_sequential_helper() {
+        assert!(is_boundary_month_sequential("2020", "2023-09", "2023-09", "2024"));
+        assert!(is_boundary_month_sequential("2023-09", "2024", "2020", "2023-09"));
+        // Point-in-time (start == end) should NOT be treated as sequential
+        assert!(!is_boundary_month_sequential("2023", "2023", "2023", "2023"));
+        // Real overlap should not match
+        assert!(!is_boundary_month_sequential("2020", "2023", "2022", "2024"));
     }
 }

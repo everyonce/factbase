@@ -184,6 +184,26 @@ fn resolve_bedrock_region(base_url: &str) -> Option<&str> {
     }
 }
 
+/// Validate that a base_url looks like an HTTP URL for Ollama.
+/// Exits with a clear error if it looks like an AWS region or other non-URL value.
+fn validate_ollama_url(base_url: &str, section: &str, provider: &str) {
+    if base_url.starts_with("http://") || base_url.starts_with("https://") {
+        return;
+    }
+    eprintln!(
+        "error: {section}.base_url is '{}' which is not a valid URL for provider '{}'.",
+        base_url, provider
+    );
+    if base_url.contains('-') && base_url.chars().all(|c| c.is_alphanumeric() || c == '-') {
+        // Looks like an AWS region
+        eprintln!("       This looks like an AWS region. Did you mean to use provider 'bedrock'?");
+        eprintln!("hint: Set {section}.provider = 'bedrock' in config, or change {section}.base_url to an Ollama URL (e.g., http://localhost:11434).");
+    } else {
+        eprintln!("hint: Set {section}.base_url to an Ollama URL (e.g., http://localhost:11434).");
+    }
+    std::process::exit(1);
+}
+
 /// Create embedding provider from config with optional timeout override
 pub async fn setup_embedding_with_timeout(
     config: &Config,
@@ -193,20 +213,31 @@ pub async fn setup_embedding_with_timeout(
         #[cfg(feature = "bedrock")]
         "bedrock" => {
             let region = resolve_bedrock_region(config.embedding.effective_base_url());
+            let timeout = timeout_override.unwrap_or(config.embedding.timeout_secs);
             Box::new(
                 factbase::bedrock::BedrockEmbedding::new(
                     &config.embedding.model,
                     config.embedding.dimension,
                     region,
                     config.embedding.profile.as_deref(),
+                    timeout,
                 )
                 .await,
             )
         }
-        _ => {
+        #[cfg(not(feature = "bedrock"))]
+        "bedrock" => {
+            eprintln!("error: Config specifies provider 'bedrock' but this binary was built without Bedrock support.");
+            eprintln!("hint: Install with Bedrock support: cargo install --path . --features bedrock");
+            eprintln!("      Or switch to Ollama: set embedding.provider = 'ollama' in config.");
+            std::process::exit(1);
+        }
+        other => {
+            let base_url = config.embedding.effective_base_url();
+            validate_ollama_url(base_url, "embedding", other);
             let timeout = timeout_override.unwrap_or(config.embedding.timeout_secs);
             Box::new(OllamaEmbedding::with_config(
-                config.embedding.effective_base_url(),
+                base_url,
                 &config.embedding.model,
                 config.embedding.dimension,
                 timeout,
@@ -242,15 +273,25 @@ async fn create_llm(
         #[cfg(feature = "bedrock")]
         "bedrock" => {
             let region = resolve_bedrock_region(config.llm.effective_base_url());
+            let timeout = timeout_override.unwrap_or(config.llm.timeout_secs);
             Box::new(
-                factbase::bedrock::BedrockLlm::new(model, region, config.llm.profile.as_deref())
+                factbase::bedrock::BedrockLlm::new(model, region, config.llm.profile.as_deref(), timeout)
                     .await,
             )
         }
-        _ => {
+        #[cfg(not(feature = "bedrock"))]
+        "bedrock" => {
+            eprintln!("error: Config specifies provider 'bedrock' but this binary was built without Bedrock support.");
+            eprintln!("hint: Install with Bedrock support: cargo install --path . --features bedrock");
+            eprintln!("      Or switch to Ollama: set embedding.provider = 'ollama' in config.");
+            std::process::exit(1);
+        }
+        other => {
+            let base_url = config.llm.effective_base_url();
+            validate_ollama_url(base_url, "llm", other);
             let timeout = timeout_override.unwrap_or(config.llm.timeout_secs);
             Box::new(OllamaLlm::with_config(
-                config.llm.effective_base_url(),
+                base_url,
                 model,
                 timeout,
                 config.ollama.max_retries,

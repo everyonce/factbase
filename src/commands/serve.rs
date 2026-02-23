@@ -86,8 +86,12 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         let web_db = db.clone();
         let web_config = config.clone();
+        let web_llm: Option<std::sync::Arc<dyn factbase::LlmProvider>> = {
+            let llm = setup_llm_with_timeout(&config, None).await;
+            Some(std::sync::Arc::from(llm))
+        };
         let handle = tokio::spawn(async move {
-            if let Err(e) = start_web_server(&web_config, web_db, rx).await {
+            if let Err(e) = start_web_server(&web_config, web_db, web_llm, rx).await {
                 error!("Web server error: {}", e);
             }
         });

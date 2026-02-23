@@ -64,6 +64,7 @@ export function renderAnswerForm(
           ${state.submitting ? 'disabled aria-busy="true"' : ''}
         ></textarea>
         <div id="${hintId}" class="sr-only">Press Ctrl+Enter to submit. Use Dismiss to skip or Delete fact to remove.</div>
+        <div id="answer-hint-live-${escapeHtml(docId)}-${questionIndex}" class="text-xs text-gray-400 dark:text-gray-500 h-4" aria-live="polite"></div>
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <button
@@ -195,6 +196,21 @@ export function setupAnswerFormHandlers(
     await submitAnswer(docId, questionIndex, answer, callbacks);
   });
 
+  // Handle live answer type hints
+  container.addEventListener('input', (e) => {
+    const textarea = e.target as HTMLTextAreaElement;
+    if (textarea.tagName !== 'TEXTAREA') return;
+    const form = textarea.closest('.answer-form') as HTMLFormElement | null;
+    if (!form) return;
+    const docId = form.dataset.docId;
+    const qIdx = form.dataset.questionIndex;
+    if (!docId || !qIdx) return;
+    const hintEl = document.getElementById(`answer-hint-live-${docId}-${qIdx}`);
+    if (hintEl) {
+      hintEl.textContent = classifyAnswerHint(textarea.value.trim());
+    }
+  });
+
   // Handle Ctrl+Enter keyboard shortcut
   container.addEventListener('keydown', async (e) => {
     if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
@@ -215,6 +231,21 @@ export function setupAnswerFormHandlers(
       await submitAnswer(docId, questionIndex, answer, callbacks);
     }
   });
+}
+
+function classifyAnswerHint(text: string): string {
+  if (!text) return '';
+  const lower = text.toLowerCase();
+  if (lower === 'dismiss' || lower === 'ignore') return '→ Will dismiss this question';
+  if (lower === 'delete' || lower === 'remove') return '→ Will delete the referenced fact';
+  if (lower === 'defer' || lower.startsWith('defer ') || lower.startsWith('needs ')) return '→ Will defer for later review';
+  if (/^(yes|confirmed|still accurate|correct)$/i.test(lower) || (lower.startsWith('yes') && text.length < 30))
+    return '→ Will refresh last-seen date (@t[~])';
+  if (/\d{4}[-/]\d{2}/.test(text) || /^(per |via |from |according to )/i.test(lower))
+    return '→ Looks like a source citation — will add footnote';
+  if (lower.startsWith('correct:') || lower.startsWith('correction:'))
+    return '→ Will rewrite the fact with LLM assistance';
+  return '';
 }
 
 export function clearFormStates(): void {

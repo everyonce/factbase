@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Phases 1-49 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v49.1.3.
+**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v50.5.0.
 
 ### Active Work
-- No active phases. All work through Phase 49 is complete.
+- No active phases. All work through Phase 50 is complete.
 
 ## Current Configuration
 
@@ -60,7 +60,7 @@
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (20)
+## MCP Tools (21)
 
 ### Search Operations
 | Tool | Description |
@@ -99,16 +99,17 @@
 | `workflow` | Guided workflow (resolve, ingest, enrich) |
 | `scan_repository` | Index (or re-index) all documents |
 | `init_repository` | Initialize a new repository |
-| `get_duplicate_entries` | Detect entity entries duplicated across documents |
+| `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
+| `organize` | Execute reorganization actions (merge, split, move, retype, apply) |
 | `get_authoring_guide` | Get document authoring guide |
 
-## Web API Endpoints (17 total, feature-gated)
+## Web API Endpoints (20 total, feature-gated)
 
 Requires `web` feature and `web.enabled = true` in config.
 
 ### Stats
 - `GET /api/stats` - Aggregate stats
-- `GET /api/stats/review` - Review queue counts
+- `GET /api/stats/review` - Review queue counts (includes deferred)
 - `GET /api/stats/organize` - Organize suggestion counts
 
 ### Review
@@ -116,7 +117,12 @@ Requires `web` feature and `web.enabled = true` in config.
 - `GET /api/review/queue/{doc_id}` - Questions for document
 - `POST /api/review/answer/{doc_id}` - Submit answer
 - `POST /api/review/bulk-answer` - Submit multiple answers
-- `GET /api/review/status` - Queue summary
+- `GET /api/review/status` - Queue summary (includes deferred)
+
+### Actions
+- `POST /api/apply` - Apply answered review questions (requires LLM)
+- `POST /api/scan` - Trigger scan (returns CLI instructions)
+- `POST /api/check` - Trigger quality checks (returns CLI instructions)
 
 ### Organize
 - `GET /api/organize/suggestions` - List suggestions
@@ -136,12 +142,12 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: ~1058 lib tests (default features); ~1119 lib tests (with all features including web)
+- Currently: ~1058 lib tests (default features); ~1157 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
 - No external dependencies required
-- Currently: ~351 bin tests (default features); ~358 bin tests (with all features including web)
+- Currently: ~351 bin tests (default features); ~361 bin tests (with all features including web)
 
 ### Integration Tests (Require inference backend)
 - Run with: `cargo test -- --ignored`
@@ -153,7 +159,13 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Vitest with jsdom environment
 - Currently: 56 tests
 
-### Total: ~1408 unit/binary tests (default features), ~1476 (with all features) + 73+ integration tests + 56 frontend tests
+### E2E Tests (web feature, requires running server)
+- Run with: `cd web && npm run test:e2e`
+- Requires: `cargo build --features web`, Ollama with models
+- Uses Playwright with Chromium
+- Currently: 12 tests
+
+### Total: ~1408 unit/binary tests (default features), ~1518 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
 
 ## Codebase Structure
 

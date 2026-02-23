@@ -38,9 +38,21 @@ impl Database {
             Some(p) => Some(serde_json::to_string(p)?),
             None => None,
         };
+        // Remove any stale repository at the same path with a different ID
         conn.execute(
-            "INSERT OR REPLACE INTO repositories (id, name, path, perspective, created_at, last_indexed_at, last_check_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "DELETE FROM repositories WHERE path = ?1 AND id != ?2",
+            rusqlite::params![repo.path.to_string_lossy(), repo.id],
+        )?;
+        conn.execute(
+            "INSERT INTO repositories (id, name, path, perspective, created_at, last_indexed_at, last_check_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                path = excluded.path,
+                perspective = excluded.perspective,
+                created_at = excluded.created_at,
+                last_indexed_at = excluded.last_indexed_at,
+                last_check_at = excluded.last_check_at",
             rusqlite::params![
                 repo.id, repo.name, repo.path.to_string_lossy(), perspective,
                 repo.created_at.to_rfc3339(), repo.last_indexed_at.map(|t| t.to_rfc3339()),

@@ -1,6 +1,6 @@
 {
   "name": "@everyonce/factbase",
-  "version": "0.4.3",
+  "version": "0.5.1",
   "description": "Filesystem-based knowledge management with semantic search for AI agents",
   "repository": {
     "type": "git",
@@ -14,10 +14,10 @@
     "bin/factbase"
   ],
   "optionalDependencies": {
-    "@everyonce/factbase-linux-x64": "0.4.3",
-    "@everyonce/factbase-darwin-arm64": "0.4.3",
-    "@everyonce/factbase-darwin-x64": "0.4.3",
-    "@everyonce/factbase-win32-x64": "0.4.3"
+    "@everyonce/factbase-linux-x64": "0.5.1",
+    "@everyonce/factbase-darwin-arm64": "0.5.1",
+    "@everyonce/factbase-darwin-x64": "0.5.1",
+    "@everyonce/factbase-win32-x64": "0.5.1"
   },
   "keywords": [
     "factbase",

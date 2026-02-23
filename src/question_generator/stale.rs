@@ -24,12 +24,17 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
 
+    // Truncate at review queue marker — review entries are not document facts
+    let body = &content[..content
+        .find(crate::patterns::REVIEW_QUEUE_MARKER)
+        .unwrap_or(content.len())];
+
     // Parse temporal tags upfront to identify closed ranges
-    let tags = parse_temporal_tags(content);
+    let tags = parse_temporal_tags(body);
 
     // Parse source references and definitions
-    let refs = parse_source_references(content);
-    let defs = parse_source_definitions(content);
+    let refs = parse_source_references(body);
+    let defs = parse_source_definitions(body);
 
     // Build map of footnote number -> (source_type, date, def_line)
     let def_map: HashMap<u32, (&str, Option<&str>, usize)> = defs
@@ -43,10 +48,10 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
         .collect();
 
     // Build map: line_number -> inherited tag type from nearest preceding ## heading
-    let heading_tag_map = build_heading_temporal_map(content, &tags);
+    let heading_tag_map = build_heading_temporal_map(body, &tags);
 
     // Check source dates for each fact line
-    let lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = body.lines().collect();
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with closed temporal ranges — old sources are expected for historical facts
         let has_closed_range = tags.iter().any(|t| {
@@ -87,7 +92,7 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                             QuestionType::Stale,
                             Some(line_number),
                             format!(
-                                "\"{fact_text}\" - {source_type} source is {days_old} days old, is this still accurate?"
+                                "\"{fact_text}\" - {source_type} source from {date_str} may be outdated, is this still accurate?"
                             ),
                         ));
                         break; // One question per fact line
@@ -124,7 +129,7 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                                         QuestionType::Stale,
                                         Some(tag.line_number),
                                         format!(
-                                            "\"{fact_text}\" has @t[~{date_str}] ({days_old} days ago) - is this still accurate?"
+                                            "\"{fact_text}\" has @t[~{date_str}] which may be outdated - is this still accurate?"
                                         ),
                                     ));
                                 }
@@ -224,7 +229,7 @@ mod tests {
         assert_eq!(questions[0].question_type, QuestionType::Stale);
         assert_eq!(questions[0].line_ref, Some(3));
         assert!(questions[0].description.contains("LinkedIn"));
-        assert!(questions[0].description.contains("days old"));
+        assert!(questions[0].description.contains("2020-01-15"));
     }
 
     #[test]
@@ -247,7 +252,7 @@ mod tests {
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question_type, QuestionType::Stale);
         assert!(questions[0].description.contains("@t[~2020-06]"));
-        assert!(questions[0].description.contains("days ago"));
+        assert!(questions[0].description.contains("outdated"));
     }
 
     #[test]

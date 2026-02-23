@@ -6,6 +6,7 @@
 import { api, AggregateStats, ReviewStats, OrganizeStats, ApiRequestError } from '../api';
 import { renderSkeletonStats } from '../components/Loading';
 import { renderError, setupRetryHandler } from '../components/Error';
+import { toast } from '../components/Toast';
 
 interface DashboardState {
   stats: AggregateStats | null;
@@ -72,6 +73,13 @@ function updateUI(): void {
   const reviewCount = document.getElementById('review-count');
   if (reviewCount) {
     reviewCount.textContent = state.loading ? '...' : (state.review?.unanswered.toString() ?? '-');
+  }
+
+  // Update deferred count
+  const deferredCount = document.getElementById('deferred-count');
+  if (deferredCount) {
+    const deferred = state.review?.deferred ?? 0;
+    deferredCount.textContent = deferred > 0 ? `⚠ ${deferred} deferred` : '';
   }
 
   // Update organize count
@@ -147,11 +155,16 @@ export function renderDashboard(): string {
     <div class="space-y-4 sm:space-y-6">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h2 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Dashboard</h2>
-        <label class="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-300">
-          <input type="checkbox" id="auto-refresh-toggle" class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500" ${state.autoRefresh ? 'checked' : ''}>
-          <span>Auto-refresh</span>
-        </label>
+        <div class="flex items-center space-x-3">
+          <button id="scan-btn" class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 disabled:opacity-50">🔄 Scan</button>
+          <button id="check-btn" class="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">🔍 Check</button>
+          <label class="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-300">
+            <input type="checkbox" id="auto-refresh-toggle" class="rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500" ${state.autoRefresh ? 'checked' : ''}>
+            <span>Auto-refresh</span>
+          </label>
+        </div>
       </div>
+      <div id="action-result"></div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
         <a href="#/review" class="block bg-white dark:bg-gray-800 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition-shadow">
           <div class="flex items-center space-x-3">
@@ -162,6 +175,7 @@ export function renderDashboard(): string {
             </div>
           </div>
           <div id="review-count" class="mt-3 sm:mt-4 text-2xl sm:text-3xl font-bold text-blue-600 dark:text-blue-400">-</div>
+          <div id="deferred-count" class="mt-1 text-sm text-amber-600 dark:text-amber-400"></div>
         </a>
         <a href="#/organize" class="block bg-white dark:bg-gray-800 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition-shadow">
           <div class="flex items-center space-x-3">
@@ -199,8 +213,58 @@ export function initDashboard(): void {
     toggleAutoRefresh((e.target as HTMLInputElement).checked);
   });
 
+  // Set up scan button
+  document.getElementById('scan-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = '⏳ Scanning...';
+    try {
+      const result = await api.triggerScan();
+      if (result.status === 'cli_required') {
+        toast.info(result.message);
+        showActionResult(result.command);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Scan failed');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔄 Scan';
+    }
+  });
+
+  // Set up check button
+  document.getElementById('check-btn')?.addEventListener('click', async (e) => {
+    const btn = e.currentTarget as HTMLButtonElement;
+    btn.disabled = true;
+    btn.textContent = '⏳ Checking...';
+    try {
+      const result = await api.triggerCheck();
+      if (result.status === 'cli_required') {
+        toast.info(result.message);
+        showActionResult(result.command);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Check failed');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔍 Check';
+    }
+  });
+
   // Fetch initial data
   fetchData();
+}
+
+function showActionResult(command: string): void {
+  const el = document.getElementById('action-result');
+  if (el) {
+    el.innerHTML = `
+      <div class="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+        <p class="text-sm text-blue-800 dark:text-blue-200">Run in terminal:</p>
+        <code class="block mt-1 text-sm bg-blue-100 dark:bg-blue-900 px-2 py-1 rounded font-mono">${command}</code>
+      </div>
+    `;
+  }
 }
 
 export function cleanupDashboard(): void {

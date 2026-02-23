@@ -27,7 +27,12 @@ pub fn classify_answer(answer: &str) -> AnswerType {
     let lower = trimmed.to_lowercase();
 
     // Dismissal
-    if lower == "dismiss" || lower == "ignore" {
+    if lower == "dismiss"
+        || lower == "ignore"
+        || lower.starts_with("not a conflict")
+        || lower.starts_with("no conflict")
+        || lower.starts_with("not conflicting")
+    {
         return AnswerType::Dismissal;
     }
 
@@ -210,6 +215,15 @@ mod tests {
         assert_eq!(classify_answer("ignore"), AnswerType::Dismissal);
         assert_eq!(classify_answer("DISMISS"), AnswerType::Dismissal);
         assert_eq!(classify_answer("  Ignore  "), AnswerType::Dismissal);
+        assert_eq!(classify_answer("not a conflict"), AnswerType::Dismissal);
+        assert_eq!(
+            classify_answer("Not a conflict. Promotion from Director to Senior Director"),
+            AnswerType::Dismissal
+        );
+        assert_eq!(
+            classify_answer("no conflict - sequential roles with shared boundary month"),
+            AnswerType::Dismissal
+        );
     }
 
     #[test]

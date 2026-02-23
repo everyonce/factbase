@@ -93,9 +93,9 @@ pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::cross_validate::cross_validate_document;
 pub use question_generator::{
     generate_ambiguous_questions, generate_conflict_questions, generate_duplicate_questions,
-    generate_missing_questions, generate_required_field_questions,
-    generate_source_quality_questions, generate_stale_questions,
-    generate_temporal_questions,
+    generate_duplicate_role_questions, generate_missing_questions,
+    generate_required_field_questions, generate_source_quality_questions,
+    generate_stale_questions, generate_temporal_questions,
 };
 pub use scanner::{full_scan, scan_all_repositories, ScanContext, ScanOptions, Scanner};
 pub use shutdown::init_shutdown_handler;

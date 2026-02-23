@@ -43,7 +43,7 @@ use serde_json::Value;
 pub use authoring::get_authoring_guide;
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
 pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
-pub use organize::get_duplicate_entries;
+pub use organize::{organize, organize_analyze};
 pub use repository::{init_repository, scan_repository};
 pub use review::{
     answer_question, answer_questions, apply_review_answers, bulk_answer_questions,
@@ -202,7 +202,38 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "init_repository" => blocking_tool!(db, args, init_repository),
                 "apply_review_answers" => apply_review_answers(db, llm, &args, &reporter).await?,
                 "get_duplicate_entries" => {
-                    get_duplicate_entries(db, embedding, &args, &reporter).await?
+                    organize_analyze(db, embedding, &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}), &reporter).await?
+                }
+                "organize_analyze" => {
+                    organize_analyze(db, embedding, &args, &reporter).await?
+                }
+                "organize" => {
+                    organize(db, embedding, llm, &args, &reporter).await?
+                }
+                "organize_merge" => {
+                    let mut a = args.clone();
+                    a.as_object_mut().map(|m| m.insert("action".into(), "merge".into()));
+                    organize(db, embedding, llm, &a, &reporter).await?
+                }
+                "organize_split" => {
+                    let mut a = args.clone();
+                    a.as_object_mut().map(|m| m.insert("action".into(), "split".into()));
+                    organize(db, embedding, llm, &a, &reporter).await?
+                }
+                "organize_move" => {
+                    let mut a = args.clone();
+                    a.as_object_mut().map(|m| m.insert("action".into(), "move".into()));
+                    organize(db, embedding, llm, &a, &reporter).await?
+                }
+                "organize_retype" => {
+                    let mut a = args.clone();
+                    a.as_object_mut().map(|m| m.insert("action".into(), "retype".into()));
+                    organize(db, embedding, llm, &a, &reporter).await?
+                }
+                "organize_apply" => {
+                    let mut a = args.clone();
+                    a.as_object_mut().map(|m| m.insert("action".into(), "apply".into()));
+                    organize(db, embedding, llm, &a, &reporter).await?
                 }
                 "workflow" => blocking_tool!(db, args, workflow::workflow),
                 "get_authoring_guide" => get_authoring_guide(),
@@ -340,9 +371,10 @@ mod tests {
             "scan_repository",
             "init_repository",
             "apply_review_answers",
-            "get_duplicate_entries",
             "get_authoring_guide",
             "workflow",
+            "organize_analyze",
+            "organize",
         ]
         .iter()
         .map(|s| s.to_string())

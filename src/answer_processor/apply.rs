@@ -152,24 +152,46 @@ pub fn apply_source_citations(content: &str, sources: &[(&str, &str)]) -> String
         return content.to_string();
     }
 
-    // Find max existing footnote number
-    let max_footnote = content
-        .lines()
-        .filter_map(|l| SOURCE_DEF_REGEX.captures(l))
-        .filter_map(|cap| cap[1].parse::<u32>().ok())
-        .max()
-        .unwrap_or(0);
+    // Find max existing footnote number and build existing def map for dedup
+    let mut max_footnote = 0u32;
+    let mut existing_defs: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    for line in content.lines() {
+        if let Some(cap) = SOURCE_DEF_REGEX.captures(line) {
+            if let Ok(num) = cap[1].parse::<u32>() {
+                max_footnote = max_footnote.max(num);
+                // Normalize: trim the definition text for comparison
+                let def_text = cap[2].trim().to_lowercase();
+                existing_defs.entry(def_text).or_insert(num);
+            }
+        }
+    }
 
     let mut lines: Vec<String> = content.lines().map(String::from).collect();
     let mut footnote_defs: Vec<String> = Vec::new();
     let mut next_num = max_footnote + 1;
 
     for &(line_text, source_info) in sources {
-        // Find the first line containing line_text
+        // Check if an identical footnote already exists — reuse its number
+        let normalized = source_info.trim().to_lowercase();
+        let ref_num = if let Some(&existing_num) = existing_defs.get(&normalized) {
+            existing_num
+        } else {
+            // Tentatively assign next number — only commit if line is found
+            next_num
+        };
+
+        // Find the first line containing line_text (skip if line_text is empty)
+        if line_text.is_empty() {
+            continue;
+        }
         let Some(line) = lines.iter_mut().find(|l| l.contains(line_text)) else {
             continue;
         };
-        let ref_tag = format!("[^{next_num}]");
+        // Skip if this line already has this footnote ref
+        let ref_tag = format!("[^{ref_num}]");
+        if line.contains(&ref_tag) {
+            continue;
+        }
         // Insert before reviewed marker if present, otherwise append
         if let Some(m) = REVIEWED_MARKER_REGEX.find(line.as_str()) {
             let pos = line[..m.start()].trim_end().len();
@@ -177,8 +199,12 @@ pub fn apply_source_citations(content: &str, sources: &[(&str, &str)]) -> String
         } else {
             line.push_str(&format!(" {ref_tag}"));
         }
-        footnote_defs.push(format!("[^{next_num}]: {source_info}"));
-        next_num += 1;
+        // Commit the footnote definition if it's new
+        if let std::collections::hash_map::Entry::Vacant(e) = existing_defs.entry(normalized) {
+            e.insert(ref_num);
+            footnote_defs.push(format!("[^{ref_num}]: {source_info}"));
+            next_num += 1;
+        }
     }
 
     if footnote_defs.is_empty() {
@@ -221,6 +247,9 @@ pub fn apply_confirmations(content: &str, updates: &[(&str, Option<&str>, &str)]
     }
     let mut lines: Vec<String> = content.lines().map(String::from).collect();
     for &(line_text, old_tag, new_tag) in updates {
+        if line_text.is_empty() {
+            continue;
+        }
         let Some(line) = lines.iter_mut().find(|l| l.contains(line_text)) else {
             continue;
         };
@@ -274,7 +303,7 @@ pub fn identify_affected_section(
     let mut end = lines.len();
 
     // Find section start (look backwards for ## heading)
-    for i in (0..min_line.saturating_sub(1)).rev() {
+    for i in (0..min_line.saturating_sub(1).min(lines.len())).rev() {
         if lines[i].starts_with("## ") {
             start = i + 1;
             break;
@@ -282,14 +311,14 @@ pub fn identify_affected_section(
     }
 
     // Find section end (look forwards for ## heading)
-    for (i, line) in lines.iter().enumerate().skip(max_line) {
+    for (i, line) in lines.iter().enumerate().skip(max_line.min(lines.len())) {
         if line.starts_with("## ") {
             end = i;
             break;
         }
     }
 
-    let section_lines: Vec<&str> = lines[start.saturating_sub(1)..end].to_vec();
+    let section_lines: Vec<&str> = lines[start.saturating_sub(1)..end.min(lines.len())].to_vec();
     let section_content = section_lines.join("\n");
 
     Some((start, end, section_content))

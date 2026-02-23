@@ -15,7 +15,7 @@ pub enum FactbaseError {
     Io(#[from] std::io::Error),
 
     #[error("Database error: {0}")]
-    Database(#[from] rusqlite::Error),
+    Database(String),
 
     #[error("Config error: {0}")]
     Config(String),
@@ -82,6 +82,20 @@ impl FactbaseError {
 impl From<serde_yaml_ng::Error> for FactbaseError {
     fn from(e: serde_yaml_ng::Error) -> Self {
         FactbaseError::config(e.to_string())
+    }
+}
+
+impl From<rusqlite::Error> for FactbaseError {
+    fn from(e: rusqlite::Error) -> Self {
+        let msg = e.to_string();
+        if msg.contains("no such column") || msg.contains("no such table") {
+            FactbaseError::Database(format!(
+                "{msg}\nhint: Database schema is out of date. Update factbase (npm i -g @everyonce/factbase) \
+                 or delete the database and re-scan."
+            ))
+        } else {
+            FactbaseError::Database(msg)
+        }
     }
 }
 

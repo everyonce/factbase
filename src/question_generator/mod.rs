@@ -44,11 +44,11 @@ mod missing;
 mod stale;
 mod temporal;
 
-use crate::patterns::FACT_LINE_REGEX;
+use crate::patterns::{FACT_LINE_REGEX, META_COMMENTARY_REGEX};
 
 // Re-export all public items
-pub use ambiguous::generate_ambiguous_questions;
-pub use conflict::generate_conflict_questions;
+pub use ambiguous::{generate_ambiguous_questions, generate_ambiguous_questions_with_type};
+pub use conflict::{generate_conflict_questions, generate_duplicate_role_questions};
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};
@@ -67,6 +67,10 @@ pub(crate) fn iter_fact_lines(content: &str) -> impl Iterator<Item = (usize, &st
     let body = &content[..end];
     body.lines().enumerate().filter_map(|(line_idx, line)| {
         if !FACT_LINE_REGEX.is_match(line) {
+            return None;
+        }
+        // Skip LLM meta-commentary artifacts (not factual claims)
+        if META_COMMENTARY_REGEX.is_match(line) {
             return None;
         }
         let fact_text = extract_fact_text(line);
@@ -184,5 +188,21 @@ mod tests {
         let result = extract_fact_text(long_fact);
         assert!(result.ends_with("..."));
         assert!(result.len() <= 83); // 80 chars + "..."
+    }
+
+    #[test]
+    fn test_iter_fact_lines_skips_meta_commentary() {
+        let content = "# Title\n\n- Real fact about a person\n- I'll rewrite the document with corrections\n- Another real fact";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].2, "Real fact about a person");
+        assert_eq!(results[1].2, "Another real fact");
+    }
+
+    #[test]
+    fn test_iter_fact_lines_skips_rewrite_as_factual() {
+        let content = "- Rewrite my own clarification text as if it were factual content";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 0);
     }
 }

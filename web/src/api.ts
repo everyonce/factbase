@@ -24,6 +24,7 @@ export interface ReviewStats {
   total: number;
   answered: number;
   unanswered: number;
+  deferred: number;
 }
 
 export interface OrganizeStats {
@@ -66,6 +67,29 @@ export interface BulkAnswerResult {
   success: boolean;
   results: AnswerResult[];
   errors: string[];
+}
+
+// Action types
+export interface ApplyResult {
+  total_applied: number;
+  total_errors: number;
+  dry_run: boolean;
+  documents: ApplyDocResult[];
+  message: string;
+}
+
+export interface ApplyDocResult {
+  doc_id: string;
+  doc_title: string;
+  questions_applied?: number;
+  status: 'applied' | 'dry_run' | 'error';
+  error?: string;
+}
+
+export interface CliActionResult {
+  status: 'cli_required';
+  message: string;
+  command: string;
 }
 
 // Organize types
@@ -227,6 +251,35 @@ class ApiClient {
 
   async getReviewStatus(): Promise<ReviewStats> {
     return this.request('/api/review/status');
+  }
+
+  // ---------------------------------------------------------------------------
+  // Action endpoints (apply, scan, check)
+  // ---------------------------------------------------------------------------
+
+  async applyAnswers(params?: {
+    repo?: string;
+    doc_id?: string;
+    dry_run?: boolean;
+  }): Promise<ApplyResult> {
+    return this.request('/api/apply', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    });
+  }
+
+  async triggerScan(params?: { repo?: string }): Promise<CliActionResult> {
+    return this.request('/api/scan', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    });
+  }
+
+  async triggerCheck(params?: { repo?: string }): Promise<CliActionResult> {
+    return this.request('/api/check', {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    });
   }
 
   // ---------------------------------------------------------------------------

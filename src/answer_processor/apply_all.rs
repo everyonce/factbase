@@ -85,7 +85,20 @@ pub async fn apply_all_review_answers(
                 }
             }
         }
-        let Some(questions) = parse_review_queue(&doc.content) else {
+        let abs_path = match repo_paths.get(doc.repo_id.as_str()) {
+            Some(repo_path) => repo_path.join(&doc.file_path),
+            None => continue,
+        };
+        // Parse questions from the file on disk (not the database) so that
+        // line_ref values match the current file content.  If the document was
+        // enriched after the last scan the DB content is stale and its line
+        // numbers will be wrong, causing the LLM rewrite to target the wrong
+        // section and drop recently-added content.
+        let disk_content = match fs::read_to_string(&abs_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let Some(questions) = parse_review_queue(&disk_content) else {
             continue;
         };
         let answered: Vec<_> = questions
@@ -96,10 +109,6 @@ pub async fn apply_all_review_answers(
         if answered.is_empty() {
             continue;
         }
-        let abs_path = match repo_paths.get(doc.repo_id.as_str()) {
-            Some(repo_path) => repo_path.join(&doc.file_path),
-            None => continue,
-        };
         work.push((doc, answered, abs_path));
     }
 
@@ -113,13 +122,21 @@ pub async fn apply_all_review_answers(
             &format!("Applying {} question(s) to {}", count, doc.title),
         );
 
-        match apply_one_document(llm, abs_path, answered, config.dry_run).await {
-            Ok(applied) => {
+        let apply_result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            apply_one_document(llm, abs_path, answered, config.dry_run),
+        )
+        .await;
+
+        match apply_result {
+            Ok(Ok(applied)) => {
                 // Sync updated file content back to database
                 if !config.dry_run {
                     if let Ok(new_content) = fs::read_to_string(abs_path) {
                         let new_hash = content_hash(&new_content);
-                        let _ = db.update_document_content(&doc.id, &new_content, &new_hash);
+                        if let Err(e) = db.update_document_content(&doc.id, &new_content, &new_hash) {
+                            warn!(doc_id = %doc.id, error = %e, "Failed to sync content to database after apply");
+                        }
                     }
                 }
                 result.total_applied += applied;
@@ -135,7 +152,7 @@ pub async fn apply_all_review_answers(
                     error: None,
                 });
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 result.total_errors += 1;
                 warn!(doc_id = %doc.id, error = %e, "Failed to apply review answers");
                 result.documents.push(ApplyDocResult {
@@ -144,6 +161,17 @@ pub async fn apply_all_review_answers(
                     questions_applied: 0,
                     status: ApplyStatus::Error,
                     error: Some(e.to_string()),
+                });
+            }
+            Err(_) => {
+                result.total_errors += 1;
+                warn!(doc_id = %doc.id, "Timed out applying review answers (120s)");
+                result.documents.push(ApplyDocResult {
+                    doc_id: doc.id.clone(),
+                    doc_title: doc.title.clone(),
+                    questions_applied: 0,
+                    status: ApplyStatus::Error,
+                    error: Some("Timed out after 120 seconds".to_string()),
                 });
             }
         }
@@ -234,21 +262,38 @@ async fn apply_one_document(
         })
         .collect();
 
-    let all_deterministic = active_instructions.iter().all(|ia| {
-        matches!(
-            ia.instruction,
-            crate::ChangeInstruction::AddSource { .. }
-                | crate::ChangeInstruction::Delete { .. }
-                | crate::ChangeInstruction::UpdateTemporal { .. }
-                | crate::ChangeInstruction::AddTemporal { .. }
-        )
-    });
+    // Split instructions: apply deterministic ones first, then LLM for the rest
+    let deterministic: Vec<_> = active_instructions
+        .iter()
+        .filter(|ia| {
+            matches!(
+                ia.instruction,
+                crate::ChangeInstruction::AddSource { .. }
+                    | crate::ChangeInstruction::Delete { .. }
+                    | crate::ChangeInstruction::UpdateTemporal { .. }
+                    | crate::ChangeInstruction::AddTemporal { .. }
+            )
+        })
+        .collect();
+    let needs_llm: Vec<_> = active_instructions
+        .iter()
+        .filter(|ia| {
+            !matches!(
+                ia.instruction,
+                crate::ChangeInstruction::AddSource { .. }
+                    | crate::ChangeInstruction::Delete { .. }
+                    | crate::ChangeInstruction::UpdateTemporal { .. }
+                    | crate::ChangeInstruction::AddTemporal { .. }
+            )
+        })
+        .collect();
 
-    if all_deterministic {
-        let today = chrono::Local::now().date_naive();
+    let today = chrono::Local::now().date_naive();
+    let mut new_content = content.clone();
 
-        // Apply source citations to full document content
-        let source_pairs: Vec<(&str, &str)> = active_instructions
+    // Apply deterministic instructions directly (no LLM needed)
+    if !deterministic.is_empty() {
+        let source_pairs: Vec<(&str, &str)> = deterministic
             .iter()
             .filter_map(|ia| match &ia.instruction {
                 crate::ChangeInstruction::AddSource {
@@ -258,10 +303,9 @@ async fn apply_one_document(
                 _ => None,
             })
             .collect();
-        let mut new_content = apply_source_citations(&content, &source_pairs);
+        new_content = apply_source_citations(&new_content, &source_pairs);
 
-        // Apply confirmation temporal tag updates
-        let confirmation_updates: Vec<(&str, Option<&str>, &str)> = active_instructions
+        let confirmation_updates: Vec<(&str, Option<&str>, &str)> = deterministic
             .iter()
             .filter_map(|ia| match &ia.instruction {
                 crate::ChangeInstruction::UpdateTemporal {
@@ -277,9 +321,11 @@ async fn apply_one_document(
             .collect();
         new_content = apply_confirmations(&new_content, &confirmation_updates);
 
-        // Apply deletes
-        for ia in &active_instructions {
+        for ia in &deterministic {
             if let crate::ChangeInstruction::Delete { line_text } = &ia.instruction {
+                if line_text.is_empty() {
+                    continue;
+                }
                 let lines: Vec<&str> = new_content.lines().collect();
                 let filtered: Vec<&str> = lines
                     .into_iter()
@@ -289,57 +335,33 @@ async fn apply_one_document(
             }
         }
 
-        // Stamp reviewed markers on all active fact lines
-        let active_line_refs: Vec<usize> = active_instructions
+        let det_line_refs: Vec<usize> = deterministic
             .iter()
             .filter_map(|ia| ia.question.line_ref)
             .collect();
-        new_content = stamp_reviewed_lines(&new_content, &active_line_refs, &today);
-
-        // Stamp dismissed fact lines too
-        let dismissed_line_refs: Vec<usize> = interpreted
-            .iter()
-            .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-            .filter_map(|ia| ia.question.line_ref)
-            .collect();
-        if !dismissed_line_refs.is_empty() {
-            new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
-        }
-
-        new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
-        new_content = remove_processed_questions(&new_content, &dismissed_indices);
-
-        // Remove all active (non-dismiss/defer) question indices too
-        let active_indices: Vec<usize> = answered
-            .iter()
-            .zip(interpreted.iter())
-            .filter(|(_, ia)| {
-                !matches!(
-                    ia.instruction,
-                    crate::ChangeInstruction::Dismiss | crate::ChangeInstruction::Defer
-                )
-            })
-            .map(|((i, _), _)| *i)
-            .collect();
-        new_content = remove_processed_questions(&new_content, &active_indices);
-
-        new_content = normalize_review_section(&new_content);
-        write_file(file_path, &new_content)?;
-        return Ok(review_questions.len());
+        new_content = stamp_reviewed_lines(&new_content, &det_line_refs, &today);
     }
 
-    let Some((start, end, section)) = identify_affected_section(&content, &review_questions) else {
-        return Err(FactbaseError::internal(
-            "Could not identify affected section",
-        ));
-    };
+    // Apply LLM-dependent instructions (corrections, splits, generic)
+    if !needs_llm.is_empty() {
+        let llm_questions: Vec<_> = needs_llm.iter().map(|ia| ia.question.clone()).collect();
+        let Some((start, end, section)) =
+            identify_affected_section(&new_content, &llm_questions)
+        else {
+            return Err(FactbaseError::internal(
+                "Could not identify affected section",
+            ));
+        };
 
-    let new_section = apply_changes_to_section(llm, &section, &interpreted).await?;
-    let today = chrono::Local::now().date_naive();
-    let new_section = stamp_reviewed_markers(&new_section, &today);
-    let mut new_content = replace_section(&content, start, end, &new_section);
+        let llm_interpreted: Vec<InterpretedAnswer> =
+            needs_llm.into_iter().map(|ia| (*ia).clone()).collect();
+        let new_section =
+            apply_changes_to_section(llm, &section, &llm_interpreted).await?;
+        let new_section = stamp_reviewed_markers(&new_section, &today);
+        new_content = replace_section(&new_content, start, end, &new_section);
+    }
 
-    // Stamp reviewed markers on fact lines for dismissed questions only (not deferred)
+    // Stamp reviewed markers on dismissed fact lines
     let dismissed_line_refs: Vec<usize> = interpreted
         .iter()
         .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
@@ -349,9 +371,23 @@ async fn apply_one_document(
         new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
     }
 
-    // Uncheck deferred questions first (before removal shifts indices), then remove dismissed
+    // Uncheck deferred questions first (before removal shifts indices), then remove processed
     new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
+    // Remove dismissed questions
     new_content = remove_processed_questions(&new_content, &dismissed_indices);
+    // Remove all active (non-dismiss/defer) questions that were applied
+    let active_indices: Vec<usize> = answered
+        .iter()
+        .zip(interpreted.iter())
+        .filter(|(_, ia)| {
+            !matches!(
+                ia.instruction,
+                crate::ChangeInstruction::Dismiss | crate::ChangeInstruction::Defer
+            )
+        })
+        .map(|((i, _), _)| *i)
+        .collect();
+    new_content = remove_processed_questions(&new_content, &active_indices);
 
     new_content = normalize_review_section(&new_content);
     write_file(file_path, &new_content)?;
