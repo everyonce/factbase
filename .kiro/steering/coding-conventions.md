@@ -24,26 +24,28 @@ pub fn process_file(&self, path: &Path) -> Result<Document, FactbaseError> {
 
 ### Async Traits
 ```rust
-// Use async-trait crate for async trait methods
-use async_trait::async_trait;
+// Manual desugaring with BoxFuture type alias (no async-trait crate)
+use std::future::Future;
+use std::pin::Pin;
 
-#[async_trait]
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
 pub trait EmbeddingProvider: Send + Sync {
-    async fn generate(&self, text: &str) -> Result<Vec<f32>>;
+    fn generate<'a>(&'a self, text: &'a str) -> BoxFuture<'a, Result<Vec<f32>>>;
     fn dimension(&self) -> usize;
 }
 ```
 
 ### Database Access
 ```rust
-// Database wraps connection in Arc<Mutex> for thread safety
+// Database uses r2d2 connection pool for thread safety
 pub struct Database {
-    conn: Arc<Mutex<Connection>>,
+    pool: r2d2::Pool<SqliteConnectionManager>,
 }
 
 impl Database {
     pub fn get_document(&self, id: &str) -> Result<Option<Document>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.pool.get()?;
         // Use connection...
     }
 }
@@ -63,10 +65,11 @@ pub struct Config {
 impl Default for EmbeddingConfig {
     fn default() -> Self {
         Self {
-            provider: "ollama".to_string(),
-            base_url: "http://localhost:11434".to_string(),
-            model: "nomic-embed-text".to_string(),
-            dimension: 768,
+            provider: "bedrock".to_string(),
+            region: None,
+            base_url: "us-east-1".to_string(),
+            model: "amazon.titan-embed-text-v2:0".to_string(),
+            dimension: 1024,
         }
     }
 }
@@ -82,15 +85,22 @@ src/
 ├── error.rs         # Error types
 ├── models.rs        # Data structures
 ├── database.rs      # SQLite operations
-├── embedding.rs     # Embedding provider trait + Ollama impl
-├── llm.rs           # LLM provider trait + Ollama impl + LinkDetector
+├── ollama.rs        # Shared Ollama HTTP client
+├── bedrock.rs       # Amazon Bedrock provider (feature-gated)
+├── embedding.rs     # EmbeddingProvider trait + Ollama impl
+├── llm.rs           # LlmProvider trait + Ollama impl + LinkDetector
 ├── scanner.rs       # File discovery + scan orchestration
 ├── processor.rs     # Document processing (ID, title, type)
 ├── watcher.rs       # File system monitoring
 └── mcp/
     ├── mod.rs       # MCP module
     ├── server.rs    # HTTP server setup
-    └── tools.rs     # Tool implementations
+    └── tools/       # Tool implementations (18 tools)
+        ├── mod.rs
+        ├── search.rs
+        ├── entity.rs
+        ├── document.rs
+        └── review.rs
 ```
 
 ## Testing Patterns
@@ -125,17 +135,17 @@ fn test_full_scan() {
 }
 ```
 
-### Ollama Integration Tests
+### Integration Tests
 ```rust
 // Mark with #[ignore] - run with `cargo test -- --ignored`
 #[tokio::test]
 #[ignore]
 async fn test_embedding_generation() {
-    // Skip if Ollama not running
-    if !is_ollama_available().await {
+    // Skip if inference backend not available
+    if !is_backend_available().await {
         return;
     }
-    // Test with real Ollama
+    // Test with real inference backend
 }
 ```
 

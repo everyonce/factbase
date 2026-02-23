@@ -1,0 +1,466 @@
+//! Configuration management for Factbase.
+//!
+//! This module provides configuration loading, validation, and defaults.
+
+mod database;
+mod embedding;
+mod processor;
+mod server;
+mod validation;
+mod web;
+
+pub use database::DatabaseConfig;
+pub use embedding::{EmbeddingConfig, LlmConfig, OllamaConfig};
+pub use processor::{ProcessorConfig, RepositoryConfig, WatcherConfig};
+pub use server::{RateLimitConfig, ReviewConfig, ServerConfig, TemporalConfig};
+pub use validation::{validate_timeout, TIMEOUT_RANGE};
+pub use web::WebConfig;
+
+use crate::database::Database;
+use crate::error::FactbaseError;
+use database::{default_compression, default_pool_size};
+use processor::{
+    default_chunk_overlap, default_chunk_size, default_embedding_batch_size,
+    default_metadata_cache_size,
+};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::{Path, PathBuf};
+use validation::{require_non_empty, require_positive, require_range};
+
+/// Main configuration struct containing all settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Config {
+    #[serde(default)]
+    pub database: DatabaseConfig,
+    #[serde(default)]
+    pub repositories: Vec<RepositoryConfig>,
+    #[serde(default)]
+    pub watcher: WatcherConfig,
+    #[serde(default)]
+    pub processor: ProcessorConfig,
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
+    #[serde(default)]
+    pub llm: LlmConfig,
+    #[serde(default)]
+    pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+    #[serde(default)]
+    pub server: ServerConfig,
+    #[serde(default)]
+    pub temporal: TemporalConfig,
+    #[serde(default)]
+    pub review: ReviewConfig,
+    #[serde(default)]
+    pub web: WebConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            database: DatabaseConfig {
+                path: shellexpand::tilde("~/.config/factbase/factbase.db").to_string(),
+                pool_size: default_pool_size(),
+                compression: default_compression(),
+            },
+            repositories: vec![],
+            watcher: WatcherConfig {
+                debounce_ms: 500,
+                ignore_patterns: vec![
+                    "*.swp".into(),
+                    "*.tmp".into(),
+                    "*~".into(),
+                    ".git/**".into(),
+                    ".DS_Store".into(),
+                    ".factbase/**".into(),
+                ],
+            },
+            processor: ProcessorConfig {
+                max_file_size: 100000,
+                snippet_length: 200,
+                chunk_size: default_chunk_size(),
+                chunk_overlap: default_chunk_overlap(),
+                embedding_batch_size: default_embedding_batch_size(),
+                metadata_cache_size: default_metadata_cache_size(),
+            },
+            embedding: EmbeddingConfig::default(),
+            llm: LlmConfig::default(),
+            ollama: OllamaConfig::default(),
+            rate_limit: RateLimitConfig::default(),
+            server: ServerConfig::default(),
+            temporal: TemporalConfig::default(),
+            review: ReviewConfig::default(),
+            web: WebConfig::default(),
+        }
+    }
+}
+
+impl Config {
+    /// Get the default config file path
+    pub fn default_path() -> PathBuf {
+        let home = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join("factbase").join("config.yaml")
+    }
+
+    /// Check if the default config file exists
+    pub fn config_file_exists() -> bool {
+        Self::default_path().exists()
+    }
+
+    pub fn load(path: Option<&Path>) -> Result<Self, FactbaseError> {
+        let config_path = path.map(PathBuf::from).unwrap_or_else(Self::default_path);
+
+        if !config_path.exists() {
+            return Ok(Config::default());
+        }
+
+        let content = fs::read_to_string(&config_path)?;
+        let config: Config = serde_yaml_ng::from_str(&content)?;
+        config.validate()?;
+        Ok(config)
+    }
+
+    /// Get the effective review LLM model (review.model if set, otherwise llm.model)
+    pub fn review_model(&self) -> &str {
+        self.review.model.as_deref().unwrap_or(&self.llm.model)
+    }
+
+    /// Open a database connection using this config's pool size and compression settings.
+    ///
+    /// Also initializes the document metadata cache.
+    pub fn open_database(&self, path: &Path) -> Result<Database, FactbaseError> {
+        let db = Database::with_options(
+            path,
+            self.database.pool_size,
+            self.database.is_compression_enabled(),
+        )?;
+        crate::cache::init_document_cache(self.processor.metadata_cache_size);
+        Ok(db)
+    }
+
+    pub fn validate(&self) -> Result<(), FactbaseError> {
+        // Database settings
+        require_range(self.database.pool_size, 1, 32, "database.pool_size")?;
+        if self.database.compression != "none" && self.database.compression != "zstd" {
+            return Err(FactbaseError::config(
+                "database.compression must be 'none' or 'zstd'",
+            ));
+        }
+
+        // Rate limits
+        require_positive(self.rate_limit.per_second, "rate_limit.per_second")?;
+        require_positive(self.rate_limit.burst_size as u64, "rate_limit.burst_size")?;
+
+        // Embedding settings
+        require_positive(self.embedding.dimension as u64, "embedding.dimension")?;
+        require_range(self.embedding.cache_size, 1, 10000, "embedding.cache_size")?;
+
+        // Processor settings
+        require_positive(
+            self.processor.max_file_size as u64,
+            "processor.max_file_size",
+        )?;
+        require_positive(
+            self.processor.snippet_length as u64,
+            "processor.snippet_length",
+        )?;
+        require_positive(self.processor.chunk_size as u64, "processor.chunk_size")?;
+        if self.processor.chunk_overlap >= self.processor.chunk_size {
+            return Err(FactbaseError::config(
+                "processor.chunk_overlap must be less than chunk_size",
+            ));
+        }
+        require_range(
+            self.processor.metadata_cache_size,
+            1,
+            10000,
+            "processor.metadata_cache_size",
+        )?;
+
+        // Server settings
+        require_positive(self.server.port as u64, "server.port")?;
+        require_non_empty(&self.server.host, "server.host")?;
+
+        // Timeout settings
+        if let Err(e) = validate_timeout(self.embedding.timeout_secs) {
+            return Err(FactbaseError::config(
+                e.to_string().replace("--timeout", "embedding.timeout_secs"),
+            ));
+        }
+        if let Err(e) = validate_timeout(self.llm.timeout_secs) {
+            return Err(FactbaseError::config(
+                e.to_string().replace("--timeout", "llm.timeout_secs"),
+            ));
+        }
+
+        // Temporal settings
+        require_range(
+            self.temporal.min_coverage,
+            0.0,
+            1.0,
+            "temporal.min_coverage",
+        )?;
+
+        // Ollama settings
+        require_range(self.ollama.max_retries, 0, 10, "ollama.max_retries")?;
+        require_range(
+            self.ollama.retry_delay_ms,
+            100,
+            60000,
+            "ollama.retry_delay_ms",
+        )?;
+
+        // Web settings
+        require_positive(self.web.port as u64, "web.port")?;
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config() -> Config {
+        Config::default()
+    }
+
+    #[test]
+    fn test_validate_default_config() {
+        let config = valid_config();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_pool_size_zero() {
+        let mut config = valid_config();
+        config.database.pool_size = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("pool_size"));
+    }
+
+    #[test]
+    fn test_validate_pool_size_too_large() {
+        let mut config = valid_config();
+        config.database.pool_size = 33;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("pool_size"));
+    }
+
+    #[test]
+    fn test_validate_rate_limit_zero() {
+        let mut config = valid_config();
+        config.rate_limit.per_second = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("per_second"));
+    }
+
+    #[test]
+    fn test_validate_burst_size_zero() {
+        let mut config = valid_config();
+        config.rate_limit.burst_size = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("burst_size"));
+    }
+
+    #[test]
+    fn test_validate_embedding_dimension_zero() {
+        let mut config = valid_config();
+        config.embedding.dimension = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("dimension"));
+    }
+
+    #[test]
+    fn test_validate_cache_size_zero() {
+        let mut config = valid_config();
+        config.embedding.cache_size = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("cache_size"));
+    }
+
+    #[test]
+    fn test_validate_cache_size_too_large() {
+        let mut config = valid_config();
+        config.embedding.cache_size = 10001;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("cache_size"));
+    }
+
+    #[test]
+    fn test_validate_embedding_timeout_zero() {
+        let mut config = valid_config();
+        config.embedding.timeout_secs = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("embedding.timeout_secs"));
+    }
+
+    #[test]
+    fn test_validate_llm_timeout_too_large() {
+        let mut config = valid_config();
+        config.llm.timeout_secs = 301;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("llm.timeout_secs"));
+    }
+
+    #[test]
+    fn test_validate_compression_invalid() {
+        let mut config = valid_config();
+        config.database.compression = "invalid".to_string();
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("compression"));
+    }
+
+    #[test]
+    fn test_validate_compression_valid_none() {
+        let mut config = valid_config();
+        config.database.compression = "none".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_compression_valid_zstd() {
+        let mut config = valid_config();
+        config.database.compression = "zstd".to_string();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_temporal_min_coverage_valid() {
+        let mut config = valid_config();
+        config.temporal.min_coverage = 0.5;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_temporal_min_coverage_zero() {
+        let mut config = valid_config();
+        config.temporal.min_coverage = 0.0;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_temporal_min_coverage_one() {
+        let mut config = valid_config();
+        config.temporal.min_coverage = 1.0;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_temporal_min_coverage_negative() {
+        let mut config = valid_config();
+        config.temporal.min_coverage = -0.1;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("min_coverage"));
+    }
+
+    #[test]
+    fn test_validate_temporal_min_coverage_too_large() {
+        let mut config = valid_config();
+        config.temporal.min_coverage = 1.1;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("min_coverage"));
+    }
+
+    #[test]
+    fn test_review_model_default_uses_llm_model() {
+        let config = valid_config();
+        assert_eq!(config.review_model(), config.llm.model);
+    }
+
+    #[test]
+    fn test_review_model_uses_custom_when_set() {
+        let mut config = valid_config();
+        config.review.model = Some("custom-review-model".to_string());
+        assert_eq!(config.review_model(), "custom-review-model");
+    }
+
+    #[test]
+    fn test_review_config_default() {
+        let config = ReviewConfig::default();
+        assert!(config.model.is_none());
+    }
+
+    #[test]
+    fn test_ollama_config_default() {
+        let config = OllamaConfig::default();
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_delay_ms, 1000);
+    }
+
+    #[test]
+    fn test_validate_ollama_max_retries_zero() {
+        let mut config = valid_config();
+        config.ollama.max_retries = 0;
+        assert!(config.validate().is_ok()); // 0 is valid (no retries)
+    }
+
+    #[test]
+    fn test_validate_ollama_max_retries_max() {
+        let mut config = valid_config();
+        config.ollama.max_retries = 10;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_ollama_max_retries_too_large() {
+        let mut config = valid_config();
+        config.ollama.max_retries = 11;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("max_retries"));
+    }
+
+    #[test]
+    fn test_validate_ollama_retry_delay_min() {
+        let mut config = valid_config();
+        config.ollama.retry_delay_ms = 100;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_ollama_retry_delay_max() {
+        let mut config = valid_config();
+        config.ollama.retry_delay_ms = 60000;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_ollama_retry_delay_too_small() {
+        let mut config = valid_config();
+        config.ollama.retry_delay_ms = 99;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("retry_delay_ms"));
+    }
+
+    #[test]
+    fn test_validate_ollama_retry_delay_too_large() {
+        let mut config = valid_config();
+        config.ollama.retry_delay_ms = 60001;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("retry_delay_ms"));
+    }
+
+    #[test]
+    fn test_web_config_default() {
+        let config = WebConfig::default();
+        assert!(!config.enabled);
+        assert_eq!(config.port, 3001);
+    }
+
+    #[test]
+    fn test_validate_web_port_zero() {
+        let mut config = valid_config();
+        config.web.port = 0;
+        let err = config.validate().unwrap_err();
+        assert!(err.to_string().contains("web.port"));
+    }
+
+    #[test]
+    fn test_validate_web_port_valid() {
+        let mut config = valid_config();
+        config.web.port = 8080;
+        assert!(config.validate().is_ok());
+    }
+}

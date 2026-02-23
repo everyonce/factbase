@@ -1,0 +1,61 @@
+# Factbase Configuration
+# Copy to ~/.config/factbase/config.yaml
+
+database:
+  path: ~/.local/share/factbase/factbase.db
+  pool_size: 4          # Connection pool size (1-32)
+  compression: none     # Content compression: none or zstd
+
+watcher:
+  debounce_ms: 500      # Debounce window for file changes
+  ignore_patterns:
+    - ".*/**"           # Hidden directories (.git, .factbase, etc.)
+    - "*.swp"
+    - "*.tmp"
+    - "*~"
+    - ".DS_Store"
+
+processor:
+  max_file_size: 1048576   # Max file size in bytes (1MB)
+  snippet_length: 200      # Search result snippet length
+  chunk_size: 100000       # Embedding chunk size in chars (for large docs)
+  chunk_overlap: 2000      # Overlap between chunks for context continuity
+
+embedding:
+  provider: bedrock
+  region: us-east-1                        # AWS region
+  model: amazon.titan-embed-text-v2:0      # 1024 dims, 8K context
+  dimension: 1024
+  cache_size: 100              # Query embedding cache (1-10000)
+  timeout_secs: 30             # HTTP timeout (1-300)
+
+llm:
+  provider: bedrock
+  region: us-east-1                                         # AWS region
+  model: us.anthropic.claude-3-5-haiku-20241022-v1:0        # Cross-region, fast
+  timeout_secs: 30             # HTTP timeout (1-300)
+
+# --- Alternative: Ollama (self-hosted) ---
+# See docs/inference-providers.md for setup instructions.
+#
+# embedding:
+#   provider: ollama
+#   base_url: http://localhost:11434
+#   model: qwen3-embedding:0.6b   # 1024 dims, 32K context
+#   dimension: 1024
+#   cache_size: 100
+#   timeout_secs: 30
+#
+# llm:
+#   provider: ollama
+#   base_url: http://localhost:11434
+#   model: rnj-1-extended          # Extended context model (49K)
+#   timeout_secs: 30
+
+rate_limit:
+  per_second: 10    # MCP server rate limit
+  burst_size: 20    # Burst capacity
+
+server:
+  host: 127.0.0.1   # MCP server host
+  port: 3000        # MCP server port

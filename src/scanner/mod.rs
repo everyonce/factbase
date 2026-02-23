@@ -1,0 +1,98 @@
+//! Scanner module - file discovery and scan orchestration
+//!
+//! This module provides:
+//! - `Scanner` - finds markdown files respecting ignore patterns
+//! - `ScanOptions` - configuration for scan behavior
+//! - `full_scan` - performs a complete scan of a repository
+//! - `scan_all_repositories` - scans all registered repositories
+
+mod options;
+mod orchestration;
+mod progress;
+
+use glob::Pattern;
+use std::path::{Path, PathBuf};
+
+// Re-export public items
+pub use options::ScanOptions;
+pub use orchestration::{full_scan, scan_all_repositories};
+
+/// Scanner for finding markdown files in a directory
+pub struct Scanner {
+    ignore_patterns: Vec<Pattern>,
+}
+
+impl Scanner {
+    /// Create a new Scanner with the given glob ignore patterns.
+    pub fn new(ignore_patterns: &[String]) -> Self {
+        let patterns = ignore_patterns
+            .iter()
+            .filter_map(|p| Pattern::new(p).ok())
+            .collect();
+        Self {
+            ignore_patterns: patterns,
+        }
+    }
+
+    /// Find all `.md` files under root, respecting ignore patterns.
+    pub fn find_markdown_files(&self, root: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(dir) = stack.pop() {
+            let entries = match std::fs::read_dir(&dir) {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().map(|e| e != "md").unwrap_or(true) {
+                    continue;
+                }
+                let relative = path.strip_prefix(root).unwrap_or(&path);
+                let rel_str = relative.to_string_lossy();
+                if self.ignore_patterns.iter().any(|p| p.matches(&rel_str)) {
+                    continue;
+                }
+                files.push(path);
+            }
+        }
+        files.sort();
+        files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_find_markdown_files() {
+        let temp = TempDir::new().expect("TempDir should be created");
+        fs::write(temp.path().join("doc.md"), "# Doc").expect("write doc.md should succeed");
+        fs::write(temp.path().join("readme.txt"), "text").expect("write readme.txt should succeed");
+        fs::create_dir(temp.path().join("sub")).expect("create sub dir should succeed");
+        fs::write(temp.path().join("sub/nested.md"), "# Nested")
+            .expect("write nested.md should succeed");
+
+        let scanner = Scanner::new(&[]);
+        let files = scanner.find_markdown_files(temp.path());
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_ignore_patterns() {
+        let temp = TempDir::new().expect("TempDir should be created");
+        fs::write(temp.path().join("doc.md"), "# Doc").expect("write doc.md should succeed");
+        fs::write(temp.path().join("doc.md.swp"), "swap").expect("write swap file should succeed");
+
+        let scanner = Scanner::new(&["*.swp".into()]);
+        let files = scanner.find_markdown_files(temp.path());
+        assert_eq!(files.len(), 1);
+    }
+}

@@ -32,7 +32,7 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 ### 5. Modular Provider Architecture
 - `EmbeddingProvider` trait allows swapping embedding backends
 - `LlmProvider` trait allows swapping LLM backends
-- Currently using Ollama, but designed for easy provider changes
+- Currently supports Amazon Bedrock (default) and Ollama
 
 ## System Components
 
@@ -48,17 +48,18 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 │  - Finds .md files, respects ignore patterns                │
 │  - Extracts/injects document IDs                            │
 │  - Parses title, derives type from folder                   │
-│  - Generates embeddings via Ollama                          │
-│  - Detects entity links via LLM                             │
+│  - Generates embeddings via inference backend (batched, 10 at a time)  │
+│  - Detects entity links via LLM (batched, 5 at a time)      │
 └────────────────┬────────────────────────────────────────────┘
                  │
                  ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              SQLite Database                                 │
 │  - documents: metadata, content, file_path                  │
-│  - document_embeddings: 768-dim vectors (sqlite-vec)        │
+│  - document_embeddings: 1024-dim vectors (sqlite-vec)       │
 │  - document_links: cross-references between docs            │
 │  - repositories: multi-repo support                         │
+│  - Connection pool via r2d2 (configurable size 1-32)        │
 └────────────────┬────────────────────────────────────────────┘
                  │
                  ▼
@@ -72,9 +73,12 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
                  ▼
 ┌─────────────────────────────────────────────────────────────┐
 │              MCP Server                                      │
-│  - HTTP server on localhost:3000                            │
-│  - Read-only tools for AI agents                            │
-│  - search_knowledge, get_entity, list_entities              │
+│  - HTTP server on localhost:3000 (configurable)             │
+│  - 18 tools for AI agents (search, entity, CRUD, review, workflow)    │
+│  - search_knowledge, search_content, search_temporal        │
+│  - get_entity, list_entities, get_perspective               │
+│  - create/update/delete/bulk_create documents               │
+│  - Review queue tools for human-in-the-loop QA              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -87,7 +91,7 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
    - Extract or inject factbase ID header
    - Parse title from first H1 (or use filename)
    - Derive type from parent folder name
-   - Generate embedding via Ollama
+   - Generate embedding via inference backend (chunked for long docs)
    - Store in SQLite
 3. After all documents indexed:
    - Run link detection pass on ALL documents
@@ -96,7 +100,7 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 
 ### Search Flow
 1. User/agent provides natural language query
-2. Generate embedding for query via Ollama
+2. Generate embedding for query via inference backend
 3. Vector similarity search in sqlite-vec
 4. Return ranked results with snippets
 
@@ -111,24 +115,26 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 ## Configuration
 
 Global config at `~/.config/factbase/config.yaml`:
-- Database location
+- Database location and pool size
 - Repository paths
-- Ollama settings (embedding model, LLM model)
+- Inference provider settings (embedding model, LLM model, region)
 - Watcher settings (debounce, ignore patterns)
+- Rate limiting settings
 
 ## Error Handling Philosophy
 
-- **Ollama errors are fatal**: If embedding/LLM fails, exit immediately
-- User must fix the underlying issue (start Ollama, etc.)
+- **Inference errors are fatal**: If embedding/LLM fails, exit immediately
+- User must fix the underlying issue (check credentials, model access, etc.)
 - Partial indexing is worse than failing completely
 - Clear error messages tell user what to do
 
 ## Thread Safety
 
-- Database uses `Arc<Mutex<Connection>>` from Phase 1
+- Database uses `r2d2` connection pool for thread-safe access
 - Enables safe sharing between watcher thread and MCP server
 - File watcher runs in background, triggers scans
 - MCP server handles concurrent requests
+- Graceful shutdown via `shutdown.rs` module
 
 ## Multi-Repository Support
 

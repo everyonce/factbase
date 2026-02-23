@@ -1,0 +1,6 @@
+# Ignore factbase generated files
+.factbase/
+
+# Ignore any generated test files
+*.tmp
+*.bak

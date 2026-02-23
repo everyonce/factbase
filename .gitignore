@@ -1,1 +1,5 @@
 /target
+auto-dev.log
+web/node_modules
+logs/
+temp/

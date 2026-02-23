@@ -1,0 +1,8 @@
+type: test
+organization: Test Organization
+focus: comprehensive testing scenarios for factbase E2E tests
+allowed_types:
+  - person
+  - project
+  - concept
+  - note
