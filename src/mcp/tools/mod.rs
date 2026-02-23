@@ -237,7 +237,23 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                     a.as_object_mut().map(|m| m.insert("action".into(), "apply".into()));
                     organize(db, embedding, llm, &a, &reporter).await?
                 }
-                "workflow" => blocking_tool!(db, args, workflow::workflow),
+                "workflow" => {
+                    // Bootstrap needs async LLM access; other workflows are sync
+                    let is_bootstrap = args.get("workflow")
+                        .and_then(|v| v.as_str())
+                        .map_or(false, |w| w == "bootstrap");
+                    if is_bootstrap {
+                        if let Some(llm) = llm {
+                            workflow::bootstrap(llm, &args).await?
+                        } else {
+                            serde_json::json!({
+                                "error": "The bootstrap workflow requires an LLM provider. Configure an LLM in your factbase config."
+                            })
+                        }
+                    } else {
+                        blocking_tool!(db, args, workflow::workflow)
+                    }
+                }
                 "get_authoring_guide" => get_authoring_guide(),
                 "embeddings_export" => blocking_tool!(db, args, embeddings_export),
                 "embeddings_import" => blocking_tool!(db, args, embeddings_import),
@@ -496,5 +512,56 @@ mod tests {
             has_phase || has_log,
             "expected at least a phase or log message"
         );
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository_includes_coverage_in_response() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        // Doc with facts but no temporal tags or sources
+        std::fs::write(
+            repo_path.join("doc1.md"),
+            "# Doc One\n\n- Fact one\n- Fact two\n",
+        )
+        .unwrap();
+        // Doc with temporal tags and sources
+        std::fs::write(
+            repo_path.join("doc2.md"),
+            "# Doc Two\n\n- Tagged fact @t[2024] [^1]\n\n---\n[^1]: Source\n",
+        )
+        .unwrap();
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+        let args = serde_json::json!({});
+        let result = scan_repository(&db, &embedding, None, &args, &reporter)
+            .await
+            .unwrap();
+
+        // Response should include coverage fields
+        assert!(result.get("temporal_coverage_percent").is_some());
+        assert!(result.get("source_coverage_percent").is_some());
+        assert!(result.get("summary").is_some());
+
+        // 3 total facts: 1 tagged, 2 untagged → ~33% temporal
+        let temporal = result["temporal_coverage_percent"].as_f64().unwrap();
+        assert!(temporal > 0.0 && temporal < 100.0, "temporal={temporal}");
+
+        // 1 of 3 facts has source → ~33% source
+        let source = result["source_coverage_percent"].as_f64().unwrap();
+        assert!(source > 0.0 && source < 100.0, "source={source}");
+
+        // Summary string should mention coverage
+        let summary = result["summary"].as_str().unwrap();
+        assert!(summary.contains("temporal coverage:"));
+        assert!(summary.contains("source coverage:"));
     }
 }

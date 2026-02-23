@@ -113,6 +113,11 @@ pub struct ScanArgs {
     pub progress: bool,
     #[arg(long, help = "Disable progress bars but keep other output")]
     pub no_progress: bool,
+    #[arg(
+        long,
+        help = "Assess existing files without modifying anything (onboarding report)"
+    )]
+    pub assess: bool,
 }
 
 #[cfg(test)]

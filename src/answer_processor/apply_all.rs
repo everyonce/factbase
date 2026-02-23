@@ -8,12 +8,12 @@ use crate::llm::LlmProvider;
 use crate::models::QuestionType;
 use crate::organize::fs_helpers::write_file;
 use crate::processor::{content_hash, normalize_review_section, parse_review_queue};
-use crate::progress::ProgressReporter;
-use crate::{
+use crate::progress::ProgressReporter;use crate::{
     apply_changes_to_section, apply_confirmations, apply_source_citations,
     identify_affected_section, interpret_answer, remove_processed_questions, replace_section,
-    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
-    stamp_sequential_lines, uncheck_deferred_questions, InterpretedAnswer,
+    stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers,
+    stamp_sequential_by_text, stamp_sequential_lines, uncheck_deferred_questions,
+    InterpretedAnswer,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -270,9 +270,30 @@ async fn apply_one_document(
             let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
             new_content = stamp_sequential_by_text(&new_content, &text_refs);
             new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
+            // Fallback: also stamp reviewed by matching fact text in case line numbers are stale
+            let dismissed_texts: Vec<String> = interpreted
+                .iter()
+                .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
+                .flat_map(|ia| conflict_fact_texts(ia))
+                .collect();
+            let dismissed_text_refs: Vec<&str> = dismissed_texts.iter().map(|s| s.as_str()).collect();
+            new_content = stamp_reviewed_by_text(&new_content, &dismissed_text_refs, &today);
             new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
             new_content = remove_processed_questions(&new_content, &dismissed_indices);
             new_content = normalize_review_section(&new_content);
+
+            // Validate before writing
+            let validation_errors =
+                super::validate::validate_document(&content, &new_content);
+            if !validation_errors.is_empty() {
+                let details: Vec<String> =
+                    validation_errors.iter().map(|e| e.detail.clone()).collect();
+                return Err(FactbaseError::internal(format!(
+                    "Document validation failed (keeping original): {}",
+                    details.join("; ")
+                )));
+            }
+
             write_file(file_path, &new_content)?;
         }
         return Ok(0);
@@ -426,6 +447,16 @@ async fn apply_one_document(
     if !dismissed_line_refs.is_empty() {
         new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
     }
+    // Fallback: also stamp reviewed by matching fact text in case line numbers are stale
+    let all_dismissed_texts: Vec<String> = interpreted
+        .iter()
+        .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
+        .flat_map(|ia| conflict_fact_texts(ia))
+        .collect();
+    if !all_dismissed_texts.is_empty() {
+        let text_refs: Vec<&str> = all_dismissed_texts.iter().map(|s| s.as_str()).collect();
+        new_content = stamp_reviewed_by_text(&new_content, &text_refs, &today);
+    }
 
     // Uncheck deferred questions first (before removal shifts indices), then remove processed
     new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
@@ -446,6 +477,18 @@ async fn apply_one_document(
     new_content = remove_processed_questions(&new_content, &active_indices);
 
     new_content = normalize_review_section(&new_content);
+
+    // Validate the final document before writing
+    let validation_errors = super::validate::validate_document(&content, &new_content);
+    if !validation_errors.is_empty() {
+        let details: Vec<String> =
+            validation_errors.iter().map(|e| e.detail.clone()).collect();
+        return Err(FactbaseError::internal(format!(
+            "Document validation failed (keeping original): {}",
+            details.join("; ")
+        )));
+    }
+
     write_file(file_path, &new_content)?;
     Ok(review_questions.len())
 }

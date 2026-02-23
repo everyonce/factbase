@@ -14,11 +14,10 @@ use super::extract_fact_text;
 /// Recognized conflict pattern for agent guidance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictPattern {
-    /// Two roles at different entities overlapping — likely concurrent positions
-    /// (e.g., board/advisory role alongside primary employment).
-    ConcurrentRoles,
-    /// Two roles at the same entity overlapping — likely a promotion or role change.
-    Promotion,
+    /// Two overlapping facts about different entities that may legitimately coexist.
+    ParallelOverlap,
+    /// Two overlapping facts about the same entity where one likely supersedes the other.
+    SameEntityTransition,
     /// Overlap is small relative to the spans — likely date-source imprecision.
     DateImprecision,
     /// No recognized pattern — needs manual investigation.
@@ -28,8 +27,8 @@ pub enum ConflictPattern {
 impl ConflictPattern {
     pub fn tag(&self) -> &'static str {
         match self {
-            Self::ConcurrentRoles => "concurrent_roles",
-            Self::Promotion => "promotion",
+            Self::ParallelOverlap => "parallel_overlap",
+            Self::SameEntityTransition => "same_entity_transition",
             Self::DateImprecision => "date_imprecision",
             Self::Unknown => "unknown",
         }
@@ -37,9 +36,9 @@ impl ConflictPattern {
 
     pub fn hint(&self) -> &'static str {
         match self {
-            Self::ConcurrentRoles => "Likely concurrent positions (e.g., advisory/board role alongside primary employment). If both are legitimate parallel roles, answer: 'Not a conflict: concurrent roles' and mark both facts with <!-- reviewed:YYYY-MM-DD -->.",
-            Self::Promotion => "Likely a promotion or role change at the same entity. If sequential progression, answer: 'Not a conflict: promotion/role change — [earlier role] ended when [later role] began' and adjust the end date of the earlier entry.",
-            Self::DateImprecision => "Overlap is small relative to the date ranges — likely imprecision from the data source. If the roles are clearly sequential, answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.",
+            Self::ParallelOverlap => "Overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' and mark both facts with <!-- reviewed:YYYY-MM-DD -->.",
+            Self::SameEntityTransition => "Overlapping facts about the same entity where one likely supersedes the other. If sequential progression, answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the end date of the earlier entry.",
+            Self::DateImprecision => "Overlap is small relative to the date ranges — likely imprecision from the data source. If the facts are clearly sequential, answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.",
             Self::Unknown => "Investigate which fact is current.",
         }
     }
@@ -59,16 +58,16 @@ pub fn classify_conflict_pattern(
     let shared_entity = names1.iter().any(|n| names2.contains(n))
         || has_shared_significant_word(text1, text2);
 
-    // Same entity with overlap → promotion / role change
+    // Same entity with overlap → transition (one supersedes the other)
     if shared_entity {
-        return ConflictPattern::Promotion;
+        return ConflictPattern::SameEntityTransition;
     }
 
-    // Different entities overlapping → concurrent roles
+    // Different entities overlapping → parallel overlap
     // (the `facts_may_conflict` check already excluded facts with
     //  completely different proper names, so reaching here means
     //  the names are ambiguous or absent — but different-entity
-    //  overlaps with significant duration are typically concurrent)
+    //  overlaps with significant duration are typically parallel)
     let s1 = normalize_date_for_comparison(start1);
     let e1 = normalize_date_for_comparison(end1);
     let s2 = normalize_date_for_comparison(start2);
@@ -87,9 +86,9 @@ pub fn classify_conflict_pattern(
         return ConflictPattern::DateImprecision;
     }
 
-    // Significant overlap at different entities → concurrent roles
+    // Significant overlap at different entities → parallel overlap
     if overlap_months > 6 {
-        return ConflictPattern::ConcurrentRoles;
+        return ConflictPattern::ParallelOverlap;
     }
 
     ConflictPattern::Unknown
@@ -1352,23 +1351,23 @@ mod tests {
     // --- ConflictPattern classification tests ---
 
     #[test]
-    fn test_classify_concurrent_roles_different_entities() {
-        // Two roles at different entities with multi-year overlap → concurrent_roles
+    fn test_classify_parallel_overlap_different_entities() {
+        // Two facts at different entities with multi-year overlap → parallel_overlap
         let p = classify_conflict_pattern(
             "CTO at Acme", "Board Member at StartupX",
             "2018", "2023", "2020", "9999-12-31",
         );
-        assert_eq!(p, ConflictPattern::ConcurrentRoles);
+        assert_eq!(p, ConflictPattern::ParallelOverlap);
     }
 
     #[test]
-    fn test_classify_promotion_same_entity() {
-        // Two roles at the same entity → promotion
+    fn test_classify_same_entity_transition() {
+        // Two facts at the same entity → same_entity_transition
         let p = classify_conflict_pattern(
             "VP Engineering at Acme", "CTO at Acme",
             "2018", "2023", "2022", "9999-12-31",
         );
-        assert_eq!(p, ConflictPattern::Promotion);
+        assert_eq!(p, ConflictPattern::SameEntityTransition);
     }
 
     #[test]
@@ -1408,8 +1407,8 @@ mod tests {
 
     #[test]
     fn test_conflict_pattern_tags() {
-        assert_eq!(ConflictPattern::ConcurrentRoles.tag(), "concurrent_roles");
-        assert_eq!(ConflictPattern::Promotion.tag(), "promotion");
+        assert_eq!(ConflictPattern::ParallelOverlap.tag(), "parallel_overlap");
+        assert_eq!(ConflictPattern::SameEntityTransition.tag(), "same_entity_transition");
         assert_eq!(ConflictPattern::DateImprecision.tag(), "date_imprecision");
         assert_eq!(ConflictPattern::Unknown.tag(), "unknown");
     }
@@ -1417,8 +1416,8 @@ mod tests {
     #[test]
     fn test_conflict_pattern_hints_non_empty() {
         for p in [
-            ConflictPattern::ConcurrentRoles,
-            ConflictPattern::Promotion,
+            ConflictPattern::ParallelOverlap,
+            ConflictPattern::SameEntityTransition,
             ConflictPattern::DateImprecision,
             ConflictPattern::Unknown,
         ] {

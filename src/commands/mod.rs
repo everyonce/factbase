@@ -25,6 +25,7 @@ pub mod check;
 pub mod mcp;
 pub mod organize;
 pub mod paths;
+pub mod repair;
 pub mod repo;
 pub mod review;
 pub mod scan;
@@ -76,6 +77,7 @@ pub use check::cmd_check;
 #[cfg(feature = "mcp")]
 pub use mcp::cmd_mcp;
 pub use organize::cmd_organize;
+pub use repair::cmd_repair;
 pub use repo::{cmd_repo_add, cmd_repo_list, cmd_repo_remove};
 pub use review::cmd_review;
 pub use scan::cmd_scan;

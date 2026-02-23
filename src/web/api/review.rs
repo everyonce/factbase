@@ -21,7 +21,7 @@ use super::errors::ApiError;
 pub struct ReviewQueueQuery {
     /// Filter by repository ID
     pub repo: Option<String>,
-    /// Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate)
+    /// Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption)
     #[serde(rename = "type")]
     pub question_type: Option<String>,
 }
@@ -368,6 +368,7 @@ mod tests {
             "ambiguous",
             "stale",
             "duplicate",
+            "corruption",
         ] {
             let json = format!(r#"{{"type": "{}"}}"#, qtype);
             let query: ReviewQueueQuery = serde_json::from_str(&json).unwrap();

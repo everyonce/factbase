@@ -12,7 +12,8 @@ use crate::progress::ProgressReporter;
 use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
     extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
-    generate_conflict_questions, generate_duplicate_entry_questions, generate_missing_questions,
+    generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
+    generate_missing_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };
@@ -41,6 +42,8 @@ pub struct CheckDocResult {
     pub existing_unanswered: usize,
     pub existing_answered: usize,
     pub skipped_reviewed: usize,
+    /// Questions suppressed because referenced facts have reviewed markers.
+    pub suppressed_by_review: usize,
 }
 
 /// Lint all documents: generate review questions, optionally cross-validate, write results.
@@ -143,6 +146,7 @@ pub async fn check_all_documents(
                     questions.extend(generate_source_quality_questions(content));
                     questions.extend(generate_ambiguous_questions_with_type(content, doc.doc_type.as_deref(), defined_terms_ref));
                     questions.extend(generate_stale_questions(content, config.stale_days));
+                    questions.extend(generate_corruption_questions(content));
 
                     // Check for duplicate titles
                     if let Some(dupes) = title_map_ref.get(&doc.title.to_lowercase()) {
@@ -233,6 +237,17 @@ pub async fn check_all_documents(
                         })
                         .count();
 
+                    // Count questions suppressed by reviewed markers.
+                    // Strip reviewed markers from content and re-generate to measure the delta.
+                    let stripped = crate::patterns::strip_reviewed_markers(content);
+                    let mut unrestricted = generate_temporal_questions(&stripped);
+                    unrestricted.extend(generate_conflict_questions(&stripped));
+                    unrestricted.extend(generate_missing_questions(&stripped));
+                    unrestricted.extend(generate_ambiguous_questions_with_type(&stripped, doc.doc_type.as_deref(), defined_terms_ref));
+                    unrestricted.extend(generate_stale_questions(&stripped, config.stale_days));
+                    filter_sequential_conflicts(&stripped, &mut unrestricted);
+                    let suppressed_by_review = unrestricted.len().saturating_sub(questions.len());
+
                     (
                         doc,
                         questions,
@@ -241,6 +256,7 @@ pub async fn check_all_documents(
                         existing_unanswered,
                         existing_answered,
                         skipped_reviewed,
+                        suppressed_by_review,
                     )
                 }
             })
@@ -253,7 +269,7 @@ pub async fn check_all_documents(
     // Sequential cross-validation pass (one doc at a time to avoid API throttling)
     if llm.is_some() {
         progress.phase("Cross-document validation");
-        for (i, (doc, questions, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
+        for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
             if i % 25 == 0 && total_active >= 50 {
                 progress.report(i + 1, total_active, "Cross-validating");
             }
@@ -268,7 +284,7 @@ pub async fn check_all_documents(
 
     // Write results (sequential for filesystem safety)
     let mut results = Vec::new();
-    for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed) in all_results {
+    for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review) in all_results {
         // Post-filter: remove conflict questions for boundary-month sequential entries.
         // This catches conflicts from any generator (rule-based or LLM cross-validation).
         let disk_content = std::fs::read_to_string(&doc.file_path).ok();
@@ -293,7 +309,7 @@ pub async fn check_all_documents(
             info!("{}: pruned {} stale questions", doc.title, pruned_count);
         }
         // Include docs with any activity
-        if count > 0 || pruned_count > 0 || existing_unanswered > 0 || existing_answered > 0 || skipped_reviewed > 0 {
+        if count > 0 || pruned_count > 0 || existing_unanswered > 0 || existing_answered > 0 || skipped_reviewed > 0 || suppressed_by_review > 0 {
             results.push(CheckDocResult {
                 doc_id: doc.id.clone(),
                 doc_title: doc.title.clone(),
@@ -302,6 +318,7 @@ pub async fn check_all_documents(
                 existing_unanswered: existing_unanswered - pruned_count,
                 existing_answered,
                 skipped_reviewed,
+                suppressed_by_review,
             });
         }
     }

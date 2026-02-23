@@ -4,7 +4,7 @@
 //! including temporal coverage and source attribution.
 
 use crate::models::FactStats;
-use crate::patterns::{FACT_LINE_REGEX, TEMPORAL_TAG_DETECT_REGEX};
+use crate::patterns::{FACT_LINE_REGEX, TEMPORAL_TAG_FULL_REGEX};
 
 /// Count total facts (list items) in document content.
 /// A fact is defined as a list item starting with `-`, `*`, or a number followed by `.` or `)`.
@@ -19,7 +19,7 @@ pub fn count_facts(content: &str) -> usize {
 pub fn count_facts_with_temporal_tags(content: &str) -> usize {
     content
         .lines()
-        .filter(|line| FACT_LINE_REGEX.is_match(line) && TEMPORAL_TAG_DETECT_REGEX.is_match(line))
+        .filter(|line| FACT_LINE_REGEX.is_match(line) && TEMPORAL_TAG_FULL_REGEX.is_match(line))
         .count()
 }
 
@@ -146,5 +146,14 @@ mod tests {
         assert_eq!(stats.total_facts, 0);
         assert_eq!(stats.facts_with_tags, 0);
         assert!((stats.coverage - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_malformed_tags_not_counted_as_temporal() {
+        let content =
+            "- Fact @t[traditional..modern]\n- Fact @t[static]\n- Valid @t[2024]\n- No tag";
+        let stats = calculate_fact_stats(content);
+        assert_eq!(stats.total_facts, 4);
+        assert_eq!(stats.facts_with_tags, 1, "Only valid @t[2024] should count");
     }
 }

@@ -37,6 +37,7 @@
 // Submodules
 mod chunks;
 mod core;
+pub mod repair;
 mod review;
 mod sources;
 mod stats;

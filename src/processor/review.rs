@@ -431,6 +431,7 @@ pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> S
                 QuestionType::Ambiguous => "ambiguous",
                 QuestionType::Stale => "stale",
                 QuestionType::Duplicate => "duplicate",
+                QuestionType::Corruption => "corruption",
             };
             {
                 write_str!(
@@ -882,7 +883,7 @@ Line 3
     fn test_normalize_conflict_desc_strips_pattern_tag() {
         assert_eq!(
             normalize_conflict_desc(
-                "\"Role A\" overlaps with \"Role B\" (line:5) [pattern:concurrent_roles]"
+                "\"Role A\" overlaps with \"Role B\" (line:5) [pattern:parallel_overlap]"
             ),
             "\"Role A\" overlaps with \"Role B\""
         );
@@ -891,7 +892,7 @@ Line 3
     #[test]
     fn test_normalize_conflict_desc_pattern_tag_without_line_ref() {
         assert_eq!(
-            normalize_conflict_desc("\"Role A\" overlaps with \"Role B\" [pattern:promotion]"),
+            normalize_conflict_desc("\"Role A\" overlaps with \"Role B\" [pattern:same_entity_transition]"),
             "\"Role A\" overlaps with \"Role B\""
         );
     }

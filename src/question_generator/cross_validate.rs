@@ -48,7 +48,7 @@ fn extract_title(content: &str, doc_id: &str) -> String {
     content
         .lines()
         .find(|l| l.starts_with("# "))
-        .map_or_else(|| doc_id.to_string(), |l| l[2..].trim().to_string())
+        .map_or_else(|| doc_id.to_string(), |l| crate::patterns::clean_title(&l[2..]))
 }
 
 /// Build the LLM prompt for a batch of facts with their cross-document context.

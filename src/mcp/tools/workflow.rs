@@ -9,10 +9,15 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
+use crate::llm::LlmProvider;
 use crate::models::Perspective;
 use serde_json::Value;
 
+use super::helpers::{build_quality_stats, detect_weak_identification};
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
+
+/// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
+const FORMAT_RULES: &str = "\n\n**Format rules (quick ref):**\n- Temporal tags on every dynamic fact: `@t[=2024-03]` point in time, `@t[2020..2023]` range, `@t[2024..]` ongoing, `@t[~2024]` approximate/last-verified, `@t[?]` unknown\n- Source footnotes on every fact: `[^1]` inline, then `---\\n[^1]: Source description, date` at bottom\n- Every fact that can change needs a temporal tag; every fact needs a source\n- Call get_authoring_guide for the full format reference";
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -29,13 +34,26 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             Ok(resolve_step(step, args, &perspective, deferred))
         }
         "ingest" => Ok(ingest_step(step, args, &perspective)),
-        "enrich" => Ok(enrich_step(step, args, &perspective)),
+        "enrich" => Ok(enrich_step(step, args, &perspective, db)),
+        "improve" => {
+            let doc_id = get_str_arg(args, "doc_id");
+            let skip = parse_skip_steps(args);
+            Ok(improve_step(step, doc_id, &perspective, &skip, db))
+        }
+        "setup" => Ok(setup_step(step, args)),
+        "bootstrap" => Ok(serde_json::json!({
+            "error": "The bootstrap workflow requires an LLM provider. Make sure your factbase instance has an LLM configured.",
+            "hint": "Bootstrap is handled as an async workflow. If you're seeing this, the routing in mod.rs didn't intercept it."
+        })),
         "list" => Ok(serde_json::json!({
             "workflows": [
+                {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure using LLM. Provide domain='mycology' (or any domain) and get suggested document types, folder structure, templates, temporal patterns, and example documents. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
+                {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
                 {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
                 {"name": "resolve", "description": "Fix quality issues by resolving review queue questions using external sources"},
                 {"name": "ingest", "description": "Research a topic and create/update factbase documents"},
-                {"name": "enrich", "description": "Find and fill gaps in existing documents"}
+                {"name": "enrich", "description": "Find and fill gaps in existing documents"},
+                {"name": "improve", "description": "Improve a single document end-to-end: cleanup, resolve questions, enrich, then quality check. Requires doc_id."}
             ]
         })),
         _ => Ok(serde_json::json!({
@@ -99,6 +117,147 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
         "\n\nRequired fields per document type:\n{}",
         hints.join("\n")
     )
+}
+
+fn setup_step(step: usize, args: &Value) -> Value {
+    let path = get_str_arg(args, "path").unwrap_or("the target directory");
+    let total = 5;
+    match step {
+        1 => serde_json::json!({
+            "workflow": "setup",
+            "step": 1, "total_steps": total,
+            "instruction": format!("Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions."),
+            "next_tool": "init_repository",
+            "suggested_args": {"path": path},
+            "when_done": "Call workflow with workflow='setup', step=2"
+        }),
+        2 => serde_json::json!({
+            "workflow": "setup",
+            "step": 2, "total_steps": total,
+            "instruction": format!("Configure the repository's perspective. Read the perspective.yaml file in '{path}' and update it with:\n\n1. **focus**: What this knowledge base is about (e.g., 'Mycology research and species identification', 'Customer relationship tracking')\n2. **organization**: Who maintains it (optional)\n3. **allowed_types**: Suggested document types as folder names (e.g., ['species', 'habitats', 'researchers'] or ['people', 'companies', 'projects'])\n\nThe perspective helps factbase tailor quality checks and workflows to the domain. Write the updated perspective.yaml back to disk.\n\nAlso plan the folder structure — each top-level folder becomes a document type. For example:\n```\n{path}/\n  species/\n  habitats/\n  field-notes/\n  definitions/\n```"),
+            "note": "Use your file-writing tools to update perspective.yaml. The folder structure will be created as documents are added.",
+            "when_done": "Call workflow with workflow='setup', step=3"
+        }),
+        3 => serde_json::json!({
+            "workflow": "setup",
+            "step": 3, "total_steps": total,
+            "instruction": format!("Create 2-3 example documents using create_document.\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{FORMAT_RULES}"),
+            "next_tool": "create_document",
+            "when_done": "Call workflow with workflow='setup', step=4"
+        }),
+        4 => serde_json::json!({
+            "workflow": "setup",
+            "step": 4, "total_steps": total,
+            "instruction": "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. Then call check_repository to see initial quality.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.",
+            "next_tool": "scan_repository",
+            "when_done": "Call workflow with workflow='setup', step=5"
+        }),
+        5 => serde_json::json!({
+            "workflow": "setup",
+            "step": 5, "total_steps": total,
+            "instruction": "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.",
+            "complete": true
+        }),
+        _ => serde_json::json!({
+            "workflow": "setup",
+            "complete": true,
+            "instruction": "Workflow complete."
+        }),
+    }
+}
+
+/// Build the LLM prompt for domain-aware KB structure generation.
+fn build_bootstrap_prompt(domain: &str, entity_types: Option<&str>) -> String {
+    let entity_hint = entity_types
+        .map(|t| format!("\nThe user has suggested these entity types: {t}"))
+        .unwrap_or_default();
+
+    format!(
+        r##"You are designing a knowledge base structure for the domain: "{domain}"{entity_hint}
+
+Generate a JSON object with these fields:
+
+1. "document_types": array of objects, each with:
+   - "name": lowercase-hyphenated folder name (e.g. "species", "field-notes")
+   - "description": one-line description of what this type holds
+
+2. "folder_structure": array of folder paths to create (e.g. ["species/", "habitats/", "definitions/"])
+
+3. "templates": object mapping each document type name to a markdown template string. Each template should:
+   - Start with a placeholder title heading
+   - Have 2-3 section headings appropriate for the type
+   - Include example bullet points with @t[...] temporal tags where facts change over time
+   - Include footnote source citations and a --- separator with source descriptions
+   - Be realistic for the domain
+
+4. "temporal_patterns": object with:
+   - "dynamic": array of things that change over time in this domain (e.g. "taxonomy revisions", "conservation status")
+   - "static": array of things that don't change (e.g. "original description date", "chemical formula")
+
+5. "source_types": array of typical citation sources for this domain (e.g. "journal paper", "field guide", "herbarium record")
+
+6. "perspective": object with:
+   - "focus": one-line description of what this knowledge base tracks
+   - "allowed_types": array of the document type names
+
+7. "examples": array of 1-2 fully worked example documents as markdown strings, using the templates above with realistic domain content. Include temporal tags and source footnotes.
+
+Return ONLY valid JSON, no markdown fences or explanation."##
+    )
+}
+
+/// Parse the LLM response, extracting JSON from the text.
+fn parse_bootstrap_response(response: &str) -> Option<Value> {
+    serde_json::from_str(response).ok().or_else(|| {
+        response.find('{').and_then(|start| {
+            response
+                .rfind('}')
+                .and_then(|end| serde_json::from_str(&response[start..=end]).ok())
+        })
+    })
+}
+
+/// Run the bootstrap workflow: use LLM to generate domain-specific KB structure.
+pub async fn bootstrap(
+    llm: &dyn LlmProvider,
+    args: &Value,
+) -> Result<Value, FactbaseError> {
+    let domain = get_str_arg_required(args, "domain")?;
+    let entity_types = get_str_arg(args, "entity_types");
+    let path = get_str_arg(args, "path").unwrap_or("the target directory");
+
+    let prompt = build_bootstrap_prompt(&domain, entity_types);
+    let response = llm.complete(&prompt).await?;
+
+    let suggestions = parse_bootstrap_response(&response).unwrap_or_else(|| {
+        serde_json::json!({
+            "error": "Could not parse LLM response as JSON. Raw response included.",
+            "raw_response": response
+        })
+    });
+
+    let has_error = suggestions.get("error").is_some();
+
+    Ok(serde_json::json!({
+        "workflow": "bootstrap",
+        "domain": domain,
+        "suggestions": suggestions,
+        "next_steps": if has_error {
+            serde_json::json!([
+                "The LLM response could not be parsed. Try calling workflow='bootstrap' again with a more specific domain description.",
+            ])
+        } else {
+            serde_json::json!([
+                format!("1. Call init_repository with path='{path}' to create the repository"),
+                "2. Write the suggested perspective to perspective.yaml (use the 'perspective' field from suggestions)",
+                "3. Create the folder structure listed in suggestions.folder_structure",
+                "4. Create 1-2 starter documents using the templates and examples provided",
+                "5. Call scan_repository to index everything",
+                "6. Use workflow='update' to verify quality",
+            ])
+        },
+        "note": "These are suggestions — adapt them to your needs. The templates and folder structure can be modified at any time."
+    }))
 }
 
 fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
@@ -169,11 +328,11 @@ fn resolve_step(
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:concurrent_roles] — Two positions at different entities overlapping. This is normal for advisory/board roles alongside primary employment. If both are legitimate parallel roles, answer: 'Not a conflict: concurrent roles' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:promotion] — Two roles at the same entity overlapping. Usually a promotion or role change where date sources lack precise transition dates. Answer: 'Not a conflict: promotion/role change — [earlier role] ended when [later role] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
+            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Use your other tools (web search, APIs, file access) to research the answer\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: Research the date. Answer: 'Started [date] per [source]'\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
             "next_tool": "answer_question",
             "conflict_patterns": {
-                "concurrent_roles": "Two positions at different entities overlapping — likely legitimate parallel roles (advisory/board + primary). Answer: 'Not a conflict: concurrent roles'.",
-                "promotion": "Two roles at the same entity overlapping — likely a promotion or role change. Adjust the earlier entry's end date.",
+                "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
+                "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
                 "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
                 "unknown": "No recognized pattern — investigate which fact is current."
             },
@@ -226,7 +385,7 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Every dynamic fact needs a temporal tag:\n  @t[2020..2023] = date range, @t[2024..] = ongoing, @t[=2024-03] = event date, @t[~2025-02] = last verified, @t[?] = unverified\n- Add source footnotes: [^1] on the fact, [^1]: Source type, date at the bottom — sources must be traceable (include URLs, dates, channels)\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers{fields}"),
+            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers{fields}{FORMAT_RULES}"),
             "next_tool": "create_document",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
@@ -246,31 +405,106 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
     }
 }
 
-fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> Value {
+/// Build quality stats JSON for a single entity by doc_id.
+fn entity_quality(db: &Database, doc_id: &str) -> Option<Value> {
+    let doc = db.get_document(doc_id).ok()??;
+    let outgoing_links = db.get_links_from(doc_id).unwrap_or_default();
+    let incoming_links = db.get_links_to(doc_id).unwrap_or_default();
+    let mut stats = build_quality_stats(&doc.content, outgoing_links.len(), incoming_links.len());
+    let contexts: Vec<&str> = incoming_links
+        .iter()
+        .filter_map(|l| l.context.as_deref())
+        .filter(|c| !c.is_empty())
+        .collect();
+    if let Some(suggested) = detect_weak_identification(&doc.title, &doc.content, &contexts) {
+        let obj = stats.as_object_mut().unwrap();
+        obj.insert("weak_identification".into(), Value::String(suggested));
+        let score = obj["attention_score"].as_u64().unwrap_or(0);
+        obj.insert("attention_score".into(), Value::Number((score + 3).into()));
+    }
+    Some(stats)
+}
+
+/// Build a bulk quality summary for all entities, sorted by attention_score descending.
+fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&str>) -> Value {
+    let docs = match db.list_documents(doc_type, repo, None, 200) {
+        Ok(d) => d,
+        Err(_) => return Value::Null,
+    };
+    if docs.is_empty() {
+        return serde_json::json!([]);
+    }
+    let doc_ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+    let links_map = db.get_links_for_documents(&doc_ids).unwrap_or_default();
+
+    let mut items: Vec<Value> = docs
+        .iter()
+        .map(|doc| {
+            let empty = (Vec::new(), Vec::new());
+            let (outgoing, incoming) = links_map
+                .get(&doc.id)
+                .unwrap_or(&empty);
+            let mut stats = build_quality_stats(&doc.content, outgoing.len(), incoming.len());
+            let obj = stats.as_object_mut().unwrap();
+            obj.insert("id".into(), Value::String(doc.id.clone()));
+            obj.insert("title".into(), Value::String(doc.title.clone()));
+            if let Some(ref t) = doc.doc_type {
+                obj.insert("type".into(), Value::String(t.clone()));
+            }
+            let contexts: Vec<&str> = incoming
+                .iter()
+                .filter_map(|l| l.context.as_deref())
+                .filter(|c| !c.is_empty())
+                .collect();
+            if let Some(suggested) =
+                detect_weak_identification(&doc.title, &doc.content, &contexts)
+            {
+                obj.insert("weak_identification".into(), Value::String(suggested));
+                let score = obj["attention_score"].as_u64().unwrap_or(0);
+                obj.insert("attention_score".into(), Value::Number((score + 3).into()));
+            }
+            stats
+        })
+        .collect();
+
+    items.sort_by(|a, b| {
+        let sa = a["attention_score"].as_u64().unwrap_or(0);
+        let sb = b["attention_score"].as_u64().unwrap_or(0);
+        sb.cmp(&sa)
+    });
+    Value::Array(items)
+}
+
+fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database) -> Value {
     let doc_type = get_str_arg(args, "doc_type").unwrap_or("all types");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
     let total = 4;
     match step {
-        1 => serde_json::json!({
-            "workflow": "enrich",
-            "step": 1, "total_steps": total,
-            "instruction": format!("List documents to review. Call list_entities to browse documents{}. Then call get_document_stats on each to find which ones need attention (low temporal coverage, missing sources, few links).{ctx}",
-                if doc_type != "all types" { format!(" filtered by type '{doc_type}'") } else { String::new() }),
-            "next_tool": "list_entities",
-            "when_done": "Call workflow with workflow='enrich', step=2"
-        }),
+        1 => {
+            let type_filter = if doc_type != "all types" { Some(doc_type) } else { None };
+            let repo_filter = get_str_arg(args, "repo");
+            let quality = bulk_quality(db, type_filter, repo_filter);
+            serde_json::json!({
+                "workflow": "enrich",
+                "step": 1, "total_steps": total,
+                "instruction": format!("Review the entity_quality list below (sorted by attention_score, highest first). Pick entities that need work — high attention_score means more gaps. Then call get_entity on each to read full content.{ctx}"),
+                "entity_quality": quality,
+                "next_tool": "get_entity",
+                "when_done": "Call workflow with workflow='enrich', step=2"
+            })
+        },
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too{fields}"),
+            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists in the data (check the weak_identification field in entity_quality), update the title via update_document\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too{fields}"),
             "next_tool": "get_entity",
             "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": format!("Research the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If your research answers any existing review questions, call answer_question to resolve them{ctx}"),
+            "instruction": format!("Research the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them{ctx}{FORMAT_RULES}"),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
@@ -290,9 +524,150 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
     }
 }
 
+/// Parse the `skip` parameter into a list of step names to skip.
+fn parse_skip_steps(args: &Value) -> Vec<String> {
+    if let Some(arr) = args.get("skip").and_then(|v| v.as_array()) {
+        arr.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+            .collect()
+    } else if let Some(s) = get_str_arg(args, "skip") {
+        s.split(',').map(|s| s.trim().to_lowercase()).collect()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Map logical step names to their step numbers for the improve workflow.
+const IMPROVE_STEPS: &[&str] = &["cleanup", "resolve", "enrich", "check"];
+
+/// Compute the effective step sequence, skipping any steps in `skip`.
+fn effective_steps(skip: &[String]) -> Vec<(usize, &'static str)> {
+    IMPROVE_STEPS
+        .iter()
+        .enumerate()
+        .filter(|(_, name)| !skip.contains(&name.to_string()))
+        .map(|(i, name)| (i + 1, *name))
+        .collect()
+}
+
+fn improve_step(
+    step: usize,
+    doc_id: Option<&str>,
+    perspective: &Option<Perspective>,
+    skip: &[String],
+    db: &Database,
+) -> Value {
+    let steps = effective_steps(skip);
+    let total = steps.len();
+
+    if total == 0 {
+        return serde_json::json!({
+            "workflow": "improve",
+            "error": "All steps were skipped. Nothing to do."
+        });
+    }
+
+    // Map user-facing step number to the logical step name
+    let Some(&(_, step_name)) = steps.get(step - 1) else {
+        return serde_json::json!({
+            "workflow": "improve",
+            "complete": true,
+            "instruction": "Workflow complete. Document improvement finished."
+        });
+    };
+
+    let ctx = perspective_context(perspective);
+    let fields = required_fields_hint(perspective);
+    let stale = stale_days(perspective);
+    let doc_hint = doc_id.map(|id| format!(" for document '{id}'")).unwrap_or_default();
+    let doc_arg = doc_id.map(|id| serde_json::json!(id));
+    let skipped: Vec<&str> = skip.iter().map(|s| s.as_str()).collect();
+    let next_step_hint = if step < total {
+        format!("Call workflow with workflow='improve', step={}{}", step + 1,
+            doc_id.map(|id| format!(", doc_id='{id}'")).unwrap_or_default())
+    } else {
+        String::new()
+    };
+
+    // Include quality stats on step 1 so the agent has immediate context
+    let quality = if step == 1 {
+        doc_id.and_then(|id| entity_quality(db, id))
+    } else {
+        None
+    };
+
+    let mut result = match step_name {
+        "cleanup" => serde_json::json!({
+            "workflow": "improve",
+            "step": step, "total_steps": total,
+            "step_name": "cleanup",
+            "doc_id": doc_arg,
+            "skipped_steps": skipped,
+            "instruction": format!("Read the document and fix any issues{doc_hint}. Call get_entity with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call update_document to fix them. If the document looks clean, move to the next step.{ctx}"),
+            "next_tool": "get_entity",
+            "suggested_args": {"id": doc_arg},
+            "when_done": next_step_hint
+        }),
+        "resolve" => serde_json::json!({
+            "workflow": "improve",
+            "step": step, "total_steps": total,
+            "step_name": "resolve",
+            "doc_id": doc_arg,
+            "skipped_steps": skipped,
+            "instruction": format!("Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: Research the date\n- ambiguous: Clarify the term or create a definitions document\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, call apply_review_answers with doc_id to apply changes to the document.{ctx}"),
+            "next_tool": "get_review_queue",
+            "suggested_args": {"doc_id": doc_arg, "include_context": true},
+            "policy": {"stale_days": stale},
+            "when_done": next_step_hint
+        }),
+        "enrich" => serde_json::json!({
+            "workflow": "improve",
+            "step": step, "total_steps": total,
+            "step_name": "enrich",
+            "doc_id": doc_arg,
+            "skipped_steps": skipped,
+            "instruction": format!("Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title{fields}\n\nResearch the gaps using your other tools, then call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely{ctx}"),
+            "next_tool": "get_entity",
+            "suggested_args": {"id": doc_arg},
+            "when_done": next_step_hint
+        }),
+        "check" => {
+            let compare_note = if !skip.is_empty() {
+                ""
+            } else {
+                "\n\nCompare the question count to what existed before cleanup — report the net change as a measure of improvement."
+            };
+            serde_json::json!({
+                "workflow": "improve",
+                "step": step, "total_steps": total,
+                "step_name": "check",
+                "doc_id": doc_arg,
+                "skipped_steps": skipped,
+                "instruction": format!("Verify the document quality{doc_hint}. Call generate_questions with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}"),
+                "next_tool": "generate_questions",
+                "suggested_args": {"doc_id": doc_arg, "dry_run": true},
+                "complete": true
+            })
+        }
+        _ => serde_json::json!({
+            "workflow": "improve",
+            "complete": true,
+            "instruction": "Workflow complete."
+        }),
+    };
+
+    if let Some(q) = quality {
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("entity_quality".into(), q);
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::tests::test_db;
     use crate::models::{Perspective, ReviewPerspective};
     use std::collections::HashMap;
 
@@ -370,11 +745,21 @@ mod tests {
     #[test]
     fn test_enrich_includes_required_fields() {
         let p = mock_perspective();
-        let step = enrich_step(2, &serde_json::json!({}), &p);
+        let (db, _tmp) = test_db();
+        let step = enrich_step(2, &serde_json::json!({}), &p, &db);
         assert!(step["instruction"]
             .as_str()
             .unwrap()
             .contains("current_role"));
+    }
+
+    #[test]
+    fn test_enrich_step2_mentions_weak_identification() {
+        let (db, _tmp) = test_db();
+        let step = enrich_step(2, &serde_json::json!({}), &None, &db);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("Weak identification"));
+        assert!(instruction.contains("weak_identification"));
     }
 
     #[test]
@@ -410,15 +795,458 @@ mod tests {
     fn test_resolve_step2_includes_conflict_patterns() {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0);
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("[pattern:concurrent_roles]"));
-        assert!(instruction.contains("[pattern:promotion]"));
+        assert!(instruction.contains("[pattern:parallel_overlap]"));
+        assert!(instruction.contains("[pattern:same_entity_transition]"));
         assert!(instruction.contains("[pattern:date_imprecision]"));
         assert!(instruction.contains("[pattern:unknown]"));
         // Structured conflict_patterns field should also be present
         let patterns = &step["conflict_patterns"];
-        assert!(patterns["concurrent_roles"].is_string());
-        assert!(patterns["promotion"].is_string());
+        assert!(patterns["parallel_overlap"].is_string());
+        assert!(patterns["same_entity_transition"].is_string());
         assert!(patterns["date_imprecision"].is_string());
         assert!(patterns["unknown"].is_string());
+    }
+
+    // --- improve workflow tests ---
+
+    #[test]
+    fn test_improve_step1_cleanup() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, Some("abc123"), &None, &[], &db);
+        assert_eq!(step["workflow"], "improve");
+        assert_eq!(step["step"], 1);
+        assert_eq!(step["total_steps"], 4);
+        assert_eq!(step["step_name"], "cleanup");
+        assert_eq!(step["doc_id"], "abc123");
+        assert!(step["instruction"].as_str().unwrap().contains("abc123"));
+        assert_eq!(step["next_tool"], "get_entity");
+    }
+
+    #[test]
+    fn test_improve_step2_resolve() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(2, Some("abc123"), &None, &[], &db);
+        assert_eq!(step["step_name"], "resolve");
+        assert_eq!(step["next_tool"], "get_review_queue");
+        assert_eq!(step["policy"]["stale_days"], 365);
+    }
+
+    #[test]
+    fn test_improve_step3_enrich() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(3, Some("abc123"), &None, &[], &db);
+        assert_eq!(step["step_name"], "enrich");
+        assert_eq!(step["next_tool"], "get_entity");
+    }
+
+    #[test]
+    fn test_improve_step4_check() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(4, Some("abc123"), &None, &[], &db);
+        assert_eq!(step["step_name"], "check");
+        assert_eq!(step["next_tool"], "generate_questions");
+        assert!(step["complete"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_improve_past_last_step() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(5, Some("abc123"), &None, &[], &db);
+        assert!(step["complete"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_improve_with_perspective() {
+        let p = mock_perspective();
+        let (db, _tmp) = test_db();
+        let step = improve_step(2, Some("abc123"), &p, &[], &db);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("Acme Corp"));
+        assert_eq!(step["policy"]["stale_days"], 180);
+    }
+
+    #[test]
+    fn test_improve_skip_cleanup() {
+        let skip = vec!["cleanup".to_string()];
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, Some("abc123"), &None, &skip, &db);
+        assert_eq!(step["step_name"], "resolve");
+        assert_eq!(step["total_steps"], 3);
+    }
+
+    #[test]
+    fn test_improve_skip_multiple() {
+        let skip = vec!["cleanup".to_string(), "enrich".to_string()];
+        let (db, _tmp) = test_db();
+        let step1 = improve_step(1, Some("abc123"), &None, &skip, &db);
+        assert_eq!(step1["step_name"], "resolve");
+        assert_eq!(step1["total_steps"], 2);
+        let step2 = improve_step(2, Some("abc123"), &None, &skip, &db);
+        assert_eq!(step2["step_name"], "check");
+        assert!(step2["complete"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_improve_skip_all_returns_error() {
+        let skip: Vec<String> = IMPROVE_STEPS.iter().map(|s| s.to_string()).collect();
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, Some("abc123"), &None, &skip, &db);
+        assert!(step["error"].is_string());
+    }
+
+    #[test]
+    fn test_improve_no_doc_id() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, None, &None, &[], &db);
+        assert_eq!(step["step_name"], "cleanup");
+        // doc_id should be null
+        assert!(step["doc_id"].is_null());
+    }
+
+    #[test]
+    fn test_parse_skip_steps_string() {
+        let args = serde_json::json!({"skip": "cleanup, enrich"});
+        let skip = parse_skip_steps(&args);
+        assert_eq!(skip, vec!["cleanup", "enrich"]);
+    }
+
+    #[test]
+    fn test_parse_skip_steps_array() {
+        let args = serde_json::json!({"skip": ["resolve", "check"]});
+        let skip = parse_skip_steps(&args);
+        assert_eq!(skip, vec!["resolve", "check"]);
+    }
+
+    #[test]
+    fn test_parse_skip_steps_empty() {
+        let args = serde_json::json!({});
+        let skip = parse_skip_steps(&args);
+        assert!(skip.is_empty());
+    }
+
+    #[test]
+    fn test_improve_skipped_steps_reported() {
+        let skip = vec!["cleanup".to_string()];
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, Some("abc123"), &None, &skip, &db);
+        let skipped = step["skipped_steps"].as_array().unwrap();
+        assert_eq!(skipped.len(), 1);
+        assert_eq!(skipped[0], "cleanup");
+    }
+
+    #[test]
+    fn test_improve_enrich_includes_required_fields() {
+        let p = mock_perspective();
+        let (db, _tmp) = test_db();
+        let step = improve_step(3, Some("abc123"), &p, &[], &db);
+        assert!(step["instruction"].as_str().unwrap().contains("current_role"));
+    }
+
+    // --- quality stats tests ---
+
+    fn insert_test_doc(db: &Database, id: &str, content: &str) {
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+        test_repo_in_db(db, "test-repo", std::path::Path::new("/tmp/test"));
+        db.upsert_document(&Document {
+            id: id.to_string(),
+            content: content.to_string(),
+            title: format!("Doc {id}"),
+            file_path: format!("{id}.md"),
+            ..Document::test_default()
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn test_improve_step1_includes_entity_quality_when_doc_exists() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:doc001 -->\n# Test\n\n- Fact one @t[2024-01] [^1]\n- Fact two\n- Fact three @t[2024-02]\n\n---\n[^1]: Source A";
+        insert_test_doc(&db, "doc001", content);
+        let step = improve_step(1, Some("doc001"), &None, &[], &db);
+        let q = &step["entity_quality"];
+        assert!(q.is_object(), "entity_quality should be present");
+        assert!(q["total_facts"].as_u64().unwrap() > 0);
+        assert!(q["attention_score"].is_number());
+        assert!(q["pending_questions"].is_number());
+        assert!(q["links"].is_object());
+    }
+
+    #[test]
+    fn test_improve_step1_no_entity_quality_when_doc_missing() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, Some("nonexistent"), &None, &[], &db);
+        assert!(step.get("entity_quality").is_none());
+    }
+
+    #[test]
+    fn test_improve_step2_no_entity_quality() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:doc002 -->\n# Test\n\n- Fact one";
+        insert_test_doc(&db, "doc002", content);
+        let step = improve_step(2, Some("doc002"), &None, &[], &db);
+        assert!(step.get("entity_quality").is_none());
+    }
+
+    #[test]
+    fn test_enrich_step1_includes_entity_quality_bulk() {
+        let (db, _tmp) = test_db();
+        let content_a = "<!-- factbase:aaa001 -->\n# Alpha\n\n- Fact one\n- Fact two";
+        let content_b = "<!-- factbase:bbb001 -->\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
+        insert_test_doc(&db, "aaa001", content_a);
+        insert_test_doc(&db, "bbb001", content_b);
+        let step = enrich_step(1, &serde_json::json!({}), &None, &db);
+        let quality = step["entity_quality"].as_array().unwrap();
+        assert_eq!(quality.len(), 2);
+        // First item should have higher attention_score (aaa001 has no tags/sources)
+        let first_score = quality[0]["attention_score"].as_u64().unwrap();
+        let second_score = quality[1]["attention_score"].as_u64().unwrap();
+        assert!(first_score >= second_score, "should be sorted by attention_score desc");
+    }
+
+    #[test]
+    fn test_enrich_step1_empty_repo() {
+        let (db, _tmp) = test_db();
+        let step = enrich_step(1, &serde_json::json!({}), &None, &db);
+        let quality = step["entity_quality"].as_array().unwrap();
+        assert!(quality.is_empty());
+    }
+
+    #[test]
+    fn test_build_quality_stats_all_covered() {
+        use super::super::helpers::build_quality_stats;
+        let content = "# Test\n\n- Fact one @t[2024-01] [^1]\n- Fact two @t[2024-02] [^2]\n\n---\n[^1]: Source A\n[^2]: Source B";
+        let stats = build_quality_stats(content, 3, 2);
+        assert_eq!(stats["links"]["outgoing"], 3);
+        assert_eq!(stats["links"]["incoming"], 2);
+        assert_eq!(stats["pending_questions"], 0);
+        assert_eq!(stats["attention_score"], 0);
+    }
+
+    #[test]
+    fn test_build_quality_stats_no_coverage() {
+        use super::super::helpers::build_quality_stats;
+        let content = "# Test\n\n- Fact one\n- Fact two\n- Fact three";
+        let stats = build_quality_stats(content, 0, 0);
+        assert_eq!(stats["total_facts"], 3);
+        assert_eq!(stats["facts_with_dates"], 0);
+        assert_eq!(stats["facts_with_sources"], 0);
+        // attention_score = 0*2 + 3 + 3 = 6
+        assert_eq!(stats["attention_score"], 6);
+    }
+
+    // --- setup workflow tests ---
+
+    #[test]
+    fn test_setup_step1_initialize() {
+        let step = setup_step(1, &serde_json::json!({"path": "/tmp/mushrooms"}));
+        assert_eq!(step["workflow"], "setup");
+        assert_eq!(step["step"], 1);
+        assert_eq!(step["total_steps"], 5);
+        assert!(step["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("/tmp/mushrooms"));
+        assert_eq!(step["next_tool"], "init_repository");
+    }
+
+    #[test]
+    fn test_setup_step1_default_path() {
+        let step = setup_step(1, &serde_json::json!({}));
+        assert!(step["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("the target directory"));
+    }
+
+    #[test]
+    fn test_setup_step2_perspective() {
+        let step = setup_step(2, &serde_json::json!({"path": "/tmp/mushrooms"}));
+        assert_eq!(step["step"], 2);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("perspective.yaml"));
+        assert!(instruction.contains("focus"));
+        assert!(instruction.contains("allowed_types"));
+    }
+
+    #[test]
+    fn test_setup_step3_create_documents() {
+        let step = setup_step(3, &serde_json::json!({}));
+        assert_eq!(step["step"], 3);
+        assert_eq!(step["next_tool"], "create_document");
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("create_document"));
+        assert!(instruction.contains("@t[=2024-03]"));
+        assert!(instruction.contains("[^1]"));
+        assert!(instruction.contains("get_authoring_guide"));
+    }
+
+    #[test]
+    fn test_setup_step4_scan_and_verify() {
+        let step = setup_step(4, &serde_json::json!({}));
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["next_tool"], "scan_repository");
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("scan_repository"));
+        assert!(instruction.contains("check_repository"));
+    }
+
+    #[test]
+    fn test_format_rules_inlined_in_document_creation_steps() {
+        // Setup step 3, ingest step 3, and enrich step 3 should all inline format rules
+        // so weaker models don't need a separate get_authoring_guide call.
+        let setup = setup_step(3, &serde_json::json!({}));
+        let ingest = ingest_step(3, &serde_json::json!({}), &None);
+        let (db, _tmp) = test_db();
+        let enrich = enrich_step(3, &serde_json::json!({}), &None, &db);
+
+        for (name, step) in [("setup", setup), ("ingest", ingest), ("enrich", enrich)] {
+            let instruction = step["instruction"].as_str().unwrap();
+            assert!(
+                instruction.contains("@t[=2024-03]"),
+                "{name} step 3 missing temporal tag examples"
+            );
+            assert!(
+                instruction.contains("[^1]"),
+                "{name} step 3 missing source footnote examples"
+            );
+            assert!(
+                instruction.contains("get_authoring_guide"),
+                "{name} step 3 should still mention get_authoring_guide"
+            );
+        }
+    }
+
+    #[test]
+    fn test_setup_step5_next_steps() {
+        let step = setup_step(5, &serde_json::json!({}));
+        assert_eq!(step["step"], 5);
+        assert!(step["complete"].as_bool().unwrap());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("ingest"));
+        assert!(instruction.contains("enrich"));
+        assert!(instruction.contains("update"));
+    }
+
+    #[test]
+    fn test_setup_past_last_step() {
+        let step = setup_step(99, &serde_json::json!({}));
+        assert!(step["complete"].as_bool().unwrap());
+    }
+
+    // --- bootstrap workflow tests ---
+
+    #[test]
+    fn test_build_bootstrap_prompt_basic() {
+        let prompt = build_bootstrap_prompt("mycology", None);
+        assert!(prompt.contains("mycology"));
+        assert!(prompt.contains("document_types"));
+        assert!(prompt.contains("folder_structure"));
+        assert!(prompt.contains("templates"));
+        assert!(prompt.contains("temporal_patterns"));
+        assert!(prompt.contains("source_types"));
+        assert!(!prompt.contains("suggested these entity types"));
+    }
+
+    #[test]
+    fn test_build_bootstrap_prompt_with_entity_types() {
+        let prompt = build_bootstrap_prompt("mycology", Some("species, habitats, researchers"));
+        assert!(prompt.contains("mycology"));
+        assert!(prompt.contains("species, habitats, researchers"));
+        assert!(prompt.contains("suggested these entity types"));
+    }
+
+    #[test]
+    fn test_parse_bootstrap_response_valid_json() {
+        let json = r#"{"document_types": [{"name": "species"}], "folder_structure": ["species/"]}"#;
+        let result = parse_bootstrap_response(json);
+        assert!(result.is_some());
+        let v = result.unwrap();
+        assert!(v["document_types"].is_array());
+    }
+
+    #[test]
+    fn test_parse_bootstrap_response_json_in_text() {
+        let text = "Here is the structure:\n{\"document_types\": [{\"name\": \"species\"}]}\nDone.";
+        let result = parse_bootstrap_response(text);
+        assert!(result.is_some());
+        assert!(result.unwrap()["document_types"].is_array());
+    }
+
+    #[test]
+    fn test_parse_bootstrap_response_invalid() {
+        let result = parse_bootstrap_response("This is not JSON at all");
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_with_mock_llm() {
+        use crate::llm::test_helpers::MockLlm;
+
+        let mock_response = r##"{"document_types":[{"name":"species","description":"Mushroom species"}],"folder_structure":["species/","habitats/"],"templates":{"species":"# Species Name"},"temporal_patterns":{"dynamic":["taxonomy"],"static":["original description"]},"source_types":["journal paper","field guide"],"perspective":{"focus":"Mycology research","allowed_types":["species","habitats"]},"examples":["# Amanita muscaria\n\n## Classification\n- Family: Amanitaceae"]}"##;
+        let llm = MockLlm::new(mock_response);
+        let args = serde_json::json!({"domain": "mycology", "path": "/tmp/mushrooms"});
+        let result = bootstrap(&llm, &args).await.unwrap();
+
+        assert_eq!(result["workflow"], "bootstrap");
+        assert_eq!(result["domain"], "mycology");
+        assert!(result["suggestions"]["document_types"].is_array());
+        assert!(result["suggestions"]["folder_structure"].is_array());
+        assert!(result["suggestions"]["templates"].is_object());
+        assert!(result["suggestions"]["temporal_patterns"].is_object());
+        assert!(result["suggestions"]["source_types"].is_array());
+        assert!(result["next_steps"].is_array());
+        let steps = result["next_steps"].as_array().unwrap();
+        assert!(steps[0].as_str().unwrap().contains("/tmp/mushrooms"));
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_unparseable_response() {
+        use crate::llm::test_helpers::MockLlm;
+
+        let llm = MockLlm::new("I don't know how to generate JSON");
+        let args = serde_json::json!({"domain": "mycology"});
+        let result = bootstrap(&llm, &args).await.unwrap();
+
+        assert_eq!(result["workflow"], "bootstrap");
+        assert!(result["suggestions"]["error"].is_string());
+        assert!(result["suggestions"]["raw_response"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_requires_domain() {
+        use crate::llm::test_helpers::MockLlm;
+
+        let llm = MockLlm::new("{}");
+        let args = serde_json::json!({});
+        let result = bootstrap(&llm, &args).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_workflow_list_includes_bootstrap() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "list"});
+        let result = workflow(&db, &args).unwrap();
+        let workflows = result["workflows"].as_array().unwrap();
+        let names: Vec<&str> = workflows
+            .iter()
+            .filter_map(|w| w["name"].as_str())
+            .collect();
+        assert!(names.contains(&"bootstrap"));
+    }
+
+    #[test]
+    fn test_workflow_bootstrap_without_llm_returns_error() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "bootstrap"});
+        let result = workflow(&db, &args).unwrap();
+        assert!(result["error"].is_string());
+    }
+
+    #[test]
+    fn test_setup_step1_mentions_bootstrap() {
+        let step = setup_step(1, &serde_json::json!({"path": "/tmp/test"}));
+        assert!(step["instruction"].as_str().unwrap().contains("bootstrap"));
     }
 }

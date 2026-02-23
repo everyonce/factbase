@@ -22,6 +22,7 @@ fn parse_type_filter(type_str: &str) -> Option<QuestionType> {
         "ambiguous" => Some(QuestionType::Ambiguous),
         "stale" => Some(QuestionType::Stale),
         "duplicate" => Some(QuestionType::Duplicate),
+        "corruption" => Some(QuestionType::Corruption),
         _ => None,
     }
 }

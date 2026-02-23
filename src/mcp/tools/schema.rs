@@ -160,7 +160,7 @@ pub fn tools_list() -> Value {
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
                         "doc_id": { "type": "string", "description": "Filter by document ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate)" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption)" },
                         "status": { "type": "string", "description": "Filter by status: 'unanswered' (default), 'answered', 'deferred', 'all'" },
                         "limit": { "type": "integer", "description": "Max questions to return (default: 10)" },
                         "offset": { "type": "integer", "description": "Skip this many questions for pagination (default: 0)" }
@@ -242,14 +242,25 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "workflow",
-                "description": "Run a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nCall again with the next step number to advance.",
+                "description": "Run a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nCall again with the next step number to advance.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "workflow": { "type": "string", "description": "Workflow name: 'update', 'resolve', 'ingest', 'enrich', or 'list'" },
+                        "workflow": { "type": "string", "description": "Workflow name: 'bootstrap', 'setup', 'update', 'resolve', 'ingest', 'enrich', 'improve', or 'list'" },
                         "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
+                        "domain": { "type": "string", "description": "For bootstrap: domain description (e.g. 'mycology', 'ancient Mediterranean history', 'indie video games')" },
+                        "entity_types": { "type": "string", "description": "For bootstrap: optional comma-separated entity types the user wants to track (e.g. 'species, habitats, researchers')" },
+                        "path": { "type": "string", "description": "For setup/bootstrap: directory path for the new repository" },
                         "topic": { "type": "string", "description": "For ingest: what to research" },
                         "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
+                        "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
+                        "skip": {
+                            "oneOf": [
+                                { "type": "string", "description": "Comma-separated step names to skip" },
+                                { "type": "array", "items": { "type": "string" }, "description": "Step names to skip" }
+                            ],
+                            "description": "For improve: steps to skip. Valid names: 'cleanup', 'resolve', 'enrich', 'check'"
+                        },
                         "repo": { "type": "string", "description": "Repository ID (optional)" }
                     },
                     "required": ["workflow"]
@@ -296,7 +307,7 @@ pub fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate)" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption)" },
                         "limit": { "type": "integer", "description": "Max items to return (default: 10)" },
                         "offset": { "type": "integer", "description": "Skip items for pagination (default: 0)" }
                     }
