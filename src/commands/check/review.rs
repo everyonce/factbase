@@ -5,13 +5,13 @@
 //! based on various quality checks (temporal tags, sources, duplicates, etc.).
 
 use factbase::{
-    filter_sequential_conflicts, generate_ambiguous_questions, generate_conflict_questions,
-    generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
-    generate_required_field_questions, generate_source_quality_questions,
-    generate_stale_questions, generate_temporal_questions,
+    filter_sequential_conflicts,
+    generate_duplicate_questions,
+    generate_required_field_questions,
     normalize_conflict_desc, parse_review_queue, prune_stale_questions, QuestionType,
     ReviewQuestion,
 };
+use factbase::question_generator::check::run_generators;
 use std::collections::{HashMap, HashSet};
 
 /// Configuration for review question generation
@@ -56,30 +56,9 @@ pub fn generate_questions_for_content(
     doc_type: Option<&str>,
     config: &ReviewConfig,
 ) -> Vec<ReviewQuestion> {
-    // Strip the review queue section so generators never treat review
-    // entries as document facts.
     let body = factbase::content_body(content);
 
-    // Generate temporal questions (missing tags, stale ongoing)
-    let mut new_questions = generate_temporal_questions(body);
-
-    // Generate conflict questions (overlapping dates)
-    new_questions.extend(generate_conflict_questions(body));
-
-    // Generate duplicate entry questions (same fact appearing multiple times)
-    new_questions.extend(generate_duplicate_entry_questions(body));
-
-    // Generate missing source questions
-    new_questions.extend(generate_missing_questions(body));
-
-    // Generate source quality questions (untraceable sources)
-    new_questions.extend(generate_source_quality_questions(body));
-
-    // Generate ambiguous questions (unclear phrasing)
-    new_questions.extend(generate_ambiguous_questions(body));
-
-    // Generate stale questions (old sources or @t[~...] dates)
-    new_questions.extend(generate_stale_questions(body, config.stale_threshold));
+    let mut new_questions = run_generators(body, doc_type, &HashSet::new(), config.stale_threshold, true);
 
     // Deduplicate: stale subsumes temporal for the same line
     let stale_lines: HashSet<_> = new_questions
@@ -92,7 +71,6 @@ pub fn generate_questions_for_content(
             && matches!(q.line_ref, Some(lr) if stale_lines.contains(&lr)))
     });
 
-    // Generate required field questions (missing required fields per doc type)
     if let Some(ref required_fields) = config.required_fields {
         new_questions.extend(generate_required_field_questions(
             body,
@@ -101,10 +79,7 @@ pub fn generate_questions_for_content(
         ));
     }
 
-    // Post-filter: remove conflict questions for boundary-month sequential entries
     filter_sequential_conflicts(body, &mut new_questions);
-
-    // Filter out questions that already exist in the document
     filter_existing_questions(content, new_questions)
 }
 
@@ -117,18 +92,9 @@ pub fn generate_and_prune(
     doc_type: Option<&str>,
     config: &ReviewConfig,
 ) -> (Vec<ReviewQuestion>, String, usize) {
-    // Strip the review queue section so generators never treat review
-    // entries as document facts.
     let body = factbase::content_body(content);
 
-    // Generate all questions (before dedup) to get the "valid" set
-    let mut all_generated = generate_temporal_questions(body);
-    all_generated.extend(generate_conflict_questions(body));
-    all_generated.extend(generate_duplicate_entry_questions(body));
-    all_generated.extend(generate_missing_questions(body));
-    all_generated.extend(generate_source_quality_questions(body));
-    all_generated.extend(generate_ambiguous_questions(body));
-    all_generated.extend(generate_stale_questions(body, config.stale_threshold));
+    let mut all_generated = run_generators(body, doc_type, &HashSet::new(), config.stale_threshold, true);
     if let Some(ref required_fields) = config.required_fields {
         all_generated.extend(generate_required_field_questions(
             body,

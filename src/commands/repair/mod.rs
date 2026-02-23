@@ -1,8 +1,22 @@
 //! Repair command for auto-fixing document corruption.
 
-pub mod args;
+use clap::Args;
 
-pub use args::RepairArgs;
+#[derive(Args)]
+pub struct RepairArgs {
+    /// Only repair documents in this repository
+    #[arg(long)]
+    pub repo: Option<String>,
+    /// Repair a single document by ID
+    #[arg(long)]
+    pub doc: Option<String>,
+    /// Preview changes without writing
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Suppress non-essential output
+    #[arg(short, long)]
+    pub quiet: bool,
+}
 
 use super::{resolve_repos, setup_database};
 use factbase::processor::content_hash;

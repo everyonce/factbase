@@ -237,70 +237,58 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                 );
             }
 
-            // Parallel processing of temporal and source checks for this batch
-            let parallel_results: Option<Vec<DocCheckResult>> = if args.parallel {
+            // Run content checks (basics, temporal, sources) for this batch.
+            // Always uses check_document_content — parallel or sequential.
+            let content_check_opts = ParallelCheckOptions {
+                check_temporal,
+                check_sources,
+                min_length: args.min_length,
+                max_age_days: args.max_age,
+                allowed_types: allowed_types.cloned(),
+            };
+            let content_results: Vec<DocCheckResult> = if args.parallel {
                 if is_table_format && !args.quiet && batch_size == 0 {
                     println!("  Processing {} documents in parallel...", batch_docs.len());
                 }
-                let opts = ParallelCheckOptions {
-                    check_temporal,
-                    check_sources,
-                    min_length: args.min_length,
-                    max_age_days: args.max_age,
-                    allowed_types: allowed_types.cloned(),
-                };
-                let results: Vec<DocCheckResult> = batch_docs
+                batch_docs
                     .par_iter()
-                    .map(|doc| {
-                        check_document_content(
-                            &doc.content,
-                            &doc.id,
-                            &doc.title,
-                            doc.doc_type.as_deref(),
-                            doc.file_modified_at,
-                            doc.indexed_at,
-                            &opts,
-                        )
-                    })
-                    .collect();
-                Some(results)
+                    .map(|doc| check_document_content(doc, &content_check_opts))
+                    .collect()
             } else {
-                None
+                batch_docs
+                    .iter()
+                    .map(|doc| check_document_content(doc, &content_check_opts))
+                    .collect()
             };
 
-            // Aggregate parallel results if available
-            if let Some(ref results) = parallel_results {
-                for doc_result in results.iter() {
-                    // Print messages
-                    if is_table_format {
-                        for msg in &doc_result.messages {
-                            println!("{msg}");
-                        }
+            // Aggregate content check results
+            for doc_result in &content_results {
+                if is_table_format {
+                    for msg in &doc_result.messages {
+                        println!("{msg}");
                     }
-                    errors += doc_result.errors;
-                    warnings += doc_result.warnings;
+                }
+                errors += doc_result.errors;
+                warnings += doc_result.warnings;
 
-                    // Aggregate temporal stats
-                    if let Some(ref mut ts) = temporal_stats {
-                        ts.total_facts += doc_result.temporal_total_facts;
-                        ts.facts_with_tags += doc_result.temporal_facts_with_tags;
-                        ts.format_errors += doc_result.temporal_format_errors;
-                        ts.conflicts += doc_result.temporal_conflicts;
-                        ts.illogical_sequences += doc_result.temporal_illogical_sequences;
-                        for (k, v) in &doc_result.temporal_by_type {
-                            *ts.by_type.entry(k.clone()).or_insert(0) += v;
-                        }
+                if let Some(ref mut ts) = temporal_stats {
+                    ts.total_facts += doc_result.temporal_total_facts;
+                    ts.facts_with_tags += doc_result.temporal_facts_with_tags;
+                    ts.format_errors += doc_result.temporal_format_errors;
+                    ts.conflicts += doc_result.temporal_conflicts;
+                    ts.illogical_sequences += doc_result.temporal_illogical_sequences;
+                    for (k, v) in &doc_result.temporal_by_type {
+                        *ts.by_type.entry(k.clone()).or_insert(0) += v;
                     }
+                }
 
-                    // Aggregate source stats
-                    if let Some(ref mut ss) = source_stats {
-                        ss.total_facts += doc_result.source_total_facts;
-                        ss.facts_with_sources += doc_result.source_facts_with_sources;
-                        ss.orphan_refs += doc_result.source_orphan_refs;
-                        ss.orphan_defs += doc_result.source_orphan_defs;
-                        for (k, v) in &doc_result.source_by_type {
-                            *ss.by_type.entry(k.clone()).or_insert(0) += v;
-                        }
+                if let Some(ref mut ss) = source_stats {
+                    ss.total_facts += doc_result.source_total_facts;
+                    ss.facts_with_sources += doc_result.source_facts_with_sources;
+                    ss.orphan_refs += doc_result.source_orphan_refs;
+                    ss.orphan_defs += doc_result.source_orphan_defs;
+                    for (k, v) in &doc_result.source_by_type {
+                        *ss.by_type.entry(k.clone()).or_insert(0) += v;
                     }
                 }
             }
@@ -341,33 +329,6 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                 warnings += link_result.warnings;
                 errors += link_result.errors;
                 fixed += link_result.fixed;
-
-                // Skip stub/type/stale checks if already done in parallel
-                if parallel_results.is_none() {
-                    warnings += execute::check_document_basics(
-                        doc,
-                        args.min_length,
-                        args.max_age,
-                        allowed_types,
-                        is_table_format,
-                    );
-                }
-
-                // Check temporal tag validity and collect stats (skip if already done in parallel)
-                if check_temporal && parallel_results.is_none() {
-                    let (temp_warnings, temp_errors) =
-                        execute::check_temporal_tags(doc, &mut temporal_stats, is_table_format);
-                    warnings += temp_warnings;
-                    errors += temp_errors;
-                }
-
-                // Check for orphan source references - skip if already done in parallel
-                if check_sources && parallel_results.is_none() {
-                    let (src_warnings, src_errors) =
-                        execute::check_source_refs(doc, &mut source_stats, is_table_format);
-                    warnings += src_warnings;
-                    errors += src_errors;
-                }
 
                 // Generate review questions (unless --no-questions)
                 if !args.no_questions {

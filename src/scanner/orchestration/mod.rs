@@ -1,32 +1,130 @@
 //! Scan orchestration - full_scan and scan_all_repositories
 
-mod duplicates;
 mod embedding;
 mod links;
-mod preread;
 mod results;
-mod types;
 
 use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
 use std::time::Instant;
 use tracing::{info, warn};
 
+use chrono::{DateTime, Utc};
+use rayon::prelude::*;
+
 use crate::models::TemporalScanStats;
+use crate::processor::content_hash;
 use crate::ProgressReporter;
 use crate::{
     calculate_fact_stats, count_facts_with_sources, Database, DocumentProcessor,
     EmbeddingProvider, LinkDetector, Repository, ScanResult, ScanStats,
 };
+use crate::models::{normalize_pair, DuplicatePair};
 
 use super::options::ScanOptions;
 use super::progress::OptionalProgress;
-use duplicates::check_duplicates;
 use embedding::{run_embedding_phase, EmbeddingPhaseInput};
 use links::{run_link_detection_phase, LinkPhaseInput};
-use preread::pre_read_files;
 use results::{build_interrupted_result, InterruptedResultParams};
-use types::{PendingDoc, PreReadFile};
+
+// --- Inlined from types.rs ---
+
+/// Document pending embedding generation
+#[derive(Clone)]
+pub(super) struct PendingDoc {
+    pub id: String,
+    pub content: String,
+    pub relative: String,
+    pub hash: String,
+    pub title: String,
+    pub doc_type: String,
+    pub path: PathBuf,
+}
+
+/// Pre-read file data from parallel I/O phase
+pub(super) struct PreReadFile {
+    pub path: PathBuf,
+    pub content: Result<String, String>,
+    pub hash: Option<String>,
+    pub existing_id: Option<String>,
+    pub modified_at: Option<DateTime<Utc>>,
+}
+
+/// Chunk information for embedding generation
+pub(super) struct ChunkInfo {
+    pub doc_idx: usize,
+    pub chunk_idx: usize,
+    pub chunk_start: usize,
+    pub chunk_end: usize,
+    pub content: String,
+}
+
+// --- Inlined from preread.rs ---
+
+/// Pre-read files in parallel (I/O bound)
+pub(super) fn pre_read_files(files: Vec<PathBuf>) -> Vec<PreReadFile> {
+    files
+        .into_par_iter()
+        .map(|path| {
+            let content = fs::read_to_string(&path).map_err(|e| e.to_string());
+            let (hash, existing_id) = if let Ok(ref c) = content {
+                let h = content_hash(c);
+                let id = DocumentProcessor::extract_id_static(c);
+                (Some(h), id)
+            } else {
+                (None, None)
+            };
+            let modified_at = fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .ok()
+                .map(DateTime::<Utc>::from);
+            PreReadFile {
+                path,
+                content,
+                hash,
+                existing_id,
+                modified_at,
+            }
+        })
+        .collect()
+}
+
+// --- Inlined from duplicates.rs ---
+
+/// Threshold for considering documents as duplicates (95% similarity)
+const DUPLICATE_THRESHOLD: f32 = 0.95;
+
+/// Check for duplicate documents among changed documents
+fn check_duplicates(
+    db: &Database,
+    changed_ids: &HashSet<String>,
+) -> anyhow::Result<Vec<DuplicatePair>> {
+    let mut duplicates = Vec::new();
+    let mut seen_pairs: HashSet<(String, String)> = HashSet::new();
+
+    for doc_id in changed_ids {
+        if let Ok(similar) = db.find_similar_documents(doc_id, DUPLICATE_THRESHOLD) {
+            for (similar_id, similar_title, similarity) in similar {
+                let pair = normalize_pair(doc_id, &similar_id);
+                if seen_pairs.insert(pair) {
+                    let doc_title = db
+                        .get_document(doc_id)?
+                        .map_or_else(|| doc_id.clone(), |d| d.title);
+                    duplicates.push(DuplicatePair {
+                        doc1_id: doc_id.clone(),
+                        doc1_title: doc_title,
+                        doc2_id: similar_id,
+                        doc2_title: similar_title,
+                        similarity,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(duplicates)
+}
 
 /// Bundles the "tools" needed for a scan, reducing parameter count on `full_scan`.
 pub struct ScanContext<'a> {

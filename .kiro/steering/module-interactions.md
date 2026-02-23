@@ -223,13 +223,17 @@ src/
 │   │   ├── display.rs
 │   │   └── detailed.rs
 │   ├── stats.rs         # factbase stats
-│   ├── lint/            # factbase check
+│   ├── check/            # factbase check
 │   │   ├── mod.rs
 │   │   ├── args.rs
-│   │   ├── checks.rs
+│   │   ├── checks.rs       # Unified content checks (basics, temporal, sources)
 │   │   ├── output.rs
 │   │   ├── review.rs
-│   │   ├── execute.rs
+│   │   ├── execute/         # Link checks, review generation, aggregation
+│   │   │   ├── mod.rs
+│   │   │   ├── links.rs
+│   │   │   ├── review.rs
+│   │   │   └── aggregate.rs
 │   │   ├── incremental.rs
 │   │   └── watch.rs
 │   ├── review/          # factbase review

@@ -3,7 +3,6 @@
 use super::super::Database;
 use crate::error::FactbaseError;
 use crate::models::TemporalStats;
-use crate::patterns::{date_cmp, normalize_date_for_comparison};
 use std::collections::HashMap;
 
 impl Database {
@@ -33,21 +32,7 @@ impl Database {
                 *by_type.entry(type_name).or_insert(0) += 1;
 
                 for date in [&tag.start_date, &tag.end_date].into_iter().flatten() {
-                    let normalized = normalize_date_for_comparison(date);
-                    if let Some(ref old) = oldest_date {
-                        if date_cmp(&normalized, &normalize_date_for_comparison(old)) == std::cmp::Ordering::Less {
-                            oldest_date = Some(date.clone());
-                        }
-                    } else {
-                        oldest_date = Some(date.clone());
-                    }
-                    if let Some(ref new) = newest_date {
-                        if date_cmp(&normalized, &normalize_date_for_comparison(new)) == std::cmp::Ordering::Greater {
-                            newest_date = Some(date.clone());
-                        }
-                    } else {
-                        newest_date = Some(date.clone());
-                    }
+                    super::update_date_range(date, &mut oldest_date, &mut newest_date);
                 }
             }
         }

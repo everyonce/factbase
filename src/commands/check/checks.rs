@@ -10,7 +10,7 @@
 //! Note: Orphan and broken link detection remain in mod.rs as they require
 //! database access (links_from/links_to queries).
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{Duration, Utc};
 use factbase::{
     calculate_fact_stats, count_facts_with_sources, detect_illogical_sequences,
     detect_temporal_conflicts, parse_source_definitions, parse_source_references,
@@ -56,15 +56,16 @@ pub struct ParallelCheckOptions {
 
 /// Perform CPU-bound lint checks on a document (can be parallelized)
 pub fn check_document_content(
-    content: &str,
-    doc_id: &str,
-    doc_title: &str,
-    doc_type: Option<&str>,
-    file_modified_at: Option<DateTime<Utc>>,
-    indexed_at: DateTime<Utc>,
+    doc: &factbase::Document,
     opts: &ParallelCheckOptions,
 ) -> DocCheckResult {
     let mut result = DocCheckResult::default();
+    let content = &doc.content;
+    let doc_id = &doc.id;
+    let doc_title = &doc.title;
+    let doc_type = doc.doc_type.as_deref();
+    let file_modified_at = doc.file_modified_at;
+    let indexed_at = doc.indexed_at;
 
     // Check for stub documents (content too short)
     let content_len = content.len();
@@ -238,6 +239,7 @@ pub fn check_document_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::DateTime;
 
     /// Helper to create default ParallelCheckOptions for tests
     fn test_opts(check_temporal: bool, check_sources: bool) -> ParallelCheckOptions {
@@ -250,20 +252,34 @@ mod tests {
         }
     }
 
+    fn make_doc(content: &str) -> factbase::Document {
+        make_doc_with(content, None, None, Utc::now())
+    }
+
+    fn make_doc_with(
+        content: &str,
+        doc_type: Option<&str>,
+        modified: Option<DateTime<Utc>>,
+        indexed: DateTime<Utc>,
+    ) -> factbase::Document {
+        factbase::Document {
+            id: "abc123".into(),
+            repo_id: "test".into(),
+            file_path: "test.md".into(),
+            file_hash: "hash".into(),
+            title: "Test".into(),
+            doc_type: doc_type.map(|s| s.to_string()),
+            content: content.to_string(),
+            file_modified_at: modified,
+            indexed_at: indexed,
+            is_deleted: false,
+        }
+    }
+
     #[test]
     fn test_check_document_content_no_checks() {
-        let content = "# Test Document\n\n- Some fact\n- Another fact";
-        let opts = test_opts(false, false);
-        let result = check_document_content(
-            content,
-            "abc123",
-            "Test Document",
-            None,
-            None,
-            Utc::now(),
-            &opts,
-        );
-
+        let doc = make_doc("# Test Document\n\n- Some fact\n- Another fact");
+        let result = check_document_content(&doc, &test_opts(false, false));
         assert_eq!(result.errors, 0);
         assert_eq!(result.warnings, 0);
         assert!(result.messages.is_empty());
@@ -271,114 +287,70 @@ mod tests {
 
     #[test]
     fn test_check_document_content_temporal_coverage() {
-        let content = "# Test\n\n- Fact without tag\n- Fact with tag @t[2024]";
-        let opts = test_opts(true, false);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact without tag\n- Fact with tag @t[2024]");
+        let result = check_document_content(&doc, &test_opts(true, false));
         assert_eq!(result.temporal_total_facts, 2);
         assert_eq!(result.temporal_facts_with_tags, 1);
-        // Should have INFO message about coverage
-        assert!(result
-            .messages
-            .iter()
-            .any(|m| m.contains("Temporal coverage")));
+        assert!(result.messages.iter().any(|m| m.contains("Temporal coverage")));
     }
 
     #[test]
     fn test_check_document_content_temporal_full_coverage() {
-        let content = "# Test\n\n- Fact @t[2024]\n- Another @t[2023..2024]";
-        let opts = test_opts(true, false);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact @t[2024]\n- Another @t[2023..2024]");
+        let result = check_document_content(&doc, &test_opts(true, false));
         assert_eq!(result.temporal_total_facts, 2);
         assert_eq!(result.temporal_facts_with_tags, 2);
-        // No INFO message when 100% coverage
-        assert!(!result
-            .messages
-            .iter()
-            .any(|m| m.contains("Temporal coverage")));
+        assert!(!result.messages.iter().any(|m| m.contains("Temporal coverage")));
     }
 
     #[test]
     fn test_check_document_content_temporal_invalid_tag() {
-        let content = "# Test\n\n- Fact @t[2024-13]"; // Invalid month
-        let opts = test_opts(true, false);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact @t[2024-13]");
+        let result = check_document_content(&doc, &test_opts(true, false));
         assert_eq!(result.temporal_format_errors, 1);
         assert_eq!(result.errors, 1);
-        assert!(result
-            .messages
-            .iter()
-            .any(|m| m.contains("Invalid temporal tag")));
+        assert!(result.messages.iter().any(|m| m.contains("Invalid temporal tag")));
     }
 
     #[test]
     fn test_check_document_content_temporal_conflict() {
-        let content = "# Test\n\n- Role @t[2020..2022] @t[2021..]"; // Conflict
-        let opts = test_opts(true, false);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Role @t[2020..2022] @t[2021..]");
+        let result = check_document_content(&doc, &test_opts(true, false));
         assert_eq!(result.temporal_conflicts, 1);
         assert_eq!(result.warnings, 1);
-        assert!(result
-            .messages
-            .iter()
-            .any(|m| m.contains("Temporal conflict")));
+        assert!(result.messages.iter().any(|m| m.contains("Temporal conflict")));
     }
 
     #[test]
     fn test_check_document_content_source_orphan_ref() {
-        let content = "# Test\n\n- Fact [^1]\n\n---\n[^2]: LinkedIn profile, 2024-01-01"; // Ref 1 has no def
-        let opts = test_opts(false, true);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact [^1]\n\n---\n[^2]: LinkedIn profile, 2024-01-01");
+        let result = check_document_content(&doc, &test_opts(false, true));
         assert_eq!(result.source_orphan_refs, 1);
         assert_eq!(result.errors, 1);
-        assert!(result
-            .messages
-            .iter()
-            .any(|m| m.contains("Orphan reference")));
+        assert!(result.messages.iter().any(|m| m.contains("Orphan reference")));
     }
 
     #[test]
     fn test_check_document_content_source_orphan_def() {
-        let content = "# Test\n\n- Fact [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-01\n[^2]: News article, 2024-01-01"; // Def 2 not used
-        let opts = test_opts(false, true);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-01\n[^2]: News article, 2024-01-01");
+        let result = check_document_content(&doc, &test_opts(false, true));
         assert_eq!(result.source_orphan_defs, 1);
         assert_eq!(result.warnings, 1);
-        assert!(result
-            .messages
-            .iter()
-            .any(|m| m.contains("Orphan definition")));
+        assert!(result.messages.iter().any(|m| m.contains("Orphan definition")));
     }
 
     #[test]
     fn test_check_document_content_source_coverage() {
-        let content = "# Test\n\n- Fact with source [^1]\n- Fact without source\n\n---\n[^1]: LinkedIn profile, 2024-01-01";
-        let opts = test_opts(false, true);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact with source [^1]\n- Fact without source\n\n---\n[^1]: LinkedIn profile, 2024-01-01");
+        let result = check_document_content(&doc, &test_opts(false, true));
         assert_eq!(result.source_total_facts, 2);
         assert_eq!(result.source_facts_with_sources, 1);
     }
 
     #[test]
     fn test_check_document_content_both_checks() {
-        let content = "# Test\n\n- Fact @t[2024] [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-01";
-        let opts = test_opts(true, true);
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let doc = make_doc("# Test\n\n- Fact @t[2024] [^1]\n\n---\n[^1]: LinkedIn profile, 2024-01-01");
+        let result = check_document_content(&doc, &test_opts(true, true));
         assert_eq!(result.temporal_total_facts, 1);
         assert_eq!(result.temporal_facts_with_tags, 1);
         assert_eq!(result.source_total_facts, 1);
@@ -389,12 +361,10 @@ mod tests {
 
     #[test]
     fn test_check_document_content_stub_check() {
-        let content = "# Test\n\nShort"; // Only 14 chars, below 100
+        let doc = make_doc("# Test\n\nShort");
         let mut opts = test_opts(false, false);
-        opts.min_length = 100; // Enable stub check
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        opts.min_length = 100;
+        let result = check_document_content(&doc, &opts);
         assert!(result.is_stub);
         assert_eq!(result.warnings, 1);
         assert!(result.messages.iter().any(|m| m.contains("Stub document")));
@@ -402,26 +372,20 @@ mod tests {
 
     #[test]
     fn test_stub_check_exactly_at_threshold() {
-        // Content exactly at min_length should NOT be a stub
-        let content = "x".repeat(50);
+        let doc = make_doc(&"x".repeat(50));
         let mut opts = test_opts(false, false);
         opts.min_length = 50;
-        let result =
-            check_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let result = check_document_content(&doc, &opts);
         assert!(!result.is_stub);
         assert_eq!(result.warnings, 0);
     }
 
     #[test]
     fn test_stub_check_one_below_threshold() {
-        // Content one char below min_length should be a stub
-        let content = "x".repeat(49);
+        let doc = make_doc(&"x".repeat(49));
         let mut opts = test_opts(false, false);
         opts.min_length = 50;
-        let result =
-            check_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let result = check_document_content(&doc, &opts);
         assert!(result.is_stub);
         assert_eq!(result.warnings, 1);
         assert!(result.messages[0].contains("49 chars"));
@@ -429,45 +393,30 @@ mod tests {
 
     #[test]
     fn test_stub_check_one_above_threshold() {
-        // Content one char above min_length should NOT be a stub
-        let content = "x".repeat(51);
+        let doc = make_doc(&"x".repeat(51));
         let mut opts = test_opts(false, false);
         opts.min_length = 50;
-        let result =
-            check_document_content(&content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let result = check_document_content(&doc, &opts);
         assert!(!result.is_stub);
         assert_eq!(result.warnings, 0);
     }
 
     #[test]
     fn test_stub_check_disabled_with_zero() {
-        // min_length = 0 should disable stub check
-        let content = "";
+        let doc = make_doc("");
         let mut opts = test_opts(false, false);
         opts.min_length = 0;
-        let result =
-            check_document_content(content, "abc123", "Test", None, None, Utc::now(), &opts);
-
+        let result = check_document_content(&doc, &opts);
         assert!(!result.is_stub);
         assert_eq!(result.warnings, 0);
     }
 
     #[test]
     fn test_check_document_content_unknown_type_check() {
-        let content = "# Test\n\nSome content that is long enough to pass the stub check easily.";
+        let doc = make_doc_with("# Test\n\nSome content that is long enough.", Some("unknown"), None, Utc::now());
         let mut opts = test_opts(false, false);
         opts.allowed_types = Some(vec!["person".to_string(), "project".to_string()]);
-        let result = check_document_content(
-            content,
-            "abc123",
-            "Test",
-            Some("unknown"),
-            None,
-            Utc::now(),
-            &opts,
-        );
-
+        let result = check_document_content(&doc, &opts);
         assert!(result.is_unknown_type);
         assert_eq!(result.warnings, 1);
         assert!(result.messages.iter().any(|m| m.contains("Unknown type")));
@@ -475,23 +424,13 @@ mod tests {
 
     #[test]
     fn test_check_document_content_stale_check() {
-        let content = "# Test\n\nSome content that is long enough to pass the stub check easily.";
+        let old_date = Utc::now() - Duration::days(60);
+        let doc = make_doc_with("# Test\n\nSome content that is long enough.", None, Some(old_date), Utc::now());
         let mut opts = test_opts(false, false);
         opts.max_age_days = Some(30);
-        // Create a date 60 days ago
-        let old_date = Utc::now() - Duration::days(60);
-        let result = check_document_content(
-            content,
-            "abc123",
-            "Test",
-            None,
-            Some(old_date),
-            Utc::now(),
-            &opts,
-        );
-
+        let result = check_document_content(&doc, &opts);
         assert!(result.is_stale);
-        assert!(result.stale_days.unwrap() >= 59); // Allow for timing variance
+        assert!(result.stale_days.unwrap() >= 59);
         assert_eq!(result.warnings, 1);
         assert!(result.messages.iter().any(|m| m.contains("Stale document")));
     }

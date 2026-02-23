@@ -4,7 +4,6 @@
 //! organized into focused submodules by domain.
 
 mod document;
-mod link;
 mod question;
 mod repository;
 mod scan;
@@ -12,9 +11,20 @@ mod search;
 mod stats;
 mod temporal;
 
+// Link struct (small enough to live here)
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Link {
+    pub source_id: String,
+    pub target_id: String,
+    pub context: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 // Re-export all public items for backward compatibility
 pub use document::{word_count, Document};
-pub use link::Link;
 pub use question::{QuestionType, ReviewQuestion};
 pub use repository::{load_perspective_from_file, Perspective, Repository, ReviewPerspective, PERSPECTIVE_TEMPLATE};
 pub use scan::{DuplicatePair, FileTimingInfo, ScanResult, ScanStats, TemporalScanStats};

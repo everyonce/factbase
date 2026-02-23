@@ -273,107 +273,33 @@ async fn apply_one_document(
         })
         .collect();
 
-    let all_no_changes = interpreted.iter().all(|ia| {
-        matches!(
+    let has_active_changes = interpreted.iter().any(|ia| {
+        !matches!(
             ia.instruction,
             crate::ChangeInstruction::Dismiss | crate::ChangeInstruction::Defer
         )
     });
 
-    // Partition indices: dismissed get removed, deferred get unchecked
-    let dismissed_indices: Vec<usize> = answered
-        .iter()
-        .zip(interpreted.iter())
-        .filter(|(_, ia)| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-        .map(|((i, _), _)| *i)
-        .collect();
-    let deferred_indices: Vec<usize> = answered
-        .iter()
-        .zip(interpreted.iter())
-        .filter(|(_, ia)| matches!(ia.instruction, crate::ChangeInstruction::Defer))
-        .map(|((i, _), _)| *i)
-        .collect();
-
-    if all_no_changes {
-        if !dry_run {
-            let today = chrono::Local::now().date_naive();
-            // Only stamp reviewed markers on dismissed questions (not deferred)
-            let dismissed_line_refs: Vec<usize> = interpreted
-                .iter()
-                .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-                .flat_map(|ia| conflict_line_refs(ia))
-                .collect();
-            // Stamp <!-- sequential --> on conflict-dismissed lines for permanent suppression
-            let conflict_dismissed_refs: Vec<usize> = interpreted
-                .iter()
-                .filter(|ia| {
-                    matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
-                        && ia.question.question_type == QuestionType::Conflict
-                })
-                .flat_map(|ia| conflict_line_refs(ia))
-                .collect();
-            let mut new_content = stamp_sequential_lines(&content, &conflict_dismissed_refs);
-            // Fallback: also stamp by matching fact text in case line numbers are stale
-            let conflict_texts: Vec<String> = interpreted
-                .iter()
-                .filter(|ia| {
-                    matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
-                        && ia.question.question_type == QuestionType::Conflict
-                })
-                .flat_map(|ia| conflict_fact_texts(ia))
-                .collect();
-            let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
-            new_content = stamp_sequential_by_text(&new_content, &text_refs);
-            new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
-            // Fallback: also stamp reviewed by matching fact text in case line numbers are stale
-            let dismissed_texts: Vec<String> = interpreted
-                .iter()
-                .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-                .flat_map(|ia| conflict_fact_texts(ia))
-                .collect();
-            let dismissed_text_refs: Vec<&str> = dismissed_texts.iter().map(|s| s.as_str()).collect();
-            new_content = stamp_reviewed_by_text(&new_content, &dismissed_text_refs, &today);
-            new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
-            new_content = remove_processed_questions(&new_content, &dismissed_indices);
-            new_content = normalize_review_section(&new_content);
-            new_content = dedup_titles(&new_content);
-
-            // Validate before writing
-            let validation_errors =
-                super::validate::validate_document(&content, &new_content);
-            if !validation_errors.is_empty() {
-                let details: Vec<String> =
-                    validation_errors.iter().map(|e| e.detail.clone()).collect();
-                return Err(FactbaseError::internal(format!(
-                    "Document validation failed (keeping original): {}",
-                    details.join("; ")
-                )));
-            }
-
-            write_file(file_path, &new_content)?;
-        }
-        return Ok(0);
-    }
-
     if dry_run {
-        return Ok(review_questions.len());
+        return Ok(if has_active_changes { review_questions.len() } else { 0 });
     }
 
-    // Check if all active instructions can be handled without LLM
-    let active_instructions: Vec<_> = interpreted
-        .iter()
-        .filter(|ia| {
-            !matches!(
-                ia.instruction,
-                crate::ChangeInstruction::Dismiss | crate::ChangeInstruction::Defer
-            )
-        })
-        .collect();
+    let today = chrono::Local::now().date_naive();
+    let mut new_content = content.clone();
 
-    // Split instructions: apply deterministic ones first, then LLM for the rest
-    let deterministic: Vec<_> = active_instructions
-        .iter()
-        .filter(|ia| {
+    // --- Phase 1: Apply active changes (deterministic + LLM) ---
+    if has_active_changes {
+        let active: Vec<_> = interpreted
+            .iter()
+            .filter(|ia| {
+                !matches!(
+                    ia.instruction,
+                    crate::ChangeInstruction::Dismiss | crate::ChangeInstruction::Defer
+                )
+            })
+            .collect();
+
+        let is_deterministic = |ia: &&InterpretedAnswer| {
             matches!(
                 ia.instruction,
                 crate::ChangeInstruction::AddSource { .. }
@@ -381,101 +307,76 @@ async fn apply_one_document(
                     | crate::ChangeInstruction::UpdateTemporal { .. }
                     | crate::ChangeInstruction::AddTemporal { .. }
             )
-        })
-        .collect();
-    let needs_llm: Vec<_> = active_instructions
-        .iter()
-        .filter(|ia| {
-            !matches!(
-                ia.instruction,
-                crate::ChangeInstruction::AddSource { .. }
-                    | crate::ChangeInstruction::Delete { .. }
-                    | crate::ChangeInstruction::UpdateTemporal { .. }
-                    | crate::ChangeInstruction::AddTemporal { .. }
-            )
-        })
-        .collect();
-
-    let today = chrono::Local::now().date_naive();
-    let mut new_content = content.clone();
-
-    // Apply deterministic instructions directly (no LLM needed)
-    if !deterministic.is_empty() {
-        let source_pairs: Vec<(&str, &str)> = deterministic
-            .iter()
-            .filter_map(|ia| match &ia.instruction {
-                crate::ChangeInstruction::AddSource {
-                    line_text,
-                    source_info,
-                } => Some((line_text.as_str(), source_info.as_str())),
-                _ => None,
-            })
-            .collect();
-        new_content = apply_source_citations(&new_content, &source_pairs);
-
-        let confirmation_updates: Vec<(&str, Option<&str>, &str)> = deterministic
-            .iter()
-            .filter_map(|ia| match &ia.instruction {
-                crate::ChangeInstruction::UpdateTemporal {
-                    line_text,
-                    old_tag,
-                    new_tag,
-                } => Some((line_text.as_str(), Some(old_tag.as_str()), new_tag.as_str())),
-                crate::ChangeInstruction::AddTemporal { line_text, tag } => {
-                    Some((line_text.as_str(), None, tag.as_str()))
-                }
-                _ => None,
-            })
-            .collect();
-        new_content = apply_confirmations(&new_content, &confirmation_updates);
-
-        for ia in &deterministic {
-            if let crate::ChangeInstruction::Delete { line_text } = &ia.instruction {
-                if line_text.is_empty() {
-                    continue;
-                }
-                let lines: Vec<&str> = new_content.lines().collect();
-                let filtered: Vec<&str> = lines
-                    .into_iter()
-                    .filter(|l| !l.contains(line_text.as_str()))
-                    .collect();
-                new_content = filtered.join("\n");
-            }
-        }
-
-        let det_line_refs: Vec<usize> = deterministic
-            .iter()
-            .filter_map(|ia| ia.question.line_ref)
-            .collect();
-        new_content = stamp_reviewed_lines(&new_content, &det_line_refs, &today);
-    }
-
-    // Apply LLM-dependent instructions (corrections, splits, generic)
-    if !needs_llm.is_empty() {
-        let llm_questions: Vec<_> = needs_llm.iter().map(|ia| ia.question.clone()).collect();
-        let Some((start, end, section)) =
-            identify_affected_section(&new_content, &llm_questions)
-        else {
-            return Err(FactbaseError::internal(
-                "Could not identify affected section",
-            ));
         };
 
-        let llm_interpreted: Vec<InterpretedAnswer> =
-            needs_llm.into_iter().map(|ia| (*ia).clone()).collect();
-        let new_section =
-            apply_changes_to_section(llm, &section, &llm_interpreted).await?;
-        let new_section = stamp_reviewed_markers(&new_section, &today);
-        new_content = replace_section(&new_content, start, end, &new_section);
+        // Apply deterministic instructions directly
+        let deterministic: Vec<_> = active.iter().copied().filter(is_deterministic).collect();
+        if !deterministic.is_empty() {
+            let source_pairs: Vec<(&str, &str)> = deterministic
+                .iter()
+                .filter_map(|ia| match &ia.instruction {
+                    crate::ChangeInstruction::AddSource { line_text, source_info } => {
+                        Some((line_text.as_str(), source_info.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            new_content = apply_source_citations(&new_content, &source_pairs);
+
+            let temporal_updates: Vec<(&str, Option<&str>, &str)> = deterministic
+                .iter()
+                .filter_map(|ia| match &ia.instruction {
+                    crate::ChangeInstruction::UpdateTemporal { line_text, old_tag, new_tag } => {
+                        Some((line_text.as_str(), Some(old_tag.as_str()), new_tag.as_str()))
+                    }
+                    crate::ChangeInstruction::AddTemporal { line_text, tag } => {
+                        Some((line_text.as_str(), None, tag.as_str()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            new_content = apply_confirmations(&new_content, &temporal_updates);
+
+            for ia in &deterministic {
+                if let crate::ChangeInstruction::Delete { line_text } = &ia.instruction {
+                    if !line_text.is_empty() {
+                        new_content = new_content
+                            .lines()
+                            .filter(|l| !l.contains(line_text.as_str()))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                    }
+                }
+            }
+
+            let det_line_refs: Vec<usize> =
+                deterministic.iter().filter_map(|ia| ia.question.line_ref).collect();
+            new_content = stamp_reviewed_lines(&new_content, &det_line_refs, &today);
+        }
+
+        // Apply LLM-dependent instructions
+        let needs_llm: Vec<_> = active.iter().copied().filter(|ia| !is_deterministic(ia)).collect();
+        if !needs_llm.is_empty() {
+            let llm_questions: Vec<_> = needs_llm.iter().map(|ia| ia.question.clone()).collect();
+            let Some((start, end, section)) =
+                identify_affected_section(&new_content, &llm_questions)
+            else {
+                return Err(FactbaseError::internal("Could not identify affected section"));
+            };
+            let llm_interpreted: Vec<InterpretedAnswer> =
+                needs_llm.into_iter().cloned().collect();
+            let new_section = apply_changes_to_section(llm, &section, &llm_interpreted).await?;
+            let new_section = stamp_reviewed_markers(&new_section, &today);
+            new_content = replace_section(&new_content, start, end, &new_section);
+        }
     }
 
-    // Stamp reviewed markers on dismissed fact lines
+    // --- Phase 2: Stamp dismissed lines (single path for all cases) ---
     let dismissed_line_refs: Vec<usize> = interpreted
         .iter()
         .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
         .flat_map(|ia| conflict_line_refs(ia))
         .collect();
-    // Stamp <!-- sequential --> on conflict-dismissed lines for permanent suppression
     let conflict_dismissed_refs: Vec<usize> = interpreted
         .iter()
         .filter(|ia| {
@@ -484,10 +385,7 @@ async fn apply_one_document(
         })
         .flat_map(|ia| conflict_line_refs(ia))
         .collect();
-    if !conflict_dismissed_refs.is_empty() {
-        new_content = stamp_sequential_lines(&new_content, &conflict_dismissed_refs);
-    }
-    // Fallback: also stamp by matching fact text in case line numbers are stale
+    new_content = stamp_sequential_lines(&new_content, &conflict_dismissed_refs);
     let conflict_texts: Vec<String> = interpreted
         .iter()
         .filter(|ia| {
@@ -496,50 +394,41 @@ async fn apply_one_document(
         })
         .flat_map(|ia| conflict_fact_texts(ia))
         .collect();
-    if !conflict_texts.is_empty() {
-        let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
-        new_content = stamp_sequential_by_text(&new_content, &text_refs);
-    }
-    if !dismissed_line_refs.is_empty() {
-        new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
-    }
-    // Fallback: also stamp reviewed by matching fact text in case line numbers are stale
-    let all_dismissed_texts: Vec<String> = interpreted
+    let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
+    new_content = stamp_sequential_by_text(&new_content, &text_refs);
+    new_content = stamp_reviewed_lines(&new_content, &dismissed_line_refs, &today);
+    let dismissed_texts: Vec<String> = interpreted
         .iter()
         .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
         .flat_map(|ia| conflict_fact_texts(ia))
         .collect();
-    if !all_dismissed_texts.is_empty() {
-        let text_refs: Vec<&str> = all_dismissed_texts.iter().map(|s| s.as_str()).collect();
-        new_content = stamp_reviewed_by_text(&new_content, &text_refs, &today);
-    }
+    let dismissed_text_refs: Vec<&str> = dismissed_texts.iter().map(|s| s.as_str()).collect();
+    new_content = stamp_reviewed_by_text(&new_content, &dismissed_text_refs, &today);
 
-    // Uncheck deferred questions first (before removal shifts indices), then remove processed
-    new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
-    // Remove dismissed questions
-    new_content = remove_processed_questions(&new_content, &dismissed_indices);
-    // Remove all active (non-dismiss/defer) questions that were applied
-    let active_indices: Vec<usize> = answered
+    // --- Phase 3: Remove/uncheck processed questions ---
+    let deferred_indices: Vec<usize> = answered
         .iter()
         .zip(interpreted.iter())
-        .filter(|(_, ia)| {
-            !matches!(
-                ia.instruction,
-                crate::ChangeInstruction::Dismiss | crate::ChangeInstruction::Defer
-            )
-        })
+        .filter(|(_, ia)| matches!(ia.instruction, crate::ChangeInstruction::Defer))
         .map(|((i, _), _)| *i)
         .collect();
-    new_content = remove_processed_questions(&new_content, &active_indices);
+    new_content = uncheck_deferred_questions(&new_content, &deferred_indices);
+    // Remove all non-deferred answered questions (dismissed + active applied)
+    let remove_indices: Vec<usize> = answered
+        .iter()
+        .zip(interpreted.iter())
+        .filter(|(_, ia)| !matches!(ia.instruction, crate::ChangeInstruction::Defer))
+        .map(|((i, _), _)| *i)
+        .collect();
+    new_content = remove_processed_questions(&new_content, &remove_indices);
 
+    // --- Phase 4: Finalize ---
     new_content = normalize_review_section(&new_content);
     new_content = dedup_titles(&new_content);
 
-    // Validate the final document before writing
     let validation_errors = super::validate::validate_document(&content, &new_content);
     if !validation_errors.is_empty() {
-        let details: Vec<String> =
-            validation_errors.iter().map(|e| e.detail.clone()).collect();
+        let details: Vec<String> = validation_errors.iter().map(|e| e.detail.clone()).collect();
         return Err(FactbaseError::internal(format!(
             "Document validation failed (keeping original): {}",
             details.join("; ")
@@ -547,7 +436,7 @@ async fn apply_one_document(
     }
 
     write_file(file_path, &new_content)?;
-    Ok(review_questions.len())
+    Ok(if has_active_changes { review_questions.len() } else { 0 })
 }
 
 /// Collect line refs to stamp as reviewed for a dismissed question.

@@ -24,7 +24,7 @@
 //! let embedding = setup_embedding_with_timeout(&config, args.timeout);
 //! ```
 
-use super::errors::db_not_found_error;
+use super::utils::db_not_found_error;
 use factbase::{
     CachedEmbedding, Config, Database, EmbeddingProvider, LinkDetector, LlmProvider,
     OllamaEmbedding, OllamaLlm, PersistentCachedEmbedding, Repository, ReviewLlm,
