@@ -114,41 +114,15 @@ pub async fn plan_split(
     })
 }
 
-/// Build the LLM prompt for split analysis.
-fn build_split_prompt(doc_title: &str, facts: &[TrackedFact], sections: &[SplitSection]) -> String {
-    let mut prompt = format!(
-        r#"You are analyzing facts from a document to split it into separate documents.
+/// Default template for the organize split prompt.
+const DEFAULT_ORGANIZE_SPLIT_PROMPT: &str = r#"You are analyzing facts from a document to split it into separate documents.
 
 SOURCE DOCUMENT: "{doc_title}"
 
 SECTIONS IDENTIFIED:
-"#
-    );
-
-    for (i, section) in sections.iter().enumerate() {
-        writeln_str!(
-            prompt,
-            "S{}: {} (lines {}-{})",
-            i,
-            section.title,
-            section.start_line,
-            section.end_line
-        );
-    }
-
-    prompt.push_str("\nFACTS TO ASSIGN:\n");
-    for (i, fact) in facts.iter().enumerate() {
-        writeln_str!(
-            prompt,
-            "F{}: [line {}] {}",
-            i,
-            fact.source_line,
-            fact.content
-        );
-    }
-
-    prompt.push_str(
-        r#"
+{sections}
+FACTS TO ASSIGN:
+{facts}
 For each fact, decide which section it belongs to:
 - Assign to the most relevant section (S0, S1, etc.)
 - Use ORPHAN if the fact doesn't fit any section
@@ -166,10 +140,44 @@ Respond in JSON format:
 }
 
 Use ORPHAN as section value for facts that don't fit any section.
-"#,
-    );
+"#;
 
-    prompt
+/// Build the LLM prompt for split analysis.
+fn build_split_prompt(doc_title: &str, facts: &[TrackedFact], sections: &[SplitSection]) -> String {
+    let mut sections_str = String::new();
+    for (i, section) in sections.iter().enumerate() {
+        writeln_str!(
+            sections_str,
+            "S{}: {} (lines {}-{})",
+            i,
+            section.title,
+            section.start_line,
+            section.end_line
+        );
+    }
+
+    let mut facts_str = String::new();
+    for (i, fact) in facts.iter().enumerate() {
+        writeln_str!(
+            facts_str,
+            "F{}: [line {}] {}",
+            i,
+            fact.source_line,
+            fact.content
+        );
+    }
+
+    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+    crate::config::prompts::resolve_prompt(
+        &prompts,
+        "organize_split",
+        DEFAULT_ORGANIZE_SPLIT_PROMPT,
+        &[
+            ("doc_title", doc_title),
+            ("sections", &sections_str),
+            ("facts", &facts_str),
+        ],
+    )
 }
 
 /// Parse the LLM response into fact assignments and proposed titles.

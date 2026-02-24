@@ -73,3 +73,32 @@ server:
 web:
   enabled: false    # Enable web UI (requires 'web' feature)
   port: 3001        # Web UI port
+
+# --- Prompt Templates ---
+# Override any LLM prompt template. Use {placeholder} for variables.
+# If a key is absent, the built-in default is used.
+#
+# prompts:
+#   # Design KB structure for a domain (vars: domain, entity_types)
+#   bootstrap: "Design a knowledge base for: {domain}{entity_types}..."
+#
+#   # Rewrite a document section with changes (vars: section, changes)
+#   rewrite_section: "Rewrite this:\n{section}\n\nChanges:\n{changes}"
+#
+#   # Merge inbox notes into a document (vars: document_content, inbox_content)
+#   inbox_merge: "Integrate inbox into document:\n{document_content}\n\n{inbox_content}"
+#
+#   # Merge facts from multiple documents (vars: doc_title, keep_facts, merge_facts)
+#   organize_merge: "Merge into \"{doc_title}\":\n{keep_facts}\n{merge_facts}"
+#
+#   # Split a document into sections (vars: doc_title, sections, facts)
+#   organize_split: "Split \"{doc_title}\":\n{sections}\n{facts}"
+#
+#   # Cross-validate facts against other documents (vars: doc_title, fact_batch)
+#   cross_validate: "Validate facts in \"{doc_title}\":\n{fact_batch}"
+#
+#   # Detect entity mentions in a single document (vars: entities_list, content)
+#   link_detect: "Find mentions of:\n{entities_list}\n\nIn:\n{content}"
+#
+#   # Detect entity mentions across multiple documents (vars: entities_list, docs_section)
+#   link_detect_batch: "Find mentions of:\n{entities_list}\n\nIn:\n{docs_section}"

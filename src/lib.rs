@@ -63,6 +63,7 @@ pub use answer_processor::{
     ChangeInstruction, InterpretedAnswer,
 };
 pub use config::Config;
+pub use config::prompts::{resolve_prompt, PromptsConfig};
 pub use database::{ContentSearchParams, Database};
 pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding};
 pub use embeddings_io::{

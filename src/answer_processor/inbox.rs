@@ -88,10 +88,8 @@ pub fn strip_inbox_blocks(content: &str, blocks: &[InboxBlock]) -> String {
     result.join("\n")
 }
 
-/// Build the LLM prompt for integrating inbox content into a document.
-pub fn build_inbox_prompt(document_content: &str, inbox_content: &str) -> String {
-    format!(
-        r#"Integrate the INBOX notes into the DOCUMENT below. The inbox contains corrections, updates, or new facts that should be merged into the appropriate sections.
+/// Default template for the inbox merge prompt.
+pub const DEFAULT_INBOX_MERGE_PROMPT: &str = r#"Integrate the INBOX notes into the DOCUMENT below. The inbox contains corrections, updates, or new facts that should be merged into the appropriate sections.
 
 DOCUMENT:
 {document_content}
@@ -108,7 +106,22 @@ RULES:
 6. Do NOT include the inbox block markers in the output
 7. Preserve the factbase ID header (<!-- factbase:XXXXXX -->)
 8. Preserve the Review Queue section (<!-- factbase:review -->) if present
-9. Output the complete updated document only"#
+9. Output the complete updated document only"#;
+
+/// Build the LLM prompt for integrating inbox content into a document.
+pub fn build_inbox_prompt(
+    document_content: &str,
+    inbox_content: &str,
+    prompts: &crate::config::PromptsConfig,
+) -> String {
+    crate::config::prompts::resolve_prompt(
+        prompts,
+        "inbox_merge",
+        DEFAULT_INBOX_MERGE_PROMPT,
+        &[
+            ("document_content", document_content),
+            ("inbox_content", inbox_content),
+        ],
     )
 }
 
@@ -128,7 +141,8 @@ pub async fn apply_inbox_integration(
     // Strip inbox blocks from content before sending to LLM
     let clean_content = strip_inbox_blocks(content, blocks);
 
-    let prompt = build_inbox_prompt(&clean_content, &combined_inbox);
+    let prompts_config = crate::Config::load(None).unwrap_or_default().prompts;
+    let prompt = build_inbox_prompt(&clean_content, &combined_inbox, &prompts_config);
     let response = llm.complete(&prompt).await?;
     let result = response.trim().to_string();
 
@@ -220,7 +234,8 @@ mod tests {
 
     #[test]
     fn test_build_inbox_prompt_contains_content() {
-        let prompt = build_inbox_prompt("# Doc\n\n- Fact one", "CEO is now Jane");
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_inbox_prompt("# Doc\n\n- Fact one", "CEO is now Jane", &prompts);
         assert!(prompt.contains("# Doc"));
         assert!(prompt.contains("CEO is now Jane"));
         assert!(prompt.contains("DOCUMENT:"));

@@ -53,10 +53,8 @@ pub fn format_changes_for_llm(instructions: &[InterpretedAnswer]) -> String {
     changes.join("\n")
 }
 
-/// Build the LLM prompt for section rewriting
-pub fn build_rewrite_prompt(section: &str, changes: &str) -> String {
-    format!(
-        r#"Rewrite this section with the exact changes specified.
+/// Default template for the rewrite_section prompt.
+pub const DEFAULT_REWRITE_SECTION_PROMPT: &str = r#"Rewrite this section with the exact changes specified.
 
 ORIGINAL:
 {section}
@@ -78,7 +76,19 @@ RULES:
 8. Do NOT include any meta-text, labels, JSON, or commentary — output ONLY the rewritten section
 9. Preserve all headings (## ...) exactly as they appear
 
-Output the complete rewritten section only:"#
+Output the complete rewritten section only:"#;
+
+/// Build the LLM prompt for section rewriting
+pub fn build_rewrite_prompt(
+    section: &str,
+    changes: &str,
+    prompts: &crate::config::PromptsConfig,
+) -> String {
+    crate::config::prompts::resolve_prompt(
+        prompts,
+        "rewrite_section",
+        DEFAULT_REWRITE_SECTION_PROMPT,
+        &[("section", section), ("changes", changes)],
     )
 }
 
@@ -114,7 +124,8 @@ pub async fn apply_changes_to_section(
 
     // Build and send prompt to LLM
     let changes = format_changes_for_llm(instructions);
-    let prompt = build_rewrite_prompt(section, &changes);
+    let prompts_config = crate::Config::load(None).unwrap_or_default().prompts;
+    let prompt = build_rewrite_prompt(section, &changes, &prompts_config);
 
     let response = llm.complete(&prompt).await?;
     let rewritten = response.trim().to_string();
@@ -690,7 +701,8 @@ mod tests {
     fn test_build_rewrite_prompt_structure() {
         let section = "## Career\n- Job 1\n- Job 2";
         let changes = "1. Add @t[2020] to Job 1";
-        let result = build_rewrite_prompt(section, changes);
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_rewrite_prompt(section, changes, &prompts);
 
         assert!(result.contains("ORIGINAL:"));
         assert!(result.contains("## Career"));
@@ -701,7 +713,8 @@ mod tests {
 
     #[test]
     fn test_build_rewrite_prompt_contains_rules() {
-        let result = build_rewrite_prompt("content", "changes");
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_rewrite_prompt("content", "changes", &prompts);
         assert!(result.contains("Apply ALL changes"));
         assert!(result.contains("@t[2022]"));
         assert!(result.contains("@t[2022-03]"));

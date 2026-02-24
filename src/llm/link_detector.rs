@@ -21,6 +21,33 @@ pub struct DetectedLink {
 }
 
 /// Service for detecting entity mentions in documents.
+
+/// Default template for single-document link detection.
+const DEFAULT_LINK_DETECT_PROMPT: &str = r#"Analyze this document and find mentions of these known entities. Return ONLY a JSON array.
+
+Known entities:
+{entities_list}
+
+Document:
+{content}
+
+Return a JSON array of objects with "entity" (exact title from list) and "context" (surrounding text). 
+Only include entities that are clearly mentioned. Return [] if none found.
+Example: [{"entity": "John Doe", "context": "met with John Doe yesterday"}]"#;
+
+/// Default template for batch link detection.
+const DEFAULT_LINK_DETECT_BATCH_PROMPT: &str = r#"Analyze these documents and find mentions of known entities. Return ONLY a JSON object.
+
+Known entities:
+{entities_list}
+
+Documents:
+{docs_section}
+
+Return a JSON object where keys are DOC_IDs and values are arrays of {"entity": "exact title", "context": "surrounding text"}.
+Only include entities clearly mentioned. Use empty array [] for docs with no matches.
+Example: {"abc123": [{"entity": "John Doe", "context": "met John"}], "def456": []}"#;
+
 pub struct LinkDetector {
     llm: Box<dyn LlmProvider>,
     max_content_length: usize,
@@ -110,18 +137,12 @@ impl LinkDetector {
             return Ok(links);
         }
 
-        let prompt = format!(
-            r#"Analyze this document and find mentions of these known entities. Return ONLY a JSON array.
-
-Known entities:
-{entities_list}
-
-Document:
-{content}
-
-Return a JSON array of objects with "entity" (exact title from list) and "context" (surrounding text). 
-Only include entities that are clearly mentioned. Return [] if none found.
-Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#
+        let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+        let prompt = crate::config::prompts::resolve_prompt(
+            &prompts,
+            "link_detect",
+            DEFAULT_LINK_DETECT_PROMPT,
+            &[("entities_list", &entities_list), ("content", content)],
         );
 
         let response = self.llm.complete(&prompt).await?;
@@ -223,18 +244,12 @@ Example: [{{"entity": "John Doe", "context": "met with John Doe yesterday"}}]"#
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let prompt = format!(
-            r#"Analyze these documents and find mentions of known entities. Return ONLY a JSON object.
-
-Known entities:
-{entities_list}
-
-Documents:
-{docs_section}
-
-Return a JSON object where keys are DOC_IDs and values are arrays of {{"entity": "exact title", "context": "surrounding text"}}.
-Only include entities clearly mentioned. Use empty array [] for docs with no matches.
-Example: {{"abc123": [{{"entity": "John Doe", "context": "met John"}}], "def456": []}}"#
+        let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+        let prompt = crate::config::prompts::resolve_prompt(
+            &prompts,
+            "link_detect_batch",
+            DEFAULT_LINK_DETECT_BATCH_PROMPT,
+            &[("entities_list", &entities_list), ("docs_section", &docs_section)],
         );
 
         let response = self.llm.complete(&prompt).await?;

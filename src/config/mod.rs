@@ -5,6 +5,7 @@
 mod database;
 mod embedding;
 mod processor;
+pub mod prompts;
 mod server;
 mod validation;
 mod web;
@@ -12,6 +13,7 @@ mod web;
 pub use database::DatabaseConfig;
 pub use embedding::{EmbeddingConfig, LlmConfig, OllamaConfig};
 pub use processor::{ProcessorConfig, RepositoryConfig, WatcherConfig};
+pub use prompts::PromptsConfig;
 pub use server::{RateLimitConfig, ReviewConfig, ServerConfig, TemporalConfig};
 pub use validation::{validate_timeout, TIMEOUT_RANGE};
 pub use web::WebConfig;
@@ -55,6 +57,8 @@ pub struct Config {
     pub review: ReviewConfig,
     #[serde(default)]
     pub web: WebConfig,
+    #[serde(default)]
+    pub prompts: PromptsConfig,
 }
 
 impl Default for Config {
@@ -95,6 +99,7 @@ impl Default for Config {
             temporal: TemporalConfig::default(),
             review: ReviewConfig::default(),
             web: WebConfig::default(),
+            prompts: PromptsConfig::default(),
         }
     }
 }
@@ -233,6 +238,9 @@ impl Config {
 
         // Web settings
         require_positive(self.web.port as u64, "web.port")?;
+
+        // Prompt templates
+        prompts::validate_prompts(&self.prompts);
 
         Ok(())
     }

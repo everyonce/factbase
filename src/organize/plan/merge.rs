@@ -117,36 +117,15 @@ pub async fn plan_merge(
     })
 }
 
-/// Build the LLM prompt for merge analysis.
-fn build_merge_prompt(
-    keep_title: &str,
-    keep_facts: &[TrackedFact],
-    merge_facts: &[(String, Vec<TrackedFact>)],
-) -> String {
-    let mut prompt = format!(
-        r#"You are analyzing facts from multiple documents to merge them into one.
+/// Default template for the organize merge prompt.
+const DEFAULT_ORGANIZE_MERGE_PROMPT: &str = r#"You are analyzing facts from multiple documents to merge them into one.
 
-TARGET DOCUMENT: "{keep_title}"
+TARGET DOCUMENT: "{doc_title}"
 
 FACTS FROM TARGET (to keep):
-"#
-    );
-
-    for (i, fact) in keep_facts.iter().enumerate() {
-        writeln_str!(prompt, "K{}: {}", i, fact.content);
-    }
-
-    prompt.push_str("\nFACTS FROM DOCUMENTS TO MERGE:\n");
-
-    for (doc_id, facts) in merge_facts {
-        writeln_str!(prompt, "\nFrom document {}:", doc_id);
-        for (i, fact) in facts.iter().enumerate() {
-            writeln_str!(prompt, "M{}_{}: {}", doc_id, i, fact.content);
-        }
-    }
-
-    prompt.push_str(
-        r#"
+{keep_facts}
+FACTS FROM DOCUMENTS TO MERGE:
+{merge_facts}
 For each fact from the merge documents, decide:
 - KEEP: Add to target (new information)
 - DUPLICATE: Same as a fact in target (specify which K# it duplicates)
@@ -160,10 +139,38 @@ Respond in JSON format:
 }
 
 Only include facts from merge documents (M*), not target facts (K*).
-"#,
-    );
+"#;
 
-    prompt
+/// Build the LLM prompt for merge analysis.
+fn build_merge_prompt(
+    keep_title: &str,
+    keep_facts: &[TrackedFact],
+    merge_facts: &[(String, Vec<TrackedFact>)],
+) -> String {
+    let mut keep_str = String::new();
+    for (i, fact) in keep_facts.iter().enumerate() {
+        writeln_str!(keep_str, "K{}: {}", i, fact.content);
+    }
+
+    let mut merge_str = String::new();
+    for (doc_id, facts) in merge_facts {
+        writeln_str!(merge_str, "\nFrom document {}:", doc_id);
+        for (i, fact) in facts.iter().enumerate() {
+            writeln_str!(merge_str, "M{}_{}: {}", doc_id, i, fact.content);
+        }
+    }
+
+    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+    crate::config::prompts::resolve_prompt(
+        &prompts,
+        "organize_merge",
+        DEFAULT_ORGANIZE_MERGE_PROMPT,
+        &[
+            ("doc_title", keep_title),
+            ("keep_facts", &keep_str),
+            ("merge_facts", &merge_str),
+        ],
+    )
 }
 
 /// Parse the LLM response into fact assignments.
