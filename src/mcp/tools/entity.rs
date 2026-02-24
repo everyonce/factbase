@@ -7,6 +7,7 @@ use super::helpers::{
 use super::{get_bool_arg, get_str_arg, get_u64_arg};
 use crate::database::Database;
 use crate::error::FactbaseError;
+use crate::models::load_perspective_from_file;
 use crate::output::truncate_at_word_boundary;
 use serde_json::Value;
 use tracing::instrument;
@@ -133,9 +134,12 @@ pub fn get_perspective(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     .ok_or_else(|| FactbaseError::not_found("No repository found"))?;
 
     let mut json = repo.to_summary_json(doc_count);
+    let perspective = repo
+        .perspective
+        .or_else(|| load_perspective_from_file(&repo.path));
     json.as_object_mut()
         .expect("to_summary_json returns object")
-        .insert("perspective".into(), serde_json::json!(repo.perspective));
+        .insert("perspective".into(), serde_json::json!(perspective));
 
     Ok(json)
 }
@@ -321,5 +325,67 @@ mod tests {
         assert!(preview.contains('\n'));
         assert!(preview.contains("Line one"));
         assert!(preview.contains("Line three"));
+    }
+
+    #[test]
+    fn test_get_perspective_falls_back_to_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: \"test focus\"\norganization: \"test org\"\n",
+        )
+        .unwrap();
+
+        // Simulate a repo with no perspective in DB
+        let repo = crate::models::Repository {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            path: tmp.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+
+        // The fallback logic used in get_perspective
+        let perspective = repo
+            .perspective
+            .or_else(|| load_perspective_from_file(&repo.path));
+
+        assert!(perspective.is_some());
+        let p = perspective.unwrap();
+        assert_eq!(p.focus.as_deref(), Some("test focus"));
+        assert_eq!(p.organization.as_deref(), Some("test org"));
+    }
+
+    #[test]
+    fn test_get_perspective_prefers_db_over_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: \"from file\"\n",
+        )
+        .unwrap();
+
+        let db_perspective = crate::models::Perspective {
+            focus: Some("from db".to_string()),
+            ..Default::default()
+        };
+
+        let repo = crate::models::Repository {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            path: tmp.path().to_path_buf(),
+            perspective: Some(db_perspective),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+
+        let perspective = repo
+            .perspective
+            .or_else(|| load_perspective_from_file(&repo.path));
+
+        assert_eq!(perspective.unwrap().focus.as_deref(), Some("from db"));
     }
 }
