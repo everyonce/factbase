@@ -397,7 +397,37 @@ fn facts_may_conflict(text1: &str, text2: &str) -> bool {
         return false;
     }
 
+    // Key-value facts with different keys describe independent attributes
+    // (e.g. "Email: x" vs "Phone: y") and cannot conflict with each other.
+    if have_different_attribute_keys(text1, text2) {
+        return false;
+    }
+
     true
+}
+
+/// Extract the attribute key from a `Key: Value` or `**Key**: Value` fact.
+/// Returns `None` if the fact doesn't follow a key-value pattern.
+fn extract_attribute_key(text: &str) -> Option<&str> {
+    // Find the first colon that's followed by a space (to avoid matching URLs like http:)
+    let colon_pos = text.find(": ")?;
+    let key = &text[..colon_pos];
+    // Strip bold markers
+    let key = key.trim_start_matches("**").trim_end_matches("**");
+    let key = key.trim();
+    // Must be a short label (≤ 4 words), not a sentence fragment
+    if key.is_empty() || key.split_whitespace().count() > 4 {
+        return None;
+    }
+    Some(key)
+}
+
+/// Returns true if both facts have key-value structure with different keys.
+fn have_different_attribute_keys(text1: &str, text2: &str) -> bool {
+    match (extract_attribute_key(text1), extract_attribute_key(text2)) {
+        (Some(k1), Some(k2)) => !k1.eq_ignore_ascii_case(k2),
+        _ => false,
+    }
 }
 
 /// Extract the year prefix from a date string ("2018" → "2018", "-0490" → "-0490").
@@ -1136,6 +1166,86 @@ mod tests {
             "2023-01", "2023-08", "2023-04", "2023-10",
         );
         assert_eq!(p, ConflictPattern::Unknown);
+    }
+
+    // --- attribute key extraction tests ---
+
+    #[test]
+    fn test_extract_attribute_key() {
+        // Standard key-value
+        assert_eq!(extract_attribute_key("Email: foo@bar.com"), Some("Email"));
+        assert_eq!(extract_attribute_key("Phone: 555-1234"), Some("Phone"));
+        // Bold key
+        assert_eq!(extract_attribute_key("**Email**: foo@bar.com"), Some("Email"));
+        assert_eq!(extract_attribute_key("**Hire Date**: 2020-01-15"), Some("Hire Date"));
+        // Multi-word key (up to 4 words)
+        assert_eq!(extract_attribute_key("Spore Print Color: white"), Some("Spore Print Color"));
+        // Too many words → not a key
+        assert_eq!(extract_attribute_key("This is a long sentence fragment: value"), None);
+        // No colon → not key-value
+        assert_eq!(extract_attribute_key("CTO at Acme Corp"), None);
+        // URL-like colon (no space after) → not key-value
+        assert_eq!(extract_attribute_key("Website http://example.com"), None);
+        // Empty key
+        assert_eq!(extract_attribute_key(": value"), None);
+    }
+
+    #[test]
+    fn test_have_different_attribute_keys() {
+        // Different keys → true
+        assert!(have_different_attribute_keys("Email: foo@bar.com", "Phone: 555-1234"));
+        assert!(have_different_attribute_keys("**Email**: foo", "**Slack**: @foo"));
+        assert!(have_different_attribute_keys("Habitat: forest", "Classification: Agaricales"));
+        // Same key → false
+        assert!(!have_different_attribute_keys("Role: CTO", "Role: CEO"));
+        assert!(!have_different_attribute_keys("**Role**: CTO", "Role: CEO"));
+        // Case-insensitive
+        assert!(!have_different_attribute_keys("email: foo", "Email: bar"));
+        // One or both not key-value → false (can't determine)
+        assert!(!have_different_attribute_keys("CTO at Acme", "Email: foo"));
+        assert!(!have_different_attribute_keys("CTO at Acme", "CEO at BigCo"));
+    }
+
+    #[test]
+    fn test_attribute_key_suppresses_conflict() {
+        // Different key-value attributes in same section should not conflict
+        let content = "# Entity\n\n\
+            - **Email**: foo@bar.com @t[2020..]\n\
+            - **Slack**: @foo @t[2020..]";
+        assert!(generate_conflict_questions(content).is_empty());
+
+        // Mixed bold/plain keys
+        let content2 = "# Entity\n\n\
+            - Hire Date: 2020-01-15 @t[=2020-01]\n\
+            - Manager: Jane Smith @t[2020..]\n\
+            - Department: Engineering @t[2020..]";
+        assert!(generate_conflict_questions(content2).is_empty());
+
+        // Non-people domain: botany
+        let content3 = "# Species\n\n\
+            - Habitat: temperate forests @t[2020..]\n\
+            - Classification: Agaricales @t[2020..]\n\
+            - Spore Color: white @t[~2023]";
+        assert!(generate_conflict_questions(content3).is_empty());
+    }
+
+    #[test]
+    fn test_same_attribute_key_still_conflicts() {
+        // Same key with overlapping dates → real conflict
+        // Use lowercase key to avoid shared-entity-sequential suppression
+        let content = "# Entity\n\n\
+            - role: alpha @t[2020..2023]\n\
+            - role: beta @t[2022..2024]";
+        assert_eq!(generate_conflict_questions(content).len(), 1);
+    }
+
+    #[test]
+    fn test_non_kv_facts_still_conflict() {
+        // Facts without key-value structure should still be checked
+        let content = "# Entity\n\n\
+            - CTO at Acme @t[2020..2023]\n\
+            - CEO at BigCo @t[2022..2024]";
+        assert_eq!(generate_conflict_questions(content).len(), 1);
     }
 
     #[test]
