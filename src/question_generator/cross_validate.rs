@@ -51,33 +51,37 @@ fn extract_title(content: &str, doc_id: &str) -> String {
         .map_or_else(|| doc_id.to_string(), |l| crate::patterns::clean_title(&l[2..]))
 }
 
+/// Default template for the cross-validate prompt.
+const DEFAULT_CROSS_VALIDATE_PROMPT: &str = "You are validating facts from a knowledge base document. For each fact below, \
+I've included relevant information from other documents in the knowledge base.\n\n\
+Determine if each fact is:\n\
+- CONSISTENT: agrees with or is not contradicted by other sources\n\
+- CONFLICT: directly contradicts information in another document\n\
+- STALE: may have been true but other sources suggest it's no longer current\n\
+- UNCERTAIN: insufficient information to validate\n\n\
+IMPORTANT: Distinguish between the SUBJECT of a fact (the entity the fact describes) \
+and entities mentioned only as SOURCES (people who provided or verified the information). \
+A source person becoming inactive or changing roles does NOT make the fact itself stale — \
+it only means the source may need re-verification. Only flag CONFLICT or STALE when the \
+factual claim itself is contradicted by other documents.\n\n\
+For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n\
+IMPORTANT: Sequential entries often share a boundary month due to month-level \
+granularity (e.g., Role A ends 2016-11 and Role B starts 2016-11). This is a normal \
+transition, NOT a conflict. Do not flag boundary-month overlaps as CONFLICT.\n\n\
+Document: {doc_title}\n---\n\
+{fact_batch}\
+---\n\nRespond ONLY with a JSON array. Each element must have: \
+fact (number), status (CONSISTENT/CONFLICT/STALE/UNCERTAIN), \
+reason (string), source_doc (string, empty if N/A).\n";
+
 /// Build the LLM prompt for a batch of facts with their cross-document context.
 fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
-    let mut prompt = String::from(
-        "You are validating facts from a knowledge base document. For each fact below, \
-         I've included relevant information from other documents in the knowledge base.\n\n\
-         Determine if each fact is:\n\
-         - CONSISTENT: agrees with or is not contradicted by other sources\n\
-         - CONFLICT: directly contradicts information in another document\n\
-         - STALE: may have been true but other sources suggest it's no longer current\n\
-         - UNCERTAIN: insufficient information to validate\n\n\
-         IMPORTANT: Distinguish between the SUBJECT of a fact (the entity the fact describes) \
-         and entities mentioned only as SOURCES (people who provided or verified the information). \
-         A source person becoming inactive or changing roles does NOT make the fact itself stale — \
-         it only means the source may need re-verification. Only flag CONFLICT or STALE when the \
-         factual claim itself is contradicted by other documents.\n\n\
-         For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n\
-         IMPORTANT: Sequential entries often share a boundary month due to month-level \
-         granularity (e.g., Role A ends 2016-11 and Role B starts 2016-11). This is a normal \
-         transition, NOT a conflict. Do not flag boundary-month overlaps as CONFLICT.\n\n",
-    );
-
-    write_str!(prompt, "Document: {doc_title}\n---\n");
+    let mut fact_batch = String::new();
 
     for (i, fwc) in batch.iter().enumerate() {
         let idx = i + 1;
         write_str!(
-            prompt,
+            fact_batch,
             "Fact {idx} (line {}): \"{}\"\nRelated information:\n",
             fwc.fact.line_number,
             fwc.fact.text
@@ -88,27 +92,28 @@ fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
             } else {
                 r.snippet.clone()
             };
-            writeln_str!(prompt, "- [{}] \"{}\"", r.title, snip);
+            writeln_str!(fact_batch, "- [{}] \"{}\"", r.title, snip);
         }
         if !fwc.source_defs.is_empty() {
-            write_str!(prompt, "Sources for this fact: ");
+            write_str!(fact_batch, "Sources for this fact: ");
             for (j, sd) in fwc.source_defs.iter().enumerate() {
                 if j > 0 {
-                    prompt.push_str("; ");
+                    fact_batch.push_str("; ");
                 }
-                prompt.push_str(sd);
+                fact_batch.push_str(sd);
             }
-            prompt.push('\n');
+            fact_batch.push('\n');
         }
-        prompt.push('\n');
+        fact_batch.push('\n');
     }
 
-    prompt.push_str(
-        "---\n\nRespond ONLY with a JSON array. Each element must have: \
-         fact (number), status (CONSISTENT/CONFLICT/STALE/UNCERTAIN), \
-         reason (string), source_doc (string, empty if N/A).\n",
-    );
-    prompt
+    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+    crate::config::prompts::resolve_prompt(
+        &prompts,
+        "cross_validate",
+        DEFAULT_CROSS_VALIDATE_PROMPT,
+        &[("doc_title", doc_title), ("fact_batch", &fact_batch)],
+    )
 }
 
 /// Parse the LLM JSON response, tolerating markdown fences and partial output.

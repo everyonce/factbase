@@ -192,14 +192,8 @@ fn setup_step(step: usize, args: &Value) -> Value {
     }
 }
 
-/// Build the LLM prompt for domain-aware KB structure generation.
-fn build_bootstrap_prompt(domain: &str, entity_types: Option<&str>) -> String {
-    let entity_hint = entity_types
-        .map(|t| format!("\nThe user has suggested these entity types: {t}"))
-        .unwrap_or_default();
-
-    format!(
-        r##"You are designing a knowledge base structure for the domain: "{domain}"{entity_hint}
+/// Default template for the bootstrap prompt.
+const DEFAULT_BOOTSTRAP_PROMPT: &str = r##"You are designing a knowledge base structure for the domain: "{domain}"{entity_types}
 
 Generate a JSON object with these fields:
 
@@ -229,7 +223,23 @@ Generate a JSON object with these fields:
 
 7. "examples": array of 1-2 fully worked example documents as markdown strings, using the templates above with realistic domain content. Include temporal tags and source footnotes.
 
-Return ONLY valid JSON, no markdown fences or explanation."##
+Return ONLY valid JSON, no markdown fences or explanation."##;
+
+/// Build the LLM prompt for domain-aware KB structure generation.
+fn build_bootstrap_prompt(
+    domain: &str,
+    entity_types: Option<&str>,
+    prompts: &crate::config::PromptsConfig,
+) -> String {
+    let entity_hint = entity_types
+        .map(|t| format!("\nThe user has suggested these entity types: {t}"))
+        .unwrap_or_default();
+
+    crate::config::prompts::resolve_prompt(
+        prompts,
+        "bootstrap",
+        DEFAULT_BOOTSTRAP_PROMPT,
+        &[("domain", domain), ("entity_types", &entity_hint)],
     )
 }
 
@@ -253,7 +263,10 @@ pub async fn bootstrap(
     let entity_types = get_str_arg(args, "entity_types");
     let _path = get_str_arg(args, "path");
 
-    let prompt = build_bootstrap_prompt(&domain, entity_types);
+    let prompts = crate::Config::load(None)
+        .unwrap_or_default()
+        .prompts;
+    let prompt = build_bootstrap_prompt(&domain, entity_types, &prompts);
     let response = llm.complete(&prompt).await?;
 
     let suggestions = parse_bootstrap_response(&response).unwrap_or_else(|| {
@@ -1208,7 +1221,8 @@ mod tests {
 
     #[test]
     fn test_build_bootstrap_prompt_basic() {
-        let prompt = build_bootstrap_prompt("mycology", None);
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt("mycology", None, &prompts);
         assert!(prompt.contains("mycology"));
         assert!(prompt.contains("document_types"));
         assert!(prompt.contains("folder_structure"));
@@ -1220,7 +1234,8 @@ mod tests {
 
     #[test]
     fn test_build_bootstrap_prompt_with_entity_types() {
-        let prompt = build_bootstrap_prompt("mycology", Some("species, habitats, researchers"));
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt("mycology", Some("species, habitats, researchers"), &prompts);
         assert!(prompt.contains("mycology"));
         assert!(prompt.contains("species, habitats, researchers"));
         assert!(prompt.contains("suggested these entity types"));
