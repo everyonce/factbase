@@ -62,9 +62,15 @@ Statuses:\n\
 - CONFLICT: At least one piece CONTRADICTS the fact itself (not just the source of the fact)\n\
 - STALE: At least one piece SUPERSEDES with newer information\n\
 - UNCERTAIN: Evidence exists but is ambiguous\n\n\
-Note: Sequential role/status entries often share a boundary month \
-(e.g., \"Role A ends 2016-11\" and \"Role B starts 2016-11\"). \
-This is a normal handoff, NOT a conflict.\n\n\
+Common mistakes to avoid:\n\
+✗ WRONG: Flagging a fact as STALE because the SOURCE is old. A 2019 source citing \
+\"founded in 1924\" is NOT stale — the fact is timeless.\n\
+✗ WRONG: Flagging boundary-month overlaps as CONFLICT. \"Role A ends 2016-11\" + \
+\"Role B starts 2016-11\" = normal transition.\n\
+✗ WRONG: Flagging two DIFFERENT facts about the same entity as conflicting. \
+\"Fleet size: 900\" and \"Destinations: 200\" coexist.\n\
+✓ RIGHT: CONFLICT only when two sources give DIFFERENT answers to the SAME question \
+about the SAME entity.\n\n\
 Document: {doc_title}\n---\n\
 {fact_batch}\
 ---\n\nRespond ONLY with a JSON array. Each element must have: \
@@ -765,7 +771,9 @@ mod tests {
         let prompt = build_prompt("Doc", &[&fwc]);
         assert!(prompt.contains("evidence chain"));
         assert!(prompt.contains("SUPPORTS, CONTRADICTS, or SUPERSEDES"));
-        assert!(prompt.contains("boundary month"));
+        assert!(prompt.contains("WRONG: Flagging a fact as STALE"));
+        assert!(prompt.contains("WRONG: Flagging boundary-month"));
+        assert!(prompt.contains("RIGHT: CONFLICT only when"));
     }
 
     /// Cross-type results are filtered when the result's title is not mentioned
