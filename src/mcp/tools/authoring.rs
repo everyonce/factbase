@@ -62,7 +62,11 @@ pub fn get_authoring_guide() -> Value {
             },
             "valid_content": "ONLY these go inside @t[...]: years (2024 or -0490 for BCE), quarters (2024-Q2), months (2024-03), days (2024-03-15), ranges with dates (2020..2023 or -0490..-0479), or ? for unknown",
             "common_errors": {
-                "❌ WRONG — text inside tag": "@t[bright red when young] @t[seasonal] @t[since ancient times] @t[traditional..modern] @t[varies by region]",
+                "❌ WRONG — entity names inside tag": "@t[Wolfgang Amadeus Mozart] @t[Mount Vesuvius] @t[Amanita muscaria]",
+                "❌ WRONG — descriptions inside tag": "@t[Complex counterpoint and fugal writing] @t[bright red when young] @t[No significant seismic activity]",
+                "❌ WRONG — statuses inside tag": "@t[Active Production Status: Ongoing] @t[Critically Endangered]",
+                "❌ WRONG — statistics inside tag": "@t[Total Produced: 650+] @t[Population: 12000]",
+                "❌ WRONG — vague time words": "@t[seasonal] @t[since ancient times] @t[traditional..modern] @t[varies by region]",
                 "✅ CORRECT — dates only": "@t[=2024] @t[~2024] @t[1753..] @t[2020..2023] @t[?]",
                 "rule": "If it's not a year, month, day, quarter, or ?, it does NOT go inside @t[...]"
             },
@@ -98,7 +102,7 @@ pub fn get_authoring_guide() -> Value {
             "processing": "Integrated by apply_review_answers or `factbase review --apply`, then the block is removed"
         },
         "common_mistakes": [
-            "Putting text/descriptions inside @t[...] instead of dates — WRONG: @t[seasonal], RIGHT: @t[~2024]",
+            "Putting text/descriptions inside @t[...] instead of dates — WRONG: @t[seasonal], @t[Wolfgang Amadeus Mozart], @t[Active Production Status: Ongoing], @t[Total Produced: 650+] — RIGHT: @t[~2024] or @t[2020..2023] or @t[?]",
             "Missing temporal tags on dynamic facts (status, classification, population, roles)",
             "Vague entity references ('the species', 'the project') instead of exact names ('Amanita muscaria', 'Platform API')",
             "Duplicate content across documents — link instead with [[id]]",
@@ -194,5 +198,22 @@ mod tests {
         let examples = &guide["temporal_tags"]["examples"];
         assert!(examples.is_array());
         assert!(examples.as_array().unwrap().len() >= 3);
+    }
+
+    #[test]
+    fn test_temporal_tag_negative_examples_cover_all_categories() {
+        let guide = get_authoring_guide();
+        let errors = &guide["temporal_tags"]["common_errors"];
+        let errors_str = serde_json::to_string(errors).unwrap();
+        // Entity names
+        assert!(errors_str.contains("Wolfgang Amadeus Mozart"), "missing entity name negative example");
+        // Descriptions
+        assert!(errors_str.contains("counterpoint"), "missing description negative example");
+        // Statuses
+        assert!(errors_str.contains("Active Production Status"), "missing status negative example");
+        // Statistics
+        assert!(errors_str.contains("Total Produced"), "missing statistic negative example");
+        // Vague time words
+        assert!(errors_str.contains("seasonal"), "missing vague time word negative example");
     }
 }

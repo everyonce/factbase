@@ -303,6 +303,18 @@ For dates before the Common Era, use either BCE suffix or negative years:
 
 Both `331 BCE` and `-331` are accepted; they are stored as `-0331` internally.
 
+### What NOT to Put in @t Tags
+
+Only dates go inside `@t[...]`. Never put names, descriptions, statuses, or statistics:
+
+```
+❌ @t[Wolfgang Amadeus Mozart]     → put the name in fact text, use @t[1756..1791]
+❌ @t[Active Production Status]    → use @t[2020..] for "ongoing since 2020"
+❌ @t[Total Produced: 650+]        → use @t[~2024] for "as of 2024"
+❌ @t[seasonal]                    → put in fact text, tag with @t[~2024]
+✅ @t[=2024]  @t[2020..2023]  @t[?]
+```
+
 ### Employment & Roles
 ```markdown
 ## Role
