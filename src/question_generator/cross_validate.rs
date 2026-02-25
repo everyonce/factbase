@@ -52,22 +52,19 @@ fn extract_title(content: &str, doc_id: &str) -> String {
 }
 
 /// Default template for the cross-validate prompt.
-const DEFAULT_CROSS_VALIDATE_PROMPT: &str = "You are validating facts from a knowledge base document. For each fact below, \
-I've included relevant information from other documents in the knowledge base.\n\n\
-Determine if each fact is:\n\
-- CONSISTENT: agrees with or is not contradicted by other sources\n\
-- CONFLICT: directly contradicts information in another document\n\
-- STALE: may have been true but other sources suggest it's no longer current\n\
-- UNCERTAIN: insufficient information to validate\n\n\
-IMPORTANT: Distinguish between the SUBJECT of a fact (the entity the fact describes) \
-and entities mentioned only as SOURCES (people who provided or verified the information). \
-A source person becoming inactive or changing roles does NOT make the fact itself stale — \
-it only means the source may need re-verification. Only flag CONFLICT or STALE when the \
-factual claim itself is contradicted by other documents.\n\n\
-For CONFLICT and STALE, cite the specific document and fact that disagrees.\n\n\
-IMPORTANT: Sequential entries often share a boundary month due to month-level \
-granularity (e.g., Role A ends 2016-11 and Role B starts 2016-11). This is a normal \
-transition, NOT a conflict. Do not flag boundary-month overlaps as CONFLICT.\n\n\
+const DEFAULT_CROSS_VALIDATE_PROMPT: &str = "Validate these facts against evidence from other knowledge base documents.\n\n\
+For each fact, trace the evidence chain:\n\
+1. List each piece of related evidence with its source document title\n\
+2. For each piece, classify it as SUPPORTS, CONTRADICTS, or SUPERSEDES the fact\n\
+3. Derive the final status from the evidence chain\n\n\
+Statuses:\n\
+- CONSISTENT: All evidence SUPPORTS or is neutral\n\
+- CONFLICT: At least one piece CONTRADICTS the fact itself (not just the source of the fact)\n\
+- STALE: At least one piece SUPERSEDES with newer information\n\
+- UNCERTAIN: Evidence exists but is ambiguous\n\n\
+Note: Sequential role/status entries often share a boundary month \
+(e.g., \"Role A ends 2016-11\" and \"Role B starts 2016-11\"). \
+This is a normal handoff, NOT a conflict.\n\n\
 Document: {doc_title}\n---\n\
 {fact_batch}\
 ---\n\nRespond ONLY with a JSON array. Each element must have: \
@@ -754,7 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_prompt_entity_role_instruction() {
+    fn test_build_prompt_evidence_chain_structure() {
         let fwc = FactWithContext {
             fact: FactLine {
                 line_number: 1,
@@ -766,8 +763,9 @@ mod tests {
             source_defs: vec![],
         };
         let prompt = build_prompt("Doc", &[&fwc]);
-        assert!(prompt.contains("Distinguish between the SUBJECT of a fact"));
-        assert!(prompt.contains("source person becoming inactive"));
+        assert!(prompt.contains("evidence chain"));
+        assert!(prompt.contains("SUPPORTS, CONTRADICTS, or SUPERSEDES"));
+        assert!(prompt.contains("boundary month"));
     }
 
     /// Cross-type results are filtered when the result's title is not mentioned
