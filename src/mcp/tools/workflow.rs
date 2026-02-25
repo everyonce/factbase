@@ -193,38 +193,26 @@ fn setup_step(step: usize, args: &Value) -> Value {
 }
 
 /// Default template for the bootstrap prompt.
-const DEFAULT_BOOTSTRAP_PROMPT: &str = r##"You are designing a knowledge base structure for the domain: "{domain}"{entity_types}
+const DEFAULT_BOOTSTRAP_PROMPT: &str = r##"Design a knowledge base structure for: "{domain}"{entity_types}
 
-Generate a JSON object with these fields:
+Return a JSON object with exactly these 4 fields:
 
-1. "document_types": array of objects, each with:
-   - "name": lowercase-hyphenated folder name (e.g. "species", "field-notes")
-   - "description": one-line description of what this type holds
+1. "document_types": array of {"name": "lowercase-hyphenated", "description": "one line"}
+   — 3-5 types that reflect how practitioners organize knowledge in this domain.
 
-2. "folder_structure": array of folder paths to create (e.g. ["species/", "habitats/", "definitions/"])
+2. "folder_structure": array of folder paths (e.g. ["airlines/", "airports/", "definitions/"])
 
-3. "templates": object mapping each document type name to a markdown template string. Each template should:
-   - Start with a placeholder title heading
-   - Have 2-3 section headings appropriate for the type
-   - Include example bullet points with @t[...] temporal tags where facts change over time
-   - CRITICAL: @t[...] tags contain ONLY dates/years — NEVER entity names, descriptions, statuses, or statistics
-     ✅ CORRECT: @t[=2024], @t[~2024-03], @t[2020..2023], @t[2024..], @t[?], @t[=331 BCE]
-     ❌ WRONG: @t[Wolfgang Amadeus Mozart], @t[Complex counterpoint], @t[Active Production Status: Ongoing], @t[Total Produced: 650+]
-   - Include footnote source citations and a --- separator with source descriptions
-   - Be realistic for the domain
+3. "templates": object mapping each type name to a markdown template. Each template:
+   - Starts with # placeholder title
+   - Has 2-3 section headings suited to the type
+   - Shows example bullets with @t[YYYY] or @t[YYYY..YYYY] temporal tags on time-sensitive facts
+   - CRITICAL: @t[...] tags contain ONLY dates — NEVER names, descriptions, or non-date content
+     ✅ @t[=2024], @t[~2024-03], @t[2020..2023], @t[2024..], @t[?], @t[=331 BCE]
+     ❌ @t[Wolfgang Amadeus Mozart], @t[Complex counterpoint], @t[Active Production Status: Ongoing]
+   - Includes [^1] footnote references and a --- section with source definitions
+   - Is realistic for the domain
 
-4. "temporal_patterns": object with:
-   - "dynamic": array of things that change over time in this domain (e.g. "taxonomy revisions", "conservation status")
-   - "static": array of things that don't change (e.g. "original description date", "chemical formula")
-
-5. "source_types": array of typical citation sources for this domain (e.g. "journal paper", "field guide", "herbarium record")
-
-6. "perspective": object with:
-   - "focus": one-line description of what this knowledge base tracks
-   - "organization": who maintains this knowledge base (optional, omit if unknown)
-   - "allowed_types": array of the document type names
-
-7. "examples": array of 1-2 fully worked example documents as markdown strings, using the templates above with realistic domain content. Include temporal tags and source footnotes.
+4. "perspective": {"focus": "one-line mission", "allowed_types": ["your type names"]}
 
 Return ONLY valid JSON, no markdown fences or explanation."##;
 
@@ -1230,8 +1218,7 @@ mod tests {
         assert!(prompt.contains("document_types"));
         assert!(prompt.contains("folder_structure"));
         assert!(prompt.contains("templates"));
-        assert!(prompt.contains("temporal_patterns"));
-        assert!(prompt.contains("source_types"));
+        assert!(prompt.contains("perspective"));
         assert!(!prompt.contains("suggested these entity types"));
     }
 
@@ -1271,7 +1258,7 @@ mod tests {
     async fn test_bootstrap_with_mock_llm() {
         use crate::llm::test_helpers::MockLlm;
 
-        let mock_response = r##"{"document_types":[{"name":"species","description":"Mushroom species"}],"folder_structure":["species/","habitats/"],"templates":{"species":"# Species Name"},"temporal_patterns":{"dynamic":["taxonomy"],"static":["original description"]},"source_types":["journal paper","field guide"],"perspective":{"focus":"Mycology research","allowed_types":["species","habitats"]},"examples":["# Amanita muscaria\n\n## Classification\n- Family: Amanitaceae"]}"##;
+        let mock_response = r##"{"document_types":[{"name":"species","description":"Mushroom species"}],"folder_structure":["species/","habitats/"],"templates":{"species":"# Species Name"},"perspective":{"focus":"Mycology research","allowed_types":["species","habitats"]}}"##;
         let llm = MockLlm::new(mock_response);
         let args = serde_json::json!({"domain": "mycology", "path": "/tmp/mushrooms"});
         let result = bootstrap(&llm, &args).await.unwrap();
@@ -1281,8 +1268,7 @@ mod tests {
         assert!(result["suggestions"]["document_types"].is_array());
         assert!(result["suggestions"]["folder_structure"].is_array());
         assert!(result["suggestions"]["templates"].is_object());
-        assert!(result["suggestions"]["temporal_patterns"].is_object());
-        assert!(result["suggestions"]["source_types"].is_array());
+        assert!(result["suggestions"]["perspective"].is_object());
         assert!(result["next_steps"].is_array());
         let steps = result["next_steps"].as_array().unwrap();
         // next_steps should route into setup workflow, not list raw tool calls
@@ -1357,7 +1343,7 @@ mod tests {
 
     #[test]
     fn test_bootstrap_prompt_has_temporal_tag_negative_examples() {
-        assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("NEVER entity names"), "missing negative guidance in bootstrap prompt");
+        assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("NEVER names, descriptions"), "missing negative guidance in bootstrap prompt");
         assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("Wolfgang Amadeus Mozart"), "missing entity name example in bootstrap prompt");
     }
 }
