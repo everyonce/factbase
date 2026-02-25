@@ -17,7 +17,7 @@ use super::helpers::{build_quality_stats, detect_weak_identification, load_persp
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
 /// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
-const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put descriptions or text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG: `@t[bright red when young]` `@t[seasonal]` `@t[since ancient times]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall get_authoring_guide for the full format reference";
+const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put names, descriptions, statuses, or any other text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG (entity names): `@t[Wolfgang Amadeus Mozart]` `@t[Mount Vesuvius]`\n- ❌ WRONG (descriptions): `@t[Complex counterpoint and fugal writing]` `@t[bright red when young]`\n- ❌ WRONG (statuses): `@t[Active Production Status: Ongoing]` `@t[No significant seismic activity]`\n- ❌ WRONG (statistics): `@t[Total Produced: 650+]` `@t[Population: 12000]`\n- ❌ WRONG (vague time words): `@t[seasonal]` `@t[since ancient times]` `@t[traditional..modern]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall get_authoring_guide for the full format reference";
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -207,6 +207,9 @@ Generate a JSON object with these fields:
    - Start with a placeholder title heading
    - Have 2-3 section headings appropriate for the type
    - Include example bullet points with @t[...] temporal tags where facts change over time
+   - CRITICAL: @t[...] tags contain ONLY dates/years — NEVER entity names, descriptions, statuses, or statistics
+     ✅ CORRECT: @t[=2024], @t[~2024-03], @t[2020..2023], @t[2024..], @t[?], @t[=331 BCE]
+     ❌ WRONG: @t[Wolfgang Amadeus Mozart], @t[Complex counterpoint], @t[Active Production Status: Ongoing], @t[Total Produced: 650+]
    - Include footnote source citations and a --- separator with source descriptions
    - Be realistic for the domain
 
@@ -1336,5 +1339,25 @@ mod tests {
     fn test_setup_step1_mentions_bootstrap() {
         let step = setup_step(1, &serde_json::json!({"path": "/tmp/test"}));
         assert!(step["instruction"].as_str().unwrap().contains("bootstrap"));
+    }
+
+    #[test]
+    fn test_format_rules_has_negative_examples_for_all_categories() {
+        // Entity names
+        assert!(FORMAT_RULES.contains("Wolfgang Amadeus Mozart"), "missing entity name");
+        // Descriptions
+        assert!(FORMAT_RULES.contains("Complex counterpoint"), "missing description");
+        // Statuses
+        assert!(FORMAT_RULES.contains("Active Production Status"), "missing status");
+        // Statistics
+        assert!(FORMAT_RULES.contains("Total Produced: 650+"), "missing statistic");
+        // Vague time words
+        assert!(FORMAT_RULES.contains("seasonal"), "missing vague time word");
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_has_temporal_tag_negative_examples() {
+        assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("NEVER entity names"), "missing negative guidance in bootstrap prompt");
+        assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("Wolfgang Amadeus Mozart"), "missing entity name example in bootstrap prompt");
     }
 }

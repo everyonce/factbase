@@ -75,6 +75,21 @@ BCE notation is converted to negative years internally. Negative years are zero-
 - Has PhD in Physics @t[?]
 ```
 
+### Invalid Tag Content
+
+The `@t[...]` tag MUST contain only dates, date ranges, or `?`. Never put entity names, descriptions, statuses, or statistics inside:
+
+```
+❌ @t[Wolfgang Amadeus Mozart]          — entity name, not a date
+❌ @t[Complex counterpoint and fugal writing]  — description, not a date
+❌ @t[No significant seismic activity]  — status, not a date
+❌ @t[Active Production Status: Ongoing] — status, not a date
+❌ @t[Total Produced: 650+]            — statistic, not a date
+❌ @t[seasonal]                        — vague time word, not a date
+
+✅ @t[=2024]  @t[~2024-03]  @t[2020..2023]  @t[2024..]  @t[?]  @t[=331 BCE]
+```
+
 ## Source Attribution
 
 Sources are referenced inline using markdown footnote syntax `[^N]` and defined at the document end.

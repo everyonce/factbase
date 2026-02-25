@@ -95,6 +95,21 @@ More content...
 
 BCE dates are normalized to zero-padded negative years internally (e.g., `331 BCE` → `-0331`).
 
+### What NOT to Put in @t Tags
+
+`@t[...]` tags contain ONLY dates. Never put entity names, descriptions, statuses, or statistics inside:
+
+| ❌ WRONG | Why | ✅ Fix |
+|----------|-----|--------|
+| `@t[Wolfgang Amadeus Mozart]` | Entity name, not a date | Put the name in the fact text, use `@t[1756..1791]` |
+| `@t[Complex counterpoint and fugal writing]` | Description, not a date | Put in fact text, add `@t[?]` if date unknown |
+| `@t[No significant seismic activity]` | Status description, not a date | `- No significant seismic activity @t[~2024]` |
+| `@t[Active Production Status: Ongoing]` | Status, not a date | `- Production status: active @t[2020..]` |
+| `@t[Total Produced: 650+]` | Statistic, not a date | `- Total produced: 650+ @t[~2024]` |
+| `@t[seasonal]` | Vague time word, not a date | Put in fact text, tag with observation date |
+
+**Rule:** If it's not a year, month, day, quarter, BCE date, date range, or `?`, it does NOT go inside `@t[...]`.
+
 ### Static vs Dynamic Facts
 
 | Static (no date needed) | Dynamic (always date) |
