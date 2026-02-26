@@ -19,6 +19,71 @@ use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 /// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
 const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put names, descriptions, statuses, or any other text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG (entity names): `@t[Wolfgang Amadeus Mozart]` `@t[Mount Vesuvius]`\n- ❌ WRONG (descriptions): `@t[Complex counterpoint and fugal writing]` `@t[bright red when young]`\n- ❌ WRONG (statuses): `@t[Active Production Status: Ongoing]` `@t[No significant seismic activity]`\n- ❌ WRONG (statistics): `@t[Total Produced: 650+]` `@t[Population: 12000]`\n- ❌ WRONG (vague time words): `@t[seasonal]` `@t[since ancient times]` `@t[traditional..modern]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall get_authoring_guide for the full format reference";
 
+// ---------------------------------------------------------------------------
+// Default instruction templates for each workflow step.
+// Use {placeholder} syntax for dynamic parts; rendered via `render()`.
+// ---------------------------------------------------------------------------
+
+// --- Setup workflow ---
+pub(crate) const DEFAULT_SETUP_INIT_INSTRUCTION: &str = "Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)";
+
+pub(crate) const DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION: &str = "Configure the repository's perspective. Write the file `{path}/perspective.yaml` with YAML content like this:\n\n```yaml\nfocus: \"What this knowledge base is about\"\norganization: \"Who maintains it (optional)\"\nallowed_types:\n  - type1\n  - type2\n  - type3\nreview:\n  stale_days: 180\n  required_fields:\n    type1: [field1, field2]\n    type2: [field1, field2]\n```\n\nIf you ran bootstrap first, use the perspective values it suggested. Otherwise choose values appropriate for the domain.\n\n⚠️ This MUST be valid YAML written to `perspective.yaml` (not .md, not .json). The file goes in the repository root, not in .factbase/.\n\nAlso plan the folder structure — each allowed_type becomes a top-level folder. Documents are placed in type folders (e.g., `species/amanita-muscaria.md`).\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=3)";
+
+pub(crate) const DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION: &str = "✅ perspective.yaml parsed successfully:\n  {detail}\n\nIf this looks correct, proceed to the next step.\n\n⚠️ NEXT: Call workflow(workflow='setup', step=4)";
+
+pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\n\n⚠️ NEXT: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again to re-validate.";
+
+pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
+
+pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. Then call check_repository to see initial quality.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
+
+pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
+
+// --- Update workflow ---
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.\n\nscan_repository also detects cross-entity links by finding entity title mentions in document text. After scanning, check if link count looks right — documents that discuss related entities should reference each other by exact title.{ctx}";
+
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks across all documents. Before calling check_repository, ask the user if they want a deep check (cross-document validation). Deep check finds conflicts between documents but takes significantly longer — minutes vs seconds on large knowledge bases.\n\nIf the user says yes (or specified deep_check when starting the workflow), call check_repository with deep_check=true. Otherwise call it without deep_check for a fast local-only check.";
+
+pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Run a full organization analysis to detect structural improvements. Call organize_analyze (without a focus parameter) to find merge candidates, split candidates, misplaced documents, and duplicate entries across the knowledge base.\n\nAfter results come back, report what was found:\n- Merge candidates: documents similar enough to combine\n- Split candidates: documents covering multiple distinct topics\n- Misplaced documents: documents whose type doesn't match their content\n- Duplicate entries: facts repeated across multiple documents\n\nIf any high-confidence suggestions are found, ask the user if they'd like to act on them (merge, split, move, or retype). Use the organize tool to execute approved actions.";
+
+pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Summarize what you found across all steps: how many documents were scanned, how many quality issues were identified, and what organization opportunities were detected (merges, splits, misplaced, duplicates). If there are review questions to fix, suggest the user run the 'resolve' workflow next.";
+
+// --- Resolve workflow ---
+pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}";
+
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Research the answer using your available tools:\n   - **Web search** for current data: try '{entity name} {fact} {current year}' for stale questions, '{entity name} {date/timeline}' for temporal questions\n   - **Read full pages** when a search snippet looks promising — don't rely on snippets alone\n   - **Cross-reference**: verify critical facts against 2+ sources\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source citation. Research when the fact was/is true, then answer: '@t[YYYY] per [source name] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges, '@t[YYYY..] per [source]' for ongoing. Use @t[?] only when no date is findable at all. Examples: '@t[=480-BCE] per Herodotus (Histories VII); verified via Britannica 2024-03-15', '@t[2020..2023] per annual report 2023'. Just citing a source in prose without providing the @t[...] tag does NOT resolve the question — the tag must appear in your answer. Every datable fact gets a tag regardless of domain, era, or how well-known it is. NEVER answer with bare dismissals like 'static fact', 'well-known', 'historical constant', or 'doesn\\'t change' — these provide no audit trail and will be rejected\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}";
+
+pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If you have many answered questions, apply them in batches by passing doc_id to process one document at a time — this avoids timeouts on large batches. Use dry_run=true first to preview, then without dry_run to apply.";
+
+pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call generate_questions with dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
+
+// --- Ingest workflow ---
+pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call search_knowledge with a relevant query. Also try list_entities to browse by type.{ctx}";
+
+pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}' using your available tools. Strategies:\n- **Web search**: Search for recent, authoritative information. Try specific queries like '{entity name} {fact type} {year}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the URL, author, publication, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}";
+
+pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document{fields}{format_rules}";
+
+pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify your work. Call generate_questions with dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
+
+// --- Enrich workflow ---
+pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list below (sorted by attention_score, highest first). Pick entities that need work — high attention_score means more gaps. Then call get_entity on each to read full content.{ctx}";
+
+pub(crate) const DEFAULT_ENRICH_GAPS_INSTRUCTION: &str = "For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists in the data (check the weak_identification field in entity_quality), update the title via update_document\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too\n- Poor file organization: if a file is in the wrong type folder or has an unclear filename, plan to rename/move it (you can do this with file tools, then run scan_repository){fields}";
+
+pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{entity name} {missing fact}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index\n- Cross-references: if this entity is related to other entities in the KB, mention them by their exact document title in a fact line. This enables automatic link detection during scan. Do NOT use markdown links — only plain text entity title mentions are detected.\n- Entity discovery: if this document references entities that don't have their own document yet but fit the KB's taxonomy (perspective.allowed_types), note them. After enriching the current doc, create documents for the most significant missing entities using create_document. Only create entities that are (a) mentioned in 2+ existing documents OR (b) central enough to the domain that they clearly deserve coverage.{ctx}{format_rules}";
+
+pub(crate) const DEFAULT_ENRICH_VERIFY_INSTRUCTION: &str = "Verify your work. Call generate_questions with dry_run=true on each document you modified to check for new issues.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
+
+// --- Improve workflow ---
+pub(crate) const DEFAULT_IMPROVE_CLEANUP_INSTRUCTION: &str = "Read the document and fix any issues{doc_hint}. Call get_entity with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call update_document to fix them. If the document looks clean, move to the next step.{ctx}";
+
+pub(crate) const DEFAULT_IMPROVE_RESOLVE_INSTRUCTION: &str = "Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, call apply_review_answers with doc_id to apply changes to the document.{ctx}";
+
+pub(crate) const DEFAULT_IMPROVE_ENRICH_INSTRUCTION: &str = "Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Web search for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run scan_repository afterward to re-index{ctx}";
+
+pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call generate_questions with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
+
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let workflow = get_str_arg_required(args, "workflow")?;
@@ -108,6 +173,15 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
     )
 }
 
+/// Substitute `{placeholder}` variables in a template string.
+fn render(template: &str, vars: &[(&str, &str)]) -> String {
+    let mut result = template.to_string();
+    for (name, value) in vars {
+        result = result.replace(&format!("{{{name}}}"), value);
+    }
+    result
+}
+
 fn setup_step(step: usize, args: &Value) -> Value {
     let path = get_str_arg(args, "path").unwrap_or("the target directory");
     let total = 6;
@@ -116,7 +190,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 1, "total_steps": total,
             "title": "Step 1 of 6: Initialize Repository",
-            "instruction": format!("Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)"),
+            "instruction": render(DEFAULT_SETUP_INIT_INSTRUCTION, &[("path", path)]),
             "next_tool": "init_repository",
             "suggested_args": {"path": path},
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 6"
@@ -125,7 +199,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 2, "total_steps": total,
             "title": "Step 2 of 6: Configure Perspective",
-            "instruction": format!("Configure the repository's perspective. Write the file `{path}/perspective.yaml` with YAML content like this:\n\n```yaml\nfocus: \"What this knowledge base is about\"\norganization: \"Who maintains it (optional)\"\nallowed_types:\n  - type1\n  - type2\n  - type3\nreview:\n  stale_days: 180\n  required_fields:\n    type1: [field1, field2]\n    type2: [field1, field2]\n```\n\nIf you ran bootstrap first, use the perspective values it suggested. Otherwise choose values appropriate for the domain.\n\n⚠️ This MUST be valid YAML written to `perspective.yaml` (not .md, not .json). The file goes in the repository root, not in .factbase/.\n\nAlso plan the folder structure — each allowed_type becomes a top-level folder. Documents are placed in type folders (e.g., `species/amanita-muscaria.md`).\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=3)"),
+            "instruction": render(DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION, &[("path", path)]),
             "note": "Write perspective.yaml as YAML to the repository root directory. Do NOT create perspective.md — factbase only reads perspective.yaml.",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=3) to continue to Step 3 of 6"
         }),
@@ -143,17 +217,18 @@ fn setup_step(step: usize, args: &Value) -> Value {
                 }
                 None => ("error".to_string(), "perspective.yaml is missing, empty, or has invalid YAML. Go back to step 2 and fix it.".into()),
             };
+            let instruction = if status == "ok" {
+                render(DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION, &[("detail", &detail)])
+            } else {
+                render(DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION, &[("detail", &detail)])
+            };
             serde_json::json!({
                 "workflow": "setup",
                 "step": 3, "total_steps": total,
                 "title": "Step 3 of 6: Validate Perspective",
                 "perspective_status": status,
                 "perspective_parsed": detail,
-                "instruction": if status == "ok" {
-                    format!("✅ perspective.yaml parsed successfully:\n  {detail}\n\nIf this looks correct, proceed to the next step.\n\n⚠️ NEXT: Call workflow(workflow='setup', step=4)")
-                } else {
-                    format!("❌ {detail}\n\n⚠️ NEXT: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again to re-validate.")
-                },
+                "instruction": instruction,
                 "when_done": if status == "ok" {
                     "⚠️ REQUIRED: Call workflow(workflow='setup', step=4) to continue to Step 4 of 6"
                 } else {
@@ -165,7 +240,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 4, "total_steps": total,
             "title": "Step 4 of 6: Create Documents",
-            "instruction": format!("Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{FORMAT_RULES}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)"),
+            "instruction": render(DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES)]),
             "next_tool": "get_authoring_guide",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=5) to continue to Step 5 of 6"
         }),
@@ -173,7 +248,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 5, "total_steps": total,
             "title": "Step 5 of 6: Scan & Verify",
-            "instruction": "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. Then call check_repository to see initial quality.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)",
+            "instruction": DEFAULT_SETUP_SCAN_INSTRUCTION,
             "next_tool": "scan_repository",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
         }),
@@ -181,7 +256,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 6, "total_steps": total,
             "title": "Step 6 of 6: Complete",
-            "instruction": "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.",
+            "instruction": DEFAULT_SETUP_COMPLETE_INSTRUCTION,
             "complete": true
         }),
         _ => serde_json::json!({
@@ -296,14 +371,14 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         1 => serde_json::json!({
             "workflow": "update",
             "step": 1, "total_steps": total,
-            "instruction": format!("Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.\n\nscan_repository also detects cross-entity links by finding entity title mentions in document text. After scanning, check if link count looks right — documents that discuss related entities should reference each other by exact title.{ctx}"),
+            "instruction": render(DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
             "next_tool": "scan_repository",
             "when_done": "Call workflow with workflow='update', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": "Run quality checks across all documents. Before calling check_repository, ask the user if they want a deep check (cross-document validation). Deep check finds conflicts between documents but takes significantly longer — minutes vs seconds on large knowledge bases.\n\nIf the user says yes (or specified deep_check when starting the workflow), call check_repository with deep_check=true. Otherwise call it without deep_check for a fast local-only check.",
+            "instruction": DEFAULT_UPDATE_CHECK_INSTRUCTION,
             "next_tool": "check_repository",
             "suggested_args": {"dry_run": false},
             "when_done": "Call workflow with workflow='update', step=3"
@@ -311,14 +386,14 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
-            "instruction": "Run a full organization analysis to detect structural improvements. Call organize_analyze (without a focus parameter) to find merge candidates, split candidates, misplaced documents, and duplicate entries across the knowledge base.\n\nAfter results come back, report what was found:\n- Merge candidates: documents similar enough to combine\n- Split candidates: documents covering multiple distinct topics\n- Misplaced documents: documents whose type doesn't match their content\n- Duplicate entries: facts repeated across multiple documents\n\nIf any high-confidence suggestions are found, ask the user if they'd like to act on them (merge, split, move, or retype). Use the organize tool to execute approved actions.",
+            "instruction": DEFAULT_UPDATE_ORGANIZE_INSTRUCTION,
             "next_tool": "organize_analyze",
             "when_done": "Call workflow with workflow='update', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "update",
             "step": 4, "total_steps": total,
-            "instruction": "Summarize what you found across all steps: how many documents were scanned, how many quality issues were identified, and what organization opportunities were detected (merges, splits, misplaced, duplicates). If there are review questions to fix, suggest the user run the 'resolve' workflow next.",
+            "instruction": DEFAULT_UPDATE_SUMMARY_INSTRUCTION,
             "complete": true
         }),
         _ => serde_json::json!({
@@ -347,7 +422,7 @@ fn resolve_step(
         1 => serde_json::json!({
             "workflow": "resolve",
             "step": 1, "total_steps": total,
-            "instruction": format!("Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}"),
+            "instruction": render(DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
             "next_tool": "get_review_queue",
             "suggested_args": {"include_context": true},
             "policy": {"stale_days": stale},
@@ -357,7 +432,7 @@ fn resolve_step(
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Research the answer using your available tools:\n   - **Web search** for current data: try '{{entity name}} {{fact}} {{current year}}' for stale questions, '{{entity name}} {{date/timeline}}' for temporal questions\n   - **Read full pages** when a search snippet looks promising — don't rely on snippets alone\n   - **Cross-reference**: verify critical facts against 2+ sources\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source citation. Research when the fact was/is true, then answer: '@t[YYYY] per [source name] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges, '@t[YYYY..] per [source]' for ongoing. Use @t[?] only when no date is findable at all. Examples: '@t[=480-BCE] per Herodotus (Histories VII); verified via Britannica 2024-03-15', '@t[2020..2023] per annual report 2023'. Just citing a source in prose without providing the @t[...] tag does NOT resolve the question — the tag must appear in your answer. Every datable fact gets a tag regardless of domain, era, or how well-known it is. NEVER answer with bare dismissals like 'static fact', 'well-known', 'historical constant', or 'doesn\\'t change' — these provide no audit trail and will be rejected\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}"),
+            "instruction": render(DEFAULT_RESOLVE_ANSWER_INSTRUCTION, &[("stale", &stale.to_string()), ("ctx", &ctx)]),
             "next_tool": "answer_question",
             "conflict_patterns": {
                 "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
@@ -370,7 +445,7 @@ fn resolve_step(
         3 => serde_json::json!({
             "workflow": "resolve",
             "step": 3, "total_steps": total,
-            "instruction": "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If you have many answered questions, apply them in batches by passing doc_id to process one document at a time — this avoids timeouts on large batches. Use dry_run=true first to preview, then without dry_run to apply.",
+            "instruction": DEFAULT_RESOLVE_APPLY_INSTRUCTION,
             "next_tool": "apply_review_answers",
             "suggested_args": {"dry_run": false},
             "when_done": "Call workflow with workflow='resolve', step=4"
@@ -378,7 +453,7 @@ fn resolve_step(
         4 => serde_json::json!({
             "workflow": "resolve",
             "step": 4, "total_steps": total,
-            "instruction": "Verify your work. For each document you modified, call generate_questions with dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.",
+            "instruction": DEFAULT_RESOLVE_VERIFY_INSTRUCTION,
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -400,28 +475,28 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         1 => serde_json::json!({
             "workflow": "ingest",
             "step": 1, "total_steps": total,
-            "instruction": format!("Search factbase to see what already exists about '{topic}'. Call search_knowledge with a relevant query. Also try list_entities to browse by type.{ctx}"),
+            "instruction": render(DEFAULT_INGEST_SEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
             "next_tool": "search_knowledge",
             "when_done": "Call workflow with workflow='ingest', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "ingest",
             "step": 2, "total_steps": total,
-            "instruction": format!("Research '{topic}' using your available tools. Strategies:\n- **Web search**: Search for recent, authoritative information. Try specific queries like '{{entity name}} {{fact type}} {{year}}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the URL, author, publication, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}"),
+            "instruction": render(DEFAULT_INGEST_RESEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
             "note": "This step uses your non-factbase tools. When you have enough information, proceed to step 3.",
             "when_done": "Call workflow with workflow='ingest', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document{fields}{FORMAT_RULES}"),
+            "instruction": render(DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES)]),
             "next_tool": "create_document",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "ingest",
             "step": 4, "total_steps": total,
-            "instruction": "Verify your work. Call generate_questions with dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.",
+            "instruction": DEFAULT_INGEST_VERIFY_INSTRUCTION,
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -517,7 +592,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
             serde_json::json!({
                 "workflow": "enrich",
                 "step": 1, "total_steps": total,
-                "instruction": format!("Review the entity_quality list below (sorted by attention_score, highest first). Pick entities that need work — high attention_score means more gaps. Then call get_entity on each to read full content.{ctx}"),
+                "instruction": render(DEFAULT_ENRICH_REVIEW_INSTRUCTION, &[("ctx", &ctx)]),
                 "entity_quality": quality,
                 "next_tool": "get_entity",
                 "when_done": "Call workflow with workflow='enrich', step=2"
@@ -526,21 +601,21 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
-            "instruction": format!("For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists in the data (check the weak_identification field in entity_quality), update the title via update_document\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too\n- Poor file organization: if a file is in the wrong type folder or has an unclear filename, plan to rename/move it (you can do this with file tools, then run scan_repository){fields}"),
+            "instruction": render(DEFAULT_ENRICH_GAPS_INSTRUCTION, &[("fields", &fields)]),
             "next_tool": "get_entity",
             "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": format!("Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{{entity name}} {{missing fact}}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index\n- Cross-references: if this entity is related to other entities in the KB, mention them by their exact document title in a fact line. This enables automatic link detection during scan. Do NOT use markdown links — only plain text entity title mentions are detected.\n- Entity discovery: if this document references entities that don't have their own document yet but fit the KB's taxonomy (perspective.allowed_types), note them. After enriching the current doc, create documents for the most significant missing entities using create_document. Only create entities that are (a) mentioned in 2+ existing documents OR (b) central enough to the domain that they clearly deserve coverage.{ctx}{FORMAT_RULES}"),
+            "instruction": render(DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "enrich",
             "step": 4, "total_steps": total,
-            "instruction": "Verify your work. Call generate_questions with dry_run=true on each document you modified to check for new issues.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.",
+            "instruction": DEFAULT_ENRICH_VERIFY_INSTRUCTION,
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -632,7 +707,7 @@ fn improve_step(
             "step_name": "cleanup",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": format!("Read the document and fix any issues{doc_hint}. Call get_entity with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call update_document to fix them. If the document looks clean, move to the next step.{ctx}"),
+            "instruction": render(DEFAULT_IMPROVE_CLEANUP_INSTRUCTION, &[("doc_hint", &doc_hint), ("ctx", &ctx)]),
             "next_tool": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
@@ -643,7 +718,7 @@ fn improve_step(
             "step_name": "resolve",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": format!("Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, call apply_review_answers with doc_id to apply changes to the document.{ctx}"),
+            "instruction": render(DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx)]),
             "next_tool": "get_review_queue",
             "suggested_args": {"doc_id": doc_arg, "include_context": true},
             "policy": {"stale_days": stale},
@@ -655,7 +730,7 @@ fn improve_step(
             "step_name": "enrich",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": format!("Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Web search for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run scan_repository afterward to re-index{ctx}"),
+            "instruction": render(DEFAULT_IMPROVE_ENRICH_INSTRUCTION, &[("doc_hint", &doc_hint), ("fields", &fields), ("ctx", &ctx)]),
             "next_tool": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
@@ -672,7 +747,7 @@ fn improve_step(
                 "step_name": "check",
                 "doc_id": doc_arg,
                 "skipped_steps": skipped,
-                "instruction": format!("Verify the document quality{doc_hint}. Call generate_questions with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}"),
+                "instruction": render(DEFAULT_IMPROVE_CHECK_INSTRUCTION, &[("doc_hint", &doc_hint), ("compare_note", compare_note)]),
                 "next_tool": "generate_questions",
                 "suggested_args": {"doc_id": doc_arg, "dry_run": true},
                 "complete": true
