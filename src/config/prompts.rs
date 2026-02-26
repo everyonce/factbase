@@ -54,7 +54,7 @@ pub fn validate_prompts(config: &PromptsConfig) {
 }
 
 /// Extract `{placeholder}` names from a template string.
-fn extract_placeholders(template: &str) -> Vec<String> {
+pub(crate) fn extract_placeholders(template: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut chars = template.chars().peekable();
     while let Some(ch) = chars.next() {
