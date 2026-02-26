@@ -13,6 +13,7 @@ use crate::llm::LlmProvider;
 use crate::models::Perspective;
 use serde_json::Value;
 
+use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
 use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective};
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
@@ -21,7 +22,7 @@ const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n*
 
 // ---------------------------------------------------------------------------
 // Default instruction templates for each workflow step.
-// Use {placeholder} syntax for dynamic parts; rendered via `render()`.
+// Use {placeholder} syntax for dynamic parts; resolved via config overrides.
 // ---------------------------------------------------------------------------
 
 // --- Setup workflow ---
@@ -89,23 +90,26 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let workflow = get_str_arg_required(args, "workflow")?;
     let step = get_u64_arg(args, "step", 1) as usize;
     let perspective = load_perspective(db, get_str_arg(args, "repo"));
+    let wf_config = crate::Config::load(None)
+        .unwrap_or_default()
+        .workflows;
 
     match workflow.as_str() {
-        "update" => Ok(update_step(step, args, &perspective)),
+        "update" => Ok(update_step(step, args, &perspective, &wf_config)),
         "resolve" => {
             let deferred = db
                 .count_deferred_questions(get_str_arg(args, "repo"))
                 .unwrap_or(0);
-            Ok(resolve_step(step, args, &perspective, deferred))
+            Ok(resolve_step(step, args, &perspective, deferred, &wf_config))
         }
-        "ingest" => Ok(ingest_step(step, args, &perspective)),
-        "enrich" => Ok(enrich_step(step, args, &perspective, db)),
+        "ingest" => Ok(ingest_step(step, args, &perspective, &wf_config)),
+        "enrich" => Ok(enrich_step(step, args, &perspective, db, &wf_config)),
         "improve" => {
             let doc_id = get_str_arg(args, "doc_id");
             let skip = parse_skip_steps(args);
-            Ok(improve_step(step, doc_id, &perspective, &skip, db))
+            Ok(improve_step(step, doc_id, &perspective, &skip, db, &wf_config))
         }
-        "setup" => Ok(setup_step(step, args)),
+        "setup" => Ok(setup_step(step, args, &wf_config)),
         "bootstrap" => Ok(serde_json::json!({
             "error": "The bootstrap workflow requires an LLM provider. Make sure your factbase instance has an LLM configured.",
             "hint": "Bootstrap is handled as an async workflow. If you're seeing this, the routing in mod.rs didn't intercept it."
@@ -173,16 +177,12 @@ fn required_fields_hint(p: &Option<Perspective>) -> String {
     )
 }
 
-/// Substitute `{placeholder}` variables in a template string.
-fn render(template: &str, vars: &[(&str, &str)]) -> String {
-    let mut result = template.to_string();
-    for (name, value) in vars {
-        result = result.replace(&format!("{{{name}}}"), value);
-    }
-    result
+/// Resolve a workflow instruction with config override support.
+fn resolve(wf: &WorkflowsConfig, key: &str, default: &str, vars: &[(&str, &str)]) -> String {
+    resolve_workflow_text(wf, key, default, vars)
 }
 
-fn setup_step(step: usize, args: &Value) -> Value {
+fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
     let path = get_str_arg(args, "path").unwrap_or("the target directory");
     let total = 6;
     match step {
@@ -190,7 +190,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 1, "total_steps": total,
             "title": "Step 1 of 6: Initialize Repository",
-            "instruction": render(DEFAULT_SETUP_INIT_INSTRUCTION, &[("path", path)]),
+            "instruction": resolve(wf, "setup.init", DEFAULT_SETUP_INIT_INSTRUCTION, &[("path", path)]),
             "next_tool": "init_repository",
             "suggested_args": {"path": path},
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 6"
@@ -199,7 +199,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 2, "total_steps": total,
             "title": "Step 2 of 6: Configure Perspective",
-            "instruction": render(DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION, &[("path", path)]),
+            "instruction": resolve(wf, "setup.perspective", DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION, &[("path", path)]),
             "note": "Write perspective.yaml as YAML to the repository root directory. Do NOT create perspective.md — factbase only reads perspective.yaml.",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=3) to continue to Step 3 of 6"
         }),
@@ -218,9 +218,9 @@ fn setup_step(step: usize, args: &Value) -> Value {
                 None => ("error".to_string(), "perspective.yaml is missing, empty, or has invalid YAML. Go back to step 2 and fix it.".into()),
             };
             let instruction = if status == "ok" {
-                render(DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION, &[("detail", &detail)])
+                resolve(wf, "setup.validate_ok", DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION, &[("detail", &detail)])
             } else {
-                render(DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION, &[("detail", &detail)])
+                resolve(wf, "setup.validate_error", DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION, &[("detail", &detail)])
             };
             serde_json::json!({
                 "workflow": "setup",
@@ -240,7 +240,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 4, "total_steps": total,
             "title": "Step 4 of 6: Create Documents",
-            "instruction": render(DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES)]),
+            "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES)]),
             "next_tool": "get_authoring_guide",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=5) to continue to Step 5 of 6"
         }),
@@ -248,7 +248,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 5, "total_steps": total,
             "title": "Step 5 of 6: Scan & Verify",
-            "instruction": DEFAULT_SETUP_SCAN_INSTRUCTION,
+            "instruction": resolve(wf, "setup.scan", DEFAULT_SETUP_SCAN_INSTRUCTION, &[]),
             "next_tool": "scan_repository",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
         }),
@@ -256,7 +256,7 @@ fn setup_step(step: usize, args: &Value) -> Value {
             "workflow": "setup",
             "step": 6, "total_steps": total,
             "title": "Step 6 of 6: Complete",
-            "instruction": DEFAULT_SETUP_COMPLETE_INSTRUCTION,
+            "instruction": resolve(wf, "setup.complete", DEFAULT_SETUP_COMPLETE_INSTRUCTION, &[]),
             "complete": true
         }),
         _ => serde_json::json!({
@@ -364,21 +364,21 @@ pub async fn bootstrap(
     }))
 }
 
-fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) -> Value {
+fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
     let ctx = perspective_context(perspective);
     let total = 4;
     match step {
         1 => serde_json::json!({
             "workflow": "update",
             "step": 1, "total_steps": total,
-            "instruction": render(DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
+            "instruction": resolve(wf, "update.scan", DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
             "next_tool": "scan_repository",
             "when_done": "Call workflow with workflow='update', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": DEFAULT_UPDATE_CHECK_INSTRUCTION,
+            "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
             "next_tool": "check_repository",
             "suggested_args": {"dry_run": false},
             "when_done": "Call workflow with workflow='update', step=3"
@@ -386,14 +386,14 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
-            "instruction": DEFAULT_UPDATE_ORGANIZE_INSTRUCTION,
+            "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
             "next_tool": "organize_analyze",
             "when_done": "Call workflow with workflow='update', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "update",
             "step": 4, "total_steps": total,
-            "instruction": DEFAULT_UPDATE_SUMMARY_INSTRUCTION,
+            "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
             "complete": true
         }),
         _ => serde_json::json!({
@@ -409,6 +409,7 @@ fn resolve_step(
     _args: &Value,
     perspective: &Option<Perspective>,
     deferred: usize,
+    wf: &WorkflowsConfig,
 ) -> Value {
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
@@ -422,7 +423,7 @@ fn resolve_step(
         1 => serde_json::json!({
             "workflow": "resolve",
             "step": 1, "total_steps": total,
-            "instruction": render(DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
+            "instruction": resolve(wf, "resolve.queue", DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
             "next_tool": "get_review_queue",
             "suggested_args": {"include_context": true},
             "policy": {"stale_days": stale},
@@ -432,7 +433,7 @@ fn resolve_step(
         2 => serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total,
-            "instruction": render(DEFAULT_RESOLVE_ANSWER_INSTRUCTION, &[("stale", &stale.to_string()), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "resolve.answer", DEFAULT_RESOLVE_ANSWER_INSTRUCTION, &[("stale", &stale.to_string()), ("ctx", &ctx)]),
             "next_tool": "answer_question",
             "conflict_patterns": {
                 "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
@@ -445,7 +446,7 @@ fn resolve_step(
         3 => serde_json::json!({
             "workflow": "resolve",
             "step": 3, "total_steps": total,
-            "instruction": DEFAULT_RESOLVE_APPLY_INSTRUCTION,
+            "instruction": resolve(wf, "resolve.apply", DEFAULT_RESOLVE_APPLY_INSTRUCTION, &[]),
             "next_tool": "apply_review_answers",
             "suggested_args": {"dry_run": false},
             "when_done": "Call workflow with workflow='resolve', step=4"
@@ -453,7 +454,7 @@ fn resolve_step(
         4 => serde_json::json!({
             "workflow": "resolve",
             "step": 4, "total_steps": total,
-            "instruction": DEFAULT_RESOLVE_VERIFY_INSTRUCTION,
+            "instruction": resolve(wf, "resolve.verify", DEFAULT_RESOLVE_VERIFY_INSTRUCTION, &[]),
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -466,7 +467,7 @@ fn resolve_step(
     }
 }
 
-fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> Value {
+fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
     let topic = get_str_arg(args, "topic").unwrap_or("the requested topic");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
@@ -475,28 +476,28 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         1 => serde_json::json!({
             "workflow": "ingest",
             "step": 1, "total_steps": total,
-            "instruction": render(DEFAULT_INGEST_SEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "ingest.search", DEFAULT_INGEST_SEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
             "next_tool": "search_knowledge",
             "when_done": "Call workflow with workflow='ingest', step=2"
         }),
         2 => serde_json::json!({
             "workflow": "ingest",
             "step": 2, "total_steps": total,
-            "instruction": render(DEFAULT_INGEST_RESEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "ingest.research", DEFAULT_INGEST_RESEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
             "note": "This step uses your non-factbase tools. When you have enough information, proceed to step 3.",
             "when_done": "Call workflow with workflow='ingest', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": render(DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES)]),
+            "instruction": resolve(wf, "ingest.create", DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES)]),
             "next_tool": "create_document",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "ingest",
             "step": 4, "total_steps": total,
-            "instruction": DEFAULT_INGEST_VERIFY_INSTRUCTION,
+            "instruction": resolve(wf, "ingest.verify", DEFAULT_INGEST_VERIFY_INSTRUCTION, &[]),
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -579,7 +580,7 @@ fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&str>) -> Va
     Value::Array(items)
 }
 
-fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database) -> Value {
+fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database, wf: &WorkflowsConfig) -> Value {
     let doc_type = get_str_arg(args, "doc_type").unwrap_or("all types");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
@@ -592,7 +593,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
             serde_json::json!({
                 "workflow": "enrich",
                 "step": 1, "total_steps": total,
-                "instruction": render(DEFAULT_ENRICH_REVIEW_INSTRUCTION, &[("ctx", &ctx)]),
+                "instruction": resolve(wf, "enrich.review", DEFAULT_ENRICH_REVIEW_INSTRUCTION, &[("ctx", &ctx)]),
                 "entity_quality": quality,
                 "next_tool": "get_entity",
                 "when_done": "Call workflow with workflow='enrich', step=2"
@@ -601,21 +602,21 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
-            "instruction": render(DEFAULT_ENRICH_GAPS_INSTRUCTION, &[("fields", &fields)]),
+            "instruction": resolve(wf, "enrich.gaps", DEFAULT_ENRICH_GAPS_INSTRUCTION, &[("fields", &fields)]),
             "next_tool": "get_entity",
             "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": render(DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
+            "instruction": resolve(wf, "enrich.research", DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "enrich",
             "step": 4, "total_steps": total,
-            "instruction": DEFAULT_ENRICH_VERIFY_INSTRUCTION,
+            "instruction": resolve(wf, "enrich.verify", DEFAULT_ENRICH_VERIFY_INSTRUCTION, &[]),
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -660,6 +661,7 @@ fn improve_step(
     perspective: &Option<Perspective>,
     skip: &[String],
     db: &Database,
+    wf: &WorkflowsConfig,
 ) -> Value {
     let steps = effective_steps(skip);
     let total = steps.len();
@@ -707,7 +709,7 @@ fn improve_step(
             "step_name": "cleanup",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": render(DEFAULT_IMPROVE_CLEANUP_INSTRUCTION, &[("doc_hint", &doc_hint), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "improve.cleanup", DEFAULT_IMPROVE_CLEANUP_INSTRUCTION, &[("doc_hint", &doc_hint), ("ctx", &ctx)]),
             "next_tool": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
@@ -718,7 +720,7 @@ fn improve_step(
             "step_name": "resolve",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": render(DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "improve.resolve", DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx)]),
             "next_tool": "get_review_queue",
             "suggested_args": {"doc_id": doc_arg, "include_context": true},
             "policy": {"stale_days": stale},
@@ -730,7 +732,7 @@ fn improve_step(
             "step_name": "enrich",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": render(DEFAULT_IMPROVE_ENRICH_INSTRUCTION, &[("doc_hint", &doc_hint), ("fields", &fields), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "improve.enrich", DEFAULT_IMPROVE_ENRICH_INSTRUCTION, &[("doc_hint", &doc_hint), ("fields", &fields), ("ctx", &ctx)]),
             "next_tool": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
@@ -747,7 +749,7 @@ fn improve_step(
                 "step_name": "check",
                 "doc_id": doc_arg,
                 "skipped_steps": skipped,
-                "instruction": render(DEFAULT_IMPROVE_CHECK_INSTRUCTION, &[("doc_hint", &doc_hint), ("compare_note", compare_note)]),
+                "instruction": resolve(wf, "improve.check", DEFAULT_IMPROVE_CHECK_INSTRUCTION, &[("doc_hint", &doc_hint), ("compare_note", compare_note)]),
                 "next_tool": "generate_questions",
                 "suggested_args": {"doc_id": doc_arg, "dry_run": true},
                 "complete": true
@@ -774,6 +776,10 @@ mod tests {
     use crate::database::tests::test_db;
     use crate::models::{Perspective, ReviewPerspective};
     use std::collections::HashMap;
+
+    fn wf() -> WorkflowsConfig {
+        WorkflowsConfig::default()
+    }
 
     fn mock_perspective() -> Option<Perspective> {
         Some(Perspective {
@@ -821,14 +827,14 @@ mod tests {
     #[test]
     fn test_resolve_includes_perspective() {
         let p = mock_perspective();
-        let step = resolve_step(1, &serde_json::json!({}), &p, 0);
+        let step = resolve_step(1, &serde_json::json!({}), &p, 0, &wf());
         assert!(step["instruction"].as_str().unwrap().contains("Acme Corp"));
         assert_eq!(step["policy"]["stale_days"], 180);
     }
 
     #[test]
     fn test_resolve_without_perspective() {
-        let step = resolve_step(1, &serde_json::json!({}), &None, 0);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &wf());
         assert!(!step["instruction"]
             .as_str()
             .unwrap()
@@ -839,7 +845,7 @@ mod tests {
     #[test]
     fn test_ingest_includes_required_fields() {
         let p = mock_perspective();
-        let step = ingest_step(3, &serde_json::json!({}), &p);
+        let step = ingest_step(3, &serde_json::json!({}), &p, &wf());
         assert!(step["instruction"]
             .as_str()
             .unwrap()
@@ -850,7 +856,7 @@ mod tests {
     fn test_enrich_includes_required_fields() {
         let p = mock_perspective();
         let (db, _tmp) = test_db();
-        let step = enrich_step(2, &serde_json::json!({}), &p, &db);
+        let step = enrich_step(2, &serde_json::json!({}), &p, &db, &wf());
         assert!(step["instruction"]
             .as_str()
             .unwrap()
@@ -860,7 +866,7 @@ mod tests {
     #[test]
     fn test_enrich_step2_mentions_weak_identification() {
         let (db, _tmp) = test_db();
-        let step = enrich_step(2, &serde_json::json!({}), &None, &db);
+        let step = enrich_step(2, &serde_json::json!({}), &None, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("Weak identification"));
         assert!(instruction.contains("weak_identification"));
@@ -869,19 +875,19 @@ mod tests {
     #[test]
     fn test_resolve_stale_days_in_instructions() {
         let p = mock_perspective();
-        let step = resolve_step(2, &serde_json::json!({}), &p, 0);
+        let step = resolve_step(2, &serde_json::json!({}), &p, 0, &wf());
         assert!(step["instruction"].as_str().unwrap().contains("180 days"));
     }
 
     #[test]
     fn test_past_last_step_returns_complete() {
-        let step = resolve_step(99, &serde_json::json!({}), &None, 0);
+        let step = resolve_step(99, &serde_json::json!({}), &None, 0, &wf());
         assert!(step["complete"].as_bool().unwrap());
     }
 
     #[test]
     fn test_resolve_step1_includes_deferred_note() {
-        let step = resolve_step(1, &serde_json::json!({}), &None, 5);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 5, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("5 deferred item(s)"));
         assert_eq!(step["deferred_count"], 5);
@@ -889,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_resolve_step1_no_deferred_note_when_zero() {
-        let step = resolve_step(1, &serde_json::json!({}), &None, 0);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(!instruction.contains("deferred"));
         assert_eq!(step["deferred_count"], 0);
@@ -897,7 +903,7 @@ mod tests {
 
     #[test]
     fn test_resolve_step2_includes_conflict_patterns() {
-        let step = resolve_step(2, &serde_json::json!({}), &None, 0);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("[pattern:parallel_overlap]"));
         assert!(instruction.contains("[pattern:same_entity_transition]"));
@@ -913,7 +919,7 @@ mod tests {
 
     #[test]
     fn test_resolve_step2_temporal_requires_tag_in_answer() {
-        let step = resolve_step(2, &serde_json::json!({}), &None, 0);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("MISSING an @t[...]"), "temporal guidance must explain the fact line is missing a tag");
         assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
@@ -926,7 +932,7 @@ mod tests {
     #[test]
     fn test_improve_resolve_temporal_requires_tag_in_answer() {
         let (db, _tmp) = test_db();
-        let step = improve_step(2, Some("abc123"), &None, &[], &db);
+        let step = improve_step(2, Some("abc123"), &None, &[], &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("MISSING an @t[...]"), "improve/resolve temporal guidance must explain the fact line is missing a tag");
         assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
@@ -939,7 +945,7 @@ mod tests {
     #[test]
     fn test_improve_step1_cleanup() {
         let (db, _tmp) = test_db();
-        let step = improve_step(1, Some("abc123"), &None, &[], &db);
+        let step = improve_step(1, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["workflow"], "improve");
         assert_eq!(step["step"], 1);
         assert_eq!(step["total_steps"], 4);
@@ -952,7 +958,7 @@ mod tests {
     #[test]
     fn test_improve_step2_resolve() {
         let (db, _tmp) = test_db();
-        let step = improve_step(2, Some("abc123"), &None, &[], &db);
+        let step = improve_step(2, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "resolve");
         assert_eq!(step["next_tool"], "get_review_queue");
         assert_eq!(step["policy"]["stale_days"], 365);
@@ -961,7 +967,7 @@ mod tests {
     #[test]
     fn test_improve_step3_enrich() {
         let (db, _tmp) = test_db();
-        let step = improve_step(3, Some("abc123"), &None, &[], &db);
+        let step = improve_step(3, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "enrich");
         assert_eq!(step["next_tool"], "get_entity");
     }
@@ -969,7 +975,7 @@ mod tests {
     #[test]
     fn test_improve_step4_check() {
         let (db, _tmp) = test_db();
-        let step = improve_step(4, Some("abc123"), &None, &[], &db);
+        let step = improve_step(4, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "check");
         assert_eq!(step["next_tool"], "generate_questions");
         assert!(step["complete"].as_bool().unwrap());
@@ -978,7 +984,7 @@ mod tests {
     #[test]
     fn test_improve_past_last_step() {
         let (db, _tmp) = test_db();
-        let step = improve_step(5, Some("abc123"), &None, &[], &db);
+        let step = improve_step(5, Some("abc123"), &None, &[], &db, &wf());
         assert!(step["complete"].as_bool().unwrap());
     }
 
@@ -986,7 +992,7 @@ mod tests {
     fn test_improve_with_perspective() {
         let p = mock_perspective();
         let (db, _tmp) = test_db();
-        let step = improve_step(2, Some("abc123"), &p, &[], &db);
+        let step = improve_step(2, Some("abc123"), &p, &[], &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("Acme Corp"));
         assert_eq!(step["policy"]["stale_days"], 180);
@@ -996,7 +1002,7 @@ mod tests {
     fn test_improve_skip_cleanup() {
         let skip = vec!["cleanup".to_string()];
         let (db, _tmp) = test_db();
-        let step = improve_step(1, Some("abc123"), &None, &skip, &db);
+        let step = improve_step(1, Some("abc123"), &None, &skip, &db, &wf());
         assert_eq!(step["step_name"], "resolve");
         assert_eq!(step["total_steps"], 3);
     }
@@ -1005,10 +1011,10 @@ mod tests {
     fn test_improve_skip_multiple() {
         let skip = vec!["cleanup".to_string(), "enrich".to_string()];
         let (db, _tmp) = test_db();
-        let step1 = improve_step(1, Some("abc123"), &None, &skip, &db);
+        let step1 = improve_step(1, Some("abc123"), &None, &skip, &db, &wf());
         assert_eq!(step1["step_name"], "resolve");
         assert_eq!(step1["total_steps"], 2);
-        let step2 = improve_step(2, Some("abc123"), &None, &skip, &db);
+        let step2 = improve_step(2, Some("abc123"), &None, &skip, &db, &wf());
         assert_eq!(step2["step_name"], "check");
         assert!(step2["complete"].as_bool().unwrap());
     }
@@ -1017,14 +1023,14 @@ mod tests {
     fn test_improve_skip_all_returns_error() {
         let skip: Vec<String> = IMPROVE_STEPS.iter().map(|s| s.to_string()).collect();
         let (db, _tmp) = test_db();
-        let step = improve_step(1, Some("abc123"), &None, &skip, &db);
+        let step = improve_step(1, Some("abc123"), &None, &skip, &db, &wf());
         assert!(step["error"].is_string());
     }
 
     #[test]
     fn test_improve_no_doc_id() {
         let (db, _tmp) = test_db();
-        let step = improve_step(1, None, &None, &[], &db);
+        let step = improve_step(1, None, &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "cleanup");
         // doc_id should be null
         assert!(step["doc_id"].is_null());
@@ -1055,7 +1061,7 @@ mod tests {
     fn test_improve_skipped_steps_reported() {
         let skip = vec!["cleanup".to_string()];
         let (db, _tmp) = test_db();
-        let step = improve_step(1, Some("abc123"), &None, &skip, &db);
+        let step = improve_step(1, Some("abc123"), &None, &skip, &db, &wf());
         let skipped = step["skipped_steps"].as_array().unwrap();
         assert_eq!(skipped.len(), 1);
         assert_eq!(skipped[0], "cleanup");
@@ -1065,7 +1071,7 @@ mod tests {
     fn test_improve_enrich_includes_required_fields() {
         let p = mock_perspective();
         let (db, _tmp) = test_db();
-        let step = improve_step(3, Some("abc123"), &p, &[], &db);
+        let step = improve_step(3, Some("abc123"), &p, &[], &db, &wf());
         assert!(step["instruction"].as_str().unwrap().contains("current_role"));
     }
 
@@ -1090,7 +1096,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let content = "<!-- factbase:doc001 -->\n# Test\n\n- Fact one @t[2024-01] [^1]\n- Fact two\n- Fact three @t[2024-02]\n\n---\n[^1]: Source A";
         insert_test_doc(&db, "doc001", content);
-        let step = improve_step(1, Some("doc001"), &None, &[], &db);
+        let step = improve_step(1, Some("doc001"), &None, &[], &db, &wf());
         let q = &step["entity_quality"];
         assert!(q.is_object(), "entity_quality should be present");
         assert!(q["total_facts"].as_u64().unwrap() > 0);
@@ -1102,7 +1108,7 @@ mod tests {
     #[test]
     fn test_improve_step1_no_entity_quality_when_doc_missing() {
         let (db, _tmp) = test_db();
-        let step = improve_step(1, Some("nonexistent"), &None, &[], &db);
+        let step = improve_step(1, Some("nonexistent"), &None, &[], &db, &wf());
         assert!(step.get("entity_quality").is_none());
     }
 
@@ -1111,7 +1117,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let content = "<!-- factbase:doc002 -->\n# Test\n\n- Fact one";
         insert_test_doc(&db, "doc002", content);
-        let step = improve_step(2, Some("doc002"), &None, &[], &db);
+        let step = improve_step(2, Some("doc002"), &None, &[], &db, &wf());
         assert!(step.get("entity_quality").is_none());
     }
 
@@ -1122,7 +1128,7 @@ mod tests {
         let content_b = "<!-- factbase:bbb001 -->\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
         insert_test_doc(&db, "aaa001", content_a);
         insert_test_doc(&db, "bbb001", content_b);
-        let step = enrich_step(1, &serde_json::json!({}), &None, &db);
+        let step = enrich_step(1, &serde_json::json!({}), &None, &db, &wf());
         let quality = step["entity_quality"].as_array().unwrap();
         assert_eq!(quality.len(), 2);
         // First item should have higher attention_score (aaa001 has no tags/sources)
@@ -1134,7 +1140,7 @@ mod tests {
     #[test]
     fn test_enrich_step1_empty_repo() {
         let (db, _tmp) = test_db();
-        let step = enrich_step(1, &serde_json::json!({}), &None, &db);
+        let step = enrich_step(1, &serde_json::json!({}), &None, &db, &wf());
         let quality = step["entity_quality"].as_array().unwrap();
         assert!(quality.is_empty());
     }
@@ -1164,7 +1170,7 @@ mod tests {
 
     #[test]
     fn test_update_step1_mentions_link_detection() {
-        let step = update_step(1, &serde_json::json!({}), &None);
+        let step = update_step(1, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("cross-entity links"), "update step 1 should explain link detection");
         assert!(instruction.contains("entity title mentions"), "should mention title-based detection");
@@ -1174,7 +1180,7 @@ mod tests {
     #[test]
     fn test_enrich_step3_mentions_cross_references() {
         let (db, _tmp) = test_db();
-        let step = enrich_step(3, &serde_json::json!({}), &None, &db);
+        let step = enrich_step(3, &serde_json::json!({}), &None, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("Cross-references"), "enrich step 3 should mention cross-references");
         assert!(instruction.contains("exact document title"), "should emphasize exact titles");
@@ -1185,7 +1191,7 @@ mod tests {
 
     #[test]
     fn test_setup_step1_initialize() {
-        let step = setup_step(1, &serde_json::json!({"path": "/tmp/mushrooms"}));
+        let step = setup_step(1, &serde_json::json!({"path": "/tmp/mushrooms"}), &wf());
         assert_eq!(step["workflow"], "setup");
         assert_eq!(step["step"], 1);
         assert_eq!(step["total_steps"], 6);
@@ -1198,7 +1204,7 @@ mod tests {
 
     #[test]
     fn test_setup_step1_default_path() {
-        let step = setup_step(1, &serde_json::json!({}));
+        let step = setup_step(1, &serde_json::json!({}), &wf());
         assert!(step["instruction"]
             .as_str()
             .unwrap()
@@ -1207,7 +1213,7 @@ mod tests {
 
     #[test]
     fn test_setup_step2_perspective() {
-        let step = setup_step(2, &serde_json::json!({"path": "/tmp/mushrooms"}));
+        let step = setup_step(2, &serde_json::json!({"path": "/tmp/mushrooms"}), &wf());
         assert_eq!(step["step"], 2);
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("perspective.yaml"));
@@ -1221,7 +1227,7 @@ mod tests {
         let path = tmp.path().to_string_lossy().to_string();
 
         // No perspective.yaml → error
-        let step = setup_step(3, &serde_json::json!({"path": path}));
+        let step = setup_step(3, &serde_json::json!({"path": path}), &wf());
         assert_eq!(step["perspective_status"], "error");
 
         // Write valid perspective
@@ -1230,7 +1236,7 @@ mod tests {
             "focus: Mycology\nallowed_types:\n  - species\n",
         )
         .unwrap();
-        let step = setup_step(3, &serde_json::json!({"path": path}));
+        let step = setup_step(3, &serde_json::json!({"path": path}), &wf());
         assert_eq!(step["perspective_status"], "ok");
         let parsed = step["perspective_parsed"].as_str().unwrap();
         assert!(parsed.contains("Mycology"));
@@ -1239,7 +1245,7 @@ mod tests {
 
     #[test]
     fn test_setup_step4_create_documents() {
-        let step = setup_step(4, &serde_json::json!({}));
+        let step = setup_step(4, &serde_json::json!({}), &wf());
         assert_eq!(step["step"], 4);
         assert_eq!(step["next_tool"], "get_authoring_guide");
         let instruction = step["instruction"].as_str().unwrap();
@@ -1251,7 +1257,7 @@ mod tests {
 
     #[test]
     fn test_setup_step5_scan_and_verify() {
-        let step = setup_step(5, &serde_json::json!({}));
+        let step = setup_step(5, &serde_json::json!({}), &wf());
         assert_eq!(step["step"], 5);
         assert_eq!(step["next_tool"], "scan_repository");
         let instruction = step["instruction"].as_str().unwrap();
@@ -1263,10 +1269,10 @@ mod tests {
     fn test_format_rules_inlined_in_document_creation_steps() {
         // Setup step 4, ingest step 3, and enrich step 3 should all inline format rules
         // so weaker models don't need a separate get_authoring_guide call.
-        let setup = setup_step(4, &serde_json::json!({}));
-        let ingest = ingest_step(3, &serde_json::json!({}), &None);
+        let setup = setup_step(4, &serde_json::json!({}), &wf());
+        let ingest = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let (db, _tmp) = test_db();
-        let enrich = enrich_step(3, &serde_json::json!({}), &None, &db);
+        let enrich = enrich_step(3, &serde_json::json!({}), &None, &db, &wf());
 
         for (name, step) in [("setup", setup), ("ingest", ingest), ("enrich", enrich)] {
             let instruction = step["instruction"].as_str().unwrap();
@@ -1287,7 +1293,7 @@ mod tests {
 
     #[test]
     fn test_setup_step6_next_steps() {
-        let step = setup_step(6, &serde_json::json!({}));
+        let step = setup_step(6, &serde_json::json!({}), &wf());
         assert_eq!(step["step"], 6);
         assert!(step["complete"].as_bool().unwrap());
         let instruction = step["instruction"].as_str().unwrap();
@@ -1298,7 +1304,7 @@ mod tests {
 
     #[test]
     fn test_setup_past_last_step() {
-        let step = setup_step(99, &serde_json::json!({}));
+        let step = setup_step(99, &serde_json::json!({}), &wf());
         assert!(step["complete"].as_bool().unwrap());
     }
 
@@ -1417,7 +1423,7 @@ mod tests {
 
     #[test]
     fn test_setup_step1_mentions_bootstrap() {
-        let step = setup_step(1, &serde_json::json!({"path": "/tmp/test"}));
+        let step = setup_step(1, &serde_json::json!({"path": "/tmp/test"}), &wf());
         assert!(step["instruction"].as_str().unwrap().contains("bootstrap"));
     }
 
@@ -1439,5 +1445,36 @@ mod tests {
     fn test_bootstrap_prompt_has_temporal_tag_negative_examples() {
         assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("NEVER names, descriptions"), "missing negative guidance in bootstrap prompt");
         assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("Wolfgang Amadeus Mozart"), "missing entity name example in bootstrap prompt");
+    }
+
+    // --- workflow config override tests ---
+
+    #[test]
+    fn test_workflow_config_override_in_step() {
+        let mut wfc = WorkflowsConfig::default();
+        wfc.templates.insert("update.scan".into(), "Custom scan: {ctx}".into());
+        let p = mock_perspective();
+        let step = update_step(1, &serde_json::json!({}), &p, &wfc);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.starts_with("Custom scan:"));
+        assert!(instruction.contains("Acme Corp"));
+    }
+
+    #[test]
+    fn test_workflow_config_override_improve() {
+        let mut wfc = WorkflowsConfig::default();
+        wfc.templates.insert("improve.cleanup".into(), "My cleanup for {doc_hint}".into());
+        let (db, _tmp) = test_db();
+        let step = improve_step(1, Some("abc123"), &None, &[], &db, &wfc);
+        assert!(step["instruction"].as_str().unwrap().starts_with("My cleanup for"));
+        assert!(step["instruction"].as_str().unwrap().contains("abc123"));
+    }
+
+    #[test]
+    fn test_workflow_config_fallback_to_default() {
+        // Empty config should produce the same output as default
+        let step_default = update_step(2, &serde_json::json!({}), &None, &wf());
+        let step_empty = update_step(2, &serde_json::json!({}), &None, &WorkflowsConfig::default());
+        assert_eq!(step_default["instruction"], step_empty["instruction"]);
     }
 }

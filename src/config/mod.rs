@@ -9,6 +9,7 @@ pub mod prompts;
 mod server;
 mod validation;
 mod web;
+pub mod workflows;
 
 pub use database::DatabaseConfig;
 pub use embedding::{EmbeddingConfig, LlmConfig, OllamaConfig};
@@ -17,6 +18,7 @@ pub use prompts::PromptsConfig;
 pub use server::{RateLimitConfig, ReviewConfig, ServerConfig, TemporalConfig};
 pub use validation::{validate_timeout, TIMEOUT_RANGE};
 pub use web::WebConfig;
+pub use workflows::WorkflowsConfig;
 
 use crate::database::Database;
 use crate::error::FactbaseError;
@@ -59,6 +61,8 @@ pub struct Config {
     pub web: WebConfig,
     #[serde(default)]
     pub prompts: PromptsConfig,
+    #[serde(default)]
+    pub workflows: WorkflowsConfig,
 }
 
 impl Default for Config {
@@ -100,6 +104,7 @@ impl Default for Config {
             review: ReviewConfig::default(),
             web: WebConfig::default(),
             prompts: PromptsConfig::default(),
+            workflows: WorkflowsConfig::default(),
         }
     }
 }
@@ -241,6 +246,9 @@ impl Config {
 
         // Prompt templates
         prompts::validate_prompts(&self.prompts);
+
+        // Workflow text overrides
+        workflows::validate_workflows(&self.workflows);
 
         Ok(())
     }
