@@ -622,6 +622,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_scan_repository_hint_when_no_links_and_multiple_docs() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "# Doc One\n\n- Fact\n").unwrap();
+        std::fs::write(repo_path.join("doc2.md"), "# Doc Two\n\n- Fact\n").unwrap();
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+        let result = scan_repository(&db, &embedding, None, &serde_json::json!({}), &reporter)
+            .await
+            .unwrap();
+
+        // With NoOpLlm, links_detected should be 0 and total > 1
+        assert_eq!(result["links_detected"], 0);
+        assert!(result["total"].as_u64().unwrap() > 1);
+        let hint = result["hint"].as_str().unwrap();
+        assert!(hint.contains("exact title"), "hint should mention exact titles");
+        assert!(hint.contains("not markdown links"), "hint should warn about markdown links");
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository_no_hint_for_single_doc() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "# Doc One\n\n- Fact\n").unwrap();
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+        let result = scan_repository(&db, &embedding, None, &serde_json::json!({}), &reporter)
+            .await
+            .unwrap();
+
+        // Single doc → no hint
+        assert!(result["hint"].is_null(), "should not show hint for single doc");
+    }
+
+    #[tokio::test]
     async fn test_check_repository_emits_progress() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
