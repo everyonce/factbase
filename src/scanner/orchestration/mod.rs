@@ -492,6 +492,7 @@ pub async fn full_scan(
         show_progress: ctx.opts.show_progress,
         verbose: ctx.opts.verbose,
         skip_links: ctx.opts.skip_links,
+        force_relink: ctx.opts.force_relink,
         link_batch_size: ctx.opts.link_batch_size,
         progress: ctx.progress,
     })

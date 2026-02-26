@@ -102,6 +102,11 @@ pub struct ScanArgs {
     pub no_links: bool,
     #[arg(
         long,
+        help = "Force link detection on all documents (useful for migrated/copied KBs)"
+    )]
+    pub relink: bool,
+    #[arg(
+        long,
         help = "Validate index integrity for CI (check embeddings exist and dimensions match)"
     )]
     pub check: bool,
@@ -224,5 +229,17 @@ mod tests {
     fn test_scan_args_invalid_timeout() {
         let result = ScanArgs::try_parse_from(["scan", "--timeout", "not_a_number"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scan_args_relink() {
+        let args = ScanArgs::try_parse_from(["scan", "--relink"]).unwrap();
+        assert!(args.relink);
+    }
+
+    #[test]
+    fn test_scan_args_relink_default_false() {
+        let args = ScanArgs::try_parse_from(["scan"]).unwrap();
+        assert!(!args.relink);
     }
 }

@@ -19,6 +19,7 @@ pub struct LinkPhaseInput<'a> {
     pub show_progress: bool,
     pub verbose: bool,
     pub skip_links: bool,
+    pub force_relink: bool,
     pub link_batch_size: usize,
     pub progress: &'a ProgressReporter,
 }
@@ -53,6 +54,10 @@ pub async fn run_link_detection_phase(
     let known_entities = input.db.get_all_document_titles(Some(input.repo_id))?;
     let all_docs = input.db.get_documents_for_repo(input.repo_id)?;
 
+    // Force full link detection if --relink or if no links exist yet (migrated/copied KB)
+    let force_all = input.force_relink
+        || (!all_docs.is_empty() && !input.db.has_links_for_repo(input.repo_id)?);
+
     let new_titles: Vec<&str> = input
         .changed_ids
         .iter()
@@ -69,12 +74,26 @@ pub async fn run_link_detection_phase(
     let full_rescan = input.added_count > 10;
     let mut rescan_count = 0;
 
+    if force_all && input.verbose {
+        println!(
+            "Full link detection: {}",
+            if input.force_relink {
+                "--relink requested"
+            } else {
+                "no existing links found"
+            }
+        );
+    }
+
     // Count docs needing link detection for progress bar
     let docs_to_scan: Vec<_> = all_docs
         .iter()
         .filter(|(id, doc)| {
             if doc.is_deleted {
                 return false;
+            }
+            if force_all {
+                return true;
             }
             if input.changed_ids.contains(*id) {
                 return true;
