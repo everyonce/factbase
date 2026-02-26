@@ -158,6 +158,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         force_reindex: args.reindex,
         embedding_batch_size: batch_size,
         skip_links: args.no_links,
+        force_relink: args.relink,
         ..ScanOptions::from_config(&config)
     };
 
@@ -167,6 +168,10 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
 
     if args.reindex && !quiet {
         println!("Reindex mode - regenerating embeddings for all documents");
+    }
+
+    if args.relink && !quiet {
+        println!("Relink mode - detecting links for all documents");
     }
 
     let progress = ProgressReporter::Cli { quiet };

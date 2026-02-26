@@ -193,6 +193,22 @@ impl Database {
         Ok(result)
     }
 
+    /// Returns true if any links exist for documents in the given repository.
+    ///
+    /// Used to detect empty link tables (e.g., migrated/copied KBs) so that
+    /// link detection can be triggered even when no documents changed.
+    pub fn has_links_for_repo(&self, repo_id: &str) -> Result<bool, FactbaseError> {
+        let conn = self.get_conn()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM document_links dl
+             JOIN documents d ON dl.source_id = d.id
+             WHERE d.repo_id = ?1 LIMIT 1",
+            [repo_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     /// Converts a database row to a Link struct.
     fn row_to_link(row: &rusqlite::Row) -> Result<Link, FactbaseError> {
         let created_str: String = row.get(3)?;
@@ -477,5 +493,70 @@ mod tests {
         let (outgoing, incoming) = result.get("doc1").expect("doc1 should be in result");
         assert!(outgoing.is_empty());
         assert!(incoming.is_empty());
+    }
+
+    #[test]
+    fn test_has_links_for_repo_empty() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+
+        assert!(!db.has_links_for_repo("test-repo").unwrap());
+    }
+
+    #[test]
+    fn test_has_links_for_repo_with_links() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        db.update_links(
+            "doc1",
+            &[DetectedLink {
+                target_id: "doc2".to_string(),
+                target_title: "Doc 2".to_string(),
+                mention_text: "Doc 2".to_string(),
+                context: "".to_string(),
+            }],
+        )
+        .unwrap();
+
+        assert!(db.has_links_for_repo("test-repo").unwrap());
+    }
+
+    #[test]
+    fn test_has_links_for_repo_other_repo() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        db.update_links(
+            "doc1",
+            &[DetectedLink {
+                target_id: "doc2".to_string(),
+                target_title: "Doc 2".to_string(),
+                mention_text: "Doc 2".to_string(),
+                context: "".to_string(),
+            }],
+        )
+        .unwrap();
+
+        // Different repo should have no links
+        let repo2 = Repository {
+            id: "other-repo".to_string(),
+            name: "Other".to_string(),
+            path: std::path::PathBuf::from("/tmp/other"),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.add_repository(&repo2).unwrap();
+        assert!(!db.has_links_for_repo("other-repo").unwrap());
     }
 }
