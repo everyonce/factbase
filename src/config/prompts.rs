@@ -23,6 +23,8 @@ pub fn known_prompts() -> HashMap<&'static str, &'static [&'static str]> {
         ("cross_validate", &["doc_title", "fact_batch"]),
         ("link_detect", &["entities_list", "content"]),
         ("link_detect_batch", &["entities_list", "docs_section"]),
+        ("entity_discover", &["content"]),
+        ("entity_classify", &["types_list", "candidates"]),
     ])
 }
 
@@ -151,7 +153,7 @@ mod tests {
     #[test]
     fn test_known_prompts_has_all_keys() {
         let known = known_prompts();
-        assert_eq!(known.len(), 8);
+        assert_eq!(known.len(), 10);
         assert!(known.contains_key("bootstrap"));
         assert!(known.contains_key("rewrite_section"));
         assert!(known.contains_key("inbox_merge"));
@@ -160,6 +162,8 @@ mod tests {
         assert!(known.contains_key("cross_validate"));
         assert!(known.contains_key("link_detect"));
         assert!(known.contains_key("link_detect_batch"));
+        assert!(known.contains_key("entity_discover"));
+        assert!(known.contains_key("entity_classify"));
     }
 
     #[test]

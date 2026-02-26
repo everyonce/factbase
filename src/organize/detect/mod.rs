@@ -6,6 +6,7 @@
 //! - Misplaced candidates: documents in wrong folders
 
 mod duplicate_entries;
+mod entity_discovery;
 mod entity_entries;
 mod merge;
 mod misplaced;
@@ -13,6 +14,7 @@ mod split;
 mod staleness;
 
 pub use duplicate_entries::detect_duplicate_entries;
+pub use entity_discovery::{discover_entities, SuggestedEntity};
 pub use entity_entries::{extract_entity_entries, EntityEntry};
 pub use merge::detect_merge_candidates;
 pub use misplaced::detect_misplaced;
