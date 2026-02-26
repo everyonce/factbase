@@ -1,5 +1,6 @@
 //! Link detection service for entity mentions.
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -18,6 +19,161 @@ pub struct DetectedLink {
     pub mention_text: String,
     /// Surrounding context where the mention was found
     pub context: String,
+}
+
+// =============================================================================
+// Fuzzy string pre-filter for link detection
+// =============================================================================
+
+/// Common words (4+ chars) excluded from single-word matching.
+const STOP_WORDS: &[&str] = &[
+    "about", "after", "also", "back", "been", "being", "came", "come", "could", "does",
+    "down", "each", "even", "every", "find", "first", "from", "gave", "goes", "going",
+    "good", "great", "have", "here", "high", "into", "just", "keep", "know", "last",
+    "left", "like", "line", "long", "look", "made", "make", "many", "more", "most",
+    "much", "must", "name", "next", "note", "only", "open", "other", "over", "part",
+    "said", "same", "show", "side", "some", "such", "take", "tell", "than", "that",
+    "them", "then", "they", "this", "time", "took", "turn", "upon", "very", "want",
+    "well", "went", "were", "what", "when", "will", "with", "word", "work", "year",
+    "your", "about", "above", "after", "again", "along", "being", "below", "between",
+    "both", "could", "doing", "during", "every", "found", "given", "going", "group",
+    "having", "house", "large", "later", "never", "often", "order", "other", "place",
+    "point", "right", "shall", "should", "since", "small", "state", "still", "their",
+    "there", "these", "thing", "think", "those", "three", "through", "under", "until",
+    "using", "where", "which", "while", "world", "would",
+];
+
+/// A match candidate mapping a pattern string to an entity.
+struct MatchCandidate {
+    entity_id: String,
+    entity_title: String,
+    regex: Regex,
+}
+
+/// Build match candidates from known entities for fuzzy pre-filtering.
+///
+/// For each entity, generates:
+/// 1. Full title match (case-insensitive, word boundary)
+/// 2. Unique words (4+ chars, not stop words, not shared across entities)
+/// 3. Abbreviation from first letters of each word (3+ chars)
+fn build_match_candidates(known_entities: &[(String, String)]) -> Vec<MatchCandidate> {
+    let stop: HashSet<&str> = STOP_WORDS.iter().copied().collect();
+
+    // Count how many entities each word appears in (lowercased)
+    let mut word_counts: HashMap<String, usize> = HashMap::new();
+    for (_, title) in known_entities {
+        let mut seen = HashSet::new();
+        for word in title.split_whitespace() {
+            let lower = word.to_lowercase();
+            // Strip trailing punctuation for counting
+            let clean: String = lower.chars().filter(|c| c.is_alphanumeric()).collect();
+            if clean.len() >= 4 && seen.insert(clean.clone()) {
+                *word_counts.entry(clean).or_insert(0) += 1;
+            }
+        }
+    }
+
+    let mut candidates = Vec::new();
+
+    for (id, title) in known_entities {
+        // 1. Full title match
+        let escaped = regex::escape(title);
+        if let Ok(re) = Regex::new(&format!(r"(?i)\b{escaped}\b")) {
+            candidates.push(MatchCandidate {
+                entity_id: id.clone(),
+                entity_title: title.clone(),
+                regex: re,
+            });
+        }
+
+        let words: Vec<&str> = title.split_whitespace().collect();
+
+        // 2. Unique words 4+ chars
+        for word in &words {
+            let clean: String = word.chars().filter(|c| c.is_alphanumeric()).collect();
+            let lower = clean.to_lowercase();
+            if lower.len() >= 4
+                && !stop.contains(lower.as_str())
+                && word_counts.get(&lower).copied().unwrap_or(0) == 1
+            {
+                let escaped = regex::escape(&clean);
+                if let Ok(re) = Regex::new(&format!(r"(?i)\b{escaped}\b")) {
+                    candidates.push(MatchCandidate {
+                        entity_id: id.clone(),
+                        entity_title: title.clone(),
+                        regex: re,
+                    });
+                }
+            }
+        }
+
+        // 3. Abbreviation (first letter of each word, 3+ chars)
+        if words.len() >= 3 {
+            let abbrev: String = words
+                .iter()
+                .filter_map(|w| w.chars().next())
+                .filter(|c| c.is_alphabetic())
+                .map(|c| c.to_ascii_uppercase())
+                .collect();
+            if abbrev.len() >= 3 {
+                let escaped = regex::escape(&abbrev);
+                if let Ok(re) = Regex::new(&format!(r"\b{escaped}\b")) {
+                    candidates.push(MatchCandidate {
+                        entity_id: id.clone(),
+                        entity_title: title.clone(),
+                        regex: re,
+                    });
+                }
+            }
+        }
+    }
+
+    candidates
+}
+
+/// Extract surrounding sentence context for a match at the given byte position.
+fn extract_context(content: &str, start: usize, end: usize) -> String {
+    // Find sentence boundaries (period+space, newline, or content bounds)
+    let ctx_start = content[..start]
+        .rfind(|c: char| c == '\n' || (c == '.' && start > 1))
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    let ctx_end = content[end..]
+        .find(|c: char| c == '\n' || c == '.')
+        .map(|p| end + p + 1)
+        .unwrap_or(content.len());
+    content[ctx_start..ctx_end.min(content.len())]
+        .trim()
+        .to_string()
+}
+
+/// Run fuzzy string matching on content against known entities.
+/// Returns (matched links, set of matched entity IDs).
+fn string_match_links(
+    content: &str,
+    source_id: &str,
+    candidates: &[MatchCandidate],
+) -> (Vec<DetectedLink>, HashSet<String>) {
+    let mut links = Vec::new();
+    let mut matched_ids = HashSet::new();
+
+    for candidate in candidates {
+        if candidate.entity_id == source_id || matched_ids.contains(&candidate.entity_id) {
+            continue;
+        }
+        if let Some(m) = candidate.regex.find(content) {
+            let context = extract_context(content, m.start(), m.end());
+            links.push(DetectedLink {
+                target_id: candidate.entity_id.clone(),
+                target_title: candidate.entity_title.clone(),
+                mention_text: m.as_str().to_string(),
+                context,
+            });
+            matched_ids.insert(candidate.entity_id.clone());
+        }
+    }
+
+    (links, matched_ids)
 }
 
 /// Service for detecting entity mentions in documents.
@@ -125,10 +281,19 @@ impl LinkDetector {
             return Ok(links);
         }
 
-        // Build prompt for LLM
+        // Fuzzy string pre-filter: catch obvious matches before LLM
+        let candidates = build_match_candidates(known_entities);
+        let (string_links, matched_ids) = string_match_links(content, source_id, &candidates);
+        for sl in string_links {
+            if !links.iter().any(|l| l.target_id == sl.target_id) {
+                links.push(sl);
+            }
+        }
+
+        // Build prompt for LLM — exclude already-matched entities
         let entities_list: String = known_entities
             .iter()
-            .filter(|(id, _)| id != source_id)
+            .filter(|(id, _)| id != source_id && !matched_ids.contains(id))
             .map(|(id, title)| format!("- {title} (id: {id})"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -215,11 +380,26 @@ impl LinkDetector {
             return Ok(results);
         }
 
-        // Build entities list (excluding docs being processed)
+        // Fuzzy string pre-filter: catch obvious matches before LLM
+        let candidates = build_match_candidates(known_entities);
+        let mut all_matched_ids: HashSet<String> = HashSet::new();
+        for (id, _, content) in documents {
+            let (string_links, matched_ids) = string_match_links(content, id, &candidates);
+            if let Some(links) = results.get_mut(*id) {
+                for sl in string_links {
+                    if !links.iter().any(|l| l.target_id == sl.target_id) {
+                        links.push(sl);
+                    }
+                }
+            }
+            all_matched_ids.extend(matched_ids);
+        }
+
+        // Build entities list (excluding docs being processed and pre-matched entities)
         let doc_ids: HashSet<&str> = documents.iter().map(|(id, _, _)| *id).collect();
         let entities_list: String = known_entities
             .iter()
-            .filter(|(id, _)| !doc_ids.contains(id.as_str()))
+            .filter(|(id, _)| !doc_ids.contains(id.as_str()) && !all_matched_ids.contains(id))
             .map(|(id, title)| format!("- {title} (id: {id})"))
             .collect::<Vec<_>>()
             .join("\n");
@@ -356,7 +536,8 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "def456");
         assert_eq!(links[0].target_title, "John Doe");
-        assert_eq!(links[0].context, "met with John Doe");
+        // Pre-filter catches this match; context is the surrounding sentence
+        assert!(links[0].context.contains("John Doe"));
     }
 
     #[tokio::test]
@@ -561,5 +742,230 @@ mod tests {
             .get("doc001")
             .expect("doc001 should be in results")
             .is_empty());
+    }
+
+    // =========================================================================
+    // Fuzzy string pre-filter tests
+    // =========================================================================
+
+    #[test]
+    fn test_build_candidates_full_title() {
+        let entities = vec![("e1".into(), "Delta Air Lines".into())];
+        let candidates = build_match_candidates(&entities);
+        // Should have full title + unique words + abbreviation
+        assert!(candidates.iter().any(|c| c.regex.is_match("Delta Air Lines")));
+    }
+
+    #[test]
+    fn test_string_match_exact_title() {
+        let entities = vec![("e1".into(), "Delta Air Lines".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, matched) = string_match_links(
+            "We flew Delta Air Lines to NYC.",
+            "src",
+            &candidates,
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_id, "e1");
+        assert!(matched.contains("e1"));
+    }
+
+    #[test]
+    fn test_string_match_case_insensitive() {
+        let entities = vec![("e1".into(), "Delta Air Lines".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "We flew delta air lines to NYC.",
+            "src",
+            &candidates,
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_id, "e1");
+    }
+
+    #[test]
+    fn test_string_match_unique_word() {
+        let entities = vec![("e1".into(), "Delta Air Lines".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "The Delta subsidiary expanded.",
+            "src",
+            &candidates,
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_id, "e1");
+    }
+
+    #[test]
+    fn test_string_match_word_boundary() {
+        let entities = vec![("e1".into(), "Delta Air Lines".into())];
+        let candidates = build_match_candidates(&entities);
+        // "Deltaforce" should NOT match "Delta" as a word
+        let (links, _) = string_match_links(
+            "The Deltaforce team arrived.",
+            "src",
+            &candidates,
+        );
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_string_match_ambiguous_word_excluded() {
+        // "Mount" appears in both entities — should not be used for matching
+        let entities = vec![
+            ("e1".into(), "Mount Vesuvius".into()),
+            ("e2".into(), "Mount St. Helens".into()),
+        ];
+        let candidates = build_match_candidates(&entities);
+        // "Mount" alone should not match either entity
+        let (links, _) = string_match_links(
+            "The mount was visible from afar.",
+            "src",
+            &candidates,
+        );
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_string_match_abbreviation() {
+        let entities = vec![("e1".into(), "Delta Air Lines".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "DAL stock rose 5% today.",
+            "src",
+            &candidates,
+        );
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_id, "e1");
+    }
+
+    #[test]
+    fn test_string_match_abbreviation_needs_3_chars() {
+        // Two-word title → abbreviation "AB" is only 2 chars, should not match
+        let entities = vec![("e1".into(), "Acme Bricks".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links("AB Corp is here.", "src", &candidates);
+        // Should not match via abbreviation (only 2 chars)
+        // May match via unique word "Acme" or "Bricks" though
+        let abbrev_match = links.iter().any(|l| l.mention_text == "AB");
+        assert!(!abbrev_match);
+    }
+
+    #[test]
+    fn test_string_match_skips_self() {
+        let entities = vec![("src".into(), "Self Document".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "This is the Self Document itself.",
+            "src",
+            &candidates,
+        );
+        assert!(links.is_empty());
+    }
+
+    #[test]
+    fn test_string_match_no_duplicate_links() {
+        // Entity matches via both full title and unique word — should only appear once
+        let entities = vec![("e1".into(), "Vesuvius".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "Vesuvius erupted. Vesuvius is a volcano.",
+            "src",
+            &candidates,
+        );
+        assert_eq!(links.len(), 1);
+    }
+
+    #[test]
+    fn test_string_match_context_extraction() {
+        let entities = vec![("e1".into(), "Acme Corporation".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "First line.\nWe partnered with Acme Corporation last year.\nThird line.",
+            "src",
+            &candidates,
+        );
+        assert_eq!(links.len(), 1);
+        assert!(links[0].context.contains("Acme Corporation"));
+    }
+
+    #[tokio::test]
+    async fn test_prefilter_reduces_llm_entities() {
+        // The mock LLM returns empty — all matches should come from pre-filter
+        let mock = MockLlm::new("[]");
+        let detector = LinkDetector::new(Box::new(mock));
+
+        let content = "We met with Delta Air Lines representatives.";
+        let known = vec![
+            ("e1".to_string(), "Delta Air Lines".to_string()),
+            ("e2".to_string(), "Unrelated Corp".to_string()),
+        ];
+
+        let links = detector
+            .detect_links(content, "src", &known)
+            .await
+            .expect("should succeed");
+
+        // Delta Air Lines found by pre-filter
+        assert!(links.iter().any(|l| l.target_id == "e1"));
+        // Unrelated Corp not in content
+        assert!(!links.iter().any(|l| l.target_id == "e2"));
+    }
+
+    #[tokio::test]
+    async fn test_prefilter_merges_with_llm() {
+        // LLM finds an indirect reference the pre-filter can't
+        let mock = MockLlm::new(
+            r#"[{"entity": "Unrelated Corp", "context": "the parent company"}]"#,
+        );
+        let detector = LinkDetector::new(Box::new(mock));
+
+        let content = "Delta Air Lines is owned by the parent company.";
+        let known = vec![
+            ("e1".to_string(), "Delta Air Lines".to_string()),
+            ("e2".to_string(), "Unrelated Corp".to_string()),
+        ];
+
+        let links = detector
+            .detect_links(content, "src", &known)
+            .await
+            .expect("should succeed");
+
+        // Both should be found: e1 by pre-filter, e2 by LLM
+        assert_eq!(links.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_batch_prefilter() {
+        let mock = MockLlm::new(r#"{}"#);
+        let detector = LinkDetector::new(Box::new(mock));
+
+        let docs = vec![
+            ("doc1", "Doc One", "We visited Mount Vesuvius."),
+            ("doc2", "Doc Two", "No entities here."),
+        ];
+        let known = vec![("e1".to_string(), "Mount Vesuvius".to_string())];
+
+        let results = detector
+            .detect_links_batch(&docs, &known)
+            .await
+            .expect("should succeed");
+
+        assert_eq!(results.get("doc1").unwrap().len(), 1);
+        assert_eq!(results.get("doc1").unwrap()[0].target_id, "e1");
+        assert!(results.get("doc2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_stop_words_excluded() {
+        // "Great" is a stop word — should not match as a single word
+        let entities = vec![("e1".into(), "The Great Wall".into())];
+        let candidates = build_match_candidates(&entities);
+        let (links, _) = string_match_links(
+            "It was a great achievement.",
+            "src",
+            &candidates,
+        );
+        assert!(links.is_empty());
     }
 }
