@@ -414,14 +414,14 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>) -> 
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward{fields}{FORMAT_RULES}"),
+            "instruction": format!("Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document{fields}{FORMAT_RULES}"),
             "next_tool": "create_document",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "ingest",
             "step": 4, "total_steps": total,
-            "instruction": "Verify your work. Call generate_questions with dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.",
+            "instruction": "Verify your work. Call generate_questions with dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.",
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
@@ -533,14 +533,14 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": format!("Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{{entity name}} {{missing fact}}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index\n- Cross-references: if this entity is related to other entities in the KB, mention them by their exact document title in a fact line. This enables automatic link detection during scan. Do NOT use markdown links — only plain text entity title mentions are detected.{ctx}{FORMAT_RULES}"),
+            "instruction": format!("Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{{entity name}} {{missing fact}}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index\n- Cross-references: if this entity is related to other entities in the KB, mention them by their exact document title in a fact line. This enables automatic link detection during scan. Do NOT use markdown links — only plain text entity title mentions are detected.\n- Entity discovery: if this document references entities that don't have their own document yet but fit the KB's taxonomy (perspective.allowed_types), note them. After enriching the current doc, create documents for the most significant missing entities using create_document. Only create entities that are (a) mentioned in 2+ existing documents OR (b) central enough to the domain that they clearly deserve coverage.{ctx}{FORMAT_RULES}"),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "enrich",
             "step": 4, "total_steps": total,
-            "instruction": "Verify your work. Call generate_questions with dry_run=true on each document you modified to check for new issues.",
+            "instruction": "Verify your work. Call generate_questions with dry_run=true on each document you modified to check for new issues.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.",
             "next_tool": "generate_questions",
             "suggested_args": {"dry_run": true},
             "complete": true
