@@ -110,7 +110,27 @@ pub async fn check_repository(
         })
         .collect();
 
-    Ok(serde_json::json!({
+    // Entity discovery: only when deep_check is enabled (requires LLM)
+    let suggested_entities = if deep_check {
+        if let Some(llm_ref) = llm {
+            let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
+            crate::organize::discover_entities(
+                &docs,
+                &existing_titles,
+                llm_ref,
+                perspective.as_ref(),
+                progress,
+            )
+            .await
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+
+    let mut result = serde_json::json!({
         "documents_scanned": total,
         "documents_with_new_questions": docs_with_questions,
         "total_questions_generated": total_new + total_existing,
@@ -122,5 +142,12 @@ pub async fn check_repository(
         "deferred_count": deferred_count,
         "dry_run": dry_run,
         "details": details,
-    }))
+    });
+
+    if !suggested_entities.is_empty() {
+        result["suggested_entities"] = serde_json::to_value(&suggested_entities)
+            .unwrap_or_default();
+    }
+
+    Ok(result)
 }
