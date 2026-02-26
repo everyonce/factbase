@@ -41,13 +41,13 @@ pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the ne
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase. Call scan_repository.\n\nRecord these baseline metrics (you'll compare them at the end):\n- link_count: total links detected\n- link_density: links / documents ratio\n- temporal_coverage: percentage of facts with temporal tags\n- source_coverage: percentage of facts with source citations\n- documents: total count{ctx}";
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase. Call scan_repository.\n\nAfter scanning, think about the STRUCTURE of this knowledge base:\n- How are the documents connected? Are there clusters or isolated nodes?\n- Is the link density healthy? (Rule of thumb: each doc should link to at least 1 other)\n- What story does the KB's coverage tell — are temporal and source coverage balanced?{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks with deep_check=true. Call check_repository with deep_check=true.\n\nRecord:\n- questions_total: new unanswered questions\n- questions_by_type: breakdown (stale, conflict, temporal, missing, ambiguous, duplicate)\n- suggested_entities_count: how many new entities were suggested\n- suggested_entities_high: how many with high confidence\n\nDo NOT create any documents or make changes — just measure and record.";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run check_repository with deep_check=true.\n\nRead the results like a doctor reading lab work:\n- Which question TYPES dominate? That tells you the KB's biggest weakness.\n  - Mostly stale? The KB is aging — needs fresh sources.\n  - Mostly temporal? Facts lack dates — the timeline is murky.\n  - Mostly conflict? Documents disagree — there are contradictions to resolve.\n  - Mostly missing? Citations are weak — claims lack evidence.\n- Look at suggested_entities. These are the \"unnamed characters\" — important actors that keep appearing but have no spotlight. They deserve their own documents.\n\nFor each suggested entity with high confidence, create a document for it — even a skeleton is better than nothing. Then run scan_repository again to update links.";
 
-pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Run organization analysis. Call organize_analyze.\n\nRecord:\n- merge_candidates: count and names\n- split_candidates: count and names\n- misplaced: count and names\n- duplicates: count and names\n\nDo NOT execute any changes — just measure and record.";
+pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Run organize_analyze.\n\nThink about this like an editor reviewing a manuscript:\n- Merge candidates: these chapters overlap — they're telling the same story twice\n- Split candidates: this chapter is trying to tell two stories at once\n- Misplaced docs: this chapter is filed in the wrong section\n- Duplicates: the same paragraph appears in multiple chapters\n\nNote what you'd recommend to the author.";
 
-pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Report ALL metrics collected across steps in a structured format:\n\n| Metric | Value |\n|--------|-------|\n| Documents | X |\n| Links | X (density: X.X per doc) |\n| Temporal coverage | X% |\n| Source coverage | X% |\n| New questions | X |\n| - stale | X |\n| - conflict | X |\n| - temporal | X |\n| - missing | X |\n| Suggested entities | X (Y high confidence) |\n| Merge candidates | X |\n| Split candidates | X |\n| Misplaced docs | X |\n| Duplicate entries | X |\n\nThen provide a one-paragraph health assessment and top-3 priorities.";
+pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report in narrative form. No tables — tell the story.\n\nStructure:\n1. **Overall Health**: Is this KB in good shape, needs work, or needs major overhaul? Support with the numbers you collected.\n2. **Strongest Area**: What does this KB do well? (high coverage, good linking, clean structure?)\n3. **Biggest Gap**: What's the single most important thing to fix? Why?\n4. **Hidden Connections**: What entities did you discover that the KB was missing? Why do they matter?\n5. **Structural Issues**: Any merge/split/misplacement opportunities? What would they improve?\n6. **Recommended Next Steps**: Ordered by impact, what should the user do next?\n\nWrite this like a consultant's brief — clear, opinionated, actionable.";
 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}";
@@ -1169,13 +1169,12 @@ mod tests {
     }
 
     #[test]
-    fn test_update_step1_metrics_driven() {
+    fn test_update_step1_diagnostic_narrative() {
         let step = update_step(1, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("baseline metrics"), "update step 1 should mention baseline metrics");
-        assert!(instruction.contains("link_count"), "should track link count");
-        assert!(instruction.contains("link_density"), "should track link density");
-        assert!(instruction.contains("temporal_coverage"), "should track temporal coverage");
+        assert!(instruction.contains("STRUCTURE"), "update step 1 should mention structure");
+        assert!(instruction.contains("link density"), "should mention link density");
+        assert!(instruction.contains("scan_repository"), "should call scan_repository");
     }
 
     #[test]
