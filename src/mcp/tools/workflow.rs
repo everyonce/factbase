@@ -41,13 +41,13 @@ pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the ne
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.\n\nscan_repository also detects cross-entity links by finding entity title mentions in document text. After scanning, check if link count looks right — documents that discuss related entities should reference each other by exact title.{ctx}";
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase. Call scan_repository.\n\nRecord these baseline metrics (you'll compare them at the end):\n- link_count: total links detected\n- link_density: links / documents ratio\n- temporal_coverage: percentage of facts with temporal tags\n- source_coverage: percentage of facts with source citations\n- documents: total count{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks across all documents. Before calling check_repository, ask the user if they want a deep check (cross-document validation). Deep check finds conflicts between documents but takes significantly longer — minutes vs seconds on large knowledge bases.\n\nIf the user says yes (or specified deep_check when starting the workflow), call check_repository with deep_check=true. Otherwise call it without deep_check for a fast local-only check.";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks with deep_check=true. Call check_repository with deep_check=true.\n\nRecord:\n- questions_total: new unanswered questions\n- questions_by_type: breakdown (stale, conflict, temporal, missing, ambiguous, duplicate)\n- suggested_entities_count: how many new entities were suggested\n- suggested_entities_high: how many with high confidence\n\nDo NOT create any documents or make changes — just measure and record.";
 
-pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Run a full organization analysis to detect structural improvements. Call organize_analyze (without a focus parameter) to find merge candidates, split candidates, misplaced documents, and duplicate entries across the knowledge base.\n\nAfter results come back, report what was found:\n- Merge candidates: documents similar enough to combine\n- Split candidates: documents covering multiple distinct topics\n- Misplaced documents: documents whose type doesn't match their content\n- Duplicate entries: facts repeated across multiple documents\n\nIf any high-confidence suggestions are found, ask the user if they'd like to act on them (merge, split, move, or retype). Use the organize tool to execute approved actions.";
+pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Run organization analysis. Call organize_analyze.\n\nRecord:\n- merge_candidates: count and names\n- split_candidates: count and names\n- misplaced: count and names\n- duplicates: count and names\n\nDo NOT execute any changes — just measure and record.";
 
-pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Summarize what you found across all steps: how many documents were scanned, how many quality issues were identified, and what organization opportunities were detected (merges, splits, misplaced, duplicates). If there are review questions to fix, suggest the user run the 'resolve' workflow next.";
+pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Report ALL metrics collected across steps in a structured format:\n\n| Metric | Value |\n|--------|-------|\n| Documents | X |\n| Links | X (density: X.X per doc) |\n| Temporal coverage | X% |\n| Source coverage | X% |\n| New questions | X |\n| - stale | X |\n| - conflict | X |\n| - temporal | X |\n| - missing | X |\n| Suggested entities | X (Y high confidence) |\n| Merge candidates | X |\n| Split candidates | X |\n| Misplaced docs | X |\n| Duplicate entries | X |\n\nThen provide a one-paragraph health assessment and top-3 priorities.";
 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}";
@@ -1169,12 +1169,13 @@ mod tests {
     }
 
     #[test]
-    fn test_update_step1_mentions_link_detection() {
+    fn test_update_step1_metrics_driven() {
         let step = update_step(1, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("cross-entity links"), "update step 1 should explain link detection");
-        assert!(instruction.contains("entity title mentions"), "should mention title-based detection");
-        assert!(instruction.contains("exact title"), "should emphasize exact titles");
+        assert!(instruction.contains("baseline metrics"), "update step 1 should mention baseline metrics");
+        assert!(instruction.contains("link_count"), "should track link count");
+        assert!(instruction.contains("link_density"), "should track link density");
+        assert!(instruction.contains("temporal_coverage"), "should track temporal coverage");
     }
 
     #[test]
