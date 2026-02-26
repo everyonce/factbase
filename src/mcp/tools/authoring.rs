@@ -91,9 +91,11 @@ pub fn get_authoring_guide() -> Value {
             "example": "- First described by Linnaeus @t[=1753] [^1][^2]\n\n---\n[^1]: Linnaeus, Species Plantarum, vol. 2, p. 1171, 1753\n[^2]: MycoBank record #120098, accessed 2024-01-10"
         },
         "linking": {
-            "description": "Use exact entity names matching other document titles for automatic link detection.",
-            "good": "Amanita muscaria forms mycorrhizal associations with Betula pendula",
-            "bad": "This mushroom grows near birch trees",
+            "description": "Factbase detects cross-entity links in TWO ways: (1) During scan_repository, an LLM scans each document's text for mentions of other entity TITLES — if your document text contains another entity's exact title, a link is created automatically. (2) Manual [[doc_id]] syntax for explicit references.",
+            "warning": "⚠️ Markdown links like [Entity Name](../path/file.md) are NOT detected by factbase and do NOT create cross-entity links. Only plain text entity title mentions and [[doc_id]] syntax work.",
+            "good": "Amanita muscaria forms mycorrhizal associations with Betula pendula ← 'Betula pendula' matches a document title, auto-detected as a link",
+            "bad": "[Betula pendula](../species/betula-pendula.md) ← NOT detected, creates no link",
+            "tip": "Use the EXACT entity title as it appears in the document's # heading. 'Delta Air Lines' not 'Delta' or 'the airline'. 'Mount Vesuvius' not 'the volcano'.",
             "manual": "See [[a1b2c3]] for the full specification"
         },
         "inbox_blocks": {
@@ -189,6 +191,21 @@ mod tests {
             assert!(step["question"].is_string());
             assert!(step["guidance"].is_string());
         }
+    }
+
+    #[test]
+    fn test_linking_explains_detection_mechanism() {
+        let guide = get_authoring_guide();
+        let linking = &guide["linking"];
+        let desc = linking["description"].as_str().unwrap();
+        assert!(desc.contains("TWO ways"), "should explain two detection methods");
+        assert!(desc.contains("LLM scans"), "should mention LLM scanning");
+        assert!(desc.contains("[[doc_id]]"), "should mention manual syntax");
+        assert!(linking["warning"].as_str().unwrap().contains("NOT detected"), "should warn about markdown links");
+        assert!(linking["tip"].as_str().unwrap().contains("EXACT entity title"), "should emphasize exact titles");
+        let bad = linking["bad"].as_str().unwrap();
+        assert!(bad.contains("[Betula pendula]("), "bad example should show markdown link");
+        assert!(bad.contains("NOT detected"), "bad example should say not detected");
     }
 
     #[test]

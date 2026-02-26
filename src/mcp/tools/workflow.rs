@@ -296,7 +296,7 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>) ->
         1 => serde_json::json!({
             "workflow": "update",
             "step": 1, "total_steps": total,
-            "instruction": format!("Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.{ctx}"),
+            "instruction": format!("Re-index the factbase to pick up any file changes. Call scan_repository. Tell the user this may take a minute for large repositories.\n\nscan_repository also detects cross-entity links by finding entity title mentions in document text. After scanning, check if link count looks right — documents that discuss related entities should reference each other by exact title.{ctx}"),
             "next_tool": "scan_repository",
             "when_done": "Call workflow with workflow='update', step=2"
         }),
@@ -533,7 +533,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": format!("Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{{entity name}} {{missing fact}}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index{ctx}{FORMAT_RULES}"),
+            "instruction": format!("Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{{entity name}} {{missing fact}}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index\n- Cross-references: if this entity is related to other entities in the KB, mention them by their exact document title in a fact line. This enables automatic link detection during scan. Do NOT use markdown links — only plain text entity title mentions are detected.{ctx}{FORMAT_RULES}"),
             "next_tool": "update_document",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
@@ -1085,6 +1085,25 @@ mod tests {
         assert_eq!(stats["facts_with_sources"], 0);
         // attention_score = 0*2 + 3 + 3 = 6
         assert_eq!(stats["attention_score"], 6);
+    }
+
+    #[test]
+    fn test_update_step1_mentions_link_detection() {
+        let step = update_step(1, &serde_json::json!({}), &None);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("cross-entity links"), "update step 1 should explain link detection");
+        assert!(instruction.contains("entity title mentions"), "should mention title-based detection");
+        assert!(instruction.contains("exact title"), "should emphasize exact titles");
+    }
+
+    #[test]
+    fn test_enrich_step3_mentions_cross_references() {
+        let (db, _tmp) = test_db();
+        let step = enrich_step(3, &serde_json::json!({}), &None, &db);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("Cross-references"), "enrich step 3 should mention cross-references");
+        assert!(instruction.contains("exact document title"), "should emphasize exact titles");
+        assert!(instruction.contains("Do NOT use markdown links"), "should warn against markdown links");
     }
 
     // --- setup workflow tests ---

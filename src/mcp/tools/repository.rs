@@ -83,6 +83,11 @@ pub async fn scan_repository(
             "{} added, {} updated (temporal coverage: {:.0}%, source coverage: {:.0}%)",
             result.added, result.updated, temporal_coverage, source_coverage
         ),
+        "hint": if result.links_detected == 0 && result.total > 1 {
+            Some("Tip: Link detection finds entity title mentions in document text. If you expected links, check that documents reference other entities by their exact title (not markdown links or abbreviations).")
+        } else {
+            None
+        },
     }))
 }
 
