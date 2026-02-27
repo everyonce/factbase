@@ -36,6 +36,34 @@ pub async fn detect_duplicate_entries(
 
     progress.phase("Detecting duplicate entries");
 
+    // Phase 0: Detect document-level duplicates (same title + same type, different paths).
+    let mut doc_title_groups: HashMap<(String, Option<String>), Vec<&crate::models::Document>> =
+        HashMap::new();
+    for doc in &docs {
+        let key = (normalize_name(&doc.title), doc.doc_type.clone());
+        doc_title_groups.entry(key).or_default().push(doc);
+    }
+
+    let mut results: Vec<DuplicateEntry> = Vec::new();
+    for ((norm_title, _), group) in &doc_title_groups {
+        if group.len() >= 2 {
+            let entries: Vec<EntryLocation> = group
+                .iter()
+                .map(|d| EntryLocation {
+                    doc_id: d.id.clone(),
+                    doc_title: d.title.clone(),
+                    section: String::new(),
+                    line_start: 1,
+                    facts: vec![d.file_path.clone()],
+                })
+                .collect();
+            results.push(DuplicateEntry {
+                entity_name: norm_title.clone(),
+                entries,
+            });
+        }
+    }
+
     // Extract entries from all documents.
     let mut all_entries: Vec<(String, EntryLocation)> = Vec::new(); // (normalized_name, location)
                                                                     // Build title→doc_id map for authoritative document lookup.
@@ -83,7 +111,7 @@ pub async fn detect_duplicate_entries(
     }
 
     if all_entries.is_empty() {
-        return Ok(Vec::new());
+        return Ok(results);
     }
 
     // Phase 1: Group by exact normalized name.
@@ -96,7 +124,6 @@ pub async fn detect_duplicate_entries(
     }
 
     // Collect groups with 2+ entries from different documents.
-    let mut results: Vec<DuplicateEntry> = Vec::new();
     let mut matched_names: HashSet<String> = HashSet::new();
 
     for (name, locations) in &exact_groups {
@@ -510,5 +537,94 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(result.len(), 1, "Mixed facts entry should be kept");
+    }
+
+    #[tokio::test]
+    async fn test_detect_document_level_duplicates_same_title_and_type() {
+        let (db, tmp) = test_db();
+        test_repo_in_db(&db, "r1", tmp.path());
+
+        // Two separate documents with the same title and type in different folders.
+        let mut doc1 = make_doc("cedb70", "Zach Evans", "# Zach Evans\n\n- CTO at XSOLIS\n");
+        doc1.doc_type = Some("person".to_string());
+        doc1.file_path = "customers/xsolis/people/zach-evans.md".to_string();
+
+        let mut doc2 = make_doc("479fee", "Zach Evans", "# Zach Evans\n\n- CTO at Powered Health\n");
+        doc2.doc_type = Some("person".to_string());
+        doc2.file_path = "customers/trend/people/zach-evans.md".to_string();
+
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+
+        let emb = HashEmbedding;
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
+
+        let dup = result.iter().find(|d| d.entity_name == "zach evans");
+        assert!(dup.is_some(), "Should detect document-level duplicate");
+        let entries = &dup.unwrap().entries;
+        assert_eq!(entries.len(), 2);
+        let ids: HashSet<&str> = entries.iter().map(|e| e.doc_id.as_str()).collect();
+        assert!(ids.contains("cedb70"));
+        assert!(ids.contains("479fee"));
+        // facts contain file paths for document-level duplicates
+        assert!(entries.iter().any(|e| e.facts[0].contains("xsolis")));
+        assert!(entries.iter().any(|e| e.facts[0].contains("trend")));
+    }
+
+    #[tokio::test]
+    async fn test_no_document_level_dup_for_different_types() {
+        let (db, tmp) = test_db();
+        test_repo_in_db(&db, "r1", tmp.path());
+
+        // Same title but different types should NOT be flagged.
+        let mut doc1 = make_doc("aaa111", "Atlas", "# Atlas\n\n- Greek titan\n");
+        doc1.doc_type = Some("mythology".to_string());
+
+        let mut doc2 = make_doc("bbb222", "Atlas", "# Atlas\n\n- Software project\n");
+        doc2.doc_type = Some("project".to_string());
+
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+
+        let emb = HashEmbedding;
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
+
+        let dup = result.iter().find(|d| d.entity_name == "atlas");
+        assert!(dup.is_none(), "Different types should not be flagged as duplicates");
+    }
+
+    #[tokio::test]
+    async fn test_document_level_dup_with_no_entry_content() {
+        let (db, tmp) = test_db();
+        test_repo_in_db(&db, "r1", tmp.path());
+
+        // Documents with no sub-entries should still be detected as duplicates.
+        let mut doc1 = make_doc("aaa111", "Jane Smith", "# Jane Smith\n\nSome notes.\n");
+        doc1.doc_type = Some("person".to_string());
+        doc1.file_path = "folder-a/jane-smith.md".to_string();
+
+        let mut doc2 = make_doc("bbb222", "Jane Smith", "# Jane Smith\n\nOther notes.\n");
+        doc2.doc_type = Some("person".to_string());
+        doc2.file_path = "folder-b/jane-smith.md".to_string();
+
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+
+        let emb = HashEmbedding;
+        let result =
+            detect_duplicate_entries(&db, &emb, Some("r1"), &crate::ProgressReporter::Silent)
+                .await
+                .unwrap();
+
+        assert!(
+            result.iter().any(|d| d.entity_name == "jane smith"),
+            "Should detect doc-level dup even with no sub-entries"
+        );
     }
 }
