@@ -68,13 +68,13 @@ pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update fac
 pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify your work. Call generate_questions with dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
 
 // --- Enrich workflow ---
-pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list below (sorted by attention_score, highest first). Pick entities that need work — high attention_score means more gaps. Then call get_entity on each to read full content.{ctx}";
+pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list (sorted by attention_score, highest first).\nPick the top 3-5 entities that need work. You will enrich them ONE AT A TIME — fully completing each before moving to the next.\n\nCall get_entity on the first entity to begin.{ctx}";
 
-pub(crate) const DEFAULT_ENRICH_GAPS_INSTRUCTION: &str = "For each document that needs enrichment, call get_entity to read its full content. Identify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists in the data (check the weak_identification field in entity_quality), update the title via update_document\n- Unanswered review questions (check the Review Queue section) — if your research answers any, resolve them too\n- Poor file organization: if a file is in the wrong type folder or has an unclear filename, plan to rename/move it (you can do this with file tools, then run scan_repository){fields}";
+pub(crate) const DEFAULT_ENRICH_GAPS_INSTRUCTION: &str = "Score this document before researching:\n\n1. Temporal: X of Y fact lines have @t tags = Z%\n2. Sources: X of Y fact lines have [^N] citations = Z%\n3. Missing fields: [list any required by perspective]{fields}\n4. Review questions: X unanswered\n5. Gaps: list ALL areas where you could add substantive facts — sections that are thin, topics mentioned but not developed, missing context or history\n\nResearch the LOWEST coverage area first, then continue through all gaps.";
 
-pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research the gaps using your available tools, then call update_document to add findings.\n\nResearch tips:\n- Use web search to find current, authoritative data for each gap\n- Search specifically: '{entity name} {missing fact}' works better than broad queries\n- For stale facts, search for the latest data and note the date you verified it\n- Read the full page/article when a search snippet looks relevant — snippets can be misleading\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Don't add speculative information — only add what you can source\n- If your research answers any existing review questions, call answer_question to resolve them\n- If a document's filename or folder location doesn't match its content (e.g., wrong type folder, poorly named file), use your file tools to rename/move it — just run scan_repository afterward to re-index\n- Cross-references: if this entity is related to other entities in the KB, mention them by their exact document title in a fact line. This enables automatic link detection during scan. Do NOT use markdown links — only plain text entity title mentions are detected.\n- Entity discovery: if this document references entities that don't have their own document yet but fit the KB's taxonomy (perspective.allowed_types), note them. After enriching the current doc, create documents for the most significant missing entities using create_document. Only create entities that are (a) mentioned in 2+ existing documents OR (b) central enough to the domain that they clearly deserve coverage.{ctx}{format_rules}";
+pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research and update THIS document. Work through ALL gaps you identified — don't stop at 3-5.\n\nFor each gap:\n1. Search specifically: \"{entity name} {fact}\" — targeted beats broad\n2. Read the full page, not just snippets\n3. Every new fact MUST have BOTH @t[YYYY] AND [^N] citation — no exceptions\n4. Mention related KB entities by exact title in prose (enables link detection)\n\nKeep going until you've exhausted your research for this document. More well-sourced facts = better.\n\nCall update_document with the enriched content. Then verify: call generate_questions with dry_run=true.\n\nRecord: facts added, sources added, @t tags added, issues from verify.\n\n⚠️ REPEAT for the next document:\n1. Call get_entity on the next entity from your list\n2. Score it (same as step 2)\n3. Research + update + verify (same as this step)\nContinue until all documents are done.\n\nRules:\n- Preserve ALL existing content — add, don't replace\n- Resolve review questions when your research provides answers\n- Create documents for significant missing entities{ctx}{format_rules}";
 
-pub(crate) const DEFAULT_ENRICH_VERIFY_INSTRUCTION: &str = "Verify your work. Call generate_questions with dry_run=true on each document you modified to check for new issues.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
+pub(crate) const DEFAULT_ENRICH_VERIFY_INSTRUCTION: &str = "Report totals across all documents enriched:\n\n| Document | +Facts | +Sources | +@t | Issues |\n|----------|--------|----------|-----|--------|\n| ... | ... | ... | ... | ... |\n\nTotals: X facts, X sources, X @t tags added. X questions resolved. X new issues.\nAssessment: biggest improvement, remaining gaps, recommended next step.";
 
 // --- Improve workflow ---
 pub(crate) const DEFAULT_IMPROVE_CLEANUP_INSTRUCTION: &str = "Read the document and fix any issues{doc_hint}. Call get_entity with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call update_document to fix them. If the document looks clean, move to the next step.{ctx}";
@@ -864,12 +864,12 @@ mod tests {
     }
 
     #[test]
-    fn test_enrich_step2_mentions_weak_identification() {
+    fn test_enrich_step2_mentions_scoring() {
         let (db, _tmp) = test_db();
         let step = enrich_step(2, &serde_json::json!({}), &None, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("Weak identification"));
-        assert!(instruction.contains("weak_identification"));
+        assert!(instruction.contains("Score this document"));
+        assert!(instruction.contains("Temporal"));
     }
 
     #[test]
@@ -1178,13 +1178,13 @@ mod tests {
     }
 
     #[test]
-    fn test_enrich_step3_mentions_cross_references() {
+    fn test_enrich_step3_mentions_link_detection() {
         let (db, _tmp) = test_db();
         let step = enrich_step(3, &serde_json::json!({}), &None, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("Cross-references"), "enrich step 3 should mention cross-references");
-        assert!(instruction.contains("exact document title"), "should emphasize exact titles");
-        assert!(instruction.contains("Do NOT use markdown links"), "should warn against markdown links");
+        assert!(instruction.contains("link detection"), "enrich step 3 should mention link detection");
+        assert!(instruction.contains("exact title"), "should emphasize exact titles");
+        assert!(instruction.contains("Preserve ALL existing content"), "should warn about preserving content");
     }
 
     // --- setup workflow tests ---
