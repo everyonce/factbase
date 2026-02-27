@@ -9,6 +9,9 @@ pub struct ServerConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Time budget in seconds for document-scaling MCP operations (5-60).
+    #[serde(default = "default_time_budget_secs")]
+    pub time_budget_secs: u64,
 }
 
 fn default_host() -> String {
@@ -19,11 +22,16 @@ fn default_port() -> u16 {
     3000
 }
 
+fn default_time_budget_secs() -> u64 {
+    10
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: default_host(),
             port: default_port(),
+            time_budget_secs: default_time_budget_secs(),
         }
     }
 }
@@ -103,6 +111,21 @@ mod tests {
         let config = ServerConfig::default();
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 3000);
+        assert_eq!(config.time_budget_secs, 10);
+    }
+
+    #[test]
+    fn test_server_config_time_budget_deserialize() {
+        let yaml = "host: 127.0.0.1\nport: 3000\ntime_budget_secs: 30\n";
+        let config: ServerConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.time_budget_secs, 30);
+    }
+
+    #[test]
+    fn test_server_config_time_budget_default_when_missing() {
+        let yaml = "host: 127.0.0.1\nport: 3000\n";
+        let config: ServerConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.time_budget_secs, 10);
     }
 
     #[test]

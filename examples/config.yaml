@@ -69,6 +69,7 @@ rate_limit:
 server:
   host: 127.0.0.1   # MCP server host
   port: 3000        # MCP server port
+  time_budget_secs: 10  # Time budget for document-scaling MCP operations (5-60)
 
 web:
   enabled: false    # Enable web UI (requires 'web' feature)

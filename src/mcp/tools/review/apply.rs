@@ -37,12 +37,15 @@ pub async fn apply_review_answers(
     let doc_id_filter = doc_id_owned.as_deref();
     let repo_filter = get_str_arg(args, "repo");
     let dry_run = get_bool_arg(args, "dry_run", false);
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = time_budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
 
     let config = ApplyConfig {
         doc_id_filter,
         repo_filter,
         dry_run,
         since: None,
+        deadline,
     };
 
     let result = apply_all_review_answers(db, llm, &config, progress).await?;
@@ -97,7 +100,7 @@ pub async fn apply_review_answers(
         "No answered questions to apply.".to_string()
     };
 
-    Ok(serde_json::json!({
+    let mut response = serde_json::json!({
         "total_applied": result.total_applied,
         "total_errors": result.total_errors,
         "dry_run": dry_run,
@@ -111,7 +114,25 @@ pub async fn apply_review_answers(
         } else {
             no_questions_msg
         }
-    }))
+    });
+
+    // Add progress/continue fields when deadline was hit
+    let processed = result.documents.len();
+    let remaining = result.total_work.saturating_sub(processed);
+    if remaining > 0 && time_budget.is_some() {
+        response["progress"] = serde_json::json!({
+            "processed": processed,
+            "remaining": remaining,
+            "total": result.total_work,
+        });
+        response["continue"] = serde_json::json!(true);
+        response["message"] = serde_json::json!(format!(
+            "Applied {} question(s) across {}/{} documents (time budget reached). Call apply_review_answers again to continue.",
+            result.total_applied, processed, result.total_work
+        ));
+    }
+
+    Ok(response)
 }
 
 #[cfg(test)]

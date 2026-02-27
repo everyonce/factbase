@@ -240,6 +240,20 @@ pub(crate) fn detect_weak_identification(
     best
 }
 
+/// Resolve the effective time budget in seconds from tool args and config.
+///
+/// Priority: per-call `time_budget_secs` arg > config `server.time_budget_secs`.
+/// Returns `None` for CLI-originated calls (no MCP config context).
+pub(crate) fn resolve_time_budget(args: &Value) -> Option<u64> {
+    // Per-call override takes priority
+    if let Some(v) = args.get("time_budget_secs").and_then(Value::as_u64) {
+        return Some(v.clamp(5, 60));
+    }
+    // Fall back to config
+    let config = crate::Config::load(None).unwrap_or_default();
+    Some(config.server.time_budget_secs)
+}
+
 /// Load perspective for a repository (first repo if repo_id is None).
 pub(crate) fn load_perspective(
     db: &Database,
@@ -452,5 +466,28 @@ mod tests {
         let content = "# Test\n\nJust a test document.";
         let result = detect_weak_identification(title, content, &[]);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_time_budget_from_args() {
+        let args = serde_json::json!({"time_budget_secs": 30});
+        assert_eq!(resolve_time_budget(&args), Some(30));
+    }
+
+    #[test]
+    fn test_resolve_time_budget_clamps_to_range() {
+        let args = serde_json::json!({"time_budget_secs": 1});
+        assert_eq!(resolve_time_budget(&args), Some(5));
+        let args = serde_json::json!({"time_budget_secs": 999});
+        assert_eq!(resolve_time_budget(&args), Some(60));
+    }
+
+    #[test]
+    fn test_resolve_time_budget_falls_back_to_config() {
+        let args = serde_json::json!({});
+        // Should return the config default (10)
+        let budget = resolve_time_budget(&args);
+        assert!(budget.is_some());
+        assert_eq!(budget.unwrap(), 10);
     }
 }

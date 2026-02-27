@@ -161,6 +161,7 @@ llm:
 server:
   host: 127.0.0.1
   port: 3000
+  time_budget_secs: 10  # Time budget for document-scaling MCP operations (5-60)
 
 web:
   enabled: false

@@ -211,6 +211,12 @@ impl Config {
         // Server settings
         require_positive(self.server.port as u64, "server.port")?;
         require_non_empty(&self.server.host, "server.host")?;
+        require_range(
+            self.server.time_budget_secs,
+            5,
+            60,
+            "server.time_budget_secs",
+        )?;
 
         // Timeout settings
         if let Err(e) = validate_timeout(self.embedding.timeout_secs) {
@@ -357,6 +363,19 @@ mod tests {
         c.web.port = 0;
         assert!(c.validate().unwrap_err().to_string().contains("web.port"));
         c.web.port = 8080;
+        assert!(c.validate().is_ok());
+    }
+
+    #[test]
+    fn test_validate_time_budget_secs() {
+        let mut c = valid_config();
+        c.server.time_budget_secs = 4;
+        assert!(c.validate().unwrap_err().to_string().contains("time_budget_secs"));
+        c.server.time_budget_secs = 61;
+        assert!(c.validate().unwrap_err().to_string().contains("time_budget_secs"));
+        c.server.time_budget_secs = 5;
+        assert!(c.validate().is_ok());
+        c.server.time_budget_secs = 60;
         assert!(c.validate().is_ok());
     }
 
