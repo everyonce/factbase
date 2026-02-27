@@ -254,6 +254,35 @@ pub(crate) fn resolve_time_budget(args: &Value) -> Option<u64> {
     Some(config.server.time_budget_secs)
 }
 
+/// Convert a time budget (seconds) into an `Instant` deadline.
+pub(crate) fn make_deadline(budget: Option<u64>) -> Option<std::time::Instant> {
+    budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs))
+}
+
+/// Inject progress/continue/message fields into a response when a time budget
+/// was active and work remains.  No-op when `remaining == 0` or budget inactive.
+pub(crate) fn apply_time_budget_progress(
+    response: &mut Value,
+    processed: usize,
+    total: usize,
+    tool_name: &str,
+    budget_active: bool,
+) {
+    let remaining = total.saturating_sub(processed);
+    if remaining == 0 || !budget_active {
+        return;
+    }
+    response["progress"] = serde_json::json!({
+        "processed": processed,
+        "remaining": remaining,
+        "total": total,
+    });
+    response["continue"] = serde_json::json!(true);
+    response["message"] = serde_json::json!(format!(
+        "Processed {processed}/{total} documents (time budget reached). Call {tool_name} again to continue."
+    ));
+}
+
 /// Load perspective for a repository (first repo if repo_id is None).
 pub(crate) fn load_perspective(
     db: &Database,
@@ -489,5 +518,44 @@ mod tests {
         let budget = resolve_time_budget(&args);
         assert!(budget.is_some());
         assert_eq!(budget.unwrap(), 10);
+    }
+
+    #[test]
+    fn test_make_deadline_none() {
+        assert!(make_deadline(None).is_none());
+    }
+
+    #[test]
+    fn test_make_deadline_some() {
+        let d = make_deadline(Some(10));
+        assert!(d.is_some());
+        assert!(d.unwrap() > std::time::Instant::now());
+    }
+
+    #[test]
+    fn test_apply_time_budget_progress_injects_fields() {
+        let mut resp = serde_json::json!({"total_applied": 3});
+        apply_time_budget_progress(&mut resp, 5, 10, "my_tool", true);
+        assert_eq!(resp["progress"]["processed"], 5);
+        assert_eq!(resp["progress"]["remaining"], 5);
+        assert_eq!(resp["progress"]["total"], 10);
+        assert_eq!(resp["continue"], true);
+        let msg = resp["message"].as_str().unwrap();
+        assert!(msg.contains("5/10"));
+        assert!(msg.contains("my_tool"));
+    }
+
+    #[test]
+    fn test_apply_time_budget_progress_noop_when_no_remaining() {
+        let mut resp = serde_json::json!({"ok": true});
+        apply_time_budget_progress(&mut resp, 10, 10, "t", true);
+        assert!(resp.get("continue").is_none());
+    }
+
+    #[test]
+    fn test_apply_time_budget_progress_noop_when_budget_inactive() {
+        let mut resp = serde_json::json!({"ok": true});
+        apply_time_budget_progress(&mut resp, 5, 10, "t", false);
+        assert!(resp.get("continue").is_none());
     }
 }
