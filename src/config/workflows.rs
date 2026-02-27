@@ -48,6 +48,7 @@ pub struct WorkflowsConfig {
 /// | `update.summary` | _(none)_ |
 /// | `resolve.queue` | `ctx`, `deferred_note` |
 /// | `resolve.answer` | `stale`, `ctx` |
+/// | `resolve.answer_intro` | `ctx` |
 /// | `resolve.apply` | _(none)_ |
 /// | `resolve.verify` | _(none)_ |
 /// | `ingest.search` | `topic`, `ctx` |
@@ -77,6 +78,7 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("update.summary", &[] as &[&str]),
         ("resolve.queue", &["ctx", "deferred_note"]),
         ("resolve.answer", &["stale", "ctx"]),
+        ("resolve.answer_intro", &["ctx"]),
         ("resolve.apply", &[] as &[&str]),
         ("resolve.verify", &[] as &[&str]),
         ("ingest.search", &["topic", "ctx"]),
@@ -188,7 +190,7 @@ mod tests {
     #[test]
     fn test_known_workflows_count() {
         let known = known_workflows();
-        assert_eq!(known.len(), 27);
+        assert_eq!(known.len(), 28);
     }
 
     #[test]
