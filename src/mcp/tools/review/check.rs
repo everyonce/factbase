@@ -75,17 +75,22 @@ pub async fn check_repository(
         }
     };
 
-    let total = docs.len();
+    let _total = docs.len();
     progress.phase("Generating review questions");
+
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = time_budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
 
     let config = CheckConfig {
         stale_days,
         required_fields,
         dry_run,
         concurrency: check_concurrency,
+        deadline,
     };
 
-    let results = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
+    let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
+    let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
@@ -131,7 +136,7 @@ pub async fn check_repository(
     };
 
     let mut result = serde_json::json!({
-        "documents_scanned": total,
+        "documents_scanned": output.docs_processed,
         "documents_with_new_questions": docs_with_questions,
         "total_questions_generated": total_new + total_existing,
         "new_unanswered": total_new,
@@ -143,6 +148,21 @@ pub async fn check_repository(
         "dry_run": dry_run,
         "details": details,
     });
+
+    // Add progress/continue fields when deadline was hit
+    let remaining = output.docs_total.saturating_sub(output.docs_processed);
+    if remaining > 0 && time_budget.is_some() {
+        result["progress"] = serde_json::json!({
+            "processed": output.docs_processed,
+            "remaining": remaining,
+            "total": output.docs_total,
+        });
+        result["continue"] = serde_json::json!(true);
+        result["message"] = serde_json::json!(format!(
+            "Checked {}/{} documents (time budget reached). Call check_repository again to continue.",
+            output.docs_processed, output.docs_total
+        ));
+    }
 
     if !suggested_entities.is_empty() {
         result["suggested_entities"] = serde_json::to_value(&suggested_entities)

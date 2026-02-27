@@ -28,6 +28,8 @@ pub struct ApplyResult {
     pub total_errors: usize,
     pub filtered_count: usize,
     pub documents: Vec<ApplyDocResult>,
+    /// Total number of documents with work to do.
+    pub total_work: usize,
 }
 
 /// Per-document result.
@@ -53,6 +55,8 @@ pub struct ApplyConfig<'a> {
     pub repo_filter: Option<&'a str>,
     pub dry_run: bool,
     pub since: Option<DateTime<Utc>>,
+    /// Optional deadline for time-boxed operations.
+    pub deadline: Option<std::time::Instant>,
 }
 
 /// Apply all answered review questions across documents.
@@ -178,8 +182,16 @@ pub async fn apply_all_review_answers(
     }
 
     let total = work.len();
+    result.total_work = total;
 
     for (i, (doc, answered, abs_path)) in work.iter().enumerate() {
+        // Check deadline before starting a new document
+        if let Some(deadline) = config.deadline {
+            if std::time::Instant::now() > deadline {
+                break;
+            }
+        }
+
         let count = answered.len();
         progress.report(
             i + 1,
@@ -645,6 +657,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -736,6 +749,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -822,6 +836,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -894,6 +909,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -979,6 +995,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1067,6 +1084,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1146,6 +1164,7 @@ mod tests {
             repo_filter: None,
             dry_run: false,
             since: None,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
 

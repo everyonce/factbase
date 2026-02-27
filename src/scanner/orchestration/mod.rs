@@ -204,6 +204,15 @@ pub async fn full_scan(
     let parsing_start = Instant::now();
 
     for file_chunk in files.chunks(SCAN_CHUNK_SIZE) {
+        // Check deadline before starting a new chunk
+        if let Some(deadline) = ctx.opts.deadline {
+            if Instant::now() > deadline {
+                result.total = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+                result.interrupted = true;
+                return Ok(result);
+            }
+        }
+
         let pre_read: Vec<PreReadFile> = pre_read_files(file_chunk.to_vec());
 
         // Pass 1: Process pre-read files sequentially (needs DB access)

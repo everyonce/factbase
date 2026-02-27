@@ -201,7 +201,8 @@ pub fn tools_list() -> Value {
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
                         "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
-                        "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, significantly slower)" }
+                        "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, significantly slower)" },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }
             },
@@ -211,7 +212,8 @@ pub fn tools_list() -> Value {
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" }
+                        "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }
             },
@@ -236,7 +238,8 @@ pub fn tools_list() -> Value {
                     "properties": {
                         "doc_id": { "type": "string", "description": "Apply only for this document (optional, applies all if omitted)" },
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
-                        "dry_run": { "type": "boolean", "description": "Preview changes without modifying files (default: false)" }
+                        "dry_run": { "type": "boolean", "description": "Preview changes without modifying files (default: false)" },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }
             },

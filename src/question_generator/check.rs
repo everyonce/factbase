@@ -55,12 +55,16 @@ pub fn run_generators(
     questions
 }
 
+use std::time::Instant;
+
 /// Configuration for the shared lint loop.
 pub struct CheckConfig {
     pub stale_days: i64,
     pub required_fields: Option<HashMap<String, Vec<String>>>,
     pub dry_run: bool,
     pub concurrency: usize,
+    /// Optional deadline for time-boxed operations.
+    pub deadline: Option<Instant>,
 }
 
 /// Result of linting a single document.
@@ -76,6 +80,15 @@ pub struct CheckDocResult {
     pub suppressed_by_review: usize,
 }
 
+/// Output from check_all_documents including metadata about the operation.
+pub struct CheckOutput {
+    pub results: Vec<CheckDocResult>,
+    /// Number of documents actually processed (may be less than total if deadline hit).
+    pub docs_processed: usize,
+    /// Total number of active (non-archived, non-corrupted) documents.
+    pub docs_total: usize,
+}
+
 /// Lint all documents: generate review questions, optionally cross-validate, write results.
 ///
 /// Used by both MCP `check_repository` and CLI `cmd_check --review`.
@@ -86,7 +99,7 @@ pub async fn check_all_documents(
     llm: Option<&dyn LlmProvider>,
     config: &CheckConfig,
     progress: &ProgressReporter,
-) -> Result<Vec<CheckDocResult>, crate::error::FactbaseError> {
+) -> Result<CheckOutput, crate::error::FactbaseError> {
     let total = docs.len();
     let rf_ref = &config.required_fields;
 
@@ -151,7 +164,16 @@ pub async fn check_all_documents(
     let defined_terms_ref = &defined_terms;
 
     let mut all_results = Vec::new();
+    let mut deadline_hit = false;
     for chunk_start in (0..total_active).step_by(config.concurrency) {
+        // Check deadline before starting a new chunk
+        if let Some(deadline) = config.deadline {
+            if Instant::now() > deadline {
+                deadline_hit = true;
+                break;
+            }
+        }
+
         let chunk_end = (chunk_start + config.concurrency).min(total_active);
         let chunk = &active_docs[chunk_start..chunk_end];
 
@@ -290,9 +312,14 @@ pub async fn check_all_documents(
     }
 
     // Sequential cross-validation pass (one doc at a time to avoid API throttling)
-    if llm.is_some() {
+    if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
         for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
+            if let Some(deadline) = config.deadline {
+                if Instant::now() > deadline {
+                    break;
+                }
+            }
             if i % 5 == 0 {
                 progress.report(i + 1, total_active, "Cross-validating");
             }
@@ -304,6 +331,8 @@ pub async fn check_all_documents(
             }
         }
     }
+
+    let docs_processed = all_results.len();
 
     // Write results (sequential for filesystem safety)
     let mut results = Vec::new();
@@ -346,7 +375,11 @@ pub async fn check_all_documents(
         }
     }
 
-    Ok(results)
+    Ok(CheckOutput {
+        results,
+        docs_processed,
+        docs_total: total_active,
+    })
 }
 
 /// Check if a document path is in an archive folder.
@@ -385,11 +418,12 @@ mod tests {
             required_fields: None,
             dry_run: true,
             concurrency: 1,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
-            .unwrap();
+            .unwrap().results;
         assert!(!results.is_empty());
         // The existing question matches what generators would produce, so it's kept
         assert_eq!(results[0].existing_unanswered, 1);
@@ -410,11 +444,12 @@ mod tests {
             required_fields: None,
             dry_run: true,
             concurrency: 1,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
-            .unwrap();
+            .unwrap().results;
         assert!(!results.is_empty());
         assert_eq!(results[0].existing_answered, 1);
     }
@@ -431,11 +466,12 @@ mod tests {
             required_fields: None,
             dry_run: true,
             concurrency: 1,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
-            .unwrap();
+            .unwrap().results;
         let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
         assert_eq!(total_skipped, 1);
     }
@@ -453,14 +489,67 @@ mod tests {
             required_fields: None,
             dry_run: true,
             concurrency: 1,
+            deadline: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
-            .unwrap();
+            .unwrap().results;
         assert!(!results.is_empty());
         assert_eq!(results[0].pruned_questions, 1, "Should prune the stale temporal question");
         assert_eq!(results[0].existing_unanswered, 0, "No unanswered after pruning");
+    }
+
+    #[tokio::test]
+    async fn test_lint_deadline_stops_early() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let mut docs = Vec::new();
+        for i in 0..10 {
+            docs.push(make_doc(
+                &format!("{i:03x}"),
+                &format!("Doc {i}"),
+                &format!("- Fact {i}\n"),
+            ));
+        }
+        // Deadline already in the past → should process 0 docs
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert_eq!(output.docs_processed, 0);
+        assert_eq!(output.docs_total, 10);
+        assert!(output.results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_lint_no_deadline_processes_all() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let docs = vec![
+            make_doc("aaa", "Doc A", "- Fact A\n"),
+            make_doc("bbb", "Doc B", "- Fact B\n"),
+        ];
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert_eq!(output.docs_processed, 2);
+        assert_eq!(output.docs_total, 2);
     }
 
     #[test]

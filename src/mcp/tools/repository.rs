@@ -32,7 +32,11 @@ pub async fn scan_repository(
     let config = Config::load(None).unwrap_or_default();
     let scanner = Scanner::new(&config.watcher.ignore_patterns);
     let processor = DocumentProcessor::new();
-    let opts = ScanOptions::from_config(&config);
+    let mut opts = ScanOptions::from_config(&config);
+
+    // Set deadline for time-boxed operation
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    opts.deadline = time_budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
 
     // Link detection uses LLM which requires 'static ownership.
     // MCP scan uses NoOpLlm — manual [[id]] links are still detected.
@@ -69,6 +73,29 @@ pub async fn scan_repository(
         "Scan complete: {} added, {} updated, {} unchanged",
         result.added, result.updated, result.unchanged
     );
+
+    let processed = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+
+    // If interrupted by deadline, return progress response
+    if result.interrupted && time_budget.is_some() {
+        // Estimate remaining from total files discovered minus what we processed
+        let remaining = result.total.saturating_sub(processed);
+        return Ok(serde_json::json!({
+            "progress": {
+                "processed": processed,
+                "remaining": remaining,
+                "total": result.total + remaining,
+            },
+            "continue": true,
+            "message": format!(
+                "Processed {}/{} documents (time budget reached). Call scan_repository again to continue.",
+                processed, result.total + remaining
+            ),
+            "added": result.added,
+            "updated": result.updated,
+            "unchanged": result.unchanged,
+        }));
+    }
 
     Ok(serde_json::json!({
         "added": result.added,

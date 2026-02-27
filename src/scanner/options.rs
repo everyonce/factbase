@@ -1,6 +1,7 @@
 //! Scan options configuration
 
 use crate::Config;
+use std::time::Instant;
 
 /// Options for controlling scan behavior
 pub struct ScanOptions {
@@ -32,6 +33,8 @@ pub struct ScanOptions {
     pub skip_links: bool,
     /// Force link detection on all documents regardless of changes
     pub force_relink: bool,
+    /// Optional deadline for time-boxed operations
+    pub deadline: Option<Instant>,
 }
 
 impl Default for ScanOptions {
@@ -51,6 +54,7 @@ impl Default for ScanOptions {
             link_batch_size: 5,
             skip_links: false,
             force_relink: false,
+            deadline: None,
         }
     }
 }

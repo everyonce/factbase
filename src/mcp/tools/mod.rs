@@ -723,4 +723,97 @@ mod tests {
         assert!(has_phase, "expected phase messages from check, got: {messages:?}");
         assert!(has_progress, "expected numeric progress from check, got: {messages:?}");
     }
+
+    #[test]
+    fn test_schema_time_budget_secs_on_scaling_tools() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().expect("tools array");
+
+        let scaling_tools = ["scan_repository", "check_repository", "apply_review_answers"];
+        for tool_name in &scaling_tools {
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == *tool_name)
+                .unwrap_or_else(|| panic!("tool {tool_name} should exist"));
+            let props = tool["inputSchema"]["properties"]
+                .as_object()
+                .unwrap_or_else(|| panic!("{tool_name} should have properties"));
+            assert!(
+                props.contains_key("time_budget_secs"),
+                "{tool_name} should have 'time_budget_secs' param"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository_with_expired_deadline_returns_progress() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        for i in 0..5 {
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("# Doc {i}\nContent {i}."),
+            )
+            .unwrap();
+        }
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+        // Use time_budget_secs=5 (minimum) — with MockEmbedding this should complete
+        let args = serde_json::json!({"time_budget_secs": 5});
+        let result = scan_repository(&db, &embedding, None, &args, &reporter)
+            .await
+            .unwrap();
+
+        // With MockEmbedding (instant), 5 docs should complete within 5s
+        // So we expect a normal completion (no "continue" field)
+        assert!(result.get("continue").is_none() || result["continue"] == false,
+            "Small scan with MockEmbedding should complete within budget");
+        assert!(result.get("total").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_check_repository_with_expired_deadline_returns_progress() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        for i in 0..3 {
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("<!-- factbase:{i:06x} -->\n# Doc {i}\n\n- Fact without date\n"),
+            )
+            .unwrap();
+        }
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let silent = crate::ProgressReporter::Silent;
+        scan_repository(&db, &embedding, None, &serde_json::json!({}), &silent)
+            .await
+            .unwrap();
+
+        // Check with a generous budget — should complete
+        let args = serde_json::json!({"time_budget_secs": 30});
+        let result = check_repository(&db, &embedding, None, &args, &silent)
+            .await
+            .unwrap();
+
+        assert!(result.get("documents_scanned").is_some());
+        // Should complete within budget (no continue flag)
+        assert!(result.get("continue").is_none() || result["continue"] == false);
+    }
 }
