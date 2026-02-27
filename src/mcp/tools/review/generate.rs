@@ -5,7 +5,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::mcp::tools::helpers::resolve_doc_path;
-use crate::mcp::tools::{get_bool_arg, get_str_arg_required};
+use crate::mcp::tools::{get_bool_arg, get_str_arg};
 use crate::patterns::has_corruption_artifacts;
 use crate::processor::{append_review_questions, content_hash, parse_review_queue};
 use crate::question_generator::cross_validate::cross_validate_document;
@@ -21,7 +21,10 @@ use tracing::{instrument, warn};
 
 use super::format_question_json;
 
-/// Generates review questions for a document.
+/// Generates review questions for one or all documents.
+///
+/// When `doc_id` is provided, checks a single document. When omitted,
+/// iterates all documents with time-boxing support.
 ///
 /// Analyzes document content for missing temporal tags, conflicts,
 /// missing sources, ambiguous facts, stale information, and duplicates.
@@ -30,15 +33,13 @@ use super::format_question_json;
 /// Appends new questions to the document's review queue.
 ///
 /// # Arguments (from JSON)
-/// - `doc_id` (required): Document ID (6-char hex)
+/// - `doc_id` (optional): Document ID (6-char hex). If omitted, checks all documents.
 /// - `dry_run` (optional): Preview questions without modifying file (default: false)
+/// - `time_budget_secs` (optional): Time budget in seconds (5-60) for multi-doc mode.
 ///
 /// # Returns
-/// JSON with `doc_id`, `doc_title`, `questions_generated`, `questions` array,
-/// `dry_run` flag, and `message`.
-///
-/// # Errors
-/// - `FactbaseError::NotFound` if document doesn't exist or is deleted
+/// JSON with results. For multi-doc mode, may include `continue: true` if
+/// time budget was reached before processing all documents.
 #[instrument(name = "mcp_generate_questions", skip(db, embedding, llm, args))]
 pub async fn generate_questions(
     db: &Database,
@@ -46,8 +47,23 @@ pub async fn generate_questions(
     llm: Option<&dyn LlmProvider>,
     args: &Value,
 ) -> Result<Value, FactbaseError> {
-    let doc_id = get_str_arg_required(args, "doc_id")?;
+    let doc_id_opt = get_str_arg(args, "doc_id");
     let dry_run = get_bool_arg(args, "dry_run", false);
+
+    match doc_id_opt {
+        Some(id) => generate_questions_single(db, embedding, llm, id, dry_run).await,
+        None => generate_questions_all(db, embedding, llm, args, dry_run).await,
+    }
+}
+
+/// Single-doc mode: generate questions for one document.
+async fn generate_questions_single(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    llm: Option<&dyn LlmProvider>,
+    doc_id: &str,
+    dry_run: bool,
+) -> Result<Value, FactbaseError> {
 
     // Get the document
     let doc = db.require_document(&doc_id)?;
@@ -152,6 +168,87 @@ pub async fn generate_questions(
             "Questions added to Review Queue"
         }
     }))
+}
+
+/// Multi-doc mode: generate questions for all documents with time-boxing.
+async fn generate_questions_all(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    llm: Option<&dyn LlmProvider>,
+    args: &Value,
+    dry_run: bool,
+) -> Result<Value, FactbaseError> {
+    let repo_id = get_str_arg(args, "repo");
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
+
+    // Get all active documents
+    let docs: Vec<_> = match repo_id {
+        Some(rid) => db
+            .get_documents_for_repo(rid)?
+            .into_values()
+            .filter(|d| !d.is_deleted)
+            .collect(),
+        None => {
+            let mut all = Vec::new();
+            for repo in db.list_repositories()? {
+                all.extend(
+                    db.get_documents_for_repo(&repo.id)?
+                        .into_values()
+                        .filter(|d| !d.is_deleted),
+                );
+            }
+            all
+        }
+    };
+
+    let total = docs.len();
+    let mut docs_processed = 0;
+    let mut total_generated = 0;
+    let mut details = Vec::new();
+
+    for doc in &docs {
+        if let Some(dl) = deadline {
+            if std::time::Instant::now() > dl {
+                break;
+            }
+        }
+
+        match generate_questions_single(db, embedding, llm, &doc.id, dry_run).await {
+            Ok(result) => {
+                let count = result["questions_generated"].as_u64().unwrap_or(0);
+                if count > 0 {
+                    details.push(serde_json::json!({
+                        "doc_id": doc.id,
+                        "doc_title": doc.title,
+                        "questions_generated": count,
+                    }));
+                }
+                total_generated += count as usize;
+            }
+            Err(e) => {
+                warn!("generate_questions failed for {}: {e}", doc.id);
+            }
+        }
+        docs_processed += 1;
+    }
+
+    let mut result = serde_json::json!({
+        "documents_processed": docs_processed,
+        "total_questions_generated": total_generated,
+        "dry_run": dry_run,
+        "details": details,
+    });
+
+    crate::mcp::tools::helpers::apply_time_budget_progress(
+        &mut result,
+        docs_processed,
+        total,
+        "generate_questions",
+        time_budget.is_some(),
+    );
+
+    Ok(result)
 }
 
 /// Filters out questions that already exist in the review queue.
