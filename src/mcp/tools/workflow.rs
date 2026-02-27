@@ -10,11 +10,13 @@
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::models::Perspective;
+use crate::models::{Perspective, QuestionType};
+use crate::processor::parse_review_queue;
 use serde_json::Value;
 
 use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
 use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective};
+use super::review::format_question_json;
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
 /// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
@@ -52,7 +54,9 @@ pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Research the answer using your available tools:\n   - **Web search** for current data: try '{entity name} {fact} {current year}' for stale questions, '{entity name} {date/timeline}' for temporal questions\n   - **Read full pages** when a search snippet looks promising — don't rely on snippets alone\n   - **Cross-reference**: verify critical facts against 2+ sources\n3. Call answer_question with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source citation. Research when the fact was/is true, then answer: '@t[YYYY] per [source name] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges, '@t[YYYY..] per [source]' for ongoing. Use @t[?] only when no date is findable at all. Examples: '@t[=480-BCE] per Herodotus (Histories VII); verified via Britannica 2024-03-15', '@t[2020..2023] per annual report 2023'. Just citing a source in prose without providing the @t[...] tag does NOT resolve the question — the tag must appear in your answer. Every datable fact gets a tag regardless of domain, era, or how well-known it is. NEVER answer with bare dismissals like 'static fact', 'well-known', 'historical constant', or 'doesn\\'t change' — these provide no audit trail and will be rejected\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions for this knowledge base. Each question has a type that tells you what kind of issue was detected:\n\n- **temporal**: The fact line is MISSING an @t[...] date tag. Your answer MUST include the tag.\n- **stale**: The source is old. Search for current info to confirm or update.\n- **conflict**: Two facts disagree. Check the [pattern:...] tag for guidance.\n- **missing**: A fact lacks a source citation. Find one.\n- **ambiguous**: A term is unclear. Clarify it or create a definitions document.\n- **duplicate**: A fact appears in multiple documents. Identify the canonical one.\n\nFor each batch of questions below, answer them using answer_questions with doc_id, question_index, and your answer. If you can't resolve one, defer it: answer with 'defer: <what you tried>'.{ctx}";
+
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Research the answer using your available tools:\n   - **Web search** for current data: try '{entity name} {fact} {current year}' for stale questions, '{entity name} {date/timeline}' for temporal questions\n   - **Read full pages** when a search snippet looks promising — don't rely on snippets alone\n   - **Cross-reference**: verify critical facts against 2+ sources\n3. Call answer_questions with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source citation. Research when the fact was/is true, then answer: '@t[YYYY] per [source name] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges, '@t[YYYY..] per [source]' for ongoing. Use @t[?] only when no date is findable at all. Examples: '@t[=480-BCE] per Herodotus (Histories VII); verified via Britannica 2024-03-15', '@t[2020..2023] per annual report 2023'. Just citing a source in prose without providing the @t[...] tag does NOT resolve the question — the tag must appear in your answer. Every datable fact gets a tag regardless of domain, era, or how well-known it is. NEVER answer with bare dismissals like 'static fact', 'well-known', 'historical constant', or 'doesn\\'t change' — these provide no audit trail and will be rejected\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}";
 
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If you have many answered questions, apply them in batches by passing doc_id to process one document at a time — this avoids timeouts on large batches. Use dry_run=true first to preview, then without dry_run to apply.";
 
@@ -100,7 +104,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             let deferred = db
                 .count_deferred_questions(get_str_arg(args, "repo"))
                 .unwrap_or(0);
-            Ok(resolve_step(step, args, &perspective, deferred, &wf_config))
+            Ok(resolve_step(step, args, &perspective, deferred, db, &wf_config))
         }
         "ingest" => Ok(ingest_step(step, args, &perspective, &wf_config)),
         "enrich" => Ok(enrich_step(step, args, &perspective, db, &wf_config)),
@@ -404,11 +408,29 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>, wf
     }
 }
 
+/// Batch size for resolve step 2 question batching.
+const RESOLVE_BATCH_SIZE: usize = 15;
+
+/// Priority ordering for question types within a batch.
+/// Lower number = higher priority (processed first).
+fn question_type_priority(qt: &QuestionType) -> u8 {
+    match qt {
+        QuestionType::Temporal => 0,
+        QuestionType::Missing => 1,
+        QuestionType::Stale => 2,
+        QuestionType::Conflict => 3,
+        QuestionType::Ambiguous => 4,
+        QuestionType::Duplicate => 5,
+        QuestionType::Corruption => 6,
+    }
+}
+
 fn resolve_step(
     step: usize,
     _args: &Value,
     perspective: &Option<Perspective>,
     deferred: usize,
+    db: &Database,
     wf: &WorkflowsConfig,
 ) -> Value {
     let ctx = perspective_context(perspective);
@@ -430,19 +452,7 @@ fn resolve_step(
             "deferred_count": deferred,
             "when_done": "Call workflow with workflow='resolve', step=2"
         }),
-        2 => serde_json::json!({
-            "workflow": "resolve",
-            "step": 2, "total_steps": total,
-            "instruction": resolve(wf, "resolve.answer", DEFAULT_RESOLVE_ANSWER_INSTRUCTION, &[("stale", &stale.to_string()), ("ctx", &ctx)]),
-            "next_tool": "answer_question",
-            "conflict_patterns": {
-                "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
-                "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
-                "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
-                "unknown": "No recognized pattern — investigate which fact is current."
-            },
-            "when_done": "After resolving questions, call workflow with workflow='resolve', step=3"
-        }),
+        2 => resolve_step2_batch(perspective, db, wf),
         3 => serde_json::json!({
             "workflow": "resolve",
             "step": 3, "total_steps": total,
@@ -465,6 +475,137 @@ fn resolve_step(
             "instruction": "Workflow complete. All review questions have been processed."
         }),
     }
+}
+
+/// Build the step 2 response with inline question batching.
+///
+/// Reads the actual review queue from the DB, collects unanswered questions,
+/// sorts them (grouped by document, then by type priority), and returns the
+/// next batch. The agent just answers what it sees and calls step 2 again.
+fn resolve_step2_batch(
+    perspective: &Option<Perspective>,
+    db: &Database,
+    wf: &WorkflowsConfig,
+) -> Value {
+    let ctx = perspective_context(perspective);
+    let stale = stale_days(perspective);
+    let total_steps = 4;
+
+    // Collect all questions from the review queue
+    let docs = db.get_documents_with_review_queue(None).unwrap_or_else(|_| Vec::new());
+    let mut unanswered: Vec<Value> = Vec::new();
+    let mut resolved_so_far: usize = 0;
+
+    for doc in &docs {
+        if let Some(questions) = parse_review_queue(&doc.content) {
+            for (idx, q) in questions.iter().enumerate() {
+                if q.answered || q.is_deferred() {
+                    resolved_so_far += 1;
+                } else {
+                    let mut qjson = format_question_json(q, Some((&doc.id, &doc.title)));
+                    if let Some(obj) = qjson.as_object_mut() {
+                        obj.insert("question_index".to_string(), serde_json::json!(idx));
+                        // Stash sort keys (removed before sending)
+                        obj.insert("_doc_id".to_string(), Value::String(doc.id.clone()));
+                        obj.insert(
+                            "_type_priority".to_string(),
+                            serde_json::json!(question_type_priority(&q.question_type)),
+                        );
+                    }
+                    unanswered.push(qjson);
+                }
+            }
+        }
+    }
+
+    // Sort: group by document, then by type priority within each doc
+    unanswered.sort_by(|a, b| {
+        let doc_a = a["_doc_id"].as_str().unwrap_or("");
+        let doc_b = b["_doc_id"].as_str().unwrap_or("");
+        doc_a.cmp(doc_b).then_with(|| {
+            let pa = a["_type_priority"].as_u64().unwrap_or(99);
+            let pb = b["_type_priority"].as_u64().unwrap_or(99);
+            pa.cmp(&pb)
+        })
+    });
+
+    // Remove sort keys before sending
+    for q in &mut unanswered {
+        if let Some(obj) = q.as_object_mut() {
+            obj.remove("_doc_id");
+            obj.remove("_type_priority");
+        }
+    }
+
+    let remaining = unanswered.len();
+
+    // If no unanswered questions remain, advance to step 3
+    if remaining == 0 {
+        return serde_json::json!({
+            "workflow": "resolve",
+            "step": 2, "total_steps": total_steps,
+            "instruction": "All review questions have been resolved. Proceeding to apply answers.",
+            "batch": {
+                "questions": [],
+                "batch_number": 0,
+                "total_batches_estimate": 0,
+                "resolved_so_far": resolved_so_far,
+                "remaining": 0
+            },
+            "when_done": "Call workflow with workflow='resolve', step=3"
+        });
+    }
+
+    let batch_size = RESOLVE_BATCH_SIZE;
+    let total_questions = resolved_so_far + remaining;
+    let batch_number = (resolved_so_far / batch_size) + 1;
+    let total_batches_estimate = (total_questions + batch_size - 1) / batch_size;
+    let batch: Vec<Value> = unanswered.into_iter().take(batch_size).collect();
+
+    let instruction = resolve(
+        wf,
+        "resolve.answer",
+        DEFAULT_RESOLVE_ANSWER_INSTRUCTION,
+        &[("stale", &stale.to_string()), ("ctx", &ctx)],
+    );
+
+    let is_first_batch = resolved_so_far == 0;
+
+    let mut result = serde_json::json!({
+        "workflow": "resolve",
+        "step": 2, "total_steps": total_steps,
+        "instruction": instruction,
+        "next_tool": "answer_questions",
+        "conflict_patterns": {
+            "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
+            "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
+            "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
+            "unknown": "No recognized pattern — investigate which fact is current."
+        },
+        "batch": {
+            "questions": batch,
+            "batch_number": batch_number,
+            "total_batches_estimate": total_batches_estimate,
+            "resolved_so_far": resolved_so_far,
+            "remaining": remaining
+        },
+        "when_done": "Call workflow with workflow='resolve', step=2"
+    });
+
+    if is_first_batch {
+        let intro = resolve(
+            wf,
+            "resolve.answer_intro",
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
+            &[("ctx", &ctx)],
+        );
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("intro".to_string(), Value::String(intro));
+    }
+
+    result
 }
 
 fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
@@ -827,14 +968,16 @@ mod tests {
     #[test]
     fn test_resolve_includes_perspective() {
         let p = mock_perspective();
-        let step = resolve_step(1, &serde_json::json!({}), &p, 0, &wf());
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &p, 0, &db, &wf());
         assert!(step["instruction"].as_str().unwrap().contains("Acme Corp"));
         assert_eq!(step["policy"]["stale_days"], 180);
     }
 
     #[test]
     fn test_resolve_without_perspective() {
-        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &wf());
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
         assert!(!step["instruction"]
             .as_str()
             .unwrap()
@@ -875,19 +1018,25 @@ mod tests {
     #[test]
     fn test_resolve_stale_days_in_instructions() {
         let p = mock_perspective();
-        let step = resolve_step(2, &serde_json::json!({}), &p, 0, &wf());
+        let (db, _tmp) = test_db();
+        // Insert a doc with a review question so step 2 returns instruction
+        let content = "<!-- factbase:stl001 -->\n# Stale Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source (line 4)\n";
+        insert_test_doc(&db, "stl001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &p, 0, &db, &wf());
         assert!(step["instruction"].as_str().unwrap().contains("180 days"));
     }
 
     #[test]
     fn test_past_last_step_returns_complete() {
-        let step = resolve_step(99, &serde_json::json!({}), &None, 0, &wf());
+        let (db, _tmp) = test_db();
+        let step = resolve_step(99, &serde_json::json!({}), &None, 0, &db, &wf());
         assert!(step["complete"].as_bool().unwrap());
     }
 
     #[test]
     fn test_resolve_step1_includes_deferred_note() {
-        let step = resolve_step(1, &serde_json::json!({}), &None, 5, &wf());
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 5, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("5 deferred item(s)"));
         assert_eq!(step["deferred_count"], 5);
@@ -895,7 +1044,8 @@ mod tests {
 
     #[test]
     fn test_resolve_step1_no_deferred_note_when_zero() {
-        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &wf());
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(!instruction.contains("deferred"));
         assert_eq!(step["deferred_count"], 0);
@@ -903,7 +1053,10 @@ mod tests {
 
     #[test]
     fn test_resolve_step2_includes_conflict_patterns() {
-        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &wf());
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:cfp001 -->\n# Conflict Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[conflict]` Two facts overlap (line 4)\n";
+        insert_test_doc(&db, "cfp001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("[pattern:parallel_overlap]"));
         assert!(instruction.contains("[pattern:same_entity_transition]"));
@@ -919,7 +1072,10 @@ mod tests {
 
     #[test]
     fn test_resolve_step2_temporal_requires_tag_in_answer() {
-        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &wf());
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:tmp001 -->\n# Temporal Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Missing date (line 4)\n";
+        insert_test_doc(&db, "tmp001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("MISSING an @t[...]"), "temporal guidance must explain the fact line is missing a tag");
         assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
@@ -1476,5 +1632,128 @@ mod tests {
         let step_default = update_step(2, &serde_json::json!({}), &None, &wf());
         let step_empty = update_step(2, &serde_json::json!({}), &None, &WorkflowsConfig::default());
         assert_eq!(step_default["instruction"], step_empty["instruction"]);
+    }
+
+    // --- resolve step 2 batch tests ---
+
+    /// Helper: create a doc with N unanswered review questions of given types.
+    fn insert_doc_with_questions(db: &Database, id: &str, types: &[&str]) {
+        let questions: String = types
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("- [ ] `@q[{t}]` Question {} (line {})\n", i + 1, i + 4))
+            .collect();
+        let content = format!(
+            "<!-- factbase:{id} -->\n# Doc {id}\n\n- Fact\n\n<!-- factbase:review -->\n{questions}"
+        );
+        insert_test_doc(db, id, &content);
+    }
+
+    #[test]
+    fn test_resolve_step2_empty_queue_advances_to_step3() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["step"], 2);
+        let batch = &step["batch"];
+        assert_eq!(batch["remaining"], 0);
+        assert_eq!(batch["resolved_so_far"], 0);
+        assert!(batch["questions"].as_array().unwrap().is_empty());
+        assert!(step["when_done"].as_str().unwrap().contains("step=3"));
+    }
+
+    #[test]
+    fn test_resolve_step2_returns_batch_of_questions() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "bat001", &["temporal", "missing", "stale"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        assert_eq!(batch["questions"].as_array().unwrap().len(), 3);
+        assert_eq!(batch["remaining"], 3);
+        assert_eq!(batch["resolved_so_far"], 0);
+        assert_eq!(batch["batch_number"], 1);
+        // Should loop back to step 2
+        assert!(step["when_done"].as_str().unwrap().contains("step=2"));
+    }
+
+    #[test]
+    fn test_resolve_step2_first_batch_includes_intro() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "int001", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        // First batch (resolved_so_far=0) should have intro
+        assert!(step["intro"].is_string(), "first batch should include intro");
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("temporal"), "intro should describe question types");
+        assert!(intro.contains("stale"), "intro should describe question types");
+    }
+
+    #[test]
+    fn test_resolve_step2_subsequent_batch_no_intro() {
+        let (db, _tmp) = test_db();
+        // Insert a doc with an answered question (resolved) and an unanswered one
+        let content = "<!-- factbase:sub001 -->\n# Sub Test\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[missing]` Unanswered (line 5)\n";
+        insert_test_doc(&db, "sub001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        // resolved_so_far > 0, so no intro
+        assert!(step.get("intro").is_none(), "subsequent batch should not include intro");
+    }
+
+    #[test]
+    fn test_resolve_step2_batch_size_limits_questions() {
+        let (db, _tmp) = test_db();
+        // Insert 20 questions across two docs (more than RESOLVE_BATCH_SIZE=15)
+        let types_10: Vec<&str> = vec!["temporal"; 10];
+        insert_doc_with_questions(&db, "big001", &types_10);
+        insert_doc_with_questions(&db, "big002", &types_10);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        assert_eq!(batch["questions"].as_array().unwrap().len(), RESOLVE_BATCH_SIZE);
+        assert_eq!(batch["remaining"], 20);
+        assert_eq!(batch["total_batches_estimate"], 2);
+        assert!(step["when_done"].as_str().unwrap().contains("step=2"));
+    }
+
+    #[test]
+    fn test_resolve_step2_questions_ordered_by_doc_then_type() {
+        let (db, _tmp) = test_db();
+        // Doc aaa: conflict, temporal → should sort as temporal, conflict
+        // Doc bbb: stale → comes after aaa
+        insert_doc_with_questions(&db, "aaa001", &["conflict", "temporal"]);
+        insert_doc_with_questions(&db, "bbb001", &["stale"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 3);
+        // First two from aaa001, sorted by type priority (temporal < conflict)
+        assert_eq!(questions[0]["doc_id"], "aaa001");
+        assert_eq!(questions[0]["type"], "temporal");
+        assert_eq!(questions[1]["doc_id"], "aaa001");
+        assert_eq!(questions[1]["type"], "conflict");
+        // Third from bbb001
+        assert_eq!(questions[2]["doc_id"], "bbb001");
+        assert_eq!(questions[2]["type"], "stale");
+    }
+
+    #[test]
+    fn test_resolve_step2_questions_include_doc_context() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "ctx001", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let q = &step["batch"]["questions"].as_array().unwrap()[0];
+        assert!(q["doc_id"].is_string());
+        assert!(q["doc_title"].is_string());
+        assert!(q["question_index"].is_number());
+        assert!(q["type"].is_string());
+        assert!(q["description"].is_string());
+    }
+
+    #[test]
+    fn test_resolve_step2_config_override_answer_intro() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "cfg001", &["temporal"]);
+        let mut wfc = WorkflowsConfig::default();
+        wfc.templates.insert("resolve.answer_intro".into(), "Custom intro {ctx}".into());
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wfc);
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.starts_with("Custom intro"));
     }
 }
