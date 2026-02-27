@@ -36,7 +36,7 @@ pub async fn scan_repository(
 
     // Set deadline for time-boxed operation
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
-    opts.deadline = time_budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+    opts.deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     // Link detection uses LLM which requires 'static ownership.
     // MCP scan uses NoOpLlm — manual [[id]] links are still detected.
@@ -78,23 +78,16 @@ pub async fn scan_repository(
 
     // If interrupted by deadline, return progress response
     if result.interrupted && time_budget.is_some() {
-        // Estimate remaining from total files discovered minus what we processed
         let remaining = result.total.saturating_sub(processed);
-        return Ok(serde_json::json!({
-            "progress": {
-                "processed": processed,
-                "remaining": remaining,
-                "total": result.total + remaining,
-            },
-            "continue": true,
-            "message": format!(
-                "Processed {}/{} documents (time budget reached). Call scan_repository again to continue.",
-                processed, result.total + remaining
-            ),
+        let mut response = serde_json::json!({
             "added": result.added,
             "updated": result.updated,
             "unchanged": result.unchanged,
-        }));
+        });
+        crate::mcp::tools::helpers::apply_time_budget_progress(
+            &mut response, processed, result.total + remaining, "scan_repository", true,
+        );
+        return Ok(response);
     }
 
     Ok(serde_json::json!({

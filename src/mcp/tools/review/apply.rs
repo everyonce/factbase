@@ -38,7 +38,7 @@ pub async fn apply_review_answers(
     let repo_filter = get_str_arg(args, "repo");
     let dry_run = get_bool_arg(args, "dry_run", false);
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
-    let deadline = time_budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     let config = ApplyConfig {
         doc_id_filter,
@@ -118,19 +118,9 @@ pub async fn apply_review_answers(
 
     // Add progress/continue fields when deadline was hit
     let processed = result.documents.len();
-    let remaining = result.total_work.saturating_sub(processed);
-    if remaining > 0 && time_budget.is_some() {
-        response["progress"] = serde_json::json!({
-            "processed": processed,
-            "remaining": remaining,
-            "total": result.total_work,
-        });
-        response["continue"] = serde_json::json!(true);
-        response["message"] = serde_json::json!(format!(
-            "Applied {} question(s) across {}/{} documents (time budget reached). Call apply_review_answers again to continue.",
-            result.total_applied, processed, result.total_work
-        ));
-    }
+    crate::mcp::tools::helpers::apply_time_budget_progress(
+        &mut response, processed, result.total_work, "apply_review_answers", time_budget.is_some(),
+    );
 
     Ok(response)
 }

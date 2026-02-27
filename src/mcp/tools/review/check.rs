@@ -79,7 +79,7 @@ pub async fn check_repository(
     progress.phase("Generating review questions");
 
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
-    let deadline = time_budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs));
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     let config = CheckConfig {
         stale_days,
@@ -150,19 +150,9 @@ pub async fn check_repository(
     });
 
     // Add progress/continue fields when deadline was hit
-    let remaining = output.docs_total.saturating_sub(output.docs_processed);
-    if remaining > 0 && time_budget.is_some() {
-        result["progress"] = serde_json::json!({
-            "processed": output.docs_processed,
-            "remaining": remaining,
-            "total": output.docs_total,
-        });
-        result["continue"] = serde_json::json!(true);
-        result["message"] = serde_json::json!(format!(
-            "Checked {}/{} documents (time budget reached). Call check_repository again to continue.",
-            output.docs_processed, output.docs_total
-        ));
-    }
+    crate::mcp::tools::helpers::apply_time_budget_progress(
+        &mut result, output.docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
+    );
 
     if !suggested_entities.is_empty() {
         result["suggested_entities"] = serde_json::to_value(&suggested_entities)
