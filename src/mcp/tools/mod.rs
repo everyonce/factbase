@@ -200,6 +200,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                     blocking_tool!(db, args, reporter, answer_questions)
                 }
                 "check_repository" => check_repository(db, embedding, llm, &args, &reporter).await?,
+                "generate_questions" => generate_questions(db, embedding, llm, &args).await?,
                 "scan_repository" => scan_repository(db, embedding, llm, &args, &reporter).await?,
                 "init_repository" => blocking_tool!(db, args, init_repository),
                 "apply_review_answers" => apply_review_answers(db, llm, &args, &reporter).await?,
@@ -389,6 +390,7 @@ mod tests {
             "get_deferred_items",
             "answer_questions",
             "check_repository",
+            "generate_questions",
             "scan_repository",
             "init_repository",
             "apply_review_answers",
@@ -729,7 +731,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        let scaling_tools = ["scan_repository", "check_repository", "apply_review_answers"];
+        let scaling_tools = ["scan_repository", "check_repository", "apply_review_answers", "generate_questions"];
         for tool_name in &scaling_tools {
             let tool = tools
                 .iter()
@@ -814,6 +816,43 @@ mod tests {
 
         assert!(result.get("documents_scanned").is_some());
         // Should complete within budget (no continue flag)
+        assert!(result.get("continue").is_none() || result["continue"] == false);
+    }
+
+    #[tokio::test]
+    async fn test_generate_questions_multi_doc_with_budget() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        for i in 0..3 {
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("<!-- factbase:{i:06x} -->\n# Doc {i}\n\n- Fact without date\n"),
+            )
+            .unwrap();
+        }
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let silent = crate::ProgressReporter::Silent;
+        scan_repository(&db, &embedding, None, &serde_json::json!({}), &silent)
+            .await
+            .unwrap();
+
+        // Generate questions for all docs with generous budget
+        let args = serde_json::json!({"dry_run": true, "time_budget_secs": 30});
+        let result = generate_questions(&db, &embedding, None, &args)
+            .await
+            .unwrap();
+
+        assert!(result.get("documents_processed").is_some());
+        assert!(result["documents_processed"].as_u64().unwrap() >= 3);
         assert!(result.get("continue").is_none() || result["continue"] == false);
     }
 }

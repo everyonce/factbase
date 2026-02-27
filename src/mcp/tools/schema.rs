@@ -1,6 +1,6 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 26 MCP tools exposed by factbase.
+//! Contains the JSON schema for all 25 MCP tools exposed by factbase.
 
 use serde_json::Value;
 
@@ -194,7 +194,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM).",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM). For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -207,8 +207,21 @@ pub fn tools_list() -> Value {
                 }
             },
             {
+                "name": "generate_questions",
+                "description": "Generate review questions for a single document or all documents. Lighter than check_repository (no entity discovery or deep cross-validation). For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "doc_id": { "type": "string", "description": "Document ID (optional, generates for all documents if omitted)" },
+                        "repo": { "type": "string", "description": "Filter by repository ID (optional, used when doc_id is omitted)" },
+                        "dry_run": { "type": "boolean", "description": "Preview questions without modifying files (default: false)" },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                    }
+                }
+            },
+            {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate embeddings, and detect entity links. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead.",
+                "description": "Re-index documents, generate embeddings, and detect entity links. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -232,7 +245,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "apply_review_answers",
-                "description": "Apply answered review questions to document content via LLM rewrite.",
+                "description": "Apply answered review questions to document content via LLM rewrite. For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -366,7 +379,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 24, "should have 24 tools");
+        assert_eq!(tools.len(), 25, "should have 25 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -393,6 +406,7 @@ mod tests {
         assert!(names.contains(&"embeddings_export"));
         assert!(names.contains(&"embeddings_import"));
         assert!(names.contains(&"embeddings_status"));
+        assert!(names.contains(&"generate_questions"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {
