@@ -4,7 +4,7 @@ use super::helpers::resolve_doc_path;
 use super::{get_str_arg, get_str_arg_required};
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::patterns::ID_REGEX;
+use crate::patterns::{body_end_offset, ID_REGEX};
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
@@ -289,11 +289,25 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let content = new_content.unwrap_or(&doc.content);
 
     // Strip existing factbase header and title from content to avoid duplication
-    let body = strip_factbase_header(if new_content.is_some() {
+    let mut body = strip_factbase_header(if new_content.is_some() {
         content
     } else {
         &doc.content
     });
+
+    // Preserve review queue: if old content had one but new content doesn't,
+    // append the old review queue so unanswered questions aren't silently dropped.
+    if new_content.is_some() {
+        let old_rq_start = body_end_offset(&doc.content);
+        let new_rq_start = body_end_offset(&body);
+        if old_rq_start < doc.content.len() && new_rq_start >= body.len() {
+            let old_review_queue = &doc.content[old_rq_start..];
+            if !body.ends_with('\n') {
+                body.push('\n');
+            }
+            body.push_str(old_review_queue);
+        }
+    }
 
     let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{body}");
     fs::write(&file_path, &doc_content)?;
@@ -829,6 +843,139 @@ mod tests {
 
         let updated = db.get_document("abc123").unwrap().unwrap();
         assert!(updated.content.contains("New content"), "DB should have new content");
+    }
+
+    #[test]
+    fn test_update_document_preserves_review_queue() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nSome facts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n  > \n";
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, old_content).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: old_content.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Agent submits new content WITHOUT review queue
+        let args = serde_json::json!({"id": "abc123", "content": "Updated facts here"});
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("Updated facts here"), "new body present");
+        assert!(on_disk.contains("## Review Queue"), "review queue preserved");
+        assert!(on_disk.contains("@q[temporal]"), "question preserved");
+    }
+
+    #[test]
+    fn test_update_document_respects_explicit_review_queue() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nFacts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Old question\n  > \n";
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, old_content).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: old_content.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Agent explicitly includes a different review queue
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "New facts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` New question\n  > \n"
+        });
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("@q[missing]"), "new queue used: {on_disk}");
+        assert!(!on_disk.contains("@q[temporal]"), "old queue not preserved: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_no_old_review_queue() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nPlain facts";
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, old_content).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: old_content.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // No old review queue, no new review queue — nothing to preserve
+        let args = serde_json::json!({"id": "abc123", "content": "Updated facts"});
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("Updated facts"), "body updated");
+        assert!(!on_disk.contains("Review Queue"), "no queue injected: {on_disk}");
     }
 
     #[test]
