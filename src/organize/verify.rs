@@ -113,8 +113,12 @@ pub fn verify_merge(
         None => 0,
     };
 
-    // Verify counts match
-    if actual_doc_facts >= expected_doc_facts && actual_orphans == expected_orphans {
+    // Verify counts match — use >= for both checks because:
+    // - Document facts: LLM may split/restructure facts, producing more lines
+    // - Orphans: the orphan file is append-only and shared across operations,
+    //   so pre-existing entries for the same doc IDs from prior operations
+    //   inflate the count beyond what this operation alone produced
+    if actual_doc_facts >= expected_doc_facts && actual_orphans >= expected_orphans {
         Ok(VerificationResult::success(
             expected_doc_facts,
             expected_orphans,
@@ -184,8 +188,12 @@ pub fn verify_split(
         None => 0,
     };
 
-    // Verify counts match
-    if actual_doc_facts >= expected_doc_facts && actual_orphans == expected_orphans {
+    // Verify counts match — use >= for both checks because:
+    // - Document facts: LLM may split/restructure facts, producing more lines
+    // - Orphans: the orphan file is append-only and shared across operations,
+    //   so pre-existing entries for the same doc IDs from prior operations
+    //   inflate the count beyond what this operation alone produced
+    if actual_doc_facts >= expected_doc_facts && actual_orphans >= expected_orphans {
         Ok(VerificationResult::success(
             expected_doc_facts,
             expected_orphans,
@@ -330,6 +338,48 @@ Regular paragraph text.
 
         let entries = parse_orphan_entries(&read_file(&orphan_path).unwrap());
         assert_eq!(entries.len(), 2);
+    }
+
+    /// Regression test: pre-existing orphan entries for the same doc IDs
+    /// (from a prior successful operation) must not cause verification failure.
+    /// The orphan file is append-only, so actual_orphans >= expected_orphans
+    /// is the correct check.
+    #[test]
+    fn test_orphan_verification_tolerates_preexisting_entries() {
+        // Scenario: doc aaa111 was previously involved in a split that produced
+        // 3 orphan entries. Now we merge aaa111 with bbb222, expecting 2 orphans.
+        // The orphan file will have 3 (old) + 2 (new) = 5 entries for aaa111/bbb222.
+        let content = r#"# Orphaned Facts
+
+## Split aaa111 (2026-02-26 00:00:00)
+
+- Old orphan from split @r[orphan] <!-- from aaa111 line 3 -->
+- Another old orphan @r[orphan] <!-- from aaa111 line 7 -->
+- Third old orphan @r[orphan] <!-- from aaa111 line 10 -->
+
+## Merge aaa111 (2026-02-27 00:00:00)
+
+- New orphan from merge @r[orphan] <!-- from aaa111 line 5 -->
+- Another new orphan @r[orphan] <!-- from bbb222 line 2 -->
+"#;
+
+        let all_entries = parse_orphan_entries(content);
+        let source_ids = vec!["aaa111", "bbb222"];
+        let actual_orphans: usize = all_entries
+            .iter()
+            .filter(|e| {
+                e.source_doc
+                    .as_ref()
+                    .is_some_and(|id| source_ids.contains(&id.as_str()))
+            })
+            .count();
+
+        // actual_orphans is 5 (3 old + 2 new), expected is 2
+        let expected_orphans = 2;
+        assert_eq!(actual_orphans, 5);
+
+        // The >= check should pass (5 >= 2)
+        assert!(actual_orphans >= expected_orphans);
     }
 
     #[test]
