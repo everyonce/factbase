@@ -2,6 +2,14 @@
 //!
 //! Validates facts in a document against the rest of the factbase using
 //! per-fact semantic search and LLM-based conflict/staleness detection.
+//!
+//! Two modes:
+//! - **Fact-pair mode** (`cross_validate_facts`): Uses pre-computed fact embeddings
+//!   from the DB. Preferred when fact_embeddings table is populated.
+//! - **Legacy mode** (`cross_validate_document`): Generates embeddings per-fact at
+//!   check time. Used as fallback when fact_embeddings table is empty.
+
+use std::collections::HashMap;
 
 use serde::Deserialize;
 use tracing::warn;
@@ -10,7 +18,8 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::models::{QuestionType, ReviewQuestion, SearchResult, TemporalTagType};
+use crate::models::{FactPair, QuestionType, ReviewQuestion, SearchResult, TemporalTagType};
+use crate::patterns::{SOURCE_REF_CAPTURE_REGEX, TEMPORAL_TAG_CONTENT_REGEX};
 use crate::processor::parse_source_definitions;
 
 use super::facts::{extract_all_facts, FactLine};
@@ -23,6 +32,9 @@ const BATCH_SIZE: usize = 10;
 
 /// Maximum snippet length in prompt to avoid huge prompts.
 const MAX_SNIPPET_LEN: usize = 200;
+
+/// Maximum fact pairs per LLM batch call.
+const PAIR_BATCH_SIZE: usize = 8;
 
 /// A fact paired with its cross-document search results and source context.
 struct FactWithContext {
@@ -41,6 +53,395 @@ struct CrossCheckResult {
     reason: String,
     #[serde(default)]
     source_doc: String,
+}
+
+// ---------------------------------------------------------------------------
+// Fact-pair cross-validation (new approach using pre-computed embeddings)
+// ---------------------------------------------------------------------------
+
+/// Enriched fact pair with source context loaded from documents.
+struct FactPairContext {
+    /// The original fact pair.
+    pair: FactPair,
+    /// Document title for fact A.
+    title_a: String,
+    /// Document title for fact B.
+    title_b: String,
+    /// Source footnote definitions for fact A.
+    source_defs_a: Vec<String>,
+    /// Source footnote definitions for fact B.
+    source_defs_b: Vec<String>,
+    /// Temporal tag text on fact A's line (e.g., "@t[2020..2022]").
+    temporal_a: Option<String>,
+    /// Temporal tag text on fact B's line.
+    temporal_b: Option<String>,
+    /// Whether fact B's title appears in fact A's document (boost signal).
+    title_b_in_doc_a: bool,
+    /// Whether fact A's title appears in fact B's document.
+    title_a_in_doc_b: bool,
+}
+
+/// Parsed LLM response for a fact-pair classification.
+#[derive(Deserialize)]
+struct PairCheckResult {
+    pair: usize,
+    status: String,
+    #[serde(default)]
+    reason: String,
+}
+
+/// Cached document context for source loading.
+struct DocContext {
+    title: String,
+    content: String,
+    source_map: HashMap<u32, String>,
+}
+
+/// Load and cache document context (title, content, source map).
+fn load_doc_context(
+    doc_id: &str,
+    cache: &mut HashMap<String, DocContext>,
+    db: &Database,
+) -> Option<()> {
+    if cache.contains_key(doc_id) {
+        return Some(());
+    }
+    let doc = db.get_document(doc_id).ok()??;
+    let source_defs = parse_source_definitions(&doc.content);
+    let source_map: HashMap<u32, String> = source_defs
+        .into_iter()
+        .map(|d| {
+            let text = if let Some(date) = &d.date {
+                format!("[^{}]: {} {}, {}", d.number, d.source_type, d.context, date)
+            } else if d.context.is_empty() {
+                format!("[^{}]: {}", d.number, d.source_type)
+            } else {
+                format!("[^{}]: {} {}", d.number, d.source_type, d.context)
+            };
+            (d.number, text)
+        })
+        .collect();
+    let title = extract_title(&doc.content, doc_id);
+    cache.insert(
+        doc_id.to_string(),
+        DocContext {
+            title,
+            content: doc.content,
+            source_map,
+        },
+    );
+    Some(())
+}
+
+/// Extract source footnote definitions for a fact at a given line number.
+fn get_source_defs_for_line(
+    content: &str,
+    line_number: usize,
+    source_map: &HashMap<u32, String>,
+) -> Vec<String> {
+    let line = content.lines().nth(line_number.saturating_sub(1)).unwrap_or("");
+    let refs: Vec<u32> = SOURCE_REF_CAPTURE_REGEX
+        .captures_iter(line)
+        .filter_map(|c| c[1].parse().ok())
+        .collect();
+    refs.iter()
+        .filter_map(|n| source_map.get(n).cloned())
+        .collect()
+}
+
+/// Extract temporal tag text from a line (e.g., "@t[2020..2022]").
+fn get_temporal_tag_on_line(content: &str, line_number: usize) -> Option<String> {
+    let line = content.lines().nth(line_number.saturating_sub(1))?;
+    TEMPORAL_TAG_CONTENT_REGEX
+        .find(line)
+        .map(|m| m.as_str().to_string())
+}
+
+/// Default template for the fact-pair cross-validate prompt.
+const DEFAULT_PAIR_CROSS_VALIDATE_PROMPT: &str = "Compare these fact pairs from different knowledge base documents.\n\n\
+For each pair, trace the evidence chain:\n\
+1. Compare Fact A and Fact B — do they address the same claim?\n\
+2. Consider source citations and temporal context for each\n\
+3. Classify the relationship\n\n\
+Statuses:\n\
+- SUPPORTS: Fact B confirms or is consistent with Fact A\n\
+- CONTRADICTS: Facts give different answers to the same question about the same entity\n\
+- SUPERSEDES: Fact B provides newer information that replaces Fact A\n\
+- CONSISTENT: Facts are about different aspects and don't conflict\n\n\
+Common mistakes to avoid:\n\
+✗ WRONG: Flagging as CONTRADICTS because the SOURCES are different. Two sources can confirm the same fact.\n\
+✗ WRONG: Flagging as SUPERSEDES because one source is older. A 2019 source citing \
+\"founded in 1924\" is NOT superseded — the fact is timeless.\n\
+✗ WRONG: Flagging boundary-month overlaps as CONTRADICTS. \"Role A ends 2016-11\" + \
+\"Role B starts 2016-11\" = normal transition.\n\
+✗ WRONG: Flagging two DIFFERENT facts about the same entity as contradicting. \
+\"Fleet size: 900\" and \"Destinations: 200\" coexist.\n\
+✓ RIGHT: CONTRADICTS only when two sources give DIFFERENT answers to the SAME question \
+about the SAME entity.\n\n\
+{fact_pairs}\
+---\n\nRespond ONLY with a JSON array. Each element must have: \
+pair (number), status (SUPPORTS/CONTRADICTS/SUPERSEDES/CONSISTENT), \
+reason (string).\n";
+
+/// Build the LLM prompt for a batch of fact pairs.
+fn build_pair_prompt(batch: &[&FactPairContext]) -> String {
+    let mut fact_pairs = String::new();
+
+    for (i, fpc) in batch.iter().enumerate() {
+        let idx = i + 1;
+        write_str!(fact_pairs, "Pair {idx}:\n");
+        // Fact A
+        write_str!(
+            fact_pairs,
+            "  Fact A (doc: \"{}\", line {}): \"{}\"",
+            fpc.title_a,
+            fpc.pair.fact_a.line_number,
+            fpc.pair.fact_a.fact_text
+        );
+        if let Some(ref t) = fpc.temporal_a {
+            write_str!(fact_pairs, " {t}");
+        }
+        fact_pairs.push('\n');
+        if !fpc.source_defs_a.is_empty() {
+            write_str!(fact_pairs, "  Sources A: {}\n", fpc.source_defs_a.join("; "));
+        }
+        // Fact B
+        write_str!(
+            fact_pairs,
+            "  Fact B (doc: \"{}\", line {}): \"{}\"",
+            fpc.title_b,
+            fpc.pair.fact_b.line_number,
+            fpc.pair.fact_b.fact_text
+        );
+        if let Some(ref t) = fpc.temporal_b {
+            write_str!(fact_pairs, " {t}");
+        }
+        fact_pairs.push('\n');
+        if !fpc.source_defs_b.is_empty() {
+            write_str!(fact_pairs, "  Sources B: {}\n", fpc.source_defs_b.join("; "));
+        }
+        if fpc.title_b_in_doc_a || fpc.title_a_in_doc_b {
+            write_str!(fact_pairs, "  (Documents cross-reference each other)\n");
+        }
+        fact_pairs.push('\n');
+    }
+
+    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+    crate::config::prompts::resolve_prompt(
+        &prompts,
+        "cross_validate_pairs",
+        DEFAULT_PAIR_CROSS_VALIDATE_PROMPT,
+        &[("fact_pairs", &fact_pairs)],
+    )
+}
+
+/// Parse LLM response for fact-pair classification.
+fn parse_pair_response(response: &str) -> Vec<PairCheckResult> {
+    let trimmed = response.trim();
+    let json_str = if trimmed.starts_with("```") {
+        trimmed
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim()
+    } else {
+        trimmed
+    };
+    match serde_json::from_str::<Vec<PairCheckResult>>(json_str) {
+        Ok(results) => results,
+        Err(e) => {
+            warn!("Failed to parse fact-pair LLM response: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Determine which document should receive the review question.
+///
+/// Prefers the document with fewer source citations, or the one with
+/// older/no temporal tags. Returns `(target_doc_id, target_line, cross_ref_title)`.
+fn attribute_question(fpc: &FactPairContext) -> (&str, usize, &str) {
+    let a_sources = fpc.source_defs_a.len();
+    let b_sources = fpc.source_defs_b.len();
+
+    // Fewer sources → more likely to need review
+    if a_sources < b_sources {
+        (
+            &fpc.pair.fact_a.document_id,
+            fpc.pair.fact_a.line_number,
+            &fpc.title_b,
+        )
+    } else if b_sources < a_sources {
+        (
+            &fpc.pair.fact_b.document_id,
+            fpc.pair.fact_b.line_number,
+            &fpc.title_a,
+        )
+    } else {
+        // Equal sources — attribute to fact A (arbitrary but deterministic)
+        (
+            &fpc.pair.fact_a.document_id,
+            fpc.pair.fact_a.line_number,
+            &fpc.title_b,
+        )
+    }
+}
+
+/// Convert a pair classification result into a review question.
+fn pair_result_to_question(
+    result: &PairCheckResult,
+    batch: &[&FactPairContext],
+) -> Option<(String, ReviewQuestion)> {
+    let fpc = batch.get(result.pair.checked_sub(1)?)?;
+
+    let qtype = match result.status.to_uppercase().as_str() {
+        "CONTRADICTS" => QuestionType::Conflict,
+        "SUPERSEDES" => QuestionType::Stale,
+        _ => return None, // SUPPORTS and CONSISTENT produce no questions
+    };
+
+    let (target_doc_id, target_line, cross_ref_title) = attribute_question(fpc);
+
+    let desc = format!(
+        "Cross-check with {}: {} — {}",
+        cross_ref_title,
+        if target_doc_id == fpc.pair.fact_a.document_id {
+            &fpc.pair.fact_a.fact_text
+        } else {
+            &fpc.pair.fact_b.fact_text
+        },
+        result.reason
+    );
+
+    Some((
+        target_doc_id.to_string(),
+        ReviewQuestion::new(qtype, Some(target_line), desc),
+    ))
+}
+
+/// Cross-validate pre-computed fact pairs using LLM classification.
+///
+/// Returns a map of document ID → review questions generated for that document.
+/// This is the preferred entry point when fact embeddings are available in the DB.
+pub async fn cross_validate_facts(
+    fact_pairs: &[FactPair],
+    db: &Database,
+    llm: &dyn LlmProvider,
+    deadline: Option<std::time::Instant>,
+) -> Result<HashMap<String, Vec<ReviewQuestion>>, FactbaseError> {
+    if fact_pairs.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Load document contexts (cached across pairs)
+    let mut doc_cache: HashMap<String, DocContext> = HashMap::new();
+    let mut enriched: Vec<FactPairContext> = Vec::with_capacity(fact_pairs.len());
+
+    for pair in fact_pairs {
+        if deadline.is_some_and(|d| std::time::Instant::now() > d) {
+            break;
+        }
+        // Load both documents
+        if load_doc_context(&pair.fact_a.document_id, &mut doc_cache, db).is_none() {
+            continue;
+        }
+        if load_doc_context(&pair.fact_b.document_id, &mut doc_cache, db).is_none() {
+            continue;
+        }
+
+        let ctx_a = &doc_cache[&pair.fact_a.document_id];
+        let ctx_b = &doc_cache[&pair.fact_b.document_id];
+
+        let source_defs_a =
+            get_source_defs_for_line(&ctx_a.content, pair.fact_a.line_number, &ctx_a.source_map);
+        let source_defs_b =
+            get_source_defs_for_line(&ctx_b.content, pair.fact_b.line_number, &ctx_b.source_map);
+        let temporal_a = get_temporal_tag_on_line(&ctx_a.content, pair.fact_a.line_number);
+        let temporal_b = get_temporal_tag_on_line(&ctx_b.content, pair.fact_b.line_number);
+
+        let title_b_in_doc_a = ctx_a
+            .content
+            .to_lowercase()
+            .contains(&ctx_b.title.to_lowercase());
+        let title_a_in_doc_b = ctx_b
+            .content
+            .to_lowercase()
+            .contains(&ctx_a.title.to_lowercase());
+
+        enriched.push(FactPairContext {
+            pair: pair.clone(),
+            title_a: ctx_a.title.clone(),
+            title_b: ctx_b.title.clone(),
+            source_defs_a,
+            source_defs_b,
+            temporal_a,
+            temporal_b,
+            title_b_in_doc_a,
+            title_a_in_doc_b,
+        });
+    }
+
+    if enriched.is_empty() {
+        return Ok(HashMap::new());
+    }
+
+    // Build temporal context for STALE suppression on closed ranges.
+    // We need this per-document for facts that have closed temporal tags.
+    let mut doc_temporal_closed: HashMap<String, HashMap<usize, TemporalTagType>> = HashMap::new();
+    for fpc in &enriched {
+        for (doc_id, content) in [
+            (&fpc.pair.fact_a.document_id, &doc_cache[&fpc.pair.fact_a.document_id].content),
+            (&fpc.pair.fact_b.document_id, &doc_cache[&fpc.pair.fact_b.document_id].content),
+        ] {
+            if !doc_temporal_closed.contains_key(doc_id.as_str()) {
+                let body = &content[..crate::patterns::body_end_offset(content)];
+                let tags = crate::processor::parse_temporal_tags(body);
+                let heading_map = super::stale::build_heading_temporal_map(body, &tags);
+                doc_temporal_closed.insert(doc_id.clone(), heading_map);
+            }
+        }
+    }
+
+    let mut questions: HashMap<String, Vec<ReviewQuestion>> = HashMap::new();
+
+    for chunk in enriched.chunks(PAIR_BATCH_SIZE) {
+        if deadline.is_some_and(|d| std::time::Instant::now() > d) {
+            break;
+        }
+        let batch: Vec<&FactPairContext> = chunk.iter().collect();
+        let prompt = build_pair_prompt(&batch);
+
+        let response = match llm.complete(&prompt).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("LLM call failed during fact-pair cross-validation: {e}");
+                continue;
+            }
+        };
+
+        let results = parse_pair_response(&response);
+        for r in &results {
+            let status_upper = r.status.to_uppercase();
+
+            // Suppress SUPERSEDES for facts with closed temporal ranges
+            if status_upper == "SUPERSEDES" {
+                if let Some(fpc) = r.pair.checked_sub(1).and_then(|i| batch.get(i)) {
+                    let (target_doc_id, target_line, _) = attribute_question(fpc);
+                    if let Some(heading_map) = doc_temporal_closed.get(target_doc_id) {
+                        if heading_map.contains_key(&target_line) {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            if let Some((doc_id, q)) = pair_result_to_question(&r, &batch) {
+                questions.entry(doc_id).or_default().push(q);
+            }
+        }
+    }
+
+    Ok(questions)
 }
 
 /// Extract document title from content (first `# ` heading) or fall back to doc_id.
@@ -1092,5 +1493,492 @@ mod tests {
         .unwrap();
         // Should return empty — deadline hit before any embedding calls
         assert!(questions.is_empty(), "expired deadline should skip all work");
+    }
+
+    // -----------------------------------------------------------------------
+    // Fact-pair cross-validation tests
+    // -----------------------------------------------------------------------
+
+    use crate::models::{FactPair, FactSearchResult};
+
+    fn make_fact(doc_id: &str, line: usize, text: &str) -> FactSearchResult {
+        FactSearchResult {
+            id: format!("{}_{}", doc_id, line),
+            document_id: doc_id.to_string(),
+            line_number: line,
+            fact_text: text.to_string(),
+            similarity: 0.9,
+        }
+    }
+
+    fn make_pair(a: FactSearchResult, b: FactSearchResult) -> FactPair {
+        FactPair {
+            similarity: 0.9,
+            fact_a: a,
+            fact_b: b,
+        }
+    }
+
+    #[test]
+    fn test_parse_pair_response_valid() {
+        let json = r#"[{"pair":1,"status":"CONTRADICTS","reason":"different values"}]"#;
+        let results = parse_pair_response(json);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "CONTRADICTS");
+        assert_eq!(results[0].pair, 1);
+    }
+
+    #[test]
+    fn test_parse_pair_response_with_fences() {
+        let json = "```json\n[{\"pair\":1,\"status\":\"SUPERSEDES\",\"reason\":\"newer\"}]\n```";
+        let results = parse_pair_response(json);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "SUPERSEDES");
+    }
+
+    #[test]
+    fn test_parse_pair_response_malformed() {
+        let results = parse_pair_response("not json");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_build_pair_prompt_contains_facts() {
+        let pair = make_pair(
+            make_fact("doc1", 5, "VP at Acme"),
+            make_fact("doc2", 10, "Left Acme in 2024"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "John Smith".into(),
+            title_b: "Acme Corp".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec![],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let prompt = build_pair_prompt(&[&fpc]);
+        assert!(prompt.contains("Pair 1:"));
+        assert!(prompt.contains("Fact A (doc: \"John Smith\", line 5): \"VP at Acme\""));
+        assert!(prompt.contains("Fact B (doc: \"Acme Corp\", line 10): \"Left Acme in 2024\""));
+    }
+
+    #[test]
+    fn test_build_pair_prompt_includes_sources() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "Founded in 1924"),
+            make_fact("doc2", 7, "Established 1924"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec!["[^1]: Wikipedia, 2024-01".into()],
+            source_defs_b: vec!["[^2]: Annual report".into()],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let prompt = build_pair_prompt(&[&fpc]);
+        assert!(prompt.contains("Sources A: [^1]: Wikipedia, 2024-01"));
+        assert!(prompt.contains("Sources B: [^2]: Annual report"));
+    }
+
+    #[test]
+    fn test_build_pair_prompt_includes_temporal_tags() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "CEO at Acme"),
+            make_fact("doc2", 5, "Left Acme"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec![],
+            temporal_a: Some("@t[2020..]".into()),
+            temporal_b: Some("@t[=2024-06]".into()),
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let prompt = build_pair_prompt(&[&fpc]);
+        assert!(prompt.contains("@t[2020..]"));
+        assert!(prompt.contains("@t[=2024-06]"));
+    }
+
+    #[test]
+    fn test_build_pair_prompt_cross_reference_note() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "fact a"),
+            make_fact("doc2", 5, "fact b"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec![],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: true,
+            title_a_in_doc_b: false,
+        };
+        let prompt = build_pair_prompt(&[&fpc]);
+        assert!(prompt.contains("Documents cross-reference each other"));
+    }
+
+    #[test]
+    fn test_attribute_question_fewer_sources_gets_question() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "fact a"),
+            make_fact("doc2", 5, "fact b"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec![], // no sources
+            source_defs_b: vec!["[^1]: source".into()], // has source
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let (target_doc, target_line, cross_ref) = attribute_question(&fpc);
+        assert_eq!(target_doc, "doc1", "doc with fewer sources should get the question");
+        assert_eq!(target_line, 3);
+        assert_eq!(cross_ref, "Doc B");
+    }
+
+    #[test]
+    fn test_attribute_question_b_fewer_sources() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "fact a"),
+            make_fact("doc2", 5, "fact b"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec!["[^1]: source".into()],
+            source_defs_b: vec![],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let (target_doc, target_line, cross_ref) = attribute_question(&fpc);
+        assert_eq!(target_doc, "doc2");
+        assert_eq!(target_line, 5);
+        assert_eq!(cross_ref, "Doc A");
+    }
+
+    #[test]
+    fn test_pair_result_to_question_contradicts() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "VP at Acme"),
+            make_fact("doc2", 5, "Left Acme"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec!["[^1]: source".into()],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let r = PairCheckResult {
+            pair: 1,
+            status: "CONTRADICTS".into(),
+            reason: "different role status".into(),
+        };
+        let (doc_id, q) = pair_result_to_question(&r, &[&fpc]).unwrap();
+        assert_eq!(doc_id, "doc1"); // fewer sources
+        assert_eq!(q.question_type, QuestionType::Conflict);
+        assert!(q.description.contains("Doc B"));
+        assert!(q.description.contains("VP at Acme"));
+    }
+
+    #[test]
+    fn test_pair_result_to_question_supersedes() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "Based in Seattle"),
+            make_fact("doc2", 5, "Relocated to Austin"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "Doc A".into(),
+            title_b: "Doc B".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec![],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let r = PairCheckResult {
+            pair: 1,
+            status: "SUPERSEDES".into(),
+            reason: "newer location".into(),
+        };
+        let (_, q) = pair_result_to_question(&r, &[&fpc]).unwrap();
+        assert_eq!(q.question_type, QuestionType::Stale);
+    }
+
+    #[test]
+    fn test_pair_result_to_question_supports_returns_none() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "fact"),
+            make_fact("doc2", 5, "fact"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "A".into(),
+            title_b: "B".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec![],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let r = PairCheckResult {
+            pair: 1,
+            status: "SUPPORTS".into(),
+            reason: "".into(),
+        };
+        assert!(pair_result_to_question(&r, &[&fpc]).is_none());
+    }
+
+    #[test]
+    fn test_pair_result_to_question_consistent_returns_none() {
+        let pair = make_pair(
+            make_fact("doc1", 3, "fact"),
+            make_fact("doc2", 5, "fact"),
+        );
+        let fpc = FactPairContext {
+            pair,
+            title_a: "A".into(),
+            title_b: "B".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec![],
+            temporal_a: None,
+            temporal_b: None,
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let r = PairCheckResult {
+            pair: 1,
+            status: "CONSISTENT".into(),
+            reason: "".into(),
+        };
+        assert!(pair_result_to_question(&r, &[&fpc]).is_none());
+    }
+
+    #[test]
+    fn test_pair_result_to_question_invalid_pair_index() {
+        let r = PairCheckResult {
+            pair: 5,
+            status: "CONTRADICTS".into(),
+            reason: "bad".into(),
+        };
+        assert!(pair_result_to_question(&r, &[]).is_none());
+    }
+
+    #[test]
+    fn test_pair_result_to_question_zero_pair_index() {
+        let r = PairCheckResult {
+            pair: 0,
+            status: "CONTRADICTS".into(),
+            reason: "bad".into(),
+        };
+        assert!(pair_result_to_question(&r, &[]).is_none());
+    }
+
+    #[test]
+    fn test_get_source_defs_for_line() {
+        let content = "# Title\n\n- VP at Acme [^1]\n- Based in Seattle\n\n---\n[^1]: LinkedIn profile, scraped 2024-01-15\n";
+        let source_map: HashMap<u32, String> =
+            [(1, "[^1]: LinkedIn profile, scraped 2024-01-15".into())].into();
+        let defs = get_source_defs_for_line(content, 3, &source_map);
+        assert_eq!(defs.len(), 1);
+        assert!(defs[0].contains("LinkedIn"));
+    }
+
+    #[test]
+    fn test_get_source_defs_for_line_no_refs() {
+        let content = "# Title\n\n- Based in Seattle\n";
+        let source_map: HashMap<u32, String> =
+            [(1, "[^1]: LinkedIn".into())].into();
+        let defs = get_source_defs_for_line(content, 3, &source_map);
+        assert!(defs.is_empty());
+    }
+
+    #[test]
+    fn test_get_temporal_tag_on_line() {
+        let content = "# Title\n\n- CEO at Acme @t[2020..]\n";
+        let tag = get_temporal_tag_on_line(content, 3);
+        assert_eq!(tag.as_deref(), Some("@t[2020..]"));
+    }
+
+    #[test]
+    fn test_get_temporal_tag_on_line_none() {
+        let content = "# Title\n\n- Based in Seattle\n";
+        let tag = get_temporal_tag_on_line(content, 3);
+        assert!(tag.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_empty_pairs() {
+        let (db, _tmp) = test_db();
+        let llm = MockLlm::default();
+        let result = cross_validate_facts(&[], &db, &llm, None).await.unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_contradicts_generates_question() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        // Insert two documents with different file paths
+        let mut doc_a = Document::test_default();
+        doc_a.id = "doc_a1".to_string();
+        doc_a.file_path = "entity_a.md".to_string();
+        doc_a.title = "Entity A".to_string();
+        doc_a.content = "# Entity A\n\n- Revenue: $10M\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "doc_b1".to_string();
+        doc_b.file_path = "entity_b.md".to_string();
+        doc_b.title = "Entity B".to_string();
+        doc_b.content = "# Entity B\n\n- Revenue: $50M [^1]\n\n---\n[^1]: Annual report, 2024\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("doc_a1", 3, "Revenue: $10M"),
+            make_fact("doc_b1", 3, "Revenue: $50M"),
+        )];
+
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"CONTRADICTS","reason":"different revenue figures"}]"#,
+        );
+
+        let result = cross_validate_facts(&pairs, &db, &llm, None).await.unwrap();
+        // Question should be on doc_a1 (fewer sources)
+        assert!(result.contains_key("doc_a1"), "question should be attributed to doc with fewer sources");
+        let qs = &result["doc_a1"];
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0].question_type, QuestionType::Conflict);
+        assert!(qs[0].description.contains("Entity B"));
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_supports_no_question() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "doc_a2".to_string();
+        doc_a.file_path = "doc_a2.md".to_string();
+        doc_a.content = "# Doc A\n\n- Founded in 1924\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "doc_b2".to_string();
+        doc_b.file_path = "doc_b2.md".to_string();
+        doc_b.content = "# Doc B\n\n- Established 1924\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("doc_a2", 3, "Founded in 1924"),
+            make_fact("doc_b2", 3, "Established 1924"),
+        )];
+
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"SUPPORTS","reason":"same founding year"}]"#,
+        );
+
+        let result = cross_validate_facts(&pairs, &db, &llm, None).await.unwrap();
+        assert!(result.is_empty(), "SUPPORTS should not generate questions");
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_supersedes_suppressed_for_historical() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "doc_a3".to_string();
+        doc_a.file_path = "doc_a3.md".to_string();
+        doc_a.content = "# Battle of Thermopylae @t[=480 BCE]\n\n- Spartans held the pass\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "doc_b3".to_string();
+        doc_b.file_path = "doc_b3.md".to_string();
+        doc_b.content = "# Greek Wars\n\n- New archaeological evidence about Thermopylae\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("doc_a3", 3, "Spartans held the pass"),
+            make_fact("doc_b3", 3, "New archaeological evidence about Thermopylae"),
+        )];
+
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"SUPERSEDES","reason":"newer evidence"}]"#,
+        );
+
+        let result = cross_validate_facts(&pairs, &db, &llm, None).await.unwrap();
+        assert!(result.is_empty(), "SUPERSEDES should be suppressed for historical facts with closed temporal tags");
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_deadline_stops_early() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc = Document::test_default();
+        doc.id = "doc_dl".to_string();
+        doc.file_path = "doc_dl.md".to_string();
+        doc.content = "# Doc\n\n- Fact\n".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let mut doc2 = Document::test_default();
+        doc2.id = "doc_d2".to_string();
+        doc2.file_path = "doc_d2.md".to_string();
+        doc2.content = "# Doc2\n\n- Fact2\n".to_string();
+        db.upsert_document(&doc2).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("doc_dl", 3, "Fact"),
+            make_fact("doc_d2", 3, "Fact2"),
+        )];
+
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#,
+        );
+
+        // Deadline already expired
+        let deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        let result = cross_validate_facts(&pairs, &db, &llm, deadline).await.unwrap();
+        assert!(result.is_empty(), "expired deadline should skip all work");
+    }
+
+    /// Fallback path test: when fact_embeddings table is empty, check.rs
+    /// should fall back to per-document cross-validation.
+    #[tokio::test]
+    async fn test_fallback_when_no_fact_embeddings() {
+        let (db, _tmp) = test_db();
+        // Verify fact embedding count is 0
+        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
+        // The fallback logic is in check.rs — this just verifies the precondition
     }
 }
