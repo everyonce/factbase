@@ -65,6 +65,36 @@ pub(crate) mod test_helpers {
             Box::pin(async move { Ok(self.response.clone()) })
         }
     }
+
+    /// Mock LLM that counts how many times `complete` is called.
+    pub struct CountingMockLlm {
+        response: String,
+        pub call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CountingMockLlm {
+        pub fn new(response: impl Into<String>) -> Self {
+            Self {
+                response: response.into(),
+                call_count: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        pub fn calls(&self) -> usize {
+            self.call_count.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl LlmProvider for CountingMockLlm {
+        fn complete<'a>(
+            &'a self,
+            _prompt: &'a str,
+        ) -> BoxFuture<'a, Result<String, FactbaseError>> {
+            self.call_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async move { Ok(self.response.clone()) })
+        }
+    }
 }
 
 #[cfg(test)]

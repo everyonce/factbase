@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
@@ -116,6 +116,8 @@ struct PairCheckResult {
 struct DocContext {
     title: String,
     content: String,
+    /// Pre-computed lowercase content for title-in-document checks.
+    content_lower: String,
     source_map: HashMap<u32, String>,
 }
 
@@ -148,6 +150,7 @@ fn load_doc_context(
         doc_id.to_string(),
         DocContext {
             title,
+            content_lower: doc.content.to_lowercase(),
             content: doc.content,
             source_map,
         },
@@ -400,12 +403,10 @@ pub async fn cross_validate_facts(
         let temporal_b = get_temporal_tag_on_line(&ctx_b.content, pair.fact_b.line_number);
 
         let title_b_in_doc_a = ctx_a
-            .content
-            .to_lowercase()
+            .content_lower
             .contains(&ctx_b.title.to_lowercase());
         let title_a_in_doc_b = ctx_b
-            .content
-            .to_lowercase()
+            .content_lower
             .contains(&ctx_a.title.to_lowercase());
 
         enriched.push(FactPairContext {
@@ -452,11 +453,19 @@ pub async fn cross_validate_facts(
 
     let effective_batch_size = batch_size.clamp(1, 50);
 
+    debug!(
+        total_enriched = enriched.len(),
+        effective_batch_size,
+        expected_llm_calls = enriched.len().div_ceil(effective_batch_size),
+        "Starting fact-pair LLM batching"
+    );
+
     for chunk in enriched.chunks(effective_batch_size) {
         if deadline.is_some_and(|d| std::time::Instant::now() > d) {
             break;
         }
         let batch: Vec<&FactPairContext> = chunk.iter().collect();
+        debug!(batch_size = batch.len(), "Sending fact-pair batch to LLM");
         let prompt = build_pair_prompt(&batch);
 
         let response = match llm.complete(&prompt).await {
@@ -497,6 +506,14 @@ pub async fn cross_validate_facts(
     // Merge prior checked_pair_ids with newly checked
     let mut all_checked: Vec<String> = checked_pair_ids.iter().cloned().collect();
     all_checked.extend(newly_checked.iter().cloned());
+
+    let llm_calls = newly_checked.len().div_ceil(effective_batch_size.max(1));
+    debug!(
+        pairs_processed = newly_checked.len(),
+        llm_calls,
+        pairs_per_call = if llm_calls > 0 { newly_checked.len() as f64 / llm_calls as f64 } else { 0.0 },
+        "Fact-pair cross-validation complete"
+    );
 
     Ok(CrossValidateOutput {
         questions,
@@ -2302,5 +2319,121 @@ mod tests {
         assert_eq!(result.total, 2, "total should reflect all pairs");
         assert_eq!(result.processed, 2, "all pairs should be processed");
         assert_eq!(result.checked_pair_ids.len(), 2, "both pair IDs should be tracked");
+    }
+
+    // -----------------------------------------------------------------------
+    // Batching behavior tests
+    // -----------------------------------------------------------------------
+
+    use crate::llm::test_helpers::CountingMockLlm;
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_batches_pairs_correctly() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        // Create two documents
+        let mut doc_a = Document::test_default();
+        doc_a.id = "bat_a".to_string();
+        doc_a.file_path = "bat_a.md".to_string();
+        doc_a.content = "# Entity A\n\n- Fact\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "bat_b".to_string();
+        doc_b.file_path = "bat_b.md".to_string();
+        doc_b.content = "# Entity B\n\n- Fact\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        // Create 25 pairs — with batch_size=10, expect ceil(25/10) = 3 LLM calls
+        let pairs: Vec<FactPair> = (0..25)
+            .map(|i| {
+                make_pair(
+                    make_fact("bat_a", 3 + i, &format!("Fact A{i}")),
+                    make_fact("bat_b", 3 + i, &format!("Fact B{i}")),
+                )
+            })
+            .collect();
+
+        let llm = CountingMockLlm::new("[]");
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 10, &HashSet::new())
+            .await
+            .unwrap();
+
+        assert_eq!(llm.calls(), 3, "25 pairs with batch_size=10 should make exactly 3 LLM calls");
+        assert_eq!(result.processed, 25);
+        assert_eq!(result.checked_pair_ids.len(), 25);
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_single_batch_when_fewer_than_batch_size() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "sb_a".to_string();
+        doc_a.file_path = "sb_a.md".to_string();
+        doc_a.content = "# Entity A\n\n- Fact\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "sb_b".to_string();
+        doc_b.file_path = "sb_b.md".to_string();
+        doc_b.content = "# Entity B\n\n- Fact\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        // 5 pairs with batch_size=10 → 1 LLM call
+        let pairs: Vec<FactPair> = (0..5)
+            .map(|i| {
+                make_pair(
+                    make_fact("sb_a", 3 + i, &format!("Fact A{i}")),
+                    make_fact("sb_b", 3 + i, &format!("Fact B{i}")),
+                )
+            })
+            .collect();
+
+        let llm = CountingMockLlm::new("[]");
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 10, &HashSet::new())
+            .await
+            .unwrap();
+
+        assert_eq!(llm.calls(), 1, "5 pairs with batch_size=10 should make exactly 1 LLM call");
+        assert_eq!(result.processed, 5);
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_exact_batch_boundary() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "eb_a".to_string();
+        doc_a.file_path = "eb_a.md".to_string();
+        doc_a.content = "# Entity A\n\n- Fact\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "eb_b".to_string();
+        doc_b.file_path = "eb_b.md".to_string();
+        doc_b.content = "# Entity B\n\n- Fact\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        // 20 pairs with batch_size=10 → exactly 2 LLM calls
+        let pairs: Vec<FactPair> = (0..20)
+            .map(|i| {
+                make_pair(
+                    make_fact("eb_a", 3 + i, &format!("Fact A{i}")),
+                    make_fact("eb_b", 3 + i, &format!("Fact B{i}")),
+                )
+            })
+            .collect();
+
+        let llm = CountingMockLlm::new("[]");
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 10, &HashSet::new())
+            .await
+            .unwrap();
+
+        assert_eq!(llm.calls(), 2, "20 pairs with batch_size=10 should make exactly 2 LLM calls");
+        assert_eq!(result.processed, 20);
     }
 }
