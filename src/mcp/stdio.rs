@@ -12,6 +12,30 @@ use tracing::{debug, error, warn};
 /// Interval between server-initiated keepalive pings (seconds).
 const KEEPALIVE_INTERVAL_SECS: u64 = 30;
 
+/// Maximum idle time (seconds) with no stdin messages before exiting.
+/// Acts as a secondary safety net for orphan detection.
+const MAX_IDLE_SECS: u64 = 300;
+
+/// Returns the initial parent PID on Unix, used for orphan detection.
+/// When the parent process dies, the OS reparents us to PID 1 (or launchd).
+#[cfg(unix)]
+fn initial_parent_pid() -> u32 {
+    std::os::unix::process::parent_id()
+}
+
+/// Checks whether the parent process has changed since startup (Unix only).
+/// Returns `true` if we've been reparented (parent died).
+#[cfg(unix)]
+fn parent_changed(original: u32) -> bool {
+    std::os::unix::process::parent_id() != original
+}
+
+/// No-op on non-Unix platforms.
+#[cfg(not(unix))]
+fn parent_changed(_original: u32) -> bool {
+    false
+}
+
 /// Runs the MCP stdio transport loop on stdin/stdout.
 ///
 /// Reads stdin on a background thread and uses `tokio::select!` to
@@ -42,6 +66,14 @@ pub async fn run_stdio<E: EmbeddingProvider>(
     // Don't send a ping immediately on startup
     keepalive.reset();
 
+    // Orphan detection: record parent PID at startup
+    #[cfg(unix)]
+    let startup_ppid = initial_parent_pid();
+    #[cfg(not(unix))]
+    let startup_ppid = 0u32;
+
+    let mut last_activity = std::time::Instant::now();
+
     loop {
         tokio::select! {
             biased;
@@ -54,8 +86,9 @@ pub async fn run_stdio<E: EmbeddingProvider>(
                     }
                     None => break, // stdin closed (EOF)
                 };
-                // Reset keepalive timer on any client activity
+                // Reset keepalive timer and idle tracker on any client activity
                 keepalive.reset();
+                last_activity = std::time::Instant::now();
                 if let Err(e) = handle_message(db, embedding, llm, &line, &mut writer, &ping_id).await {
                     if is_broken_pipe(&e) {
                         debug!("stdout broken pipe, exiting");
@@ -65,6 +98,18 @@ pub async fn run_stdio<E: EmbeddingProvider>(
                 }
             }
             _ = keepalive.tick() => {
+                // Check if parent process died (orphan detection)
+                if parent_changed(startup_ppid) {
+                    warn!("parent process died (reparented), exiting");
+                    break;
+                }
+
+                // Check idle timeout
+                if last_activity.elapsed() >= std::time::Duration::from_secs(MAX_IDLE_SECS) {
+                    warn!("idle timeout ({}s with no stdin messages), exiting", MAX_IDLE_SECS);
+                    break;
+                }
+
                 let id = ping_id.fetch_add(1, Ordering::Relaxed);
                 if let Err(e) = write_jsonrpc_line(&mut writer, &serde_json::json!({
                     "jsonrpc": "2.0",
@@ -82,6 +127,16 @@ pub async fn run_stdio<E: EmbeddingProvider>(
     }
 
     debug!("stdio loop exiting");
+
+    // The dedicated stdin reader thread (line ~30) blocks on stdin.lock().
+    // After the main loop exits, that thread may hang indefinitely.
+    // Spawn a brief delay then force-exit to avoid zombie processes.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        debug!("forcing exit to release blocking stdin reader");
+        std::process::exit(0);
+    });
+
     Ok(())
 }
 
@@ -784,5 +839,41 @@ mod tests {
         assert_eq!(ping_id.fetch_add(1, Ordering::Relaxed), 1);
         assert_eq!(ping_id.fetch_add(1, Ordering::Relaxed), 2);
         assert_eq!(ping_id.load(Ordering::Relaxed), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_initial_parent_pid_is_nonzero() {
+        let ppid = initial_parent_pid();
+        assert!(ppid > 0, "parent PID should be > 0, got {ppid}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parent_changed_false_when_same() {
+        let ppid = initial_parent_pid();
+        // Parent hasn't changed during this test
+        assert!(!parent_changed(ppid));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_parent_changed_true_when_different() {
+        // PID 0 is never a real parent (it's the kernel scheduler)
+        assert!(parent_changed(0));
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn test_parent_changed_always_false_on_non_unix() {
+        assert!(!parent_changed(0));
+        assert!(!parent_changed(999));
+    }
+
+    #[test]
+    fn test_max_idle_timeout_is_reasonable() {
+        // Idle timeout should be between 1 min and 30 min
+        assert!(MAX_IDLE_SECS >= 60);
+        assert!(MAX_IDLE_SECS <= 1800);
     }
 }
