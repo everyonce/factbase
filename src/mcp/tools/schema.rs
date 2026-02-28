@@ -285,14 +285,17 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "organize_analyze",
-                "description": "Analyze repository for reorganization opportunities: merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only.",
+                "description": "Analyze repository for reorganization opportunities: merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only. Supports time-boxing via time_budget_secs; pass completed_phases to resume.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
-                        "focus": { "type": "string", "enum": ["duplicates"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info (replaces get_duplicate_entries)." },
+                        "focus": { "type": "string", "enum": ["duplicates", "structure"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info. 'structure' returns misplaced document candidates." },
                         "merge_threshold": { "type": "number", "description": "Minimum similarity for merge candidates (default: 0.95)" },
-                        "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" }
+                        "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60). Falls back to server.time_budget_secs config." },
+                        "completed_phases": { "type": "array", "items": { "type": "string" }, "description": "Cursor: phases already completed in a previous call (returned when deadline fires)." },
+                        "analyzed_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Cursor: document IDs already analyzed (for future within-phase resumption)." }
                     }
                 }
             },
