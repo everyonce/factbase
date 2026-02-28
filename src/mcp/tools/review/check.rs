@@ -213,8 +213,10 @@ mod tests {
     use crate::embedding::test_helpers::MockEmbedding;
     use crate::llm::test_helpers::MockLlm;
     use crate::progress::ProgressReporter;
+    use serial_test::serial;
 
     #[tokio::test]
+    #[serial]
     async fn test_check_repository_skips_entity_discovery_when_deadline_hit() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
@@ -269,6 +271,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_check_repository_accepts_checked_pair_ids() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
@@ -300,6 +303,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_check_repository_backward_compat_checked_doc_ids() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));

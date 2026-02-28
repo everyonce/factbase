@@ -40,8 +40,10 @@ impl Drop for WriteGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_write_guard_prevents_concurrent() {
         let guard1 = WriteGuard::try_acquire();
         assert!(guard1.is_ok());

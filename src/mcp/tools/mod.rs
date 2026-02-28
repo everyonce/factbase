@@ -284,6 +284,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_mcp_response_success() {
@@ -470,6 +471,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_repository_sends_progress_via_mcp_channel() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -517,6 +519,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_emits_embedding_and_indexing_progress() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -573,6 +576,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_repository_includes_coverage_in_response() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -624,6 +628,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_repository_hint_when_no_links_and_multiple_docs() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -653,6 +658,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_repository_no_hint_for_single_doc() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -677,6 +683,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_check_repository_emits_progress() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -748,6 +755,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_repository_with_expired_deadline_returns_progress() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -783,6 +791,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_check_repository_with_expired_deadline_returns_progress() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -820,6 +829,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_generate_questions_multi_doc_with_budget() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
@@ -953,6 +963,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_repository_force_reindex_param() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
