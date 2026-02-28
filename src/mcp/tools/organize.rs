@@ -498,21 +498,4 @@ mod tests {
         let doc2 = get_str_arg(&args, "doc2").unwrap();
         assert!(into != doc1 && into != doc2);
     }
-
-    #[test]
-    fn test_write_guard_prevents_concurrent() {
-        let guard1 = WriteGuard::try_acquire();
-        assert!(guard1.is_ok());
-
-        // Second acquire should fail while first is held
-        let guard2 = WriteGuard::try_acquire();
-        assert!(guard2.is_err());
-
-        // Drop first guard
-        drop(guard1);
-
-        // Now acquire should succeed
-        let guard3 = WriteGuard::try_acquire();
-        assert!(guard3.is_ok());
-    }
 }

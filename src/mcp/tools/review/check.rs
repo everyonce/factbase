@@ -4,7 +4,6 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::mcp::tools::helpers::WriteGuard;
 use crate::mcp::tools::{get_str_arg, load_perspective};
 use crate::progress::ProgressReporter;
 use crate::question_generator::check::{check_all_documents, CheckConfig};
@@ -93,14 +92,10 @@ pub async fn check_repository(
             .and_then(Value::as_array)
             .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
             .unwrap_or_default(),
+        acquire_write_guard: true,
     };
 
-    // Acquire write guard for non-dry-run (writes review queue to disk+DB)
-    let _write_guard = if dry_run { None } else { Some(WriteGuard::try_acquire()?) };
-
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
-    // Guard held until output is computed (drop at end of scope)
-    drop(_write_guard);
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();

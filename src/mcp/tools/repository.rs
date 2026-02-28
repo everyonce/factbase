@@ -44,7 +44,7 @@ pub async fn scan_repository(
     // For LLM-powered entity detection, run check_repository after scanning.
     let link_detector = LinkDetector::new(Box::new(NoOpLlm));
 
-    // Acquire write guard — scan rewrites all DB content from disk
+    // Acquire write guard right before full_scan — setup above is read-only
     let _guard = WriteGuard::try_acquire()?;
 
     progress.log(&format!("Scanning repository '{}'...", repo.id));

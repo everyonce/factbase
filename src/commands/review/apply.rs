@@ -47,6 +47,7 @@ pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
         dry_run: args.dry_run,
         since: since_filter,
         deadline: None,
+        acquire_write_guard: false,
     };
 
     if args.dry_run && !args.quiet {
