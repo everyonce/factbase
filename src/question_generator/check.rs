@@ -362,7 +362,11 @@ pub async fn check_all_documents(
         }
     }
 
-    let docs_processed = all_results.len();
+    let docs_processed = if llm.is_some() {
+        cross_validated_ids.len()
+    } else {
+        all_results.len()
+    };
 
     // Acquire write guard for non-dry-run (writes review queue to disk+DB).
     // Acquired here — after all read-only question generation — so dry-run
@@ -692,6 +696,95 @@ mod tests {
         // Reference doc should be skipped — only 1 doc processed
         assert_eq!(output.docs_total, 1);
         assert_eq!(output.docs_processed, 1);
+    }
+
+    #[tokio::test]
+    async fn test_deep_check_docs_processed_reflects_cross_validate_progress() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        // Use fact-free content so cross_validate_document returns Ok immediately
+        // (avoids needing sqlite-vec in the test DB)
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts here.\n"),
+            make_doc("bbb", "Doc B", "# Doc B\n\nJust prose.\n"),
+            make_doc("ccc", "Doc C", "# Doc C\n\nMore prose.\n"),
+        ];
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 3,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            acquire_write_guard: false,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        assert_eq!(output.docs_processed, 3, "all docs should be cross-validated");
+        assert_eq!(output.docs_total, 3);
+    }
+
+    #[tokio::test]
+    async fn test_deep_check_past_deadline_docs_processed_zero() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
+            make_doc("bbb", "Doc B", "# Doc B\n\nNo facts.\n"),
+        ];
+        // Past deadline + LLM → Phase 1 runs 0 docs, Phase 2 skipped
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+            checked_doc_ids: HashSet::new(),
+            acquire_write_guard: false,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        assert_eq!(output.docs_processed, 0, "past deadline means no cross-validation");
+        assert_eq!(output.docs_total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_deep_check_with_prior_checked_ids_counts_correctly() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
+            make_doc("bbb", "Doc B", "# Doc B\n\nNo facts.\n"),
+        ];
+        // aaa already checked from prior call; no deadline → bbb gets cross-validated
+        let mut checked = HashSet::new();
+        checked.insert("aaa".to_string());
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: None,
+            checked_doc_ids: checked,
+            acquire_write_guard: false,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        // aaa carried forward + bbb newly validated = 2
+        assert_eq!(output.docs_processed, 2, "prior + new cross-validated");
+        assert_eq!(output.docs_total, 2);
     }
 
     /// Dry-run check succeeds even when the write guard is already held,
