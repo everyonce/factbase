@@ -118,6 +118,17 @@ impl Database {
         Ok(map)
     }
 
+    /// Count distinct documents that have fact embeddings.
+    pub fn count_documents_with_fact_embeddings(&self) -> Result<usize, FactbaseError> {
+        let conn = self.get_conn()?;
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT document_id) FROM fact_metadata",
+            [],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     /// Count total fact embeddings in the database.
     pub fn get_fact_embedding_count(&self) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
@@ -273,6 +284,27 @@ mod tests {
         assert_eq!(db.get_fact_embedding_count().unwrap(), 2);
         assert_eq!(db.get_fact_embedding_count_for_doc("doc1").unwrap(), 2);
         assert_eq!(db.get_fact_embedding_count_for_doc("doc2").unwrap(), 0);
+    }
+
+    #[test]
+    fn test_count_documents_with_fact_embeddings() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 0);
+
+        let emb: Vec<f32> = vec![0.1; 1024];
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact", "h1", &emb).unwrap();
+        assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 1);
+
+        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact 2", "h2", &emb).unwrap();
+        assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 1); // still 1 doc
+
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact 3", "h3", &emb).unwrap();
+        assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 2);
     }
 
     #[test]

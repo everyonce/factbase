@@ -50,6 +50,9 @@ pub struct EmbeddingsStatusInfo {
     pub model: String,
     pub orphaned_chunks: usize,
     pub documents_without_embeddings: usize,
+    pub total_fact_embeddings: usize,
+    pub documents_with_fact_embeddings: usize,
+    pub documents_without_fact_embeddings: usize,
 }
 
 /// Result of an embedding import operation.
@@ -212,6 +215,9 @@ pub fn embeddings_status(
 
     let total_chunks = db.count_embedding_chunks()?;
     let dimension = db.get_embedding_dimension()?;
+    let total_fact_embeddings = db.get_fact_embedding_count()?;
+    let documents_with_fact_embeddings = db.count_documents_with_fact_embeddings()?;
+    let total_docs_in_db = status.with_embeddings.len() + status.without_embeddings.len();
 
     Ok(EmbeddingsStatusInfo {
         total_chunks,
@@ -220,6 +226,9 @@ pub fn embeddings_status(
         model: model.to_string(),
         orphaned_chunks: status.orphaned.len(),
         documents_without_embeddings: status.without_embeddings.len(),
+        total_fact_embeddings,
+        documents_with_fact_embeddings,
+        documents_without_fact_embeddings: total_docs_in_db.saturating_sub(documents_with_fact_embeddings),
     })
 }
 
@@ -384,6 +393,36 @@ mod tests {
         assert_eq!(info.total_chunks, 3);
         assert_eq!(info.dimension, Some(1024));
         assert_eq!(info.documents_without_embeddings, 0);
+        assert_eq!(info.total_fact_embeddings, 0);
+        assert_eq!(info.documents_with_fact_embeddings, 0);
+        assert_eq!(info.documents_without_fact_embeddings, 2);
+    }
+
+    #[test]
+    fn test_embeddings_status_includes_fact_counts() {
+        let (db, _tmp) = setup_db_with_embeddings();
+        let emb: Vec<f32> = vec![0.1; 1024];
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact B", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact C", "h3", &emb).unwrap();
+
+        let info = embeddings_status(&db, Some("test-repo"), "test-model").unwrap();
+        assert_eq!(info.total_fact_embeddings, 3);
+        assert_eq!(info.documents_with_fact_embeddings, 2);
+        assert_eq!(info.documents_without_fact_embeddings, 0);
+    }
+
+    #[test]
+    fn test_embeddings_status_with_zero_fact_embeddings() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+
+        let info = embeddings_status(&db, Some("test-repo"), "test-model").unwrap();
+        assert_eq!(info.total_fact_embeddings, 0);
+        assert_eq!(info.documents_with_fact_embeddings, 0);
+        assert_eq!(info.documents_without_fact_embeddings, 1);
     }
 
     #[test]
