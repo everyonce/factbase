@@ -38,8 +38,15 @@ pub async fn scan_repository(
     // Wire force_reindex from MCP args
     opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
 
-    // Set deadline for time-boxed operation
-    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    // Set deadline for time-boxed operation.
+    // force_reindex bypasses the default time budget — the user explicitly asked for a full reindex.
+    // If the caller also passed an explicit time_budget_secs, respect it.
+    let explicit_budget = args.get("time_budget_secs").and_then(Value::as_u64);
+    let time_budget = if opts.force_reindex && explicit_budget.is_none() {
+        None
+    } else {
+        crate::mcp::tools::helpers::resolve_time_budget(args)
+    };
     opts.deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     // Link detection uses LLM which requires 'static ownership.
@@ -90,6 +97,7 @@ pub async fn scan_repository(
             "added": result.added,
             "updated": result.updated,
             "unchanged": result.unchanged,
+            "reindexed": result.reindexed,
         });
         crate::mcp::tools::helpers::apply_time_budget_progress(
             &mut response, processed, result.total + remaining, "scan_repository", true,
@@ -101,6 +109,7 @@ pub async fn scan_repository(
         "added": result.added,
         "updated": result.updated,
         "unchanged": result.unchanged,
+        "reindexed": result.reindexed,
         "deleted": result.deleted,
         "links_detected": result.links_detected,
         "fact_embeddings_generated": result.fact_embeddings_generated,

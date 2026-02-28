@@ -990,4 +990,101 @@ mod tests {
         let total = r["total"].as_u64().unwrap();
         assert!(total > 0, "force_reindex should process docs");
     }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_scan_repository_force_reindex_bypasses_default_budget() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        // Write files with factbase headers so first scan doesn't modify them
+        for i in 0..5u8 {
+            let hex = format!("{:06x}", i + 0xa0);
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("<!-- factbase:{hex} -->\n# Doc {i}\nContent {i}."),
+            )
+            .unwrap();
+        }
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        // Initial scan to populate DB
+        let args = serde_json::json!({});
+        scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+
+        // force_reindex without explicit time_budget_secs: should NOT be interrupted
+        let args = serde_json::json!({"force_reindex": true});
+        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+
+        assert!(
+            r.get("continue").is_none() || r["continue"] == false,
+            "force_reindex without explicit budget should not be interrupted"
+        );
+        assert_eq!(r["reindexed"].as_u64().unwrap(), 5, "all docs should be reindexed");
+        assert!(r.get("total").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_scan_repository_force_reindex_respects_explicit_budget() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "<!-- factbase:aaa001 -->\n# Doc One\nContent.").unwrap();
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        // Initial scan
+        let args = serde_json::json!({});
+        scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+
+        // force_reindex WITH explicit time_budget_secs: budget should be active
+        // (MockEmbedding is instant so it completes, but the deadline is set)
+        let args = serde_json::json!({"force_reindex": true, "time_budget_secs": 10});
+        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+
+        // Should complete (MockEmbedding is instant) with reindexed count
+        assert_eq!(r["reindexed"].as_u64().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_scan_repository_normal_scan_still_respects_budget() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "# Doc One\nContent.").unwrap();
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        // Normal scan (no force_reindex) with explicit budget: should still use budget
+        let args = serde_json::json!({"time_budget_secs": 30});
+        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+
+        // MockEmbedding is instant, so it completes within budget
+        assert!(r.get("total").is_some());
+        assert_eq!(r["reindexed"].as_u64().unwrap(), 0);
+    }
 }
