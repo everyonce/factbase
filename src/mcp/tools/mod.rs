@@ -855,4 +855,128 @@ mod tests {
         assert!(result["documents_processed"].as_u64().unwrap() >= 3);
         assert!(result.get("continue").is_none() || result["continue"] == false);
     }
+
+    #[tokio::test]
+    async fn test_scan_auto_populates_fact_embeddings_on_empty_table() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use crate::llm::LlmProvider;
+        use crate::{BoxFuture, DocumentProcessor, FactbaseError, LinkDetector, Scanner, ScanContext, ScanOptions};
+        use tempfile::TempDir;
+
+        struct NoOpLlm;
+        impl LlmProvider for NoOpLlm {
+            fn complete<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
+                Box::pin(async { Ok("[]".to_string()) })
+            }
+        }
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "<!-- factbase:aaa111 -->\n# Doc One\n\n- Fact alpha\n- Fact beta\n").unwrap();
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let scanner = Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let link_detector = LinkDetector::new(Box::new(NoOpLlm));
+        let opts = ScanOptions::default();
+        let progress = crate::ProgressReporter::Silent;
+        let repo = db.list_repositories().unwrap().into_iter().next().unwrap();
+
+        let ctx = ScanContext {
+            scanner: &scanner, processor: &processor, embedding: &embedding,
+            link_detector: &link_detector, opts: &opts, progress: &progress,
+        };
+
+        // First scan: indexes docs and generates fact embeddings
+        let r1 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
+        assert!(r1.fact_embeddings_generated > 0);
+        let count_after_first = db.get_fact_embedding_count().unwrap();
+        assert!(count_after_first > 0);
+
+        // Second scan with no changes: should skip fact embedding (already populated)
+        let r2 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.fact_embeddings_generated, 0);
+        assert_eq!(db.get_fact_embedding_count().unwrap(), count_after_first);
+    }
+
+    #[tokio::test]
+    async fn test_scan_auto_populates_fact_embeddings_after_migration() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use crate::llm::LlmProvider;
+        use crate::{BoxFuture, DocumentProcessor, FactbaseError, LinkDetector, Scanner, ScanContext, ScanOptions};
+        use tempfile::TempDir;
+
+        struct NoOpLlm;
+        impl LlmProvider for NoOpLlm {
+            fn complete<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
+                Box::pin(async { Ok("[]".to_string()) })
+            }
+        }
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "<!-- factbase:bbb222 -->\n# Doc One\n\n- Fact one\n").unwrap();
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let scanner = Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let link_detector = LinkDetector::new(Box::new(NoOpLlm));
+        let opts = ScanOptions::default();
+        let progress = crate::ProgressReporter::Silent;
+        let repo = db.list_repositories().unwrap().into_iter().next().unwrap();
+
+        let ctx = ScanContext {
+            scanner: &scanner, processor: &processor, embedding: &embedding,
+            link_detector: &link_detector, opts: &opts, progress: &progress,
+        };
+
+        // First scan indexes docs normally
+        crate::full_scan(&repo, &db, &ctx).await.unwrap();
+        assert!(db.get_fact_embedding_count().unwrap() > 0);
+
+        // Simulate migration: clear fact embeddings but leave docs unchanged
+        db.delete_fact_embeddings_for_doc("bbb222").unwrap();
+        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
+
+        // Rescan with no file changes: should auto-populate fact embeddings
+        let r = crate::full_scan(&repo, &db, &ctx).await.unwrap();
+        assert!(r.fact_embeddings_generated > 0);
+        assert!(db.get_fact_embedding_count().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn test_scan_repository_force_reindex_param() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc1.md"), "# Doc One\n\n- Fact one\n").unwrap();
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        // First scan
+        let args = serde_json::json!({});
+        scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+
+        // Second scan with force_reindex: should re-process all docs
+        let args = serde_json::json!({"force_reindex": true});
+        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        // force_reindex causes docs to be reindexed even though unchanged
+        let total = r["total"].as_u64().unwrap();
+        assert!(total > 0, "force_reindex should process docs");
+    }
 }

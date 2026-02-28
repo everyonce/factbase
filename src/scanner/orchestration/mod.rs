@@ -553,10 +553,22 @@ pub async fn full_scan(
     let docs_link_detected = link_output.docs_link_detected;
 
     // Pass 3: Generate fact-level embeddings for cross-validation
-    if !changed_ids.is_empty() {
+    // Auto-populate when fact_embeddings table is empty (e.g., after migration)
+    let fact_ids = if !changed_ids.is_empty() {
+        changed_ids.clone()
+    } else {
+        let total_docs = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+        if total_docs > 0 && db.get_fact_embedding_count()? == 0 {
+            info!("No fact embeddings found — auto-populating for all documents");
+            seen.clone()
+        } else {
+            HashSet::new()
+        }
+    };
+    if !fact_ids.is_empty() {
         ctx.progress.phase("Generating fact embeddings");
         result.fact_embeddings_generated = run_fact_embedding_phase(&FactEmbeddingInput {
-            changed_ids: &changed_ids,
+            changed_ids: &fact_ids,
             embedding: ctx.embedding,
             db,
             embedding_batch_size: ctx.opts.embedding_batch_size,
