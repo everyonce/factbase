@@ -255,6 +255,46 @@ pub fn content_body(content: &str) -> &str {
     &content[..body_end_offset(content)]
 }
 
+/// Extract the review queue section from `content`, including any preceding
+/// `---` separator. Returns `None` if no review queue marker is present.
+pub(crate) fn extract_review_queue_section(content: &str) -> Option<&str> {
+    if !content.contains(REVIEW_QUEUE_MARKER) {
+        return None;
+    }
+    let mut offset = body_end_offset(content);
+    // Walk backwards over blank lines and a `---` separator if present
+    let before = &content[..offset];
+    let trimmed = before.trim_end_matches('\n');
+    if trimmed.ends_with("---") {
+        offset = trimmed.len() - 3;
+        // Also include a preceding newline if present
+        if offset > 0 && content.as_bytes()[offset - 1] == b'\n' {
+            offset -= 1;
+        }
+    }
+    Some(&content[offset..])
+}
+
+/// Merge a review queue from `db_content` into `disk_content` when the disk
+/// file is stale (lacks the review queue that the DB has).
+///
+/// Returns `Some(merged)` when the DB has a review queue and the disk does not.
+/// Returns `None` in all other cases (no merge needed).
+pub(crate) fn merge_review_queue(disk_content: &str, db_content: &str) -> Option<String> {
+    // If disk already has a review queue, disk wins (explicit user edit or both have it)
+    if disk_content.contains(REVIEW_QUEUE_MARKER) {
+        return None;
+    }
+    // If DB doesn't have a review queue, nothing to preserve
+    let review_section = extract_review_queue_section(db_content)?;
+    let mut merged = disk_content.to_string();
+    if !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(review_section);
+    Some(merged)
+}
+
 // =============================================================================
 // Orphan review patterns
 // =============================================================================
@@ -811,5 +851,59 @@ mod tests {
         assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-5..]"));
         assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[..-479]"));
         assert!(TEMPORAL_TAG_FULL_REGEX.is_match("@t[-490-03]"));
+    }
+
+    // =========================================================================
+    // extract_review_queue_section tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_review_queue_section_present() {
+        let content = "# Title\n\n- fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
+        let section = extract_review_queue_section(content).unwrap();
+        assert!(section.starts_with("---") || section.starts_with("\n---"));
+        assert!(section.contains("<!-- factbase:review -->"));
+        assert!(section.contains("@q[temporal]"));
+    }
+
+    #[test]
+    fn test_extract_review_queue_section_absent() {
+        let content = "# Title\n\n- fact\n";
+        assert!(extract_review_queue_section(content).is_none());
+    }
+
+    // =========================================================================
+    // merge_review_queue tests
+    // =========================================================================
+
+    #[test]
+    fn test_merge_review_queue_stale_disk_preserves_db_queue() {
+        let disk = "<!-- factbase:abc123 -->\n# Title\n\n- fact one\n";
+        let db = "<!-- factbase:abc123 -->\n# Title\n\n- fact one\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
+        let merged = merge_review_queue(disk, db).unwrap();
+        assert!(merged.contains("<!-- factbase:review -->"));
+        assert!(merged.contains("@q[temporal]"));
+        assert!(merged.contains("- fact one"));
+    }
+
+    #[test]
+    fn test_merge_review_queue_both_have_queue_disk_wins() {
+        let disk = "# Title\n\n- fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` New q\n  > \n";
+        let db = "# Title\n\n- fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Old q\n  > \n";
+        assert!(merge_review_queue(disk, db).is_none());
+    }
+
+    #[test]
+    fn test_merge_review_queue_neither_has_queue() {
+        let disk = "# Title\n\n- fact\n";
+        let db = "# Title\n\n- old fact\n";
+        assert!(merge_review_queue(disk, db).is_none());
+    }
+
+    #[test]
+    fn test_merge_review_queue_disk_has_queue_db_does_not() {
+        let disk = "# Title\n\n<!-- factbase:review -->\n- [ ] q\n";
+        let db = "# Title\n\n- fact\n";
+        assert!(merge_review_queue(disk, db).is_none());
     }
 }

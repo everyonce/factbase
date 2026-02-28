@@ -370,6 +370,18 @@ pub async fn full_scan(
                 );
             }
 
+            // Preserve review queue from DB when disk file is stale
+            let content = if !is_new {
+                if let Some(db_doc) = known.get(&id) {
+                    crate::patterns::merge_review_queue(&content, &db_doc.content)
+                        .unwrap_or(content)
+                } else {
+                    content
+                }
+            } else {
+                content
+            };
+
             pending.push(PendingDoc {
                 id,
                 content,
