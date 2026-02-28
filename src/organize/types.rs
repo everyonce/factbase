@@ -74,12 +74,6 @@ pub struct MisplacedCandidate {
     pub confidence: f32,
     /// Rationale for the suggestion
     pub rationale: String,
-    /// Current container folder (for folder misplacement; None for type misplacement)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub current_folder: Option<String>,
-    /// Suggested container folder (for folder misplacement; None for type misplacement)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub suggested_folder: Option<String>,
 }
 
 /// A discrete fact extracted from a document for tracking through reorganization.

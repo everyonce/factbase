@@ -1,8 +1,7 @@
 //! Misplaced document detection.
 //!
 //! Identifies documents whose content doesn't match their folder-derived type
-//! by comparing document embeddings to type centroids, and detects documents
-//! filed under the wrong container folder by analyzing cross-references.
+//! by comparing document embeddings to type centroids.
 
 use super::{
     collect_active_documents, compute_centroid, cosine_similarity, get_document_embedding,
@@ -12,7 +11,6 @@ use crate::error::FactbaseError;
 use crate::organize::MisplacedCandidate;
 use crate::ProgressReporter;
 use std::collections::HashMap;
-use std::path::Path;
 
 /// Minimum documents per type to compute a meaningful centroid.
 const MIN_DOCS_PER_TYPE: usize = 2;
@@ -92,8 +90,6 @@ pub fn detect_misplaced(
                     rationale: format!(
                         "Similarity to '{closest_type}': {closest_sim:.2}, to '{current_type}': {current_sim:.2}"
                     ),
-                    current_folder: None,
-                    suggested_folder: None,
                 });
             }
         }
@@ -105,10 +101,6 @@ pub fn detect_misplaced(
             .partial_cmp(&a.confidence)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-
-    // Phase 2: Detect folder misplacement via cross-references
-    let folder_candidates = detect_folder_misplacement(db, repo_id)?;
-    candidates.extend(folder_candidates);
 
     Ok(candidates)
 }
@@ -189,112 +181,6 @@ fn find_closest_centroid(
     (best_type, best_sim)
 }
 
-/// Detect documents filed under the wrong container folder by analyzing cross-references.
-///
-/// A "container document" follows the entity folder convention: `prefix/name/name.md`.
-/// If document A lives under container X but links to container Y, A may be misplaced.
-fn detect_folder_misplacement(
-    db: &Database,
-    repo_id: Option<&str>,
-) -> Result<Vec<MisplacedCandidate>, FactbaseError> {
-    let docs = collect_active_documents(db, repo_id)?;
-    if docs.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Identify container documents (filename stem == parent folder name)
-    // and build: container_folder_path → (doc_id, title)
-    let mut container_by_folder: HashMap<String, (String, String)> = HashMap::new();
-    // Also: doc_id → container_folder_path for container docs
-    let mut container_by_id: HashMap<String, String> = HashMap::new();
-
-    for doc in &docs {
-        let path = Path::new(&doc.file_path);
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        let parent = path.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).unwrap_or("");
-        if !stem.is_empty() && stem.eq_ignore_ascii_case(parent) {
-            // This is a container document. The container folder is the parent directory.
-            if let Some(parent_path) = path.parent() {
-                let folder_key = parent_path.to_string_lossy().to_string();
-                container_by_folder.insert(folder_key.clone(), (doc.id.clone(), doc.title.clone()));
-                container_by_id.insert(doc.id.clone(), folder_key);
-            }
-        }
-    }
-
-    if container_by_folder.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // For each non-container document, find which container it lives under
-    let mut candidates = Vec::new();
-    let doc_ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
-    let all_links = db.get_links_for_documents(&doc_ids)?;
-
-    for doc in &docs {
-        // Skip container documents themselves
-        if container_by_id.contains_key(&doc.id) {
-            continue;
-        }
-
-        // Find which container folder this doc lives under
-        let doc_path = Path::new(&doc.file_path);
-        let doc_container = find_ancestor_container(doc_path, &container_by_folder);
-        let Some(doc_container) = doc_container else {
-            continue; // Not under any container
-        };
-
-        // Check outgoing links for references to other containers
-        let (outgoing, _) = match all_links.get(&doc.id) {
-            Some(links) => links,
-            None => continue,
-        };
-
-        for link in outgoing {
-            let Some(linked_container) = container_by_id.get(&link.target_id) else {
-                continue; // Target is not a container document
-            };
-
-            if *linked_container != doc_container {
-                let (_, suggested_title) = &container_by_folder[linked_container];
-                let (_, current_title) = &container_by_folder[&doc_container];
-                candidates.push(MisplacedCandidate {
-                    doc_id: doc.id.clone(),
-                    doc_title: doc.title.clone(),
-                    current_type: doc.doc_type.clone().unwrap_or_default(),
-                    suggested_type: doc.doc_type.clone().unwrap_or_default(),
-                    confidence: 1.0,
-                    rationale: format!(
-                        "Links to '{}' but filed under '{}'",
-                        suggested_title, current_title
-                    ),
-                    current_folder: Some(doc_container.clone()),
-                    suggested_folder: Some(linked_container.clone()),
-                });
-                break; // One suggestion per document
-            }
-        }
-    }
-
-    Ok(candidates)
-}
-
-/// Walk up the path to find the nearest ancestor that is a known container folder.
-fn find_ancestor_container(
-    path: &Path,
-    containers: &HashMap<String, (String, String)>,
-) -> Option<String> {
-    let mut current = path.parent(); // start from parent dir of the file
-    while let Some(dir) = current {
-        let key = dir.to_string_lossy().to_string();
-        if containers.contains_key(&key) {
-            return Some(key);
-        }
-        current = dir.parent();
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -346,77 +232,10 @@ mod tests {
             suggested_type: "person".to_string(),
             confidence: 0.15,
             rationale: "Similarity to 'person': 0.85, to 'project': 0.70".to_string(),
-            current_folder: None,
-            suggested_folder: None,
         };
         assert_eq!(candidate.doc_id, "abc123");
         assert_eq!(candidate.current_type, "project");
         assert_eq!(candidate.suggested_type, "person");
         assert!(candidate.confidence > 0.0);
-    }
-
-    #[test]
-    fn test_find_ancestor_container() {
-        let mut containers = HashMap::new();
-        containers.insert(
-            "customers/acme".to_string(),
-            ("id1".to_string(), "Acme Corp".to_string()),
-        );
-        containers.insert(
-            "customers/globex".to_string(),
-            ("id2".to_string(), "Globex Inc".to_string()),
-        );
-
-        // Doc under acme
-        let path = Path::new("customers/acme/people/john.md");
-        assert_eq!(
-            find_ancestor_container(path, &containers),
-            Some("customers/acme".to_string())
-        );
-
-        // Doc under globex
-        let path = Path::new("customers/globex/notes/meeting.md");
-        assert_eq!(
-            find_ancestor_container(path, &containers),
-            Some("customers/globex".to_string())
-        );
-
-        // Doc not under any container
-        let path = Path::new("misc/random.md");
-        assert_eq!(find_ancestor_container(path, &containers), None);
-    }
-
-    #[test]
-    fn test_find_ancestor_container_nested() {
-        let mut containers = HashMap::new();
-        containers.insert(
-            "a/b".to_string(),
-            ("id1".to_string(), "B".to_string()),
-        );
-
-        // Deeply nested doc still finds ancestor
-        let path = Path::new("a/b/c/d/e/file.md");
-        assert_eq!(
-            find_ancestor_container(path, &containers),
-            Some("a/b".to_string())
-        );
-    }
-
-    #[test]
-    fn test_folder_misplacement_candidate_fields() {
-        let candidate = MisplacedCandidate {
-            doc_id: "f39677".to_string(),
-            doc_title: "Dr. Heather Bassett".to_string(),
-            current_type: "person".to_string(),
-            suggested_type: "person".to_string(),
-            confidence: 1.0,
-            rationale: "Links to 'XSOLIS' but filed under 'Trend Health Partners'".to_string(),
-            current_folder: Some("customers/trend-health-partners".to_string()),
-            suggested_folder: Some("customers/xsolis".to_string()),
-        };
-        assert!(candidate.current_folder.is_some());
-        assert!(candidate.suggested_folder.is_some());
-        // Type stays the same for folder misplacement
-        assert_eq!(candidate.current_type, candidate.suggested_type);
     }
 }
