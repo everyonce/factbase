@@ -448,6 +448,28 @@ Archived documents:
 - ❌ Skipped by `factbase check` and `check_repository` (no review questions generated)
 - ❌ Not included in cross-document validation
 
+### Reference Entities
+
+Add `<!-- factbase:reference -->` to documents that exist primarily as link targets — external entities you reference but don't track in depth. This is the primary mechanism for preventing duplicate entity suggestions for well-known external entities.
+
+```markdown
+<!-- factbase:reference -->
+# AWS Lambda
+
+- Serverless compute service by Amazon Web Services @t[2014..] [^1]
+
+---
+[^1]: AWS, aws.amazon.com/lambda
+```
+
+Reference documents:
+- ✅ Scanned, indexed, and embedded (appear in search results)
+- ✅ Fully participate in link detection (their titles are matched across all docs)
+- ✅ Count as existing entities (entity discovery won't re-suggest them)
+- ✅ Visible in `list_entities`, `get_entity`, `search_knowledge`
+- ❌ Skipped by `factbase check` and `check_repository` (no review questions)
+- ❌ Excluded from enrich and resolve workflows
+
 ---
 
 ## Common Mistakes to Avoid

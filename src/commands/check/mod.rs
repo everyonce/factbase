@@ -167,6 +167,13 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
             println!("  Skipping {archived_count} archived document(s)");
         }
 
+        // Filter out reference entities (indexed for linking, but not quality-checked)
+        let reference_count = docs.iter().filter(|d| factbase::is_reference_doc(&d.content)).count();
+        let docs: Vec<_> = docs.into_iter().filter(|d| !factbase::is_reference_doc(&d.content)).collect();
+        if reference_count > 0 && is_table_format && !args.quiet {
+            println!("  Skipping {reference_count} reference document(s)");
+        }
+
         // Build title → doc IDs map for duplicate title detection
         let mut title_map: std::collections::HashMap<String, Vec<(&str, &str)>> = std::collections::HashMap::new();
         for doc in &docs {

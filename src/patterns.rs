@@ -224,6 +224,14 @@ pub static MANUAL_LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Review Queue marker comment.
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
 
+/// Reference entity marker comment.
+pub const REFERENCE_MARKER: &str = "<!-- factbase:reference -->";
+
+/// Returns `true` if the document content contains the reference entity marker.
+pub fn is_reference_doc(content: &str) -> bool {
+    content.contains(REFERENCE_MARKER)
+}
+
 /// Return the byte offset where the document body ends (before any review queue
 /// section). Checks for both the HTML marker comment and a bare `## Review Queue`
 /// heading, returning whichever appears first. This prevents question generators
@@ -492,6 +500,14 @@ pub(crate) fn normalize_date_to_end(date: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_reference_doc() {
+        assert!(is_reference_doc("<!-- factbase:reference -->\n# AWS Lambda\n"));
+        assert!(is_reference_doc("<!-- factbase:abc123 -->\n<!-- factbase:reference -->\n# AWS Lambda\n"));
+        assert!(!is_reference_doc("# Regular Doc\n\nContent"));
+        assert!(!is_reference_doc("<!-- factbase:review -->\n# Doc\n"));
+    }
 
     #[test]
     fn test_clean_title_strips_footnote_refs() {
