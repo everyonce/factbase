@@ -54,9 +54,9 @@ pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time — answer them, then call step 2 again for the next batch.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([URL]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Search \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't resolve? → \"defer: searched [what], found [nothing/insufficient]\"\nAlways include your source.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([URL]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Search \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't resolve? → \"defer: searched [what], found [nothing/insufficient]\"\nAlways include your source.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Call answer_questions with doc_id, question_index, and your answer for each.\n\nResearch when needed — web search for stale/temporal, get_entity for cross-doc conflicts.\n\nThen call workflow with workflow='resolve', step=2 for the next batch.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Call answer_questions with doc_id, question_index, and your answer for each.\n\nResearch when needed — web search for stale/temporal, get_entity for cross-doc conflicts.\n\nAfter answering, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3 — the system will tell you when all questions are resolved.{ctx}";
 
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If the response includes `continue: true`, call it again until complete. Use dry_run=true first to preview, then without dry_run to apply.";
 
@@ -589,6 +589,8 @@ fn resolve_step2_batch(
             "resolved_so_far": resolved_so_far,
             "remaining": remaining
         },
+        "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
+        "completion_gate": format!("⚠️ {remaining} questions remain. Do NOT proceed to step 3 until remaining is 0. Call workflow with workflow='resolve', step=2 for the next batch."),
         "when_done": "Call workflow with workflow='resolve', step=2"
     });
 
@@ -1757,5 +1759,64 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wfc);
         let intro = step["intro"].as_str().unwrap();
         assert!(intro.starts_with("Custom intro"));
+    }
+
+    #[test]
+    fn test_resolve_step2_has_completion_gate_when_remaining() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "gate01", &["temporal", "missing"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let gate = step["completion_gate"].as_str().unwrap();
+        assert!(gate.contains("2 questions remain"));
+        assert!(gate.contains("Do NOT proceed to step 3"));
+        assert!(gate.contains("step=2"));
+    }
+
+    #[test]
+    fn test_resolve_step2_has_progress_field() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "prg001", &["temporal", "stale"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let progress = step["progress"].as_str().unwrap();
+        assert!(progress.contains("Batch 1"));
+        assert!(progress.contains("0 answered"));
+        assert!(progress.contains("2 remaining"));
+    }
+
+    #[test]
+    fn test_resolve_step2_empty_queue_has_no_completion_gate() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("completion_gate").is_none());
+        assert!(step.get("progress").is_none());
+    }
+
+    #[test]
+    fn test_resolve_step2_answer_instruction_warns_no_skip() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "skip01", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("Do NOT skip ahead to step 3"));
+    }
+
+    #[test]
+    fn test_resolve_step2_intro_mentions_multiple_batches() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "mul001", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("multiple batches"));
+        assert!(intro.contains("system will tell you when all questions are resolved"));
+    }
+
+    #[test]
+    fn test_time_budget_progress_message_warns_incomplete() {
+        let mut resp = serde_json::json!({"ok": true});
+        crate::mcp::tools::helpers::apply_time_budget_progress(&mut resp, 3, 10, "check_repository", true);
+        let msg = resp["message"].as_str().unwrap();
+        assert!(msg.contains("7 remaining"));
+        assert!(msg.contains("same arguments"));
+        assert!(msg.contains("Do NOT report partial results"));
     }
 }

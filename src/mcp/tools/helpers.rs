@@ -279,7 +279,7 @@ pub(crate) fn apply_time_budget_progress(
     });
     response["continue"] = serde_json::json!(true);
     response["message"] = serde_json::json!(format!(
-        "Processed {processed}/{total} documents (time budget reached). Call {tool_name} again to continue."
+        "⚠️ Processed {processed}/{total} ({remaining} remaining). Call {tool_name} again with the same arguments to continue. Do NOT report partial results — the operation is incomplete."
     ));
 }
 
