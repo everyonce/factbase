@@ -169,11 +169,19 @@ export function renderMisplacedCard(
             <span class="text-gray-400 dark:text-gray-500 text-xs">[${escapeHtml(suggestion.doc_id)}]</span>
           </div>
           <div class="flex items-center space-x-2 text-sm">
+            ${suggestion.current_folder ? `
+            <span class="text-gray-500 dark:text-gray-400">Current folder:</span>
+            <span class="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300">${escapeHtml(suggestion.current_folder)}</span>
+            <span class="text-gray-400 dark:text-gray-500">→</span>
+            <span class="text-gray-500 dark:text-gray-400">Suggested:</span>
+            <span class="px-2 py-0.5 bg-green-100 dark:bg-green-900 rounded text-green-700 dark:text-green-300">${escapeHtml(suggestion.suggested_folder || '')}</span>
+            ` : `
             <span class="text-gray-500 dark:text-gray-400">Current type:</span>
             <span class="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300">${escapeHtml(suggestion.current_type)}</span>
             <span class="text-gray-400 dark:text-gray-500">→</span>
             <span class="text-gray-500 dark:text-gray-400">Suggested:</span>
             <span class="px-2 py-0.5 bg-green-100 dark:bg-green-900 rounded text-green-700 dark:text-green-300">${escapeHtml(suggestion.suggested_type)}</span>
+            `}
           </div>
           <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
             ${escapeHtml(suggestion.reason)}

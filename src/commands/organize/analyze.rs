@@ -136,11 +136,22 @@ fn print_table(results: &AnalysisResults, repo_id: &str) {
         );
         println!("{}", "-".repeat(40));
         for c in &results.misplaced_candidates {
-            println!("  [{:.2}] {} [{}]", c.confidence, c.doc_id, c.doc_title);
-            println!(
-                "         {} → {} (suggested)",
-                c.current_type, c.suggested_type
-            );
+            if let (Some(current_folder), Some(suggested_folder)) =
+                (&c.current_folder, &c.suggested_folder)
+            {
+                println!("  [folder] {} [{}]", c.doc_id, c.doc_title);
+                println!(
+                    "         {} → {} (suggested)",
+                    current_folder, suggested_folder
+                );
+                println!("         {}", c.rationale);
+            } else {
+                println!("  [{:.2}] {} [{}]", c.confidence, c.doc_id, c.doc_title);
+                println!(
+                    "         {} → {} (suggested)",
+                    c.current_type, c.suggested_type
+                );
+            }
         }
     }
 
@@ -279,6 +290,8 @@ mod tests {
                 suggested_type: "project".to_string(),
                 confidence: 0.15,
                 rationale: "test".to_string(),
+                current_folder: None,
+                suggested_folder: None,
             }],
             duplicate_entries: vec![],
             stale_entries: vec![],
