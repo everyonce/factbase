@@ -219,7 +219,7 @@ struct ClassifyResult {
 
 /// Parse a JSON array of strings from LLM response, tolerating markdown fences.
 fn parse_string_array(response: &str) -> Vec<String> {
-    let trimmed = strip_markdown_fences(response);
+    let trimmed = crate::patterns::strip_markdown_fences(response);
     serde_json::from_str::<Vec<String>>(trimmed)
         .ok()
         .or_else(|| {
@@ -234,7 +234,7 @@ fn parse_string_array(response: &str) -> Vec<String> {
 
 /// Parse classification JSON from LLM response.
 fn parse_classify_response(response: &str) -> Vec<ClassifyResult> {
-    let trimmed = strip_markdown_fences(response);
+    let trimmed = crate::patterns::strip_markdown_fences(response);
     serde_json::from_str::<Vec<ClassifyResult>>(trimmed)
         .ok()
         .or_else(|| {
@@ -245,18 +245,6 @@ fn parse_classify_response(response: &str) -> Vec<ClassifyResult> {
             })
         })
         .unwrap_or_default()
-}
-
-/// Strip markdown code fences (```json ... ```) from LLM output.
-fn strip_markdown_fences(s: &str) -> &str {
-    let s = s.trim();
-    if let Some(rest) = s.strip_prefix("```json") {
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else if let Some(rest) = s.strip_prefix("```") {
-        rest.strip_suffix("```").unwrap_or(rest).trim()
-    } else {
-        s
-    }
 }
 
 fn capitalize_first(s: &str) -> String {
@@ -459,6 +447,7 @@ mod tests {
 
     #[test]
     fn test_strip_markdown_fences() {
+        use crate::patterns::strip_markdown_fences;
         assert_eq!(strip_markdown_fences("```json\n[]\n```"), "[]");
         assert_eq!(strip_markdown_fences("```\n[]\n```"), "[]");
         assert_eq!(strip_markdown_fences("[]"), "[]");

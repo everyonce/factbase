@@ -121,18 +121,9 @@ struct DocContext {
     source_map: HashMap<u32, String>,
 }
 
-/// Load and cache document context (title, content, source map).
-fn load_doc_context(
-    doc_id: &str,
-    cache: &mut HashMap<String, DocContext>,
-    db: &Database,
-) -> Option<()> {
-    if cache.contains_key(doc_id) {
-        return Some(());
-    }
-    let doc = db.get_document(doc_id).ok()??;
-    let source_defs = parse_source_definitions(&doc.content);
-    let source_map: HashMap<u32, String> = source_defs
+/// Build a lookup from footnote number → formatted definition text.
+fn build_source_map(content: &str) -> HashMap<u32, String> {
+    parse_source_definitions(content)
         .into_iter()
         .map(|d| {
             let text = if let Some(date) = &d.date {
@@ -144,7 +135,20 @@ fn load_doc_context(
             };
             (d.number, text)
         })
-        .collect();
+        .collect()
+}
+
+/// Load and cache document context (title, content, source map).
+fn load_doc_context(
+    doc_id: &str,
+    cache: &mut HashMap<String, DocContext>,
+    db: &Database,
+) -> Option<()> {
+    if cache.contains_key(doc_id) {
+        return Some(());
+    }
+    let doc = db.get_document(doc_id).ok()??;
+    let source_map = build_source_map(&doc.content);
     let title = extract_title(&doc.content, doc_id);
     cache.insert(
         doc_id.to_string(),
@@ -262,23 +266,7 @@ fn build_pair_prompt(batch: &[&FactPairContext]) -> String {
 
 /// Parse LLM response for fact-pair classification.
 fn parse_pair_response(response: &str) -> Vec<PairCheckResult> {
-    let trimmed = response.trim();
-    let json_str = if trimmed.starts_with("```") {
-        trimmed
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim()
-    } else {
-        trimmed
-    };
-    match serde_json::from_str::<Vec<PairCheckResult>>(json_str) {
-        Ok(results) => results,
-        Err(e) => {
-            warn!("Failed to parse fact-pair LLM response: {e}");
-            Vec::new()
-        }
-    }
+    crate::patterns::parse_json_array(response, "fact-pair")
 }
 
 /// Determine which document should receive the review question.
@@ -525,10 +513,7 @@ pub async fn cross_validate_facts(
 
 /// Extract document title from content (first `# ` heading) or fall back to doc_id.
 fn extract_title(content: &str, doc_id: &str) -> String {
-    content
-        .lines()
-        .find(|l| l.starts_with("# "))
-        .map_or_else(|| doc_id.to_string(), |l| crate::patterns::clean_title(&l[2..]))
+    crate::patterns::extract_heading_title(content).unwrap_or_else(|| doc_id.to_string())
 }
 
 /// Default template for the cross-validate prompt.
@@ -601,25 +586,7 @@ fn build_prompt(doc_title: &str, batch: &[&FactWithContext]) -> String {
 
 /// Parse the LLM JSON response, tolerating markdown fences and partial output.
 fn parse_llm_response(response: &str) -> Vec<CrossCheckResult> {
-    // Strip markdown code fences if present
-    let trimmed = response.trim();
-    let json_str = if trimmed.starts_with("```") {
-        trimmed
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim()
-    } else {
-        trimmed
-    };
-
-    match serde_json::from_str::<Vec<CrossCheckResult>>(json_str) {
-        Ok(results) => results,
-        Err(e) => {
-            warn!("Failed to parse cross-validation LLM response: {e}");
-            Vec::new()
-        }
-    }
+    crate::patterns::parse_json_array(response, "cross-validation")
 }
 
 /// Convert a CrossCheckResult into a ReviewQuestion, if actionable.
@@ -667,20 +634,7 @@ pub async fn cross_validate_document(
     }
 
     // Build a lookup from footnote number → definition text for source context.
-    let source_defs = parse_source_definitions(content);
-    let source_map: std::collections::HashMap<u32, String> = source_defs
-        .into_iter()
-        .map(|d| {
-            let text = if let Some(date) = &d.date {
-                format!("[^{}]: {} {}, {}", d.number, d.source_type, d.context, date)
-            } else if d.context.is_empty() {
-                format!("[^{}]: {}", d.number, d.source_type)
-            } else {
-                format!("[^{}]: {} {}", d.number, d.source_type, d.context)
-            };
-            (d.number, text)
-        })
-        .collect();
+    let source_map = build_source_map(content);
 
     let content_lower = content.to_lowercase();
     let mut facts_with_context = Vec::with_capacity(facts.len());

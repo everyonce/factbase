@@ -143,10 +143,7 @@ fn extract_header_id(content: &str) -> Option<String> {
 }
 
 fn extract_title(content: &str) -> Option<String> {
-    content
-        .lines()
-        .find(|l| l.starts_with("# ") && !l.starts_with("## "))
-        .map(|l| crate::patterns::clean_title(&l[2..]))
+    crate::patterns::extract_heading_title(content)
 }
 
 fn content_line_count(text: &str) -> usize {
