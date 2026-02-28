@@ -105,6 +105,16 @@ pub fn clean_title(title: &str) -> String {
     SOURCE_REF_DETECT_REGEX.replace_all(title, "").trim().to_string()
 }
 
+/// Extract the first `# ` heading from content and clean it.
+///
+/// Returns `None` if no H1 heading is found.
+pub fn extract_heading_title(content: &str) -> Option<String> {
+    content
+        .lines()
+        .find(|l| l.starts_with("# ") && !l.starts_with("## "))
+        .map(|l| clean_title(&l[2..]))
+}
+
 // =============================================================================
 // Fact/list item patterns
 // =============================================================================
@@ -365,6 +375,41 @@ pub fn strip_reviewed_markers(content: &str) -> String {
 static SEQUENTIAL_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- sequential\b.*?-->").expect("sequential marker regex should be valid")
 });
+
+// =============================================================================
+// LLM response parsing helpers
+// =============================================================================
+
+/// Strip markdown code fences from an LLM response.
+///
+/// Handles ```` ```json ... ``` ```` and ```` ``` ... ``` ```` wrappers.
+pub(crate) fn strip_markdown_fences(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(rest) = s.strip_prefix("```json") {
+        rest.strip_suffix("```").unwrap_or(rest).trim()
+    } else if let Some(rest) = s.strip_prefix("```") {
+        rest.strip_suffix("```").unwrap_or(rest).trim()
+    } else {
+        s
+    }
+}
+
+/// Parse an LLM response as a JSON array, stripping markdown fences.
+///
+/// Returns an empty Vec on parse failure (with a warning log).
+pub(crate) fn parse_json_array<T: serde::de::DeserializeOwned>(
+    response: &str,
+    context: &str,
+) -> Vec<T> {
+    let json_str = strip_markdown_fences(response);
+    match serde_json::from_str::<Vec<T>>(json_str) {
+        Ok(results) => results,
+        Err(e) => {
+            tracing::warn!("Failed to parse {context} LLM response: {e}");
+            Vec::new()
+        }
+    }
+}
 
 // =============================================================================
 // Date normalization and comparison functions
@@ -921,5 +966,77 @@ mod tests {
         let disk = "# Title\n\n<!-- factbase:review -->\n- [ ] q\n";
         let db = "# Title\n\n- fact\n";
         assert!(merge_review_queue(disk, db).is_none());
+    }
+
+    #[test]
+    fn test_strip_markdown_fences_json() {
+        assert_eq!(strip_markdown_fences("```json\n[]\n```"), "[]");
+    }
+
+    #[test]
+    fn test_strip_markdown_fences_plain() {
+        assert_eq!(strip_markdown_fences("```\n[]\n```"), "[]");
+    }
+
+    #[test]
+    fn test_strip_markdown_fences_none() {
+        assert_eq!(strip_markdown_fences("[]"), "[]");
+    }
+
+    #[test]
+    fn test_parse_json_array_valid() {
+        #[derive(serde::Deserialize)]
+        struct Item {
+            n: usize,
+        }
+        let results: Vec<Item> = parse_json_array("[{\"n\":1},{\"n\":2}]", "test");
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].n, 1);
+    }
+
+    #[test]
+    fn test_parse_json_array_with_fences() {
+        #[derive(serde::Deserialize)]
+        struct Item {
+            n: usize,
+        }
+        let results: Vec<Item> = parse_json_array("```json\n[{\"n\":1}]\n```", "test");
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_json_array_malformed() {
+        #[derive(serde::Deserialize)]
+        struct Item {
+            n: usize,
+        }
+        let results: Vec<Item> = parse_json_array("not json", "test");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_extract_heading_title_found() {
+        assert_eq!(
+            extract_heading_title("<!-- factbase:abc123 -->\n# My Title\n\n- fact"),
+            Some("My Title".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_heading_title_none() {
+        assert_eq!(extract_heading_title("No heading here\n- fact"), None);
+    }
+
+    #[test]
+    fn test_extract_heading_title_skips_h2() {
+        assert_eq!(extract_heading_title("## Subheading\n- fact"), None);
+    }
+
+    #[test]
+    fn test_extract_heading_title_cleans_refs() {
+        assert_eq!(
+            extract_heading_title("# Title [^1]\n"),
+            Some("Title".to_string())
+        );
     }
 }
