@@ -1856,6 +1856,16 @@ mod tests {
     }
 
     #[test]
+    fn test_scan_repository_schema_has_force_reindex() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let scan = tools_arr.iter().find(|t| t["name"] == "scan_repository").unwrap();
+        let props = &scan["inputSchema"]["properties"];
+        assert!(props.get("force_reindex").is_some(), "scan_repository should have force_reindex param");
+        assert_eq!(props["force_reindex"]["type"], "boolean");
+    }
+
+    #[test]
     fn test_workflow_texts_mention_fact_embeddings() {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());

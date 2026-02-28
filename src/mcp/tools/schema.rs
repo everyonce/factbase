@@ -228,6 +228,7 @@ pub fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" },
+                        "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings even if content is unchanged (default: false)" },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }

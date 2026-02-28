@@ -35,6 +35,9 @@ pub async fn scan_repository(
     let processor = DocumentProcessor::new();
     let mut opts = ScanOptions::from_config(&config);
 
+    // Wire force_reindex from MCP args
+    opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
+
     // Set deadline for time-boxed operation
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     opts.deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
