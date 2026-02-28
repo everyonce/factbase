@@ -202,7 +202,8 @@ pub fn tools_list() -> Value {
                         "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
                         "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, significantly slower)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
+                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Doc IDs already cross-validated (from previous call's response). Pass back to resume deep_check where it left off." }
                     }
                 }
             },

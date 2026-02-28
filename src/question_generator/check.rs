@@ -65,6 +65,8 @@ pub struct CheckConfig {
     pub concurrency: usize,
     /// Optional deadline for time-boxed operations.
     pub deadline: Option<Instant>,
+    /// Doc IDs already cross-validated in a previous call (skip them).
+    pub checked_doc_ids: HashSet<String>,
 }
 
 /// Result of linting a single document.
@@ -87,6 +89,8 @@ pub struct CheckOutput {
     pub docs_processed: usize,
     /// Total number of active (non-archived, non-corrupted) documents.
     pub docs_total: usize,
+    /// Doc IDs that completed cross-validation (for cursor-based resumption).
+    pub checked_doc_ids: Vec<String>,
 }
 
 /// Lint all documents: generate review questions, optionally cross-validate, write results.
@@ -312,6 +316,7 @@ pub async fn check_all_documents(
     }
 
     // Sequential cross-validation pass (one doc at a time to avoid API throttling)
+    let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
     if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
         for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
@@ -320,12 +325,22 @@ pub async fn check_all_documents(
                     break;
                 }
             }
+            // Skip docs already cross-validated in a previous call
+            if config.checked_doc_ids.contains(&doc.id) {
+                continue;
+            }
             if i % 5 == 0 {
                 progress.report(i + 1, total_active, "Cross-validating");
             }
             if let Some(llm) = llm {
-                match cross_validate_document(&doc.content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm).await {
-                    Ok(cross) => questions.extend(cross),
+                match cross_validate_document(&doc.content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, config.deadline).await {
+                    Ok(cross) => {
+                        questions.extend(cross);
+                        // Only mark as fully checked if deadline wasn't hit mid-document
+                        if !config.deadline.is_some_and(|d| Instant::now() > d) {
+                            cross_validated_ids.push(doc.id.clone());
+                        }
+                    }
                     Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
                 }
             }
@@ -379,6 +394,7 @@ pub async fn check_all_documents(
         results,
         docs_processed,
         docs_total: total_active,
+        checked_doc_ids: cross_validated_ids,
     })
 }
 
@@ -419,6 +435,7 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
+            checked_doc_ids: HashSet::new(),
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -445,6 +462,7 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
+            checked_doc_ids: HashSet::new(),
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -467,6 +485,7 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
+            checked_doc_ids: HashSet::new(),
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -490,6 +509,7 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
+            checked_doc_ids: HashSet::new(),
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -519,6 +539,7 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+            checked_doc_ids: HashSet::new(),
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -543,6 +564,7 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
+            checked_doc_ids: HashSet::new(),
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -560,5 +582,57 @@ mod tests {
         assert!(!is_archived("people/jane.md"));
         assert!(!is_archived("companies/xsolis/xsolis.md"));
         assert!(!is_archived("archival-notes/doc.md")); // not "archive/"
+    }
+
+    #[tokio::test]
+    async fn test_lint_deadline_returns_checked_doc_ids() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let docs = vec![
+            make_doc("aaa", "Doc A", "- Fact A\n"),
+            make_doc("bbb", "Doc B", "- Fact B\n"),
+        ];
+        // No deadline, no LLM → checked_doc_ids should be empty (no cross-validation)
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert!(output.checked_doc_ids.is_empty(), "no LLM means no cross-validation tracking");
+    }
+
+    #[tokio::test]
+    async fn test_lint_checked_doc_ids_skip_cross_validation() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let docs = vec![
+            make_doc("aaa", "Doc A", "- Fact A\n"),
+            make_doc("bbb", "Doc B", "- Fact B\n"),
+        ];
+        // Pass aaa as already checked — it should be skipped in cross-validation
+        let mut checked = HashSet::new();
+        checked.insert("aaa".to_string());
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: None,
+            checked_doc_ids: checked.clone(),
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        // Without LLM, cross-validation is skipped entirely, so checked_doc_ids
+        // just carries forward the input set
+        assert!(output.checked_doc_ids.contains(&"aaa".to_string()));
     }
 }

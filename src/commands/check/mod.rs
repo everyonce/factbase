@@ -383,6 +383,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     &db,
                     embedding.as_ref(),
                     llm.as_ref(),
+                    None,
                 )
                 .await
                 {
