@@ -17,6 +17,8 @@ pub struct ScanResult {
     pub reindexed: usize,
     /// Number of entity links detected
     pub links_detected: usize,
+    /// Number of fact-level embeddings generated
+    pub fact_embeddings_generated: usize,
     /// Total documents processed
     pub total: usize,
     /// Detected duplicate document pairs

@@ -104,6 +104,20 @@ impl Database {
         Ok(results)
     }
 
+    /// Get fact hashes for a document, keyed by fact ID.
+    pub fn get_fact_hashes_for_doc(
+        &self,
+        doc_id: &str,
+    ) -> Result<std::collections::HashMap<String, String>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let mut stmt =
+            conn.prepare("SELECT id, fact_hash FROM fact_metadata WHERE document_id = ?1")?;
+        let map = stmt
+            .query_map([doc_id], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<std::collections::HashMap<String, String>, _>>()?;
+        Ok(map)
+    }
+
     /// Count total fact embeddings in the database.
     pub fn get_fact_embedding_count(&self) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
@@ -237,5 +251,28 @@ mod tests {
     fn test_fact_embedding_count_empty() {
         let (db, _tmp) = test_db();
         assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_get_fact_hashes_for_doc() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+
+        let embedding: Vec<f32> = vec![0.1; 1024];
+        db.upsert_fact_embedding("doc1_5", "doc1", 5, "Fact A", "hashA", &embedding)
+            .unwrap();
+        db.upsert_fact_embedding("doc1_10", "doc1", 10, "Fact B", "hashB", &embedding)
+            .unwrap();
+
+        let hashes = db.get_fact_hashes_for_doc("doc1").unwrap();
+        assert_eq!(hashes.len(), 2);
+        assert_eq!(hashes["doc1_5"], "hashA");
+        assert_eq!(hashes["doc1_10"], "hashB");
+
+        // Non-existent doc returns empty
+        let empty = db.get_fact_hashes_for_doc("nonexistent").unwrap();
+        assert!(empty.is_empty());
     }
 }

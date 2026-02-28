@@ -100,6 +100,7 @@ pub async fn scan_repository(
         "unchanged": result.unchanged,
         "deleted": result.deleted,
         "links_detected": result.links_detected,
+        "fact_embeddings_generated": result.fact_embeddings_generated,
         "total": result.total,
         "temporal_coverage_percent": temporal_coverage,
         "source_coverage_percent": source_coverage,
