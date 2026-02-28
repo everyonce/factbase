@@ -731,7 +731,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        let scaling_tools = ["scan_repository", "check_repository", "apply_review_answers", "generate_questions"];
+        let scaling_tools = ["scan_repository", "check_repository", "apply_review_answers", "generate_questions", "organize_analyze"];
         for tool_name in &scaling_tools {
             let tool = tools
                 .iter()
