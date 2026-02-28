@@ -1,6 +1,7 @@
 //! Scan orchestration - full_scan and scan_all_repositories
 
 mod embedding;
+mod facts;
 mod links;
 mod results;
 
@@ -25,6 +26,7 @@ use crate::models::{normalize_pair, DuplicatePair};
 use super::options::ScanOptions;
 use super::progress::OptionalProgress;
 use embedding::{run_embedding_phase, EmbeddingPhaseInput};
+use facts::{run_fact_embedding_phase, FactEmbeddingInput};
 use links::{run_link_detection_phase, LinkPhaseInput};
 use results::{build_interrupted_result, InterruptedResultParams};
 
@@ -436,6 +438,7 @@ pub async fn full_scan(
                     total_ms: scan_start.elapsed().as_millis() as u64,
                     docs_embedded: total_docs_embedded,
                     docs_link_detected: 0,
+                    fact_embeddings_generated: 0,
                 }));
             }
         }
@@ -462,6 +465,7 @@ pub async fn full_scan(
             }
             if !ctx.opts.dry_run {
                 db.mark_deleted(id)?;
+                db.delete_fact_embeddings_for_doc(id)?;
             }
             result.deleted += 1;
         }
@@ -540,12 +544,26 @@ pub async fn full_scan(
             total_ms: scan_start.elapsed().as_millis() as u64,
             docs_embedded,
             docs_link_detected: link_output.docs_link_detected,
+            fact_embeddings_generated: 0,
         }));
     }
 
     result.links_detected = link_output.links_detected;
     let link_detection_ms = link_output.link_detection_ms;
     let docs_link_detected = link_output.docs_link_detected;
+
+    // Pass 3: Generate fact-level embeddings for cross-validation
+    if !changed_ids.is_empty() {
+        ctx.progress.phase("Generating fact embeddings");
+        result.fact_embeddings_generated = run_fact_embedding_phase(&FactEmbeddingInput {
+            changed_ids: &changed_ids,
+            embedding: ctx.embedding,
+            db,
+            embedding_batch_size: ctx.opts.embedding_batch_size,
+            progress: ctx.progress,
+        })
+        .await?;
+    }
 
     // Set total document count
     // moved = files that changed path only (no content change)
@@ -613,6 +631,7 @@ pub async fn scan_all_repositories(
                 total.unchanged += result.unchanged;
                 total.deleted += result.deleted;
                 total.links_detected += result.links_detected;
+                total.fact_embeddings_generated += result.fact_embeddings_generated;
             }
             Err(e) => {
                 warn!("Failed to scan repo {}: {}", repo.id, e);

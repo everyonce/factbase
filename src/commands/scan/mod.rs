@@ -204,6 +204,9 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         if result.links_detected > 0 {
             println!("{} links detected", result.links_detected);
         }
+        if result.fact_embeddings_generated > 0 {
+            println!("{} fact embeddings generated", result.fact_embeddings_generated);
+        }
         if let Some(ref stats) = result.stats {
             println!("\nTiming:");
             println!(
