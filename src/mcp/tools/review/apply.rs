@@ -4,6 +4,7 @@ use crate::answer_processor::apply_all::{apply_all_review_answers, ApplyConfig, 
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
+use crate::mcp::tools::helpers::WriteGuard;
 use crate::mcp::tools::{get_bool_arg, get_str_arg};
 use crate::processor::parse_review_queue;
 use crate::progress::ProgressReporter;
@@ -47,6 +48,9 @@ pub async fn apply_review_answers(
         since: None,
         deadline,
     };
+
+    // Acquire write guard for non-dry-run (rewrites doc content on disk+DB)
+    let _write_guard = if dry_run { None } else { Some(WriteGuard::try_acquire()?) };
 
     let result = apply_all_review_answers(db, llm, &config, progress).await?;
 
