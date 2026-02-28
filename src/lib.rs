@@ -107,6 +107,8 @@ pub use processor::{
 };
 pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::cross_validate::cross_validate_document;
+pub use question_generator::cross_validate::cross_validate_facts;
+pub use question_generator::cross_validate::{make_pair_id, CrossValidateOutput};
 pub use question_generator::{
     extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions,
     generate_conflict_questions, generate_corruption_questions,

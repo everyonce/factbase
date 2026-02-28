@@ -39,9 +39,15 @@ pub async fn check_repository(
     // Only pass LLM for cross-validation when deep_check is requested
     let effective_llm: Option<&dyn LlmProvider> = if deep_check { llm } else { None };
 
-    let check_concurrency = crate::Config::load(None)
+    let config_file = crate::Config::load(None);
+    let check_concurrency = config_file
+        .as_ref()
         .map(|c| c.processor.check_concurrency)
         .unwrap_or(LINT_CONCURRENCY);
+    let batch_size = config_file
+        .as_ref()
+        .map(|c| c.cross_validate.batch_size)
+        .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
 
     // Load perspective for stale_days and required_fields
     let perspective = load_perspective(db, repo_id);
@@ -92,7 +98,13 @@ pub async fn check_repository(
             .and_then(Value::as_array)
             .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
             .unwrap_or_default(),
+        checked_pair_ids: args
+            .get("checked_pair_ids")
+            .and_then(Value::as_array)
+            .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+            .unwrap_or_default(),
         acquire_write_guard: true,
+        batch_size,
     };
 
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
@@ -163,9 +175,27 @@ pub async fn check_repository(
         &mut result, output.docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
     );
 
-    // Return checked doc IDs so the caller can resume cross-validation
+    // Return checked doc IDs so the caller can resume cross-validation (backward compat)
     if !output.checked_doc_ids.is_empty() && output.docs_processed < output.docs_total {
         result["checked_doc_ids"] = serde_json::to_value(&output.checked_doc_ids).unwrap_or_default();
+    }
+
+    // Return checked pair IDs for precise cursor-based resumption
+    if !output.checked_pair_ids.is_empty() {
+        if let Some((processed, total)) = output.pair_progress {
+            if processed < total {
+                result["checked_pair_ids"] = serde_json::to_value(&output.checked_pair_ids).unwrap_or_default();
+                result["progress"] = serde_json::json!({
+                    "processed": processed,
+                    "total": total,
+                });
+                result["continue"] = serde_json::json!(true);
+                let remaining = total.saturating_sub(processed);
+                result["message"] = serde_json::json!(format!(
+                    "⚠️ Processed {processed}/{total} fact pairs ({remaining} remaining). Call check_repository again with the `checked_pair_ids` array to continue. Do NOT report partial results — the operation is incomplete."
+                ));
+            }
+        }
     }
 
     if !suggested_entities.is_empty() {
@@ -236,5 +266,66 @@ mod tests {
         // Future deadline → deadline_hit = false
         let future = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
         assert!(!future.is_some_and(|d| std::time::Instant::now() > d));
+    }
+
+    #[tokio::test]
+    async fn test_check_repository_accepts_checked_pair_ids() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "pp1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:pp1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // Pass checked_pair_ids — should be accepted without error
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+            "checked_pair_ids": ["pp1111_3:pp2222_5"],
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        // Should complete without error
+        assert!(result.get("documents_scanned").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_check_repository_backward_compat_checked_doc_ids() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "bc1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:bc1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // Pass old-style checked_doc_ids — should still work
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+            "checked_doc_ids": ["bc1111"],
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert!(result.get("documents_scanned").is_some());
     }
 }

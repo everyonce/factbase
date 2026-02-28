@@ -10,6 +10,7 @@ mod server;
 mod validation;
 mod web;
 pub mod workflows;
+pub mod cross_validate;
 
 pub use database::DatabaseConfig;
 pub use embedding::{EmbeddingConfig, LlmConfig, OllamaConfig};
@@ -19,6 +20,7 @@ pub use server::{RateLimitConfig, ReviewConfig, ServerConfig, TemporalConfig};
 pub use validation::{validate_timeout, TIMEOUT_RANGE};
 pub use web::WebConfig;
 pub use workflows::WorkflowsConfig;
+pub use cross_validate::CrossValidateConfig;
 
 use crate::database::Database;
 use crate::error::FactbaseError;
@@ -63,6 +65,8 @@ pub struct Config {
     pub prompts: PromptsConfig,
     #[serde(default)]
     pub workflows: WorkflowsConfig,
+    #[serde(default)]
+    pub cross_validate: CrossValidateConfig,
 }
 
 impl Default for Config {
@@ -105,6 +109,7 @@ impl Default for Config {
             web: WebConfig::default(),
             prompts: PromptsConfig::default(),
             workflows: WorkflowsConfig::default(),
+            cross_validate: CrossValidateConfig::default(),
         }
     }
 }

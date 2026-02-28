@@ -369,76 +369,139 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         if !args.no_questions {
         if let Some((ref embedding, ref llm)) = deep_check_providers {
             progress.phase("Cross-document validation");
-            if is_table_format && !args.quiet {
-                println!("  Cross-checking {} documents...", docs.len());
-            }
-            let mut skipped = 0usize;
-            for (i, doc) in docs.iter().enumerate() {
-                // Skip documents whose content hasn't changed since last cross-check
-                if !db.needs_cross_check(&doc.id)? {
-                    skipped += 1;
-                    continue;
-                }
-                if is_table_format && !args.quiet {
-                    eprint!("\r  Cross-checking document {} of {}...", i + 1, docs.len());
-                }
-                progress.report(i + 1, docs.len(), &format!("Cross-checking {}", doc.title));
-                match factbase::cross_validate_document(
-                    &doc.content,
-                    &doc.id,
-                    doc.doc_type.as_deref(),
-                    &db,
-                    embedding.as_ref(),
-                    llm.as_ref(),
-                    None,
-                )
-                .await
-                {
-                    Ok(questions) => {
-                        if !questions.is_empty() {
-                            warnings += questions.len();
-                            if is_table_format {
-                                eprintln!();
-                                for q in &questions {
-                                    println!(
-                                        "  CROSS: {} [{}] @q[{}] {}",
-                                        doc.title,
-                                        doc.id,
-                                        q.question_type.as_str(),
-                                        q.description
-                                    );
+
+            // Try fact-pair mode first (uses pre-computed embeddings from scan)
+            let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+            if fact_count > 0 {
+                let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5).unwrap_or_default();
+                if !pairs.is_empty() {
+                    if is_table_format && !args.quiet {
+                        println!("  Cross-checking {} fact pairs...", pairs.len());
+                    }
+                    match factbase::cross_validate_facts(&pairs, &db, llm.as_ref(), None, config.cross_validate.batch_size, &std::collections::HashSet::new()).await {
+                        Ok(cv_output) => {
+                            for (doc_id, questions) in &cv_output.questions {
+                                if !questions.is_empty() {
+                                    warnings += questions.len();
+                                    if let Some(doc) = docs.iter().find(|d| &d.id == doc_id) {
+                                        if is_table_format {
+                                            for q in questions {
+                                                println!(
+                                                    "  CROSS: {} [{}] @q[{}] {}",
+                                                    doc.title,
+                                                    doc.id,
+                                                    q.question_type.as_str(),
+                                                    q.description
+                                                );
+                                            }
+                                        }
+                                        if !args.dry_run {
+                                            let updated = factbase::append_review_questions(
+                                                &doc.content,
+                                                questions,
+                                            );
+                                            let abs_path =
+                                                std::path::Path::new(&repo.path).join(&doc.file_path);
+                                            fs::write(&abs_path, &updated)?;
+                                        }
+                                    }
+                                }
+                                if !args.dry_run {
+                                    db.set_cross_check_hash(doc_id)?;
                                 }
                             }
-                            // Append questions to file unless dry-run
+                            // Mark all docs as cross-checked
                             if !args.dry_run {
-                                let updated =
-                                    factbase::append_review_questions(&doc.content, &questions);
-                                let abs_path =
-                                    std::path::Path::new(&repo.path).join(&doc.file_path);
-                                fs::write(&abs_path, &updated)?;
+                                for doc in &docs {
+                                    if !cv_output.questions.contains_key(&doc.id) {
+                                        db.set_cross_check_hash(&doc.id)?;
+                                    }
+                                }
                             }
                         }
-                        // Mark document as cross-checked so subsequent runs skip it
-                        if !args.dry_run {
-                            db.set_cross_check_hash(&doc.id)?;
+                        Err(e) => {
+                            if is_table_format {
+                                eprintln!("  WARN: Fact-pair cross-validation failed: {e}");
+                            }
+                            warnings += 1;
                         }
-                    }
-                    Err(e) => {
-                        if is_table_format {
-                            eprintln!();
-                            eprintln!(
-                                "  WARN: Cross-check failed for {} [{}]: {}",
-                                doc.title, doc.id, e
-                            );
-                        }
-                        warnings += 1;
                     }
                 }
-            }
-            if is_table_format && !args.quiet {
-                eprintln!("\r  Cross-check complete.                    ");
-                if skipped > 0 {
-                    println!("  Skipped {skipped} unchanged document(s).");
+                if is_table_format && !args.quiet {
+                    eprintln!("  Cross-check complete.                    ");
+                }
+            } else {
+                // Fallback: per-document cross-validation (no fact embeddings yet)
+                if is_table_format && !args.quiet {
+                    eprintln!("  No fact embeddings found — using per-document cross-validation.");
+                    eprintln!("  Run `factbase scan` to populate fact embeddings for faster checks.");
+                    println!("  Cross-checking {} documents...", docs.len());
+                }
+                let mut skipped = 0usize;
+                for (i, doc) in docs.iter().enumerate() {
+                    if !db.needs_cross_check(&doc.id)? {
+                        skipped += 1;
+                        continue;
+                    }
+                    if is_table_format && !args.quiet {
+                        eprint!("\r  Cross-checking document {} of {}...", i + 1, docs.len());
+                    }
+                    progress.report(i + 1, docs.len(), &format!("Cross-checking {}", doc.title));
+                    match factbase::cross_validate_document(
+                        &doc.content,
+                        &doc.id,
+                        doc.doc_type.as_deref(),
+                        &db,
+                        embedding.as_ref(),
+                        llm.as_ref(),
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(questions) => {
+                            if !questions.is_empty() {
+                                warnings += questions.len();
+                                if is_table_format {
+                                    eprintln!();
+                                    for q in &questions {
+                                        println!(
+                                            "  CROSS: {} [{}] @q[{}] {}",
+                                            doc.title,
+                                            doc.id,
+                                            q.question_type.as_str(),
+                                            q.description
+                                        );
+                                    }
+                                }
+                                if !args.dry_run {
+                                    let updated =
+                                        factbase::append_review_questions(&doc.content, &questions);
+                                    let abs_path =
+                                        std::path::Path::new(&repo.path).join(&doc.file_path);
+                                    fs::write(&abs_path, &updated)?;
+                                }
+                            }
+                            if !args.dry_run {
+                                db.set_cross_check_hash(&doc.id)?;
+                            }
+                        }
+                        Err(e) => {
+                            if is_table_format {
+                                eprintln!();
+                                eprintln!(
+                                    "  WARN: Cross-check failed for {} [{}]: {}",
+                                    doc.title, doc.id, e
+                                );
+                            }
+                            warnings += 1;
+                        }
+                    }
+                }
+                if is_table_format && !args.quiet {
+                    eprintln!("\r  Cross-check complete.                    ");
+                    if skipped > 0 {
+                        println!("  Skipped {skipped} unchanged document(s).");
+                    }
                 }
             }
         }

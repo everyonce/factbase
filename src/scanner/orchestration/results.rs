@@ -24,6 +24,7 @@ pub(super) struct InterruptedResultParams {
     pub total_ms: u64,
     pub docs_embedded: usize,
     pub docs_link_detected: usize,
+    pub fact_embeddings_generated: usize,
 }
 
 /// Build a ScanResult for an interrupted scan
@@ -47,6 +48,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
         moved: params.moved,
         reindexed: params.reindexed,
         links_detected: params.links_detected,
+        fact_embeddings_generated: params.fact_embeddings_generated,
         total: params.added + params.updated + params.unchanged + params.moved + params.reindexed,
         duplicates: vec![],
         stats: Some(ScanStats {
@@ -97,6 +99,7 @@ mod tests {
             total_ms: 0,
             docs_embedded: 0,
             docs_link_detected: 0,
+            fact_embeddings_generated: 0,
         }
     }
 
@@ -170,6 +173,7 @@ mod tests {
             total_ms: 150,
             docs_embedded: 9,
             docs_link_detected: 11,
+            fact_embeddings_generated: 42,
         };
         let result = build_interrupted_result(params);
 
@@ -181,6 +185,7 @@ mod tests {
         assert_eq!(result.moved, 5);
         assert_eq!(result.reindexed, 6);
         assert_eq!(result.links_detected, 7);
+        assert_eq!(result.fact_embeddings_generated, 42);
         assert!(result.interrupted);
         assert!(result.duplicates.is_empty());
 

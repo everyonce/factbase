@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 9;
+pub(super) const SCHEMA_VERSION: i32 = 10;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -78,6 +78,24 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
             PRIMARY KEY (text_hash, model)
         );
         CREATE INDEX IF NOT EXISTS idx_query_cache_last_used ON query_embedding_cache(last_used_at);",
+    ),
+    // Version 10: Fact-level embeddings for cross-validation
+    (
+        10,
+        "Add fact_embeddings and fact_metadata tables",
+        "CREATE VIRTUAL TABLE IF NOT EXISTS fact_embeddings USING vec0(
+            id TEXT PRIMARY KEY,
+            embedding FLOAT[1024]
+        );
+        CREATE TABLE IF NOT EXISTS fact_metadata (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            line_number INTEGER NOT NULL,
+            fact_text TEXT NOT NULL,
+            fact_hash TEXT NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES documents(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fact_meta_doc ON fact_metadata(document_id);",
     ),
 ];
 
@@ -168,6 +186,27 @@ impl Database {
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS document_content_fts USING fts5(doc_id UNINDEXED, content)",
             [],
+        )?;
+
+        // Fact-level embeddings for cross-validation
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS fact_embeddings USING vec0(
+                id TEXT PRIMARY KEY,
+                embedding FLOAT[1024]
+            )",
+            [],
+        )?;
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS fact_metadata (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                fact_text TEXT NOT NULL,
+                fact_hash TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fact_meta_doc ON fact_metadata(document_id);",
         )?;
 
         // Persistent query embedding cache

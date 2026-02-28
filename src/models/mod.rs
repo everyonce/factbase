@@ -28,7 +28,7 @@ pub use document::{word_count, Document};
 pub use question::{QuestionType, ReviewQuestion};
 pub use repository::{load_perspective_from_file, Perspective, Repository, ReviewPerspective, PERSPECTIVE_TEMPLATE};
 pub use scan::{DuplicatePair, FileTimingInfo, ScanResult, ScanStats, TemporalScanStats};
-pub use search::{ContentMatch, ContentSearchResult, PaginatedSearchResult, SearchResult};
+pub use search::{ContentMatch, ContentSearchResult, FactPair, FactSearchResult, PaginatedSearchResult, SearchResult};
 pub use stats::{
     CompressionStats, DetailedStats, PoolStats, RepoStats, SourceStats, TemporalStats,
 };
