@@ -208,14 +208,17 @@ fn check_citation_year_as_temporal(content: &str, questions: &mut Vec<ReviewQues
             .captures_iter(line)
             .filter_map(|cap| {
                 let inner = &cap[1];
-                // ~YYYY means "last verified" — matching the source year is expected
-                if inner.starts_with('~') {
+                // ~YYYY means "last verified", =YYYY means "as of" — in both
+                // cases the temporal tag year naturally matches the source year
+                // (you verify/observe a fact and record the source on the same date).
+                // Only flag bare YYYY with no prefix, which is more likely a
+                // copy-paste error from the source citation.
+                if inner.starts_with('~') || inner.starts_with('=') {
                     return None;
                 }
-                let year_part = inner.trim_start_matches('=');
-                // Bare year: after stripping prefix, only a 4-digit modern year remains
-                if YEAR_REGEX.is_match(year_part) && year_part.len() == 4 {
-                    Some(year_part.to_string())
+                // Bare year: only a 4-digit modern year with no prefix
+                if YEAR_REGEX.is_match(inner) && inner.len() == 4 {
+                    Some(inner.to_string())
                 } else {
                     None
                 }
@@ -349,12 +352,34 @@ mod tests {
 
     #[test]
     fn test_citation_year_matches_temporal_tag() {
-        // Bare =YYYY tag matching footnote year should be flagged
-        let content = "# Entity\n\n- Some fact @t[=1991] [^2]\n\n---\n[^2]: Book published 1991\n";
+        // Bare YYYY tag (no prefix) matching footnote year should be flagged
+        let content = "# Entity\n\n- Some fact @t[1991] [^2]\n\n---\n[^2]: Book published 1991\n";
         let questions = generate_corruption_questions(content);
         assert!(
             questions.iter().any(|q| q.description.contains("Temporal tag year 1991 matches footnote [^2]")),
             "Should flag citation year match: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_citation_year_equals_prefix_not_flagged() {
+        // =YYYY means "as of" — matching the source year is expected
+        let content = "# Entity\n\n- Some fact @t[=2024] [^1]\n\n---\n[^1]: Report, 2024\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions.iter().any(|q| q.description.contains("citation year")),
+            "Should not flag =YYYY tags: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_citation_year_approximate_month_precision_not_flagged() {
+        // ~YYYY-MM should also be suppressed (not just ~YYYY)
+        let content = "# Entity\n\n- Current role @t[~2026-02] [^1]\n\n---\n[^1]: Lookup, 2026-02-27\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions.iter().any(|q| q.description.contains("citation year")),
+            "Should not flag ~YYYY-MM tags: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
         );
     }
 
@@ -422,8 +447,8 @@ mod tests {
 
     #[test]
     fn test_citation_year_multiple_footnotes() {
-        // Only the matching footnote should be flagged
-        let content = "# Entity\n\n- Fact @t[=2005] [^1] [^2]\n\n---\n[^1]: Source A, 2005\n[^2]: Source B, 2010\n";
+        // Only the matching footnote should be flagged (bare year, no prefix)
+        let content = "# Entity\n\n- Fact @t[2005] [^1] [^2]\n\n---\n[^1]: Source A, 2005\n[^2]: Source B, 2010\n";
         let questions = generate_corruption_questions(content);
         assert!(questions.iter().any(|q| q.description.contains("[^1]")));
         assert!(!questions.iter().any(|q| q.description.contains("[^2]")));
