@@ -87,6 +87,11 @@ pub async fn check_repository(
         dry_run,
         concurrency: check_concurrency,
         deadline,
+        checked_doc_ids: args
+            .get("checked_doc_ids")
+            .and_then(Value::as_array)
+            .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+            .unwrap_or_default(),
     };
 
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
@@ -153,6 +158,11 @@ pub async fn check_repository(
     crate::mcp::tools::helpers::apply_time_budget_progress(
         &mut result, output.docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
     );
+
+    // Return checked doc IDs so the caller can resume cross-validation
+    if !output.checked_doc_ids.is_empty() && output.docs_processed < output.docs_total {
+        result["checked_doc_ids"] = serde_json::to_value(&output.checked_doc_ids).unwrap_or_default();
+    }
 
     if !suggested_entities.is_empty() {
         result["suggested_entities"] = serde_json::to_value(&suggested_entities)

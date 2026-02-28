@@ -179,6 +179,7 @@ pub async fn cross_validate_document(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
     llm: &dyn LlmProvider,
+    deadline: Option<std::time::Instant>,
 ) -> Result<Vec<ReviewQuestion>, FactbaseError> {
     let facts = extract_all_facts(content);
     if facts.is_empty() {
@@ -205,6 +206,10 @@ pub async fn cross_validate_document(
     let mut facts_with_context = Vec::with_capacity(facts.len());
 
     for fact in facts {
+        // Check deadline before each embedding call
+        if deadline.is_some_and(|d| std::time::Instant::now() > d) {
+            break;
+        }
         let fact_embedding = embedding.generate(&fact.text).await?;
         let search_results =
             db.search_semantic_paginated(&fact_embedding, 10, 0, None, None, Some(&fact.text))?;
@@ -268,6 +273,10 @@ pub async fn cross_validate_document(
     let mut questions = Vec::new();
 
     for chunk in facts_with_context.chunks(BATCH_SIZE) {
+        // Check deadline before each LLM call
+        if deadline.is_some_and(|d| std::time::Instant::now() > d) {
+            break;
+        }
         let batch: Vec<&FactWithContext> = chunk.iter().collect();
         let prompt = build_prompt(&doc_title, &batch);
 
@@ -327,6 +336,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &MockLlm::default(),
+            None,
         )
         .await
         .unwrap();
@@ -344,6 +354,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &MockLlm::default(),
+            None,
         )
         .await
         .unwrap();
@@ -361,6 +372,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &MockLlm::default(),
+            None,
         )
         .await
         .unwrap();
@@ -712,7 +724,7 @@ mod tests {
         );
 
         let questions =
-            cross_validate_document(content, "prod01", Some("product"), &db, &MockEmbedding::new(1024), &llm)
+            cross_validate_document(content, "prod01", Some("product"), &db, &MockEmbedding::new(1024), &llm, None)
                 .await
                 .unwrap();
 
@@ -809,6 +821,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &llm,
+            None,
         )
         .await
         .unwrap();
@@ -849,6 +862,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &llm,
+            None,
         )
         .await
         .unwrap();
@@ -898,6 +912,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &llm,
+            None,
         )
         .await
         .unwrap();
@@ -937,6 +952,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &llm,
+            None,
         )
         .await
         .unwrap();
@@ -975,6 +991,7 @@ mod tests {
             &db,
             &MockEmbedding::new(1024),
             &llm,
+            None,
         )
         .await
         .unwrap();
@@ -1011,7 +1028,7 @@ mod tests {
         );
 
         let questions = cross_validate_document(
-            content, "bat001", None, &db, &MockEmbedding::new(1024), &llm,
+            content, "bat001", None, &db, &MockEmbedding::new(1024), &llm, None,
         )
         .await
         .unwrap();
@@ -1045,7 +1062,7 @@ mod tests {
         );
 
         let questions = cross_validate_document(
-            content, "ent001", None, &db, &MockEmbedding::new(1024), &llm,
+            content, "ent001", None, &db, &MockEmbedding::new(1024), &llm, None,
         )
         .await
         .unwrap();
@@ -1055,5 +1072,25 @@ mod tests {
             1,
             "STALE should NOT be suppressed for facts without closed temporal context"
         );
+    }
+
+    /// Deadline already expired should cause cross_validate_document to return
+    /// early without making any embedding or LLM calls.
+    #[tokio::test]
+    async fn test_cross_validate_deadline_stops_early() {
+        let (db, _tmp) = test_db();
+        let content = "# Entity\n\n- Fact one about something\n- Fact two about another thing\n";
+        let llm = MockLlm::new(
+            r#"[{"fact":1,"status":"CONFLICT","reason":"mismatch","source_doc":"other"}]"#,
+        );
+        // Deadline already in the past
+        let deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        let questions = cross_validate_document(
+            content, "aaa", None, &db, &MockEmbedding::new(1024), &llm, deadline,
+        )
+        .await
+        .unwrap();
+        // Should return empty — deadline hit before any embedding calls
+        assert!(questions.is_empty(), "expired deadline should skip all work");
     }
 }

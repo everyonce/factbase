@@ -114,7 +114,7 @@ async fn generate_questions_single(
 
     // Cross-document fact validation (when LLM is available)
     if let Some(llm) = llm {
-        match cross_validate_document(body, &doc.id, doc.doc_type.as_deref(), db, embedding, llm).await {
+        match cross_validate_document(body, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, None).await {
             Ok(cross_questions) => new_questions.extend(cross_questions),
             Err(e) => warn!("Cross-validation failed for {}: {e}", doc_id),
         }
