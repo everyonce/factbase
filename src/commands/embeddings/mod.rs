@@ -63,6 +63,11 @@ fn cmd_status(args: args::StatusArgs) -> anyhow::Result<()> {
         if info.orphaned_chunks > 0 {
             println!("Orphaned chunks:    {}", info.orphaned_chunks);
         }
+        println!();
+        println!("Fact Embeddings:");
+        println!("  Total fact embeddings: {}", info.total_fact_embeddings);
+        let total_docs = info.documents_with_fact_embeddings + info.documents_without_fact_embeddings;
+        println!("  Documents with facts:  {} / {}", info.documents_with_fact_embeddings, total_docs);
     }
     Ok(())
 }
