@@ -42,6 +42,7 @@ This document defines the LLM prompt for generating review questions during `fac
 | `ambiguous` | Unclear phrasing; location without context; relationship without direction |
 | `stale` | `@t[~...]` date older than threshold; source date older than threshold |
 | `duplicate` | High similarity with entity in known_entities list |
+| `corruption` | Temporal tag contains non-date content (entity names, descriptions, statistics) |
 
 ## Final Prompt Template
 

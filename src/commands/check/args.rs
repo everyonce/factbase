@@ -99,7 +99,7 @@ pub struct CheckArgs {
     pub incremental: bool,
     #[arg(
         long,
-        help = "Deep check: cross-validate facts against other documents for conflicts and staleness (requires inference backend, significantly slower)"
+        help = "Deep check: cross-validate facts across documents using fact-level embeddings and pair matching (requires inference backend, significantly slower)"
     )]
     pub deep_check: bool,
     #[arg(

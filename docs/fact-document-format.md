@@ -240,6 +240,7 @@ Factbase can analyze documents and generate questions about inconsistencies, mis
 | `@q[ambiguous]` | Unclear meaning, needs clarification |
 | `@q[stale]` | Data may be outdated (based on `@t[~...]` age) |
 | `@q[duplicate]` | Possible duplicate of another entity |
+| `@q[corruption]` | Data corruption (malformed temporal tags, non-date content in `@t[...]`) |
 
 ### Answering Questions
 

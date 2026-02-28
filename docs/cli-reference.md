@@ -36,7 +36,7 @@ List all registered repositories with document counts.
 
 ## `factbase scan [--repo <repo>] [-v] [-q] [-j] [--dry-run] [-w] [--check-duplicates] [--stats] [--since <date>]`
 
-Index documents. Scans specific repo or all repos if omitted.
+Index documents. Generates document embeddings for semantic search, fact-level embeddings for cross-document validation, and detects entity links. Scans specific repo or all repos if omitted.
 
 - `-v, --verbose` - Show per-file processing details
 - `-q, --quiet` - Suppress output except errors (useful for scripts)
@@ -52,7 +52,7 @@ Index documents. Scans specific repo or all repos if omitted.
 - `--fix` - Auto-fix integrity issues found by --verify (re-inject headers, update database)
 - `--prune` - Remove orphaned database entries for deleted files (soft delete by default)
 - `--hard` - Permanently remove orphaned entries instead of soft delete (use with --prune)
-- `--reindex` - Force re-generation of embeddings even if content unchanged (useful after model upgrade)
+- `--reindex` - Force re-generation of all embeddings (document and fact-level) even if content unchanged (useful after model upgrade)
 - `--batch-size <n>` - Batch size for embedding generation (default: 10, from config)
 - `--no-links` - Skip link detection phase for faster indexing (links can be detected in subsequent scan)
 - `-y, --yes` - Skip confirmation prompts when using --fix or --prune
@@ -339,7 +339,7 @@ Check knowledge base quality for common issues.
 - `--incremental` - Only check documents modified since last check (tracks timestamp per repository)
 - `--since` - Only check files modified since date (ISO 8601 or relative: 1h, 1d, 1w)
 - `-a, --check-all` - Run all validation checks (equivalent to --check-temporal --check-sources --check-duplicates)
-- `--deep-check` - Cross-validate facts across documents using fact-level embeddings (slower, requires LLM)
+- `--deep-check` - Cross-validate facts across documents using fact-level embeddings (slower, requires LLM). Uses pre-computed fact embeddings to find semantically similar fact pairs and classify conflicts.
 - `-p, --parallel` - Process documents in parallel for faster checking
 - `--batch-size` - Process documents in batches of N to limit memory usage (default: 0 = no batching)
 

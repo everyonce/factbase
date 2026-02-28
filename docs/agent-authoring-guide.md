@@ -549,7 +549,7 @@ teams at Google and Stripe.
 After creating documents, Factbase will:
 
 1. **Scan**: `factbase scan` indexes new/changed files
-2. **Embed**: Generate semantic vectors for search
+2. **Embed**: Generate semantic vectors for search and fact-level embeddings for cross-document validation
 3. **Link**: Detect entity mentions across all documents
 4. **Validate**: `factbase check` checks for quality issues
 

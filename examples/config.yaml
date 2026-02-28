@@ -75,6 +75,10 @@ web:
   enabled: false    # Enable web UI (requires 'web' feature)
   port: 3001        # Web UI port
 
+cross_validate:
+  fact_similarity_threshold: 0.5  # Minimum cosine similarity for fact pairs (0.0-1.0)
+  batch_size: 10                  # Fact pairs per LLM batch call (1-50)
+
 # --- Prompt Templates ---
 # Override any LLM prompt template. Use {placeholder} for variables.
 # If a key is absent, the built-in default is used.
@@ -97,6 +101,9 @@ web:
 #
 #   # Cross-validate facts against other documents (vars: doc_title, fact_batch)
 #   cross_validate: "Validate facts in \"{doc_title}\":\n{fact_batch}"
+#
+#   # Cross-validate fact pairs from different documents (vars: fact_pairs)
+#   cross_validate_pairs: "Compare these fact pairs:\n{fact_pairs}"
 #
 #   # Detect entity mentions in a single document (vars: entities_list, content)
 #   link_detect: "Find mentions of:\n{entities_list}\n\nIn:\n{content}"
