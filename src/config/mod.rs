@@ -219,7 +219,7 @@ impl Config {
         require_range(
             self.server.time_budget_secs,
             5,
-            60,
+            600,
             "server.time_budget_secs",
         )?;
 
@@ -376,11 +376,11 @@ mod tests {
         let mut c = valid_config();
         c.server.time_budget_secs = 4;
         assert!(c.validate().unwrap_err().to_string().contains("time_budget_secs"));
-        c.server.time_budget_secs = 61;
+        c.server.time_budget_secs = 601;
         assert!(c.validate().unwrap_err().to_string().contains("time_budget_secs"));
         c.server.time_budget_secs = 5;
         assert!(c.validate().is_ok());
-        c.server.time_budget_secs = 60;
+        c.server.time_budget_secs = 600;
         assert!(c.validate().is_ok());
     }
 
