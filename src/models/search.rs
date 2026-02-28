@@ -51,6 +51,17 @@ pub struct FactSearchResult {
     pub similarity: f32,
 }
 
+/// A pair of semantically similar facts from different documents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactPair {
+    /// First fact in the pair
+    pub fact_a: FactSearchResult,
+    /// Second fact in the pair
+    pub fact_b: FactSearchResult,
+    /// Cosine similarity between the two facts
+    pub similarity: f32,
+}
+
 /// A content/grep search result with line-level matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentSearchResult {
