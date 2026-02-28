@@ -378,9 +378,9 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     if is_table_format && !args.quiet {
                         println!("  Cross-checking {} fact pairs...", pairs.len());
                     }
-                    match factbase::cross_validate_facts(&pairs, &db, llm.as_ref(), None, config.cross_validate.batch_size).await {
-                        Ok(pair_questions) => {
-                            for (doc_id, questions) in &pair_questions {
+                    match factbase::cross_validate_facts(&pairs, &db, llm.as_ref(), None, config.cross_validate.batch_size, &std::collections::HashSet::new()).await {
+                        Ok(cv_output) => {
+                            for (doc_id, questions) in &cv_output.questions {
                                 if !questions.is_empty() {
                                     warnings += questions.len();
                                     if let Some(doc) = docs.iter().find(|d| &d.id == doc_id) {
@@ -413,7 +413,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                             // Mark all docs as cross-checked
                             if !args.dry_run {
                                 for doc in &docs {
-                                    if !pair_questions.contains_key(&doc.id) {
+                                    if !cv_output.questions.contains_key(&doc.id) {
                                         db.set_cross_check_hash(&doc.id)?;
                                     }
                                 }

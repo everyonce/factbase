@@ -38,14 +38,14 @@ pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\
 
 pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
 
-pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. If the response includes `continue: true`, call it again until complete. Then call check_repository to see initial quality. If the response includes `continue: true`, call it again with the `checked_doc_ids` array from the response to resume where it left off.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
+pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository. First call scan_repository to generate embeddings and detect links. If the response includes `continue: true`, call it again until complete. Then call check_repository to see initial quality. If the response includes `continue: true`, call it again with the `checked_pair_ids` array from the response to resume where it left off.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
 
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
 pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes and detect cross-entity links.\n\n1. Call scan_repository. If the response includes `continue: true`, call it again until complete.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation\n\nHow links work: scan_repository finds entity title mentions in document text. Each doc should link to at least 1 other. Low link density means entities are isolated — they discuss related topics but don't reference each other by name.{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run a deep quality check to find issues across documents and discover missing entities.\n\n1. Call check_repository with deep_check=true. If the response includes `continue: true`, call it again with the `checked_doc_ids` array from the response to resume where it left off.\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly conflict → documents disagree, contradictions to resolve\n   - Mostly missing → claims lack evidence\n3. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  4. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  5. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete. Then re-run check_repository (without checked_doc_ids, since new entities changed the graph).\n     - New entities = new titles for the link detector to find\n  6. Record links_detected as LINKS_AFTER\n  7. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  4. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run a deep quality check to find issues across documents and discover missing entities.\n\n1. Call check_repository with deep_check=true. If the response includes `continue: true`, call it again with the `checked_pair_ids` array from the response to resume where it left off.\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly conflict → documents disagree, contradictions to resolve\n   - Mostly missing → claims lack evidence\n3. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  4. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  5. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete. Then re-run check_repository (without checked_pair_ids, since new entities changed the graph).\n     - New entities = new titles for the link detector to find\n  6. Record links_detected as LINKS_AFTER\n  7. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  4. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
 
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
@@ -1812,17 +1812,17 @@ mod tests {
     }
 
     #[test]
-    fn test_check_repository_workflow_texts_mention_checked_doc_ids_cursor() {
+    fn test_check_repository_workflow_texts_mention_checked_pair_ids_cursor() {
         // Every workflow instruction that tells agents to loop on check_repository
-        // must mention passing back checked_doc_ids to avoid restarting from scratch.
+        // must mention passing back checked_pair_ids to avoid restarting from scratch.
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update = update_step(2, &serde_json::json!({}), &None, &wf());
 
         for (name, step) in [("setup.scan", setup), ("update.check", update)] {
             let instruction = step["instruction"].as_str().unwrap();
             assert!(
-                instruction.contains("checked_doc_ids"),
-                "{name} workflow mentions check_repository continue:true but not the checked_doc_ids cursor"
+                instruction.contains("checked_pair_ids"),
+                "{name} workflow mentions check_repository continue:true but not the checked_pair_ids cursor"
             );
         }
     }
@@ -1834,8 +1834,8 @@ mod tests {
         let check = tools_arr.iter().find(|t| t["name"] == "check_repository").unwrap();
         let desc = check["description"].as_str().unwrap();
         assert!(
-            desc.contains("checked_doc_ids"),
-            "check_repository schema description should mention checked_doc_ids cursor"
+            desc.contains("checked_pair_ids"),
+            "check_repository schema description should mention checked_pair_ids cursor"
         );
     }
 

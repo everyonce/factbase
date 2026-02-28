@@ -65,8 +65,10 @@ pub struct CheckConfig {
     pub concurrency: usize,
     /// Optional deadline for time-boxed operations.
     pub deadline: Option<Instant>,
-    /// Doc IDs already cross-validated in a previous call (skip them).
+    /// Doc IDs already cross-validated in a previous call (backward compat).
     pub checked_doc_ids: HashSet<String>,
+    /// Fact-pair IDs already cross-validated (preferred cursor for resumption).
+    pub checked_pair_ids: HashSet<String>,
     /// Whether to acquire the global write guard before writing results.
     /// Set to `true` in MCP context (concurrent requests), `false` in CLI/tests.
     pub acquire_write_guard: bool,
@@ -94,8 +96,12 @@ pub struct CheckOutput {
     pub docs_processed: usize,
     /// Total number of active (non-archived, non-corrupted) documents.
     pub docs_total: usize,
-    /// Doc IDs that completed cross-validation (for cursor-based resumption).
+    /// Doc IDs that completed cross-validation (backward compat).
     pub checked_doc_ids: Vec<String>,
+    /// Fact-pair IDs that completed cross-validation (preferred cursor).
+    pub checked_pair_ids: Vec<String>,
+    /// Progress for fact-pair cross-validation.
+    pub pair_progress: Option<(usize, usize)>,
 }
 
 /// Lint all documents: generate review questions, optionally cross-validate, write results.
@@ -334,6 +340,8 @@ pub async fn check_all_documents(
 
     // Sequential cross-validation pass
     let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
+    let mut checked_pair_ids: Vec<String> = Vec::new();
+    let mut pair_progress: Option<(usize, usize)> = None;
     if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
         let llm = llm.unwrap();
@@ -345,21 +353,44 @@ pub async fn check_all_documents(
                 .find_all_cross_doc_fact_pairs(0.3, 5)
                 .unwrap_or_default();
             if !pairs.is_empty() {
+                // Build effective checked_pair_ids: merge explicit pair IDs with
+                // backward-compat conversion from checked_doc_ids.
+                let mut effective_checked: HashSet<String> = config.checked_pair_ids.clone();
+                if !config.checked_doc_ids.is_empty() && config.checked_pair_ids.is_empty() {
+                    for p in &pairs {
+                        if config.checked_doc_ids.contains(&p.fact_a.document_id)
+                            || config.checked_doc_ids.contains(&p.fact_b.document_id)
+                        {
+                            effective_checked.insert(
+                                super::cross_validate::make_pair_id(&p.fact_a.id, &p.fact_b.id),
+                            );
+                        }
+                    }
+                }
+
                 progress.report(0, pairs.len(), "Cross-validating fact pairs");
-                match cross_validate_facts(&pairs, db, llm, config.deadline, config.batch_size).await {
-                    Ok(pair_questions) => {
+                match cross_validate_facts(&pairs, db, llm, config.deadline, config.batch_size, &effective_checked).await {
+                    Ok(cv_output) => {
                         // Distribute questions to the correct documents
                         for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
-                            if let Some(qs) = pair_questions.get(&doc.id) {
+                            if let Some(qs) = cv_output.questions.get(&doc.id) {
                                 questions.extend(qs.iter().cloned());
                             }
                         }
-                        // Mark all active docs as cross-validated
-                        for (doc, _, _, _, _, _, _, _) in &all_results {
-                            if !config.checked_doc_ids.contains(&doc.id) {
-                                cross_validated_ids.push(doc.id.clone());
+                        checked_pair_ids = cv_output.checked_pair_ids;
+                        pair_progress = Some((cv_output.processed, cv_output.total));
+
+                        // Derive docs_processed from unique docs that had at least one pair processed
+                        let mut docs_with_pairs: HashSet<String> = HashSet::new();
+                        for pid in &checked_pair_ids {
+                            // pair ID format: {fact_a_id}:{fact_b_id}, fact ID format: {doc_id}_{line}
+                            for fact_id in pid.split(':') {
+                                if let Some(pos) = fact_id.rfind('_') {
+                                    docs_with_pairs.insert(fact_id[..pos].to_string());
+                                }
                             }
                         }
+                        cross_validated_ids = docs_with_pairs.into_iter().collect();
                     }
                     Err(e) => warn!("Fact-pair cross-validation failed: {e}"),
                 }
@@ -453,6 +484,8 @@ pub async fn check_all_documents(
         docs_processed,
         docs_total: total_active,
         checked_doc_ids: cross_validated_ids,
+        checked_pair_ids,
+        pair_progress,
     })
 }
 
@@ -494,6 +527,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -523,6 +557,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -548,6 +583,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -574,6 +610,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -606,6 +643,7 @@ mod tests {
                     concurrency: 1,
                     deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -633,6 +671,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -670,6 +709,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -698,6 +738,7 @@ mod tests {
                     concurrency: 2,
                     deadline: None,
                     checked_doc_ids: checked.clone(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -725,6 +766,7 @@ mod tests {
                     concurrency: 2,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
                 };
@@ -757,6 +799,7 @@ mod tests {
             concurrency: 3,
             deadline: None,
             checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
         };
@@ -786,6 +829,7 @@ mod tests {
             concurrency: 1,
             deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
             checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
         };
@@ -817,6 +861,7 @@ mod tests {
             concurrency: 2,
             deadline: None,
             checked_doc_ids: checked,
+            checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
         };
@@ -844,6 +889,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
             acquire_write_guard: true,
             batch_size: 10,
         };
@@ -852,5 +898,65 @@ mod tests {
         let result = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await;
         assert!(result.is_ok(), "dry-run should never be blocked by write guard");
+    }
+
+    #[tokio::test]
+    async fn test_check_output_includes_checked_pair_ids() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
+        ];
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            checked_pair_ids: HashSet::new(),
+            acquire_write_guard: false,
+            batch_size: 10,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        // No fact embeddings → fallback path, checked_pair_ids stays empty
+        assert!(output.checked_pair_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_backward_compat_checked_doc_ids_accepted() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
+            make_doc("bbb", "Doc B", "# Doc B\n\nNo facts.\n"),
+        ];
+        // Pass checked_doc_ids (old-style) — should still work
+        let mut checked = HashSet::new();
+        checked.insert("aaa".to_string());
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: None,
+            checked_doc_ids: checked,
+            checked_pair_ids: HashSet::new(),
+            acquire_write_guard: false,
+            batch_size: 10,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        // Should complete without error; checked_doc_ids carried forward
+        assert!(output.checked_doc_ids.contains(&"aaa".to_string()));
     }
 }

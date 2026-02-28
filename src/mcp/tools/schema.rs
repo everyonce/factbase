@@ -194,7 +194,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM). For large repositories, may return partial results with `continue: true` and a `checked_doc_ids` array — pass `checked_doc_ids` back on the next call to resume where it left off.",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM). For large repositories, may return partial results with `continue: true` and a `checked_pair_ids` array — pass `checked_pair_ids` back on the next call to resume where it left off. Legacy `checked_doc_ids` is also accepted for backward compatibility.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -203,7 +203,8 @@ pub fn tools_list() -> Value {
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
                         "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, significantly slower)" },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Doc IDs already cross-validated (from previous call's response). Pass back to resume deep_check where it left off." }
+                        "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Fact-pair IDs already cross-validated (from previous call's response). Pass back to resume deep_check where it left off. Format: fact_a_id:fact_b_id." },
+                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Legacy: Doc IDs already cross-validated. Use checked_pair_ids instead for precise resumption." }
                     }
                 }
             },

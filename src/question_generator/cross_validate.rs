@@ -9,7 +9,7 @@
 //! - **Legacy mode** (`cross_validate_document`): Generates embeddings per-fact at
 //!   check time. Used as fallback when fact_embeddings table is empty.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 use tracing::warn;
@@ -36,6 +36,27 @@ const MAX_SNIPPET_LEN: usize = 200;
 /// Maximum fact pairs per LLM batch call (default, overridden by config).
 #[cfg(test)]
 const PAIR_BATCH_SIZE: usize = 10;
+
+/// Output from fact-pair cross-validation, including cursor state.
+pub struct CrossValidateOutput {
+    /// Questions keyed by document ID.
+    pub questions: HashMap<String, Vec<ReviewQuestion>>,
+    /// Pair IDs that were processed (for cursor-based resumption).
+    pub checked_pair_ids: Vec<String>,
+    /// Number of pairs processed in this call.
+    pub processed: usize,
+    /// Total number of pairs (above similarity threshold).
+    pub total: usize,
+}
+
+/// Build a deterministic pair ID: lower ID first.
+pub fn make_pair_id(fact_a_id: &str, fact_b_id: &str) -> String {
+    if fact_a_id <= fact_b_id {
+        format!("{fact_a_id}:{fact_b_id}")
+    } else {
+        format!("{fact_b_id}:{fact_a_id}")
+    }
+}
 
 /// A fact paired with its cross-document search results and source context.
 struct FactWithContext {
@@ -322,7 +343,8 @@ fn pair_result_to_question(
 
 /// Cross-validate pre-computed fact pairs using LLM classification.
 ///
-/// Returns a map of document ID → review questions generated for that document.
+/// Returns a [`CrossValidateOutput`] with questions, processed pair IDs, and progress.
+/// Pairs whose ID is in `checked_pair_ids` are skipped (cursor-based resumption).
 /// This is the preferred entry point when fact embeddings are available in the DB.
 pub async fn cross_validate_facts(
     fact_pairs: &[FactPair],
@@ -330,16 +352,32 @@ pub async fn cross_validate_facts(
     llm: &dyn LlmProvider,
     deadline: Option<std::time::Instant>,
     batch_size: usize,
-) -> Result<HashMap<String, Vec<ReviewQuestion>>, FactbaseError> {
+    checked_pair_ids: &HashSet<String>,
+) -> Result<CrossValidateOutput, FactbaseError> {
+    let total = fact_pairs.len();
     if fact_pairs.is_empty() {
-        return Ok(HashMap::new());
+        return Ok(CrossValidateOutput {
+            questions: HashMap::new(),
+            checked_pair_ids: checked_pair_ids.iter().cloned().collect(),
+            processed: 0,
+            total: 0,
+        });
     }
+
+    // Filter out already-checked pairs
+    let pending_pairs: Vec<&FactPair> = fact_pairs
+        .iter()
+        .filter(|p| {
+            let pid = make_pair_id(&p.fact_a.id, &p.fact_b.id);
+            !checked_pair_ids.contains(&pid)
+        })
+        .collect();
 
     // Load document contexts (cached across pairs)
     let mut doc_cache: HashMap<String, DocContext> = HashMap::new();
-    let mut enriched: Vec<FactPairContext> = Vec::with_capacity(fact_pairs.len());
+    let mut enriched: Vec<FactPairContext> = Vec::with_capacity(pending_pairs.len());
 
-    for pair in fact_pairs {
+    for pair in &pending_pairs {
         if deadline.is_some_and(|d| std::time::Instant::now() > d) {
             break;
         }
@@ -371,7 +409,7 @@ pub async fn cross_validate_facts(
             .contains(&ctx_a.title.to_lowercase());
 
         enriched.push(FactPairContext {
-            pair: pair.clone(),
+            pair: (*pair).clone(),
             title_a: ctx_a.title.clone(),
             title_b: ctx_b.title.clone(),
             source_defs_a,
@@ -384,7 +422,12 @@ pub async fn cross_validate_facts(
     }
 
     if enriched.is_empty() {
-        return Ok(HashMap::new());
+        return Ok(CrossValidateOutput {
+            questions: HashMap::new(),
+            checked_pair_ids: checked_pair_ids.iter().cloned().collect(),
+            processed: checked_pair_ids.len(),
+            total,
+        });
     }
 
     // Build temporal context for STALE suppression on closed ranges.
@@ -405,6 +448,7 @@ pub async fn cross_validate_facts(
     }
 
     let mut questions: HashMap<String, Vec<ReviewQuestion>> = HashMap::new();
+    let mut newly_checked: Vec<String> = Vec::new();
 
     let effective_batch_size = batch_size.clamp(1, 50);
 
@@ -443,9 +487,23 @@ pub async fn cross_validate_facts(
                 questions.entry(doc_id).or_default().push(q);
             }
         }
+
+        // Mark all pairs in this batch as checked
+        for fpc in &batch {
+            newly_checked.push(make_pair_id(&fpc.pair.fact_a.id, &fpc.pair.fact_b.id));
+        }
     }
 
-    Ok(questions)
+    // Merge prior checked_pair_ids with newly checked
+    let mut all_checked: Vec<String> = checked_pair_ids.iter().cloned().collect();
+    all_checked.extend(newly_checked.iter().cloned());
+
+    Ok(CrossValidateOutput {
+        questions,
+        processed: checked_pair_ids.len() + newly_checked.len(),
+        total,
+        checked_pair_ids: all_checked,
+    })
 }
 
 /// Extract document title from content (first `# ` heading) or fall back to doc_id.
@@ -1842,8 +1900,8 @@ mod tests {
     async fn test_cross_validate_facts_empty_pairs() {
         let (db, _tmp) = test_db();
         let llm = MockLlm::default();
-        let result = cross_validate_facts(&[], &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
-        assert!(result.is_empty());
+        let result = cross_validate_facts(&[], &db, &llm, None, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert!(result.questions.is_empty());
     }
 
     #[tokio::test]
@@ -1875,10 +1933,10 @@ mod tests {
             r#"[{"pair":1,"status":"CONTRADICTS","reason":"different revenue figures"}]"#,
         );
 
-        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
         // Question should be on doc_a1 (fewer sources)
-        assert!(result.contains_key("doc_a1"), "question should be attributed to doc with fewer sources");
-        let qs = &result["doc_a1"];
+        assert!(result.questions.contains_key("doc_a1"), "question should be attributed to doc with fewer sources");
+        let qs = &result.questions["doc_a1"];
         assert_eq!(qs.len(), 1);
         assert_eq!(qs[0].question_type, QuestionType::Conflict);
         assert!(qs[0].description.contains("Entity B"));
@@ -1910,8 +1968,8 @@ mod tests {
             r#"[{"pair":1,"status":"SUPPORTS","reason":"same founding year"}]"#,
         );
 
-        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
-        assert!(result.is_empty(), "SUPPORTS should not generate questions");
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert!(result.questions.is_empty(), "SUPPORTS should not generate questions");
     }
 
     #[tokio::test]
@@ -1940,8 +1998,8 @@ mod tests {
             r#"[{"pair":1,"status":"SUPERSEDES","reason":"newer evidence"}]"#,
         );
 
-        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
-        assert!(result.is_empty(), "SUPERSEDES should be suppressed for historical facts with closed temporal tags");
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert!(result.questions.is_empty(), "SUPERSEDES should be suppressed for historical facts with closed temporal tags");
     }
 
     #[tokio::test]
@@ -1972,8 +2030,8 @@ mod tests {
 
         // Deadline already expired
         let deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
-        let result = cross_validate_facts(&pairs, &db, &llm, deadline, PAIR_BATCH_SIZE).await.unwrap();
-        assert!(result.is_empty(), "expired deadline should skip all work");
+        let result = cross_validate_facts(&pairs, &db, &llm, deadline, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert!(result.questions.is_empty(), "expired deadline should skip all work");
     }
 
     /// Fallback path test: when fact_embeddings table is empty, check.rs
@@ -2091,9 +2149,9 @@ mod tests {
         );
 
         // batch_size=1: each pair is its own batch, so pair index is always 1
-        let result = cross_validate_facts(&pairs, &db, &llm, None, 1).await.unwrap();
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 1, &HashSet::new()).await.unwrap();
         // Both pairs should generate questions (each batch has pair 1)
-        let total_questions: usize = result.values().map(|qs| qs.len()).sum();
+        let total_questions: usize = result.questions.values().map(|qs| qs.len()).sum();
         assert_eq!(total_questions, 2, "batch_size=1 should process each pair separately");
     }
 
@@ -2125,7 +2183,124 @@ mod tests {
         );
 
         // batch_size=0 should be clamped to 1, not panic
-        let result = cross_validate_facts(&pairs, &db, &llm, None, 0).await.unwrap();
-        assert!(result.is_empty(), "SUPPORTS generates no questions");
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 0, &HashSet::new()).await.unwrap();
+        assert!(result.questions.is_empty(), "SUPPORTS generates no questions");
+    }
+
+    // -----------------------------------------------------------------------
+    // Pair-level cursor and progress tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_make_pair_id_deterministic_ordering() {
+        assert_eq!(make_pair_id("aaa_3", "bbb_5"), "aaa_3:bbb_5");
+        assert_eq!(make_pair_id("bbb_5", "aaa_3"), "aaa_3:bbb_5");
+        assert_eq!(make_pair_id("x_1", "x_1"), "x_1:x_1");
+    }
+
+    #[tokio::test]
+    async fn test_cursor_round_trip_skips_checked_pairs() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "cur_a".to_string();
+        doc_a.file_path = "cur_a.md".to_string();
+        doc_a.title = "Entity A".to_string();
+        doc_a.content = "# Entity A\n\n- Revenue: $10M\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "cur_b".to_string();
+        doc_b.file_path = "cur_b.md".to_string();
+        doc_b.title = "Entity B".to_string();
+        doc_b.content = "# Entity B\n\n- Revenue: $50M\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("cur_a", 3, "Revenue: $10M"),
+            make_fact("cur_b", 3, "Revenue: $50M"),
+        )];
+
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"CONTRADICTS","reason":"different revenue"}]"#,
+        );
+
+        // First call: no checked pairs
+        let result1 = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert!(!result1.checked_pair_ids.is_empty(), "should return checked pair IDs");
+        assert_eq!(result1.processed, 1);
+        assert_eq!(result1.total, 1);
+
+        // Second call: pass back checked_pair_ids — should skip the pair
+        let checked: HashSet<String> = result1.checked_pair_ids.into_iter().collect();
+        let result2 = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE, &checked).await.unwrap();
+        assert!(result2.questions.is_empty(), "already-checked pair should be skipped");
+        assert_eq!(result2.processed, 1, "processed should include prior checked");
+    }
+
+    #[tokio::test]
+    async fn test_deadline_returns_partial_checked_pair_ids() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "dl_a".to_string();
+        doc_a.file_path = "dl_a.md".to_string();
+        doc_a.content = "# Doc A\n\n- Fact A\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "dl_b".to_string();
+        doc_b.file_path = "dl_b.md".to_string();
+        doc_b.content = "# Doc B\n\n- Fact B\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("dl_a", 3, "Fact A"),
+            make_fact("dl_b", 3, "Fact B"),
+        )];
+
+        let llm = MockLlm::new(r#"[{"pair":1,"status":"SUPPORTS","reason":"ok"}]"#);
+
+        // Expired deadline: should process 0 new pairs
+        let deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        let result = cross_validate_facts(&pairs, &db, &llm, deadline, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert!(result.questions.is_empty(), "expired deadline should skip all work");
+        assert_eq!(result.processed, 0);
+        assert_eq!(result.total, 1);
+        assert!(result.checked_pair_ids.is_empty(), "no pairs should be checked with expired deadline");
+    }
+
+    #[tokio::test]
+    async fn test_progress_tracks_total_and_processed() {
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "pg_a".to_string();
+        doc_a.file_path = "pg_a.md".to_string();
+        doc_a.title = "Entity A".to_string();
+        doc_a.content = "# Entity A\n\n- Fact 1\n- Fact 2\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "pg_b".to_string();
+        doc_b.file_path = "pg_b.md".to_string();
+        doc_b.title = "Entity B".to_string();
+        doc_b.content = "# Entity B\n\n- Fact 3\n- Fact 4\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![
+            make_pair(make_fact("pg_a", 3, "Fact 1"), make_fact("pg_b", 3, "Fact 3")),
+            make_pair(make_fact("pg_a", 4, "Fact 2"), make_fact("pg_b", 4, "Fact 4")),
+        ];
+
+        let llm = MockLlm::new(r#"[{"pair":1,"status":"SUPPORTS","reason":"ok"}]"#);
+
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE, &HashSet::new()).await.unwrap();
+        assert_eq!(result.total, 2, "total should reflect all pairs");
+        assert_eq!(result.processed, 2, "all pairs should be processed");
+        assert_eq!(result.checked_pair_ids.len(), 2, "both pair IDs should be tracked");
     }
 }
