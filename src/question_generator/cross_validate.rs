@@ -33,8 +33,9 @@ const BATCH_SIZE: usize = 10;
 /// Maximum snippet length in prompt to avoid huge prompts.
 const MAX_SNIPPET_LEN: usize = 200;
 
-/// Maximum fact pairs per LLM batch call.
-const PAIR_BATCH_SIZE: usize = 8;
+/// Maximum fact pairs per LLM batch call (default, overridden by config).
+#[cfg(test)]
+const PAIR_BATCH_SIZE: usize = 10;
 
 /// A fact paired with its cross-document search results and source context.
 struct FactWithContext {
@@ -328,6 +329,7 @@ pub async fn cross_validate_facts(
     db: &Database,
     llm: &dyn LlmProvider,
     deadline: Option<std::time::Instant>,
+    batch_size: usize,
 ) -> Result<HashMap<String, Vec<ReviewQuestion>>, FactbaseError> {
     if fact_pairs.is_empty() {
         return Ok(HashMap::new());
@@ -404,7 +406,9 @@ pub async fn cross_validate_facts(
 
     let mut questions: HashMap<String, Vec<ReviewQuestion>> = HashMap::new();
 
-    for chunk in enriched.chunks(PAIR_BATCH_SIZE) {
+    let effective_batch_size = batch_size.clamp(1, 50);
+
+    for chunk in enriched.chunks(effective_batch_size) {
         if deadline.is_some_and(|d| std::time::Instant::now() > d) {
             break;
         }
@@ -1838,7 +1842,7 @@ mod tests {
     async fn test_cross_validate_facts_empty_pairs() {
         let (db, _tmp) = test_db();
         let llm = MockLlm::default();
-        let result = cross_validate_facts(&[], &db, &llm, None).await.unwrap();
+        let result = cross_validate_facts(&[], &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
         assert!(result.is_empty());
     }
 
@@ -1871,7 +1875,7 @@ mod tests {
             r#"[{"pair":1,"status":"CONTRADICTS","reason":"different revenue figures"}]"#,
         );
 
-        let result = cross_validate_facts(&pairs, &db, &llm, None).await.unwrap();
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
         // Question should be on doc_a1 (fewer sources)
         assert!(result.contains_key("doc_a1"), "question should be attributed to doc with fewer sources");
         let qs = &result["doc_a1"];
@@ -1906,7 +1910,7 @@ mod tests {
             r#"[{"pair":1,"status":"SUPPORTS","reason":"same founding year"}]"#,
         );
 
-        let result = cross_validate_facts(&pairs, &db, &llm, None).await.unwrap();
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
         assert!(result.is_empty(), "SUPPORTS should not generate questions");
     }
 
@@ -1936,7 +1940,7 @@ mod tests {
             r#"[{"pair":1,"status":"SUPERSEDES","reason":"newer evidence"}]"#,
         );
 
-        let result = cross_validate_facts(&pairs, &db, &llm, None).await.unwrap();
+        let result = cross_validate_facts(&pairs, &db, &llm, None, PAIR_BATCH_SIZE).await.unwrap();
         assert!(result.is_empty(), "SUPERSEDES should be suppressed for historical facts with closed temporal tags");
     }
 
@@ -1968,7 +1972,7 @@ mod tests {
 
         // Deadline already expired
         let deadline = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
-        let result = cross_validate_facts(&pairs, &db, &llm, deadline).await.unwrap();
+        let result = cross_validate_facts(&pairs, &db, &llm, deadline, PAIR_BATCH_SIZE).await.unwrap();
         assert!(result.is_empty(), "expired deadline should skip all work");
     }
 
@@ -1980,5 +1984,148 @@ mod tests {
         // Verify fact embedding count is 0
         assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
         // The fallback logic is in check.rs — this just verifies the precondition
+    }
+
+    // -----------------------------------------------------------------------
+    // Batch size configuration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_build_pair_prompt_multiple_cross_doc_pairs() {
+        let pair1 = make_pair(
+            make_fact("doc_a", 3, "Revenue: $10M"),
+            make_fact("doc_c", 5, "Revenue: $50M"),
+        );
+        let pair2 = make_pair(
+            make_fact("doc_b", 7, "Founded in 1990"),
+            make_fact("doc_d", 2, "Established 1985"),
+        );
+        let fpc1 = FactPairContext {
+            pair: pair1,
+            title_a: "Company A".into(),
+            title_b: "Company C".into(),
+            source_defs_a: vec![],
+            source_defs_b: vec!["[^1]: Annual report".into()],
+            temporal_a: None,
+            temporal_b: Some("@t[=2024]".into()),
+            title_b_in_doc_a: false,
+            title_a_in_doc_b: false,
+        };
+        let fpc2 = FactPairContext {
+            pair: pair2,
+            title_a: "Company B".into(),
+            title_b: "Company D".into(),
+            source_defs_a: vec!["[^2]: Wikipedia".into()],
+            source_defs_b: vec![],
+            temporal_a: Some("@t[=1990]".into()),
+            temporal_b: None,
+            title_b_in_doc_a: true,
+            title_a_in_doc_b: false,
+        };
+        let prompt = build_pair_prompt(&[&fpc1, &fpc2]);
+        assert!(prompt.contains("Pair 1:"));
+        assert!(prompt.contains("Pair 2:"));
+        assert!(prompt.contains("Company A"));
+        assert!(prompt.contains("Company C"));
+        assert!(prompt.contains("Company B"));
+        assert!(prompt.contains("Company D"));
+        assert!(prompt.contains("@t[=2024]"));
+        assert!(prompt.contains("@t[=1990]"));
+        assert!(prompt.contains("Sources B: [^1]: Annual report"));
+        assert!(prompt.contains("Sources A: [^2]: Wikipedia"));
+    }
+
+    #[test]
+    fn test_parse_pair_response_multiple_results() {
+        let json = r#"[
+            {"pair":1,"status":"CONTRADICTS","reason":"different revenue"},
+            {"pair":2,"status":"SUPPORTS","reason":"consistent dates"},
+            {"pair":3,"status":"SUPERSEDES","reason":"newer info"}
+        ]"#;
+        let results = parse_pair_response(json);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].pair, 1);
+        assert_eq!(results[0].status, "CONTRADICTS");
+        assert_eq!(results[1].pair, 2);
+        assert_eq!(results[1].status, "SUPPORTS");
+        assert_eq!(results[2].pair, 3);
+        assert_eq!(results[2].status, "SUPERSEDES");
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_small_batch_size() {
+        // With batch_size=1, each pair gets its own LLM call.
+        // Two pairs should produce two LLM calls, but MockLlm returns
+        // the same response for all calls.
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "bs_a".to_string();
+        doc_a.file_path = "bs_a.md".to_string();
+        doc_a.title = "Entity A".to_string();
+        doc_a.content = "# Entity A\n\n- Revenue: $10M\n- Founded 1990\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "bs_b".to_string();
+        doc_b.file_path = "bs_b.md".to_string();
+        doc_b.title = "Entity B".to_string();
+        doc_b.content = "# Entity B\n\n- Revenue: $50M\n- Founded 1985\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![
+            make_pair(
+                make_fact("bs_a", 3, "Revenue: $10M"),
+                make_fact("bs_b", 3, "Revenue: $50M"),
+            ),
+            make_pair(
+                make_fact("bs_a", 4, "Founded 1990"),
+                make_fact("bs_b", 4, "Founded 1985"),
+            ),
+        ];
+
+        // MockLlm returns pair 1 as CONTRADICTS for each call
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#,
+        );
+
+        // batch_size=1: each pair is its own batch, so pair index is always 1
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 1).await.unwrap();
+        // Both pairs should generate questions (each batch has pair 1)
+        let total_questions: usize = result.values().map(|qs| qs.len()).sum();
+        assert_eq!(total_questions, 2, "batch_size=1 should process each pair separately");
+    }
+
+    #[tokio::test]
+    async fn test_cross_validate_facts_batch_size_clamped() {
+        // batch_size=0 should be clamped to 1 (minimum)
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = Document::test_default();
+        doc_a.id = "cl_a".to_string();
+        doc_a.file_path = "cl_a.md".to_string();
+        doc_a.content = "# Doc A\n\n- Fact one\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = Document::test_default();
+        doc_b.id = "cl_b".to_string();
+        doc_b.file_path = "cl_b.md".to_string();
+        doc_b.content = "# Doc B\n\n- Fact two\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        let pairs = vec![make_pair(
+            make_fact("cl_a", 3, "Fact one"),
+            make_fact("cl_b", 3, "Fact two"),
+        )];
+
+        let llm = MockLlm::new(
+            r#"[{"pair":1,"status":"SUPPORTS","reason":"ok"}]"#,
+        );
+
+        // batch_size=0 should be clamped to 1, not panic
+        let result = cross_validate_facts(&pairs, &db, &llm, None, 0).await.unwrap();
+        assert!(result.is_empty(), "SUPPORTS generates no questions");
     }
 }

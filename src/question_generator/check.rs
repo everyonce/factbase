@@ -70,6 +70,8 @@ pub struct CheckConfig {
     /// Whether to acquire the global write guard before writing results.
     /// Set to `true` in MCP context (concurrent requests), `false` in CLI/tests.
     pub acquire_write_guard: bool,
+    /// Maximum fact pairs per LLM batch call.
+    pub batch_size: usize,
 }
 
 /// Result of linting a single document.
@@ -344,7 +346,7 @@ pub async fn check_all_documents(
                 .unwrap_or_default();
             if !pairs.is_empty() {
                 progress.report(0, pairs.len(), "Cross-validating fact pairs");
-                match cross_validate_facts(&pairs, db, llm, config.deadline).await {
+                match cross_validate_facts(&pairs, db, llm, config.deadline, config.batch_size).await {
                     Ok(pair_questions) => {
                         // Distribute questions to the correct documents
                         for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
@@ -493,6 +495,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -521,6 +524,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -545,6 +549,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -570,6 +575,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -601,6 +607,7 @@ mod tests {
                     deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -627,6 +634,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -663,6 +671,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -690,6 +699,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: checked.clone(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -716,6 +726,7 @@ mod tests {
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
                     acquire_write_guard: false,
+                    batch_size: 10,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -747,6 +758,7 @@ mod tests {
             deadline: None,
             checked_doc_ids: HashSet::new(),
             acquire_write_guard: false,
+            batch_size: 10,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -775,6 +787,7 @@ mod tests {
             deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
             checked_doc_ids: HashSet::new(),
             acquire_write_guard: false,
+            batch_size: 10,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -805,6 +818,7 @@ mod tests {
             deadline: None,
             checked_doc_ids: checked,
             acquire_write_guard: false,
+            batch_size: 10,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -831,6 +845,7 @@ mod tests {
             deadline: None,
             checked_doc_ids: HashSet::new(),
             acquire_write_guard: true,
+            batch_size: 10,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state

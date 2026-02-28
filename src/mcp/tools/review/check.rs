@@ -39,9 +39,15 @@ pub async fn check_repository(
     // Only pass LLM for cross-validation when deep_check is requested
     let effective_llm: Option<&dyn LlmProvider> = if deep_check { llm } else { None };
 
-    let check_concurrency = crate::Config::load(None)
+    let config_file = crate::Config::load(None);
+    let check_concurrency = config_file
+        .as_ref()
         .map(|c| c.processor.check_concurrency)
         .unwrap_or(LINT_CONCURRENCY);
+    let batch_size = config_file
+        .as_ref()
+        .map(|c| c.cross_validate.batch_size)
+        .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
 
     // Load perspective for stale_days and required_fields
     let perspective = load_perspective(db, repo_id);
@@ -93,6 +99,7 @@ pub async fn check_repository(
             .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
             .unwrap_or_default(),
         acquire_write_guard: true,
+        batch_size,
     };
 
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
