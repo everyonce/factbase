@@ -194,7 +194,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM). For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM). For large repositories, may return partial results with `continue: true` and a `checked_doc_ids` array — pass `checked_doc_ids` back on the next call to resume where it left off.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
