@@ -57,6 +57,9 @@ pub struct ApplyConfig<'a> {
     pub since: Option<DateTime<Utc>>,
     /// Optional deadline for time-boxed operations.
     pub deadline: Option<std::time::Instant>,
+    /// Whether to acquire the global write guard before writing results.
+    /// Set to `true` in MCP context (concurrent requests), `false` in CLI/tests.
+    pub acquire_write_guard: bool,
 }
 
 /// Apply all answered review questions across documents.
@@ -183,6 +186,15 @@ pub async fn apply_all_review_answers(
 
     let total = work.len();
     result.total_work = total;
+
+    // Acquire write guard for non-dry-run (rewrites doc content on disk+DB).
+    // Acquired here — after all read-only answer parsing — so dry-run
+    // and read-only phases are never blocked by a concurrent write.
+    let _write_guard = if config.dry_run || !config.acquire_write_guard {
+        None
+    } else {
+        Some(crate::write_guard::WriteGuard::try_acquire()?)
+    };
 
     for (i, (doc, answered, abs_path)) in work.iter().enumerate() {
         // Check deadline before starting a new document
@@ -653,12 +665,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("abc123"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("abc123"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)
@@ -745,12 +758,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("abc123"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("abc123"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)
@@ -832,12 +846,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("abc123"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("abc123"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)
@@ -905,12 +920,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("abc123"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("abc123"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)
@@ -991,12 +1007,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("abc123"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("abc123"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)
@@ -1080,12 +1097,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("543601"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("543601"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)
@@ -1160,12 +1178,13 @@ mod tests {
 
         let llm = MockLlm::new("no changes needed");
         let config = ApplyConfig {
-            doc_id_filter: Some("abc123"),
-            repo_filter: None,
-            dry_run: false,
-            since: None,
-            deadline: None,
-        };
+                    doc_id_filter: Some("abc123"),
+                    repo_filter: None,
+                    dry_run: false,
+                    since: None,
+                    deadline: None,
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &llm, &config, &progress)

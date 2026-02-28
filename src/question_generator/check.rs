@@ -67,6 +67,9 @@ pub struct CheckConfig {
     pub deadline: Option<Instant>,
     /// Doc IDs already cross-validated in a previous call (skip them).
     pub checked_doc_ids: HashSet<String>,
+    /// Whether to acquire the global write guard before writing results.
+    /// Set to `true` in MCP context (concurrent requests), `false` in CLI/tests.
+    pub acquire_write_guard: bool,
 }
 
 /// Result of linting a single document.
@@ -361,6 +364,15 @@ pub async fn check_all_documents(
 
     let docs_processed = all_results.len();
 
+    // Acquire write guard for non-dry-run (writes review queue to disk+DB).
+    // Acquired here — after all read-only question generation — so dry-run
+    // and read-only phases are never blocked by a concurrent write.
+    let _write_guard = if config.dry_run || !config.acquire_write_guard {
+        None
+    } else {
+        Some(crate::write_guard::WriteGuard::try_acquire()?)
+    };
+
     // Write results (sequential for filesystem safety)
     let mut results = Vec::new();
     for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review) in all_results {
@@ -442,13 +454,14 @@ mod tests {
                        - [ ] `@q[temporal]` \"Fact one\" - when was this true?\n  > \n";
         let docs = vec![make_doc("aaa", "Test", content)];
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -469,13 +482,14 @@ mod tests {
                        > confirmed\n";
         let docs = vec![make_doc("bbb", "Test", content)];
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -492,13 +506,14 @@ mod tests {
         let content = format!("- Fact one <!-- reviewed:{today} -->\n- Fact two\n");
         let docs = vec![make_doc("ccc", "Test", &content)];
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -516,13 +531,14 @@ mod tests {
                        - [ ] `@q[temporal]` \"Fact one\" - when was this true?\n  > \n";
         let docs = vec![make_doc("ccc", "Test", content)];
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -546,13 +562,14 @@ mod tests {
         }
         // Deadline already in the past → should process 0 docs
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -571,13 +588,14 @@ mod tests {
             make_doc("bbb", "Doc B", "- Fact B\n"),
         ];
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -606,13 +624,14 @@ mod tests {
         ];
         // No deadline, no LLM → checked_doc_ids should be empty (no cross-validation)
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -632,13 +651,14 @@ mod tests {
         let mut checked = HashSet::new();
         checked.insert("aaa".to_string());
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 2,
-            deadline: None,
-            checked_doc_ids: checked.clone(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 2,
+                    deadline: None,
+                    checked_doc_ids: checked.clone(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -657,13 +677,14 @@ mod tests {
             make_doc("bbb", "Reference", "<!-- factbase:reference -->\n# AWS Lambda\n\n- Serverless compute\n"),
         ];
         let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 2,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-        };
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 2,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -671,5 +692,29 @@ mod tests {
         // Reference doc should be skipped — only 1 doc processed
         assert_eq!(output.docs_total, 1);
         assert_eq!(output.docs_processed, 1);
+    }
+
+    /// Dry-run check succeeds even when the write guard is already held,
+    /// because dry_run never acquires the guard.
+    #[tokio::test]
+    async fn test_dry_run_check_never_acquires_write_guard() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let docs = vec![make_doc("aaa", "Test", "- Fact one\n")];
+        // Even with acquire_write_guard: true, dry_run skips the guard
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            acquire_write_guard: true,
+        };
+        let progress = ProgressReporter::Silent;
+        // This should always succeed regardless of guard state
+        let result = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await;
+        assert!(result.is_ok(), "dry-run should never be blocked by write guard");
     }
 }

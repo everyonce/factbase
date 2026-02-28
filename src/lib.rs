@@ -42,6 +42,7 @@ pub mod question_generator;
 pub mod scanner;
 pub(crate) mod shutdown;
 pub mod watcher;
+pub(crate) mod write_guard;
 #[cfg(feature = "web")]
 pub mod web;
 
