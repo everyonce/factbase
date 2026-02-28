@@ -36,6 +36,32 @@ impl SearchResult {
     }
 }
 
+/// A fact-level search result from cross-validation embedding search.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactSearchResult {
+    /// Fact embedding ID (`{doc_id}_{line_number}`)
+    pub id: String,
+    /// Document containing this fact
+    pub document_id: String,
+    /// Line number within the document
+    pub line_number: usize,
+    /// The fact text
+    pub fact_text: String,
+    /// Cosine similarity score (0.0 to 1.0)
+    pub similarity: f32,
+}
+
+/// A pair of semantically similar facts from different documents.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FactPair {
+    /// First fact in the pair
+    pub fact_a: FactSearchResult,
+    /// Second fact in the pair
+    pub fact_b: FactSearchResult,
+    /// Cosine similarity between the two facts
+    pub similarity: f32,
+}
+
 /// A content/grep search result with line-level matches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentSearchResult {
