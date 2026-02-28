@@ -124,7 +124,10 @@ async fn generate_questions_single(
                 .filter(|p| p.fact_a.document_id == doc_id || p.fact_b.document_id == doc_id)
                 .collect();
             if !doc_pairs.is_empty() {
-                match crate::question_generator::cross_validate::cross_validate_facts(&doc_pairs, db, llm, None).await {
+                let batch_size = crate::Config::load(None)
+                    .map(|c| c.cross_validate.batch_size)
+                    .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
+                match crate::question_generator::cross_validate::cross_validate_facts(&doc_pairs, db, llm, None, batch_size).await {
                     Ok(pair_questions) => {
                         if let Some(qs) = pair_questions.get(doc_id) {
                             new_questions.extend(qs.iter().cloned());

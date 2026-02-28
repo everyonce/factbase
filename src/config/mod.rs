@@ -10,7 +10,7 @@ mod server;
 mod validation;
 mod web;
 pub mod workflows;
-mod cross_validate;
+pub mod cross_validate;
 
 pub use database::DatabaseConfig;
 pub use embedding::{EmbeddingConfig, LlmConfig, OllamaConfig};
