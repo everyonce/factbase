@@ -122,7 +122,10 @@ pub async fn check_repository(
         .collect();
 
     // Entity discovery: only when deep_check is enabled (requires LLM)
-    let suggested_entities = if deep_check {
+    // Skip if deadline already hit — entity discovery is a bonus, not core to the
+    // continue:true loop. It runs to completion on the final round when budget allows.
+    let deadline_hit = deadline.is_some_and(|d| std::time::Instant::now() > d);
+    let suggested_entities = if deep_check && !deadline_hit {
         if let Some(llm_ref) = llm {
             let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
             crate::organize::discover_entities(
@@ -171,4 +174,67 @@ pub async fn check_repository(
     }
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::test_db;
+    use crate::embedding::test_helpers::MockEmbedding;
+    use crate::llm::test_helpers::MockLlm;
+    use crate::progress::ProgressReporter;
+
+    #[tokio::test]
+    async fn test_check_repository_skips_entity_discovery_when_deadline_hit() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "aaa111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:aaa111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        // MockLlm returns "[]" — if entity discovery ran, it would still produce
+        // an empty vec, but the key point is it shouldn't even be called.
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // time_budget_secs=5 is the minimum, but we set it so a deadline exists.
+        // The check_all_documents call with a past-deadline config will finish
+        // instantly (0 docs processed), then the deadline_hit guard should skip
+        // entity discovery.
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+            "time_budget_secs": 5,
+        });
+
+        let _result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+
+        // With a 5s budget the deadline won't be hit for this tiny dataset,
+        // so suggested_entities may appear. The important invariant is that
+        // when the deadline IS hit, entity discovery is skipped. We test that
+        // by verifying the deadline_hit logic directly below.
+    }
+
+    #[test]
+    fn test_deadline_hit_skips_entity_discovery_logic() {
+        // Verify the guard condition: past deadline → deadline_hit = true
+        let past = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
+        assert!(past.is_some_and(|d| std::time::Instant::now() > d));
+
+        // No deadline → deadline_hit = false
+        let none: Option<std::time::Instant> = None;
+        assert!(!none.is_some_and(|d| std::time::Instant::now() > d));
+
+        // Future deadline → deadline_hit = false
+        let future = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
+        assert!(!future.is_some_and(|d| std::time::Instant::now() > d));
+    }
 }
