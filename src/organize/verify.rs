@@ -94,9 +94,22 @@ pub fn verify_merge(
     let kept_content = read_file(&kept_path)?;
     let actual_doc_facts = extract_facts(&kept_content, &result.kept_id).len();
 
-    // Count actual orphans if orphan file exists
+    // Count actual orphans from THIS operation only (the orphan file is shared
+    // across operations, so we filter by source document IDs)
     let actual_orphans = match &result.orphan_path {
-        Some(p) => parse_orphan_entries(&read_file(p)?).len(),
+        Some(p) => {
+            let all_entries = parse_orphan_entries(&read_file(p)?);
+            let mut source_ids: Vec<&str> = plan.merge_ids.iter().map(|s| s.as_str()).collect();
+            source_ids.push(&plan.keep_id);
+            all_entries
+                .iter()
+                .filter(|e| {
+                    e.source_doc
+                        .as_ref()
+                        .is_some_and(|id| source_ids.contains(&id.as_str()))
+                })
+                .count()
+        }
         None => 0,
     };
 
@@ -154,9 +167,20 @@ pub fn verify_split(
         actual_doc_facts += extract_facts(&doc.content, doc_id).len();
     }
 
-    // Count actual orphans if orphan file exists
+    // Count actual orphans from THIS operation only (the orphan file is shared
+    // across operations, so we filter by source document ID)
     let actual_orphans = match &result.orphan_path {
-        Some(p) => parse_orphan_entries(&read_file(p)?).len(),
+        Some(p) => {
+            let all_entries = parse_orphan_entries(&read_file(p)?);
+            all_entries
+                .iter()
+                .filter(|e| {
+                    e.source_doc
+                        .as_ref()
+                        .is_some_and(|id| id == &plan.source_id)
+                })
+                .count()
+        }
         None => 0,
     };
 
@@ -236,6 +260,53 @@ mod tests {
 
         let entries = parse_orphan_entries(&read_file(&orphan_path).unwrap());
         assert_eq!(entries.len(), 3);
+    }
+
+    /// Regression test: verify_merge must only count orphans from the current
+    /// operation, not all orphans in the shared _orphans.md file.
+    #[test]
+    fn test_orphan_count_filters_by_source_doc() {
+        // Simulate an _orphans.md with entries from two different merge operations
+        let content = r#"# Orphaned Facts
+
+## Merge aaa111 (2026-02-27 00:00:00)
+
+- Old orphan from first merge @r[orphan] <!-- from aaa111 line 3 -->
+- Another old orphan @r[orphan] <!-- from bbb222 line 7 -->
+- Third old orphan @r[orphan] <!-- from aaa111 line 10 -->
+
+## Merge ccc333 (2026-02-27 00:01:00)
+
+- New orphan from second merge @r[orphan] <!-- from ccc333 line 5 -->
+- Another new orphan @r[orphan] <!-- from ddd444 line 2 -->
+"#;
+
+        let all_entries = parse_orphan_entries(content);
+        assert_eq!(all_entries.len(), 5, "total orphans in file");
+
+        // Filter for second merge (keep_id=ccc333, merge_ids=[ddd444])
+        let source_ids = vec!["ccc333", "ddd444"];
+        let filtered: usize = all_entries
+            .iter()
+            .filter(|e| {
+                e.source_doc
+                    .as_ref()
+                    .is_some_and(|id| source_ids.contains(&id.as_str()))
+            })
+            .count();
+        assert_eq!(filtered, 2, "only orphans from current merge");
+
+        // Filter for first merge (keep_id=aaa111, merge_ids=[bbb222])
+        let source_ids = vec!["aaa111", "bbb222"];
+        let filtered: usize = all_entries
+            .iter()
+            .filter(|e| {
+                e.source_doc
+                    .as_ref()
+                    .is_some_and(|id| source_ids.contains(&id.as_str()))
+            })
+            .count();
+        assert_eq!(filtered, 3, "only orphans from first merge");
     }
 
     #[test]
