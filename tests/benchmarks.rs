@@ -27,6 +27,7 @@ fn generate_test_docs(repo_path: &std::path::Path, count: usize) {
 
 /// Benchmark 10.2: Scan performance by repo size
 #[tokio::test]
+#[ignore]
 #[ignore] // Requires Ollama
 async fn benchmark_scan_performance() {
     require_ollama().await;
@@ -69,6 +70,7 @@ async fn benchmark_scan_performance() {
 
 /// Benchmark 10.3: Search latency
 #[tokio::test]
+#[ignore]
 #[ignore] // Requires Ollama
 async fn benchmark_search_latency() {
     require_ollama().await;
@@ -148,6 +150,7 @@ async fn benchmark_search_latency() {
 
 /// Benchmark 10.4: Embedding generation performance
 #[tokio::test]
+#[ignore]
 #[ignore] // Requires Ollama
 async fn benchmark_embedding_generation() {
     require_ollama().await;
@@ -187,6 +190,7 @@ async fn benchmark_embedding_generation() {
 
 /// Benchmark 10.5: Batch vs individual embedding
 #[tokio::test]
+#[ignore]
 #[ignore] // Requires Ollama
 async fn benchmark_batch_embedding() {
     require_ollama().await;
@@ -318,6 +322,7 @@ fn benchmark_lint_parallel() {
 
 /// Benchmark summary
 #[tokio::test]
+#[ignore]
 #[ignore] // Requires Ollama
 async fn benchmark_summary() {
     require_ollama().await;

@@ -58,6 +58,7 @@ async fn test_dry_run_scan() {
 
 /// Test: --timeout flag overrides config timeout
 #[tokio::test]
+#[ignore]
 async fn test_timeout_flag_override() {
     require_ollama().await;
 

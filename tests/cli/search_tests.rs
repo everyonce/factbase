@@ -9,6 +9,7 @@ use tempfile::TempDir;
 
 /// Test search --count flag outputs only result count
 #[tokio::test]
+#[ignore]
 async fn test_search_count_flag() {
     require_ollama().await;
 

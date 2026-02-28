@@ -254,6 +254,7 @@ fn test_full_question_generation_workflow() {
 // Integration test requiring Ollama - marked as ignored
 #[tokio::test]
 #[ignore]
+#[ignore]
 async fn test_review_apply_with_llm() {
     use factbase::answer_processor::{
         apply_changes_to_section, identify_affected_section, interpret_answer,

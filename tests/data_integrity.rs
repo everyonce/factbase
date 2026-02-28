@@ -12,6 +12,7 @@ use tempfile::TempDir;
 
 /// Test 12.1: Document ID stability
 #[tokio::test]
+#[ignore]
 async fn test_document_id_stability() {
     require_ollama().await;
 
@@ -66,6 +67,7 @@ async fn test_document_id_stability() {
 
 /// Test 12.2: Embedding-document consistency
 #[tokio::test]
+#[ignore]
 async fn test_embedding_document_consistency() {
     require_ollama().await;
 
@@ -131,6 +133,7 @@ async fn test_embedding_document_consistency() {
 
 /// Test 12.3: Link validity
 #[tokio::test]
+#[ignore]
 async fn test_link_validity() {
     require_ollama().await;
 
@@ -205,6 +208,7 @@ async fn test_link_validity() {
 
 /// Test 12.4: No orphaned records
 #[tokio::test]
+#[ignore]
 async fn test_no_orphaned_records() {
     require_ollama().await;
 
@@ -271,6 +275,7 @@ async fn test_no_orphaned_records() {
 
 /// Test document hash consistency
 #[tokio::test]
+#[ignore]
 async fn test_document_hash_consistency() {
     require_ollama().await;
 

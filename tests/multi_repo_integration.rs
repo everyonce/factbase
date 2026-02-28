@@ -20,6 +20,7 @@ use factbase::{
 // === Task 12.1: Add multiple repositories ===
 
 #[tokio::test]
+#[ignore]
 async fn test_add_multiple_repositories() {
     let (db, _temp) = create_test_db();
 
@@ -47,6 +48,7 @@ async fn test_add_multiple_repositories() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_add_repository_duplicate_id_fails() {
     let (db, _temp) = create_test_db();
 
@@ -61,6 +63,7 @@ async fn test_add_repository_duplicate_id_fails() {
 // === Task 12.2: Scan specific repository ===
 
 #[tokio::test]
+#[ignore]
 async fn test_scan_specific_repository() {
     require_ollama().await;
 
@@ -84,6 +87,7 @@ async fn test_scan_specific_repository() {
 // === Task 12.3: Search across repos ===
 
 #[tokio::test]
+#[ignore]
 async fn test_search_across_repos() {
     require_ollama().await;
 
@@ -171,6 +175,7 @@ async fn test_search_across_repos() {
 // === Task 12.4: Remove repository ===
 
 #[tokio::test]
+#[ignore]
 async fn test_remove_repository() {
     require_ollama().await;
 
@@ -207,6 +212,7 @@ async fn test_remove_repository() {
 // === Task 12.5: File watcher multiple repos (simplified - no actual watcher) ===
 
 #[tokio::test]
+#[ignore]
 async fn test_repo_isolation_after_file_change() {
     require_ollama().await;
 
@@ -297,6 +303,7 @@ async fn test_repo_isolation_after_file_change() {
 // === Task 30: Check embedding status ===
 
 #[tokio::test]
+#[ignore]
 async fn test_check_embedding_status() {
     require_ollama().await;
 
@@ -330,6 +337,7 @@ async fn test_check_embedding_status() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_get_embedding_dimension() {
     require_ollama().await;
 

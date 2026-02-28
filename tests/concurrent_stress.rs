@@ -17,6 +17,7 @@ use tokio::sync::oneshot;
 
 /// Test 7.1: Concurrent file changes and MCP requests
 #[tokio::test]
+#[ignore]
 async fn test_concurrent_file_changes_and_mcp() {
     require_ollama().await;
 
@@ -195,6 +196,7 @@ async fn test_concurrent_file_changes_and_mcp() {
 
 /// Test 7.2: Scan during active MCP requests
 #[tokio::test]
+#[ignore]
 async fn test_scan_during_active_mcp_requests() {
     require_ollama().await;
 
@@ -308,6 +310,7 @@ async fn test_scan_during_active_mcp_requests() {
 
 /// Test 7.3: MCP writes during scan
 #[tokio::test]
+#[ignore]
 async fn test_mcp_writes_during_scan() {
     require_ollama().await;
 

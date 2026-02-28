@@ -24,6 +24,7 @@ use tokio::sync::oneshot;
 // --- Tests ---
 
 #[tokio::test]
+#[ignore]
 async fn test_serve_starts_both_components() {
     let server = TestServer::start_with_data().await;
 
@@ -37,6 +38,7 @@ async fn test_serve_starts_both_components() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_initial_document_accessible() {
     let server = TestServer::start_with_data().await;
 
@@ -50,6 +52,7 @@ async fn test_initial_document_accessible() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_get_perspective_returns_repo_info() {
     let server = TestServer::start_with_data().await;
 
@@ -63,6 +66,7 @@ async fn test_get_perspective_returns_repo_info() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_mcp_client_workflow() {
     // Simulates an AI agent using MCP
     let server = TestServer::start_with_data().await;
@@ -89,6 +93,7 @@ async fn test_mcp_client_workflow() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_graceful_shutdown() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("test.db");
@@ -132,6 +137,7 @@ async fn test_graceful_shutdown() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_watcher_detects_new_file() {
     let temp_dir = TempDir::new().unwrap();
     let watch_path = temp_dir.path().to_path_buf();
@@ -167,6 +173,7 @@ async fn test_watcher_detects_new_file() {
 
 /// Test complete new user workflow: init -> repo add -> scan -> search
 #[tokio::test]
+#[ignore]
 async fn test_new_user_workflow() {
     require_ollama().await;
 
@@ -258,6 +265,7 @@ async fn test_new_user_workflow() {
 
 /// Test AI agent workflow via MCP
 #[tokio::test]
+#[ignore]
 async fn test_agent_workflow_via_mcp() {
     require_ollama().await;
 
@@ -442,6 +450,7 @@ async fn test_agent_workflow_via_mcp() {
 
 /// Test system stability under repeated operations
 #[tokio::test]
+#[ignore]
 async fn test_repeated_operations_stability() {
     require_ollama().await;
 

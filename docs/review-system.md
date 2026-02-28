@@ -101,6 +101,12 @@ Triggers:
 - Same name/title with different IDs
 - Cross-document: same entity mentioned with conflicting details
 
+### `@q[corruption]` - Data Corruption
+
+Triggers:
+- Temporal tag contains non-date content (entity names, descriptions, statistics)
+- Malformed temporal tag syntax
+
 ## Answer Processing
 
 When `review --apply` processes answered questions, it classifies each answer and handles it accordingly:

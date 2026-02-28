@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Fact-level cross-document validation via pre-computed fact embeddings (`check --deep-check`)
+- Fact-level embeddings generated during scan, powering cross-document conflict detection
+- Auto-populate fact embeddings on first scan after migration
+- MCP stdio orphan detection — exit when parent process dies
+- Folder placement checks via link graph analysis (moved from organize to check as review questions)
+- Time-boxing support for `organize_analyze` MCP tool
+- `embeddings_export`, `embeddings_import`, `embeddings_status` MCP tools
+- `checked_pair_ids` cursor for resumable deep-check cross-validation
+- `force_reindex` parameter for `scan_repository` MCP tool
+- Reference entity support via `<!-- factbase:reference -->` marker
+- Write concurrency guard for all destructive MCP operations
+
+### Changed
+- Cross-document validation now operates on fact pairs instead of whole documents
+- MCP tool count increased from 21 to 25
+- Stability tests gated behind `#[ignore]` (require Ollama)
+
+### Fixed
+- WriteGuard serialization for flaky MCP tool tests
+- Deep-check summary line after cross-validate completes
+
 ## [0.4.3] - 2026-02-09
 
 ### Changed

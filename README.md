@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1675_passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-1921_passing-brightgreen.svg)]()
 
 Filesystem-based knowledge management with semantic search for AI agents.
 
@@ -42,6 +42,7 @@ That's it. Everything below is optional depth.
 
 - **Semantic search** - Find documents by meaning, not just keywords
 - **Automatic link detection** - LLM discovers entity references across documents
+- **Cross-document validation** - Fact-level embeddings detect conflicts across documents
 - **Live updates** - File watcher keeps index in sync
 - **MCP server** - AI agents can search and explore your knowledge base
 - **Multi-repository** - Manage multiple knowledge bases from one instance
@@ -51,6 +52,7 @@ Optional power features (plain markdown works without these):
 - **Source attribution** - Footnotes for fact provenance
 - **Review system** - Human-in-the-loop quality improvement via `@q[...]` questions
 - **Self-organizing** - Merge, split, and reorganize documents
+- **Folder placement checks** - Detect misplaced documents via link graph analysis
 
 ## Prerequisites
 
@@ -172,7 +174,7 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 21 MCP tools:
+Factbase exposes 25 MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -190,6 +192,7 @@ Factbase exposes 21 MCP tools:
 | `init_repository` | Initialize a new factbase repository at a directory path |
 | `get_review_queue` | Get pending review questions |
 | `answer_questions` | Answer or defer one or more review questions |
+| `generate_questions` | Generate review questions for a specific document |
 | `check_repository` | Run quality checks and generate review questions |
 | `apply_review_answers` | Apply answered review questions to document content |
 | `get_deferred_items` | Get deferred review items needing human attention |
@@ -197,6 +200,9 @@ Factbase exposes 21 MCP tools:
 | `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
 | `organize` | Execute reorganization actions (merge, split, move, retype, apply) |
 | `get_authoring_guide` | Get document formatting rules and templates |
+| `embeddings_export` | Export embeddings for backup or transfer |
+| `embeddings_import` | Import embeddings from a previous export |
+| `embeddings_status` | Check embedding coverage and statistics |
 
 ## Document Format
 

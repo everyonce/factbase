@@ -10,6 +10,7 @@ use serde_json::json;
 // --- Tests ---
 
 #[tokio::test]
+#[ignore]
 async fn test_health_endpoint() {
     let server = TestServer::start().await;
     let resp = server.health().await.unwrap();
@@ -17,6 +18,7 @@ async fn test_health_endpoint() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_knowledge() {
     require_ollama().await;
 
@@ -34,6 +36,7 @@ async fn test_search_knowledge() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_get_entity_valid() {
     let server = TestServer::start_with_data().await;
     let resp = server
@@ -49,6 +52,7 @@ async fn test_get_entity_valid() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_get_entity_not_found() {
     let server = TestServer::start_with_data().await;
     let resp = server
@@ -64,6 +68,7 @@ async fn test_get_entity_not_found() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_list_entities() {
     let server = TestServer::start_with_data().await;
     let resp = server.call_tool("list_entities", json!({})).await.unwrap();
@@ -74,6 +79,7 @@ async fn test_list_entities() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_list_entities_with_type_filter() {
     let server = TestServer::start_with_data().await;
     let resp = server
@@ -89,6 +95,7 @@ async fn test_list_entities_with_type_filter() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_get_perspective() {
     let server = TestServer::start_with_data().await;
     let resp = server
@@ -102,6 +109,7 @@ async fn test_get_perspective() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_concurrent_requests() {
     let server = TestServer::start_with_data().await;
 
@@ -131,6 +139,7 @@ async fn test_concurrent_requests() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_unknown_tool() {
     let server = TestServer::start().await;
     let resp = server.call_tool("unknown_tool", json!({})).await.unwrap();

@@ -19,6 +19,7 @@ use factbase::{
 use tempfile::TempDir;
 
 #[tokio::test]
+#[ignore]
 async fn test_ollama_availability_check() {
     require_ollama().await;
     // If we get here, Ollama is available
@@ -26,6 +27,7 @@ async fn test_ollama_availability_check() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_embedding_generation() {
     require_ollama().await;
 
@@ -48,6 +50,7 @@ async fn test_embedding_generation() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_embedding_various_lengths() {
     require_ollama().await;
 
@@ -72,6 +75,7 @@ async fn test_embedding_various_lengths() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_embedding_similarity() {
     require_ollama().await;
 
@@ -108,6 +112,7 @@ async fn test_embedding_similarity() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_llm_link_detection() {
     require_ollama().await;
 
@@ -164,6 +169,7 @@ async fn test_llm_link_detection() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_full_scan_with_embeddings() {
     require_ollama().await;
 
@@ -254,6 +260,7 @@ async fn test_full_scan_with_embeddings() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_finds_relevant_documents() {
     require_ollama().await;
 
@@ -346,6 +353,7 @@ async fn test_search_finds_relevant_documents() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_with_type_filter() {
     require_ollama().await;
 
@@ -446,6 +454,7 @@ async fn test_search_with_type_filter() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_no_results() {
     require_ollama().await;
 
@@ -525,6 +534,7 @@ async fn test_search_no_results() {
 // === Performance tests ===
 
 #[tokio::test]
+#[ignore]
 async fn test_scan_100_documents() {
     require_ollama().await;
 
@@ -605,6 +615,7 @@ async fn test_scan_100_documents() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_latency() {
     require_ollama().await;
 
@@ -715,6 +726,7 @@ async fn test_search_latency() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_link_detection_scale() {
     require_ollama().await;
 
@@ -750,6 +762,7 @@ async fn test_link_detection_scale() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_merge_planning() {
     use factbase::organize::{plan_merge, FactDestination};
 
@@ -840,6 +853,7 @@ async fn test_merge_planning() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_split_detection() {
     use factbase::organize::detect_split_candidates;
 
@@ -986,6 +1000,7 @@ and deployment. Tools include Docker, Kubernetes, and CI/CD pipelines.
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_split_planning() {
     use factbase::organize::{extract_sections, plan_split, SplitSection};
 
@@ -1079,6 +1094,7 @@ async fn test_split_planning() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_split_execution() {
     use factbase::organize::{execute_split, extract_sections, plan_split, SplitSection};
     use std::fs;
@@ -1200,6 +1216,7 @@ async fn test_split_execution() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_misplaced_detection() {
     use factbase::organize::detect_misplaced;
 

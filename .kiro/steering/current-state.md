@@ -142,12 +142,12 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: ~1298 lib tests (default features); ~1363 lib tests (with all features including web)
+- Currently: ~1541 lib tests (default features); ~1606 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
 - No external dependencies required
-- Currently: ~377 bin tests (default features); ~384 bin tests (with all features including web)
+- Currently: ~380 bin tests (default features); ~387 bin tests (with all features including web)
 
 ### Integration Tests (Require inference backend)
 - Run with: `cargo test -- --ignored`
@@ -165,7 +165,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Playwright with Chromium
 - Currently: 12 tests
 
-### Total: ~1675 unit/binary tests (default features), ~1747 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
+### Total: ~1921 unit/binary tests (default features), ~1993 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
 
 ## Codebase Structure
 
