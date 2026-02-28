@@ -166,14 +166,19 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
             run_blocking(move || detect_misplaced(&db2, rid2.as_deref(), &p)).await?
         };
         let mut result = serde_json::json!({
-            "misplaced_candidates": misplaced_candidates.iter().map(|c| serde_json::json!({
-                "doc_id": c.doc_id,
-                "doc_title": c.doc_title,
-                "current_type": c.current_type,
-                "suggested_type": c.suggested_type,
-                "confidence": c.confidence,
-                "rationale": c.rationale,
-            })).collect::<Vec<_>>(),
+            "misplaced_candidates": misplaced_candidates.iter().map(|c| {
+                let mut obj = serde_json::json!({
+                    "doc_id": c.doc_id,
+                    "doc_title": c.doc_title,
+                    "current_type": c.current_type,
+                    "suggested_type": c.suggested_type,
+                    "confidence": c.confidence,
+                    "rationale": c.rationale,
+                });
+                if let Some(f) = &c.current_folder { obj["current_folder"] = serde_json::json!(f); }
+                if let Some(f) = &c.suggested_folder { obj["suggested_folder"] = serde_json::json!(f); }
+                obj
+            }).collect::<Vec<_>>(),
             "total_suggestions": misplaced_candidates.len(),
             "progress": { "processed": total_docs, "total": total_docs },
         });
@@ -256,14 +261,19 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
             "avg_similarity": c.avg_similarity,
             "rationale": c.rationale,
         })).collect::<Vec<_>>(),
-        "misplaced_candidates": misplaced_candidates.iter().map(|c| serde_json::json!({
-            "doc_id": c.doc_id,
-            "doc_title": c.doc_title,
-            "current_type": c.current_type,
-            "suggested_type": c.suggested_type,
-            "confidence": c.confidence,
-            "rationale": c.rationale,
-        })).collect::<Vec<_>>(),
+        "misplaced_candidates": misplaced_candidates.iter().map(|c| {
+            let mut obj = serde_json::json!({
+                "doc_id": c.doc_id,
+                "doc_title": c.doc_title,
+                "current_type": c.current_type,
+                "suggested_type": c.suggested_type,
+                "confidence": c.confidence,
+                "rationale": c.rationale,
+            });
+            if let Some(f) = &c.current_folder { obj["current_folder"] = serde_json::json!(f); }
+            if let Some(f) = &c.suggested_folder { obj["suggested_folder"] = serde_json::json!(f); }
+            obj
+        }).collect::<Vec<_>>(),
         "duplicate_entries": duplicate_entries.len(),
         "stale_entries": stale_entries.len(),
         "total_suggestions": merge_candidates.len() + split_candidates.len() + misplaced_candidates.len() + duplicate_entries.len() + stale_entries.len(),
