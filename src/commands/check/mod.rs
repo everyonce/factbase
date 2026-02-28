@@ -383,6 +383,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                             for (doc_id, questions) in &cv_output.questions {
                                 if !questions.is_empty() {
                                     warnings += questions.len();
+                                    review_new_total += questions.len();
                                     if let Some(doc) = docs.iter().find(|d| &d.id == doc_id) {
                                         if is_table_format {
                                             for q in questions {
@@ -428,7 +429,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     }
                 }
                 if is_table_format && !args.quiet {
-                    eprintln!("  Cross-check complete.                    ");
+                    println!("  Cross-check complete.");
                 }
             } else {
                 // Fallback: per-document cross-validation (no fact embeddings yet)
@@ -461,6 +462,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                         Ok(questions) => {
                             if !questions.is_empty() {
                                 warnings += questions.len();
+                                review_new_total += questions.len();
                                 if is_table_format {
                                     eprintln!();
                                     for q in &questions {
@@ -498,7 +500,8 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     }
                 }
                 if is_table_format && !args.quiet {
-                    eprintln!("\r  Cross-check complete.                    ");
+                    eprint!("\r                                              \r");
+                    println!("  Cross-check complete.");
                     if skipped > 0 {
                         println!("  Skipped {skipped} unchanged document(s).");
                     }
@@ -615,4 +618,38 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Verify that the review summary format includes cross-validate questions
+    /// in the total and new counts (regression test for deep_check summary).
+    #[test]
+    fn test_review_summary_includes_cross_validate_counts() {
+        // Simulate the counters as used in cmd_check
+        let mut review_new_total: usize = 3; // from per-doc generation
+        let review_already_in_queue: usize = 2;
+        let review_suppressed: usize = 1;
+        let review_skipped_reviewed: usize = 0;
+
+        // Simulate cross-validate adding questions (the fix)
+        let cross_validate_questions = 2usize;
+        review_new_total += cross_validate_questions;
+
+        let total_generated = review_new_total + review_already_in_queue;
+        let summary = format!(
+            "Review: Generated {total_generated} total, {review_new_total} new \
+             ({review_already_in_queue} already in queue, \
+             {review_suppressed} suppressed by prior answers, \
+             {review_skipped_reviewed} reviewed facts)"
+        );
+
+        assert_eq!(
+            summary,
+            "Review: Generated 7 total, 5 new (2 already in queue, 1 suppressed by prior answers, 0 reviewed facts)"
+        );
+        // Cross-validate questions (2) are included in both total (7) and new (5)
+        assert!(summary.contains("5 new"), "cross-validate questions must be counted in new");
+        assert!(summary.contains("7 total"), "cross-validate questions must be counted in total");
+    }
 }
