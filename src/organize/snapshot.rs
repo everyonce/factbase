@@ -140,6 +140,22 @@ pub fn create_snapshot(
         }
     }
 
+    // Backup orphan file if it exists — merge/split operations may append to
+    // _orphans.md which is NOT one of the documents being operated on, so it
+    // must be snapshotted separately to allow clean rollback.
+    let orphan_rel = "_orphans.md";
+    let orphan_path = repo_path.join(orphan_rel);
+    let orphan_existed = orphan_path.exists();
+    let orphan_backup = snap_dir.join("_orphans.md.bak");
+    if orphan_existed {
+        copy_file(&orphan_path, &orphan_backup)?;
+    }
+    files.push(FileBackup {
+        original_path: orphan_rel.to_string(),
+        backup_path: orphan_backup,
+        existed: orphan_existed,
+    });
+
     Ok(Snapshot {
         id: snapshot_id,
         created_at: Local::now(),
@@ -345,7 +361,10 @@ mod tests {
 
         let snapshot = create_snapshot(&[], &db, repo_path).expect("create snapshot");
 
-        assert!(snapshot.is_empty());
+        // Snapshot always includes orphan file backup (even if it doesn't exist yet)
+        assert_eq!(snapshot.file_count(), 1);
+        assert_eq!(snapshot.document_count(), 0);
+        assert!(!snapshot.files[0].existed); // orphan file didn't exist
         assert!(snapshot.snapshot_dir.exists());
 
         // Cleanup
@@ -369,10 +388,10 @@ mod tests {
         let snapshot = create_snapshot(&["doc1"], &db, repo_path).expect("create snapshot");
 
         assert!(!snapshot.is_empty());
-        assert_eq!(snapshot.file_count(), 1);
+        assert_eq!(snapshot.file_count(), 2); // doc + orphan backup
         assert_eq!(snapshot.document_count(), 1);
 
-        // Verify backup file exists
+        // Verify backup file exists (first entry is the document)
         let backup = &snapshot.files[0];
         assert!(backup.backup_path.exists());
         assert!(backup.existed);
@@ -562,6 +581,75 @@ mod tests {
 
         let remaining = list_snapshots(temp.path()).expect("list");
         assert_eq!(remaining.len(), 2);
+    }
+
+    #[test]
+    fn test_rollback_restores_orphan_file() {
+        let (db, temp) = test_db();
+        let repo_path = temp.path();
+        test_repo(&db, "repo1", repo_path);
+
+        // Create an existing orphan file
+        let orphan_path = repo_path.join("_orphans.md");
+        fs::write(&orphan_path, "# Orphaned Facts\n\n- Old orphan\n").unwrap();
+
+        let snapshot = create_snapshot(&[], &db, repo_path).expect("create snapshot");
+
+        // Simulate a merge appending to the orphan file
+        fs::write(&orphan_path, "# Orphaned Facts\n\n- Old orphan\n\n- New orphan from failed merge\n").unwrap();
+
+        // Rollback should restore original orphan file
+        rollback(&snapshot, &db).expect("rollback");
+
+        let content = fs::read_to_string(&orphan_path).unwrap();
+        assert_eq!(content, "# Orphaned Facts\n\n- Old orphan\n");
+
+        cleanup(&snapshot).expect("cleanup");
+    }
+
+    #[test]
+    fn test_rollback_removes_orphan_file_if_new() {
+        let (db, temp) = test_db();
+        let repo_path = temp.path();
+        test_repo(&db, "repo1", repo_path);
+
+        // No orphan file exists initially
+        let orphan_path = repo_path.join("_orphans.md");
+        assert!(!orphan_path.exists());
+
+        let snapshot = create_snapshot(&[], &db, repo_path).expect("create snapshot");
+
+        // Simulate a merge creating the orphan file
+        fs::write(&orphan_path, "# Orphaned Facts\n\n- New orphan\n").unwrap();
+
+        // Rollback should remove the orphan file since it didn't exist before
+        rollback(&snapshot, &db).expect("rollback");
+
+        assert!(!orphan_path.exists());
+
+        cleanup(&snapshot).expect("cleanup");
+    }
+
+    #[test]
+    fn test_snapshot_backs_up_existing_orphan_file() {
+        let (db, temp) = test_db();
+        let repo_path = temp.path();
+        test_repo(&db, "repo1", repo_path);
+
+        // Create an existing orphan file
+        let orphan_path = repo_path.join("_orphans.md");
+        fs::write(&orphan_path, "# Orphaned Facts\n").unwrap();
+
+        let snapshot = create_snapshot(&[], &db, repo_path).expect("create snapshot");
+
+        // Find the orphan backup entry
+        let orphan_backup = snapshot.files.iter().find(|f| f.original_path == "_orphans.md");
+        assert!(orphan_backup.is_some());
+        let orphan_backup = orphan_backup.unwrap();
+        assert!(orphan_backup.existed);
+        assert!(orphan_backup.backup_path.exists());
+
+        cleanup(&snapshot).expect("cleanup");
     }
 
     #[test]
