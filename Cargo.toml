@@ -1,6 +1,6 @@
 [package]
 name = "factbase"
-version = "50.57.0"
+version = "50.57.1"
 edition = "2021"
 description = "Filesystem-based knowledge management with semantic search for AI agents"
 license = "MIT"
