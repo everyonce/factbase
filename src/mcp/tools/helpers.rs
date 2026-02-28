@@ -514,10 +514,17 @@ mod tests {
     #[test]
     fn test_resolve_time_budget_falls_back_to_config() {
         let args = serde_json::json!({});
-        // Should return the config default (10)
+        // Should return the config default (30)
         let budget = resolve_time_budget(&args);
         assert!(budget.is_some());
-        assert_eq!(budget.unwrap(), 10);
+        assert_eq!(budget.unwrap(), 30);
+    }
+
+    #[test]
+    fn test_resolve_time_budget_mcp_default_30_when_no_arg_no_config() {
+        // MCP calls get 30s default when neither arg nor config is set
+        let args = serde_json::json!({});
+        assert_eq!(resolve_time_budget(&args), Some(30));
     }
 
     #[test]
