@@ -194,7 +194,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation (slower, requires LLM). For large repositories, may return partial results with `continue: true` and a `checked_pair_ids` array — pass `checked_pair_ids` back on the next call to resume where it left off. Legacy `checked_doc_ids` is also accepted for backward compatibility.",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation using pre-computed fact embeddings (slower, requires LLM). For large repositories, may return partial results with `continue: true` and a `checked_pair_ids` array — pass `checked_pair_ids` back on the next call to resume where it left off. Legacy `checked_doc_ids` is also accepted for backward compatibility.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -223,7 +223,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate embeddings, and detect entity links. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
+                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in deep_check. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
