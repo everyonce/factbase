@@ -114,9 +114,31 @@ async fn generate_questions_single(
 
     // Cross-document fact validation (when LLM is available)
     if let Some(llm) = llm {
-        match cross_validate_document(body, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, None).await {
-            Ok(cross_questions) => new_questions.extend(cross_questions),
-            Err(e) => warn!("Cross-validation failed for {}: {e}", doc_id),
+        // Prefer fact-pair mode if fact embeddings exist
+        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        if fact_count > 0 {
+            let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5).unwrap_or_default();
+            // Filter to pairs involving this document
+            let doc_pairs: Vec<_> = pairs
+                .into_iter()
+                .filter(|p| p.fact_a.document_id == doc_id || p.fact_b.document_id == doc_id)
+                .collect();
+            if !doc_pairs.is_empty() {
+                match crate::question_generator::cross_validate::cross_validate_facts(&doc_pairs, db, llm, None).await {
+                    Ok(pair_questions) => {
+                        if let Some(qs) = pair_questions.get(doc_id) {
+                            new_questions.extend(qs.iter().cloned());
+                        }
+                    }
+                    Err(e) => warn!("Fact-pair cross-validation failed for {}: {e}", doc_id),
+                }
+            }
+        } else {
+            // Fallback: per-document cross-validation
+            match cross_validate_document(body, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, None).await {
+                Ok(cross_questions) => new_questions.extend(cross_questions),
+                Err(e) => warn!("Cross-validation failed for {}: {e}", doc_id),
+            }
         }
     }
 

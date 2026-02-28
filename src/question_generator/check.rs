@@ -9,7 +9,7 @@ use crate::processor::{
     append_review_questions, content_hash, parse_review_queue, prune_stale_questions,
 };
 use crate::progress::ProgressReporter;
-use crate::question_generator::cross_validate::cross_validate_document;
+use crate::question_generator::cross_validate::{cross_validate_document, cross_validate_facts};
 use crate::question_generator::{
     extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
     generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
@@ -330,28 +330,56 @@ pub async fn check_all_documents(
         all_results.extend(batch);
     }
 
-    // Sequential cross-validation pass (one doc at a time to avoid API throttling)
+    // Sequential cross-validation pass
     let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
     if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
-        for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
-            if let Some(deadline) = config.deadline {
-                if Instant::now() > deadline {
-                    break;
+        let llm = llm.unwrap();
+
+        // Try fact-pair mode first (uses pre-computed embeddings from scan)
+        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        if fact_count > 0 {
+            let pairs = db
+                .find_all_cross_doc_fact_pairs(0.3, 5)
+                .unwrap_or_default();
+            if !pairs.is_empty() {
+                progress.report(0, pairs.len(), "Cross-validating fact pairs");
+                match cross_validate_facts(&pairs, db, llm, config.deadline).await {
+                    Ok(pair_questions) => {
+                        // Distribute questions to the correct documents
+                        for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
+                            if let Some(qs) = pair_questions.get(&doc.id) {
+                                questions.extend(qs.iter().cloned());
+                            }
+                        }
+                        // Mark all active docs as cross-validated
+                        for (doc, _, _, _, _, _, _, _) in &all_results {
+                            if !config.checked_doc_ids.contains(&doc.id) {
+                                cross_validated_ids.push(doc.id.clone());
+                            }
+                        }
+                    }
+                    Err(e) => warn!("Fact-pair cross-validation failed: {e}"),
                 }
             }
-            // Skip docs already cross-validated in a previous call
-            if config.checked_doc_ids.contains(&doc.id) {
-                continue;
-            }
-            if i % 5 == 0 {
-                progress.report(i + 1, total_active, "Cross-validating");
-            }
-            if let Some(llm) = llm {
+        } else {
+            // Fallback: per-document cross-validation (no fact embeddings yet)
+            warn!("No fact embeddings found — falling back to per-document cross-validation. Run `factbase scan` to populate fact embeddings.");
+            for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
+                if let Some(deadline) = config.deadline {
+                    if Instant::now() > deadline {
+                        break;
+                    }
+                }
+                if config.checked_doc_ids.contains(&doc.id) {
+                    continue;
+                }
+                if i % 5 == 0 {
+                    progress.report(i + 1, total_active, "Cross-validating");
+                }
                 match cross_validate_document(&doc.content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, config.deadline).await {
                     Ok(cross) => {
                         questions.extend(cross);
-                        // Only mark as fully checked if deadline wasn't hit mid-document
                         if !config.deadline.is_some_and(|d| Instant::now() > d) {
                             cross_validated_ids.push(doc.id.clone());
                         }
