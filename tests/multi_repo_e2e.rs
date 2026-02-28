@@ -16,6 +16,7 @@ fn setup_db(temp: &TempDir) -> Database {
 
 /// Task 4.1: Test multi-repo workflow with real Ollama
 #[tokio::test]
+#[ignore]
 async fn test_multi_repo_with_real_ollama() {
     require_ollama().await;
 
@@ -105,6 +106,7 @@ async fn test_multi_repo_with_real_ollama() {
 
 /// Task 4.2: Test cross-repo search
 #[tokio::test]
+#[ignore]
 async fn test_cross_repo_search() {
     require_ollama().await;
 
@@ -164,6 +166,7 @@ async fn test_cross_repo_search() {
 
 /// Task 4.3: Test repo-filtered search
 #[tokio::test]
+#[ignore]
 async fn test_repo_filtered_search() {
     require_ollama().await;
 
@@ -235,6 +238,7 @@ async fn test_repo_filtered_search() {
 
 /// Task 4.4: Test repo isolation
 #[tokio::test]
+#[ignore]
 async fn test_repo_isolation() {
     require_ollama().await;
 

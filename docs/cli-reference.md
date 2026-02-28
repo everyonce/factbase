@@ -339,6 +339,7 @@ Check knowledge base quality for common issues.
 - `--incremental` - Only check documents modified since last check (tracks timestamp per repository)
 - `--since` - Only check files modified since date (ISO 8601 or relative: 1h, 1d, 1w)
 - `-a, --check-all` - Run all validation checks (equivalent to --check-temporal --check-sources --check-duplicates)
+- `--deep-check` - Cross-validate facts across documents using fact-level embeddings (slower, requires LLM)
 - `-p, --parallel` - Process documents in parallel for faster checking
 - `--batch-size` - Process documents in batches of N to limit memory usage (default: 0 = no batching)
 
@@ -449,5 +450,6 @@ Run `review --apply` to process answers. The LLM interprets your answers and upd
 | `@q[ambiguous]` | Unclear meaning |
 | `@q[stale]` | Outdated info |
 | `@q[duplicate]` | Similar document |
+| `@q[corruption]` | Data corruption (malformed temporal tags) |
 
 See [docs/review-system.md](review-system.md) for the complete specification.

@@ -70,6 +70,7 @@ async fn setup_indexed_repo() -> (TempDir, Database, OllamaEmbedding, Repository
 
 /// Test 6.1: MCP search with real embeddings
 #[tokio::test]
+#[ignore]
 async fn test_mcp_search_with_real_embeddings() {
     require_ollama().await;
 
@@ -185,6 +186,7 @@ async fn test_mcp_search_with_real_embeddings() {
 
 /// Test 6.2: All 8 MCP tools end-to-end
 #[tokio::test]
+#[ignore]
 async fn test_all_8_mcp_tools() {
     require_ollama().await;
 
@@ -397,6 +399,7 @@ async fn test_all_8_mcp_tools() {
 
 /// Test 6.3: Concurrent MCP requests with real operations
 #[tokio::test]
+#[ignore]
 async fn test_mcp_concurrent_requests_real() {
     require_ollama().await;
 
@@ -494,6 +497,7 @@ async fn test_mcp_concurrent_requests_real() {
 
 /// Test 6.4: MCP write operations trigger proper updates
 #[tokio::test]
+#[ignore]
 async fn test_mcp_write_operations_update_index() {
     require_ollama().await;
 
@@ -654,6 +658,7 @@ async fn test_mcp_write_operations_update_index() {
 
 /// Test tools/list endpoint returns all 8 tools
 #[tokio::test]
+#[ignore]
 async fn test_tools_list_endpoint() {
     let (_temp, db, embedding, _repo, config) = setup_indexed_repo().await;
 

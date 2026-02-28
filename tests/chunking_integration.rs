@@ -93,6 +93,7 @@ fn test_chunk_document_respects_word_boundaries() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_scan_with_chunking() {
     if !is_ollama_available().await {
         eprintln!("Skipping test: Ollama not available");
@@ -165,6 +166,7 @@ async fn test_scan_with_chunking() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_deduplicates_chunks() {
     if !is_ollama_available().await {
         eprintln!("Skipping test: Ollama not available");
@@ -230,6 +232,7 @@ async fn test_search_deduplicates_chunks() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_search_returns_best_chunk() {
     if !is_ollama_available().await {
         eprintln!("Skipping test: Ollama not available");

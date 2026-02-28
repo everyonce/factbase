@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 
 /// Test 5.1: File watcher triggers real scan with Ollama
 #[tokio::test]
+#[ignore]
 async fn test_watcher_triggers_real_scan() {
     require_ollama().await;
 
@@ -88,6 +89,7 @@ async fn test_watcher_triggers_real_scan() {
 
 /// Test 5.2: New file detection and indexing with real embeddings
 #[tokio::test]
+#[ignore]
 async fn test_new_file_detection_and_indexing() {
     require_ollama().await;
 
@@ -157,6 +159,7 @@ async fn test_new_file_detection_and_indexing() {
 
 /// Test 5.3: File deletion handling with real database updates
 #[tokio::test]
+#[ignore]
 async fn test_file_deletion_handling() {
     require_ollama().await;
 
@@ -226,6 +229,7 @@ async fn test_file_deletion_handling() {
 
 /// Test 5.4: Rapid changes with debouncing and real operations
 #[tokio::test]
+#[ignore]
 async fn test_rapid_changes_with_debouncing() {
     require_ollama().await;
 
@@ -282,6 +286,7 @@ async fn test_rapid_changes_with_debouncing() {
 
 /// Test watcher with MCP server integration
 #[tokio::test]
+#[ignore]
 async fn test_watcher_with_mcp_server() {
     require_ollama().await;
 

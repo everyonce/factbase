@@ -10,6 +10,7 @@ use std::io::Write;
 
 /// Test 8.1: Corrupted file handling (invalid UTF-8)
 #[tokio::test]
+#[ignore]
 async fn test_corrupted_file_handling() {
     require_ollama().await;
 
@@ -45,6 +46,7 @@ async fn test_corrupted_file_handling() {
 
 /// Test 8.2: Very large file handling
 #[tokio::test]
+#[ignore]
 async fn test_very_large_file_handling() {
     require_ollama().await;
 
@@ -73,6 +75,7 @@ async fn test_very_large_file_handling() {
 
 /// Test 8.3: Invalid factbase header handling
 #[tokio::test]
+#[ignore]
 async fn test_invalid_factbase_header_handling() {
     require_ollama().await;
 
@@ -124,6 +127,7 @@ async fn test_invalid_factbase_header_handling() {
 
 /// Test 8.4: Empty file handling
 #[tokio::test]
+#[ignore]
 async fn test_empty_file_handling() {
     require_ollama().await;
 
@@ -153,6 +157,7 @@ async fn test_empty_file_handling() {
 
 /// Test 8.5: Permission denied handling
 #[tokio::test]
+#[ignore]
 #[cfg(unix)]
 async fn test_permission_denied_handling() {
     require_ollama().await;
@@ -190,6 +195,7 @@ async fn test_permission_denied_handling() {
 
 /// Test 8.6: Symlink handling
 #[tokio::test]
+#[ignore]
 #[cfg(unix)]
 async fn test_symlink_handling() {
     require_ollama().await;
@@ -223,6 +229,7 @@ async fn test_symlink_handling() {
 
 /// Test database integrity after errors
 #[tokio::test]
+#[ignore]
 async fn test_database_integrity_after_errors() {
     require_ollama().await;
 

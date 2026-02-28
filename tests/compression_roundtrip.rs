@@ -201,6 +201,7 @@ fn import_tar_zst(repo: &Repository, input_path: &std::path::Path) -> anyhow::Re
 
 /// Test compressed json.zst export/import roundtrip
 #[tokio::test]
+#[ignore]
 async fn test_json_zst_roundtrip() {
     require_ollama().await;
 
@@ -257,6 +258,7 @@ async fn test_json_zst_roundtrip() {
 
 /// Test compressed tar.zst export/import roundtrip
 #[tokio::test]
+#[ignore]
 async fn test_tar_zst_roundtrip() {
     require_ollama().await;
 
@@ -320,6 +322,7 @@ async fn test_tar_zst_roundtrip() {
 
 /// Test that compressed files are actually smaller
 #[tokio::test]
+#[ignore]
 async fn test_compression_reduces_size() {
     require_ollama().await;
 

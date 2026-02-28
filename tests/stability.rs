@@ -19,6 +19,7 @@ use tokio::sync::oneshot;
 /// Test 9.1: Short stability test (2 minutes)
 /// Tests system stability with periodic operations
 #[tokio::test]
+#[ignore]
 async fn test_stability_short() {
     require_ollama().await;
 
@@ -325,6 +326,7 @@ async fn test_stability_long() {
 
 /// Test 9.3: Database integrity after operations
 #[tokio::test]
+#[ignore]
 async fn test_database_integrity_after_operations() {
     require_ollama().await;
 

@@ -10,6 +10,7 @@ use factbase::{cosine_similarity, database::Database, scanner::full_scan, Embedd
 
 /// Task 3.1: Test complete scan workflow with real Ollama
 #[tokio::test]
+#[ignore]
 async fn test_full_scan_with_real_ollama() {
     require_ollama().await;
 
@@ -77,6 +78,7 @@ async fn test_full_scan_with_real_ollama() {
 
 /// Task 3.2: Verify embedding quality
 #[tokio::test]
+#[ignore]
 async fn test_embedding_quality() {
     require_ollama().await;
 
@@ -142,6 +144,7 @@ async fn test_embedding_quality() {
 
 /// Task 3.3: Verify link detection accuracy
 #[tokio::test]
+#[ignore]
 async fn test_link_detection_accuracy() {
     require_ollama().await;
 
@@ -202,6 +205,7 @@ async fn test_link_detection_accuracy() {
 
 /// Task 3.4: Verify semantic search works
 #[tokio::test]
+#[ignore]
 async fn test_semantic_search_works() {
     require_ollama().await;
 

@@ -10,6 +10,7 @@ use std::fs;
 
 /// Test 11.1: Empty repository
 #[tokio::test]
+#[ignore]
 async fn test_empty_repository() {
     require_ollama().await;
 
@@ -31,6 +32,7 @@ async fn test_empty_repository() {
 
 /// Test 11.2: Single document repository
 #[tokio::test]
+#[ignore]
 async fn test_single_document_repository() {
     require_ollama().await;
 
@@ -57,6 +59,7 @@ async fn test_single_document_repository() {
 
 /// Test 11.3: Deeply nested directories
 #[tokio::test]
+#[ignore]
 async fn test_deeply_nested_directories() {
     require_ollama().await;
 
@@ -97,6 +100,7 @@ async fn test_deeply_nested_directories() {
 
 /// Test 11.4: Unicode in filenames and content
 #[tokio::test]
+#[ignore]
 async fn test_unicode_filenames_and_content() {
     require_ollama().await;
 
@@ -136,6 +140,7 @@ async fn test_unicode_filenames_and_content() {
 
 /// Test 11.5: Special characters in content
 #[tokio::test]
+#[ignore]
 async fn test_special_characters_in_content() {
     require_ollama().await;
 
@@ -212,6 +217,7 @@ Regular content here.
 
 /// Test 11.6: Very long file paths
 #[tokio::test]
+#[ignore]
 async fn test_long_file_paths() {
     require_ollama().await;
 

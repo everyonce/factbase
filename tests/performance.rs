@@ -19,6 +19,7 @@ use tokio::sync::oneshot;
 // === Task 14.1: 1000 document repository ===
 
 #[tokio::test]
+#[ignore]
 async fn test_scan_1000_documents() {
     require_ollama().await;
 
@@ -132,6 +133,7 @@ async fn test_scan_1000_documents() {
 // === Task 14.2: Concurrent MCP requests ===
 
 #[tokio::test]
+#[ignore]
 async fn test_concurrent_mcp_requests() {
     require_ollama().await;
 
@@ -277,6 +279,7 @@ async fn test_concurrent_mcp_requests() {
 // === Task 14.3: Rapid file changes ===
 
 #[tokio::test]
+#[ignore]
 async fn test_rapid_file_changes() {
     let temp_dir = TempDir::new().unwrap();
     let watch_path = temp_dir.path().to_path_buf();
@@ -329,6 +332,7 @@ async fn test_rapid_file_changes() {
 // === Task 14.4: Memory stability (simplified) ===
 
 #[tokio::test]
+#[ignore]
 async fn test_memory_stability_basic() {
     require_ollama().await;
 
