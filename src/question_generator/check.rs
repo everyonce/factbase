@@ -112,11 +112,23 @@ pub async fn check_all_documents(
         .iter()
         .filter(|d| !is_archived(&d.file_path))
         .collect();
-    let total_active = active_docs.len();
-    if total_active < total {
+    if active_docs.len() < total {
         progress.log(&format!(
             "Skipping {} archived document(s)",
-            total - total_active
+            total - active_docs.len()
+        ));
+    }
+
+    // Filter out reference entities — they exist for linking, not quality checks
+    let reference_count = active_docs.iter().filter(|d| crate::patterns::is_reference_doc(&d.content)).count();
+    let active_docs: Vec<_> = active_docs
+        .into_iter()
+        .filter(|d| !crate::patterns::is_reference_doc(&d.content))
+        .collect();
+    if reference_count > 0 {
+        progress.log(&format!(
+            "Skipping {} reference document(s)",
+            reference_count
         ));
     }
 
@@ -634,5 +646,30 @@ mod tests {
         // Without LLM, cross-validation is skipped entirely, so checked_doc_ids
         // just carries forward the input set
         assert!(output.checked_doc_ids.contains(&"aaa".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_check_skips_reference_docs() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let docs = vec![
+            make_doc("aaa", "Regular", "- Fact A\n"),
+            make_doc("bbb", "Reference", "<!-- factbase:reference -->\n# AWS Lambda\n\n- Serverless compute\n"),
+        ];
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        // Reference doc should be skipped — only 1 doc processed
+        assert_eq!(output.docs_total, 1);
+        assert_eq!(output.docs_processed, 1);
     }
 }

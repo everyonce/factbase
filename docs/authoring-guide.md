@@ -255,6 +255,22 @@ Move stable documents into an `archive/` subfolder. They stay indexed and search
 /projects/archive/completed-2024.md   ← searchable, not checked
 ```
 
+### Reference Entities
+
+Add `<!-- factbase:reference -->` to documents that exist primarily as link targets — external entities you reference but don't track in depth. Reference docs are indexed, searchable, and participate in link detection, but are skipped by quality checks (check, enrich, resolve workflows).
+
+```markdown
+<!-- factbase:reference -->
+# AWS Lambda
+
+- Serverless compute service by Amazon Web Services @t[2014..] [^1]
+
+---
+[^1]: AWS, aws.amazon.com/lambda
+```
+
+Place the marker before the title heading. Use for well-known products, standards, or organizations that your knowledge base references but doesn't own.
+
 ### Allowed Types
 If your `perspective.yaml` defines `allowed_types`, ensure your folder names match:
 ```yaml

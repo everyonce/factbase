@@ -193,6 +193,22 @@ Author knowledge files are exclusively human-authored. Agents must never create 
 4. Facts marked `@t[?]` should be flagged as lower confidence
 5. Source footnotes provide provenance for fact verification
 
+## Reference Entities
+
+Documents can be marked as reference entities using the `<!-- factbase:reference -->` marker. Reference entities exist primarily as link targets for entity detection and are excluded from quality workflows.
+
+```markdown
+<!-- factbase:reference -->
+# Entity Name
+
+- Key facts about the external entity @t[2014..] [^1]
+
+---
+[^1]: Official source, URL
+```
+
+Reference documents are fully indexed, searchable, and participate in link detection, but are skipped by `check`, `enrich`, and `resolve` workflows.
+
 ## Review Queue
 
 Factbase can analyze documents and generate questions about inconsistencies, missing data, or ambiguities. Questions are appended in a structured Review Queue section.

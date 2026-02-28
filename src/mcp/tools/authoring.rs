@@ -43,7 +43,8 @@ pub fn get_authoring_guide() -> Value {
             "length": "Minimum 100 chars, optimal 500-5000 chars",
             "filenames": "lowercase-with-hyphens.md (e.g., amanita-muscaria.md, battle-of-thermopylae.md, platform-api.md)",
             "reorganization": "If a file is in the wrong folder or has a poor name, rename or move it freely using file tools. Just run scan_repository afterward to re-index. The factbase ID in the <!-- factbase:XXXXXX --> header is stable across renames.",
-            "archive": "Documents in archive/ folders are indexed and searchable but skipped by quality checks. Use for stable/historical documents: species/archive/reclassified.md, events/archive/superseded.md"
+            "archive": "Documents in archive/ folders are indexed and searchable but skipped by quality checks. Use for stable/historical documents: species/archive/reclassified.md, events/archive/superseded.md",
+            "reference_entities": "Add `<!-- factbase:reference -->` to documents that exist primarily as link targets — external entities you reference but don't track in depth (e.g., well-known products, standards, organizations). Reference docs are indexed, searchable, and participate in link detection, but are skipped by quality checks (check, enrich, resolve workflows). Place the marker after the factbase ID header."
         },
         "temporal_tags": {
             "description": "Every dynamic fact MUST have a temporal tag. Static facts (mathematical constants, chemical formulas) do not need one. CRITICAL: Only dates/years go inside @t[...] — NEVER put descriptive text inside the brackets.",
@@ -130,7 +131,8 @@ pub fn get_authoring_guide() -> Value {
             "organization": "# Organization Name\n\n## Overview\nWhat the organization does.\n\n## Key Facts\n- Founded @t[=2015] [^1]\n- Size: ~500 members @t[~2024-01]\n\n## Leadership\n- Director: Name @t[2020..]\n\n---\n[^1]: Source, date",
             "project": "# Project Name\n\n## Overview\nPurpose and goals.\n\n## Status\nCurrent phase @t[2024-Q1..]\n\n## Team\n- Name - Role @t[2024..]\n\n---\n[^1]: Source, date",
             "generic": "# Entity Name\n\n## Overview\nBrief description of the entity.\n\n## Key Facts\n- Fact with temporal context @t[~2024] [^1]\n- Fact with date range @t[2020..2023] [^2]\n- Static fact that doesn't change [^3]\n\n## Relationships\n- Related to Other Entity Name [^1]\n\n---\n[^1]: Source name, date or URL\n[^2]: Source name, date or URL\n[^3]: Source name, date or URL",
-            "definitions": "# Definitions: <Domain>\n\n## Acronyms\n- **PCR**: Polymerase Chain Reaction — method for amplifying DNA sequences\n- **BCE**: Before Common Era — calendar notation for dates before year 1\n\n## Terms\n- **Mycorrhiza**: Symbiotic association between a fungus and plant roots\n- **Holotype**: The single specimen designated as the name-bearing type of a species"
+            "definitions": "# Definitions: <Domain>\n\n## Acronyms\n- **PCR**: Polymerase Chain Reaction — method for amplifying DNA sequences\n- **BCE**: Before Common Era — calendar notation for dates before year 1\n\n## Terms\n- **Mycorrhiza**: Symbiotic association between a fungus and plant roots\n- **Holotype**: The single specimen designated as the name-bearing type of a species",
+            "reference_entity": "<!-- factbase:reference -->\n# Entity Name\n\n- Brief description of the external entity @t[2014..] [^1]\n- Key facts relevant to your domain [^1]\n\n---\n[^1]: Official source, URL"
         },
         "definitions_files": {
             "description": "When encountering undefined acronyms or ambiguous terms (@q[ambiguous] questions), create or update a definitions file rather than only answering inline. This builds a reusable glossary that prevents the same question from recurring across documents.",
@@ -151,6 +153,7 @@ mod tests {
         assert!(guide["temporal_tags"]["syntax"].is_object());
         assert!(guide["sources"]["format"].is_string());
         assert!(guide["structure"]["title"].is_string());
+        assert!(guide["structure"]["reference_entities"].is_string());
         assert!(guide["template_pattern"]["pattern"].is_object());
         assert!(guide["common_mistakes"].is_array());
         assert!(guide["taxonomy_design"]["steps"].is_array());
@@ -166,6 +169,7 @@ mod tests {
         assert!(templates["organization"].is_string());
         assert!(templates["generic"].is_string());
         assert!(templates["definitions"].is_string());
+        assert!(templates["reference_entity"].is_string());
     }
 
     #[test]

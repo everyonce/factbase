@@ -93,7 +93,8 @@ pub use organize::{
 };
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
 pub use patterns::{
-    content_body, extract_reviewed_date, strip_reviewed_markers, FACT_LINE_REGEX, MANUAL_LINK_REGEX,
+    content_body, extract_reviewed_date, is_reference_doc, strip_reviewed_markers,
+    FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER,
 };
 pub use processor::{
     append_review_questions, calculate_fact_stats, calculate_recency_boost, chunk_document,
