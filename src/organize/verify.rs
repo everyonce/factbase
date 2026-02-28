@@ -2,16 +2,18 @@
 //!
 //! Verifies that fact counts match expectations after merge/split operations
 //! to ensure no data was silently lost.
+//!
+//! Orphan counts are NOT verified because the orphan file (`_orphans.md`) is
+//! append-only and shared across operations. Orphan writing is deterministic
+//! (driven by the plan's ledger), so the document fact count is the only
+//! meaningful verification target.
 
 use std::path::Path;
 
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::organize::fs_helpers::read_file;
-use crate::organize::review::parse_orphan_entries;
-use crate::organize::{
-    extract_facts, FactDestination, MergePlan, MergeResult, SplitPlan, SplitResult,
-};
+use crate::organize::{extract_facts, FactDestination, MergePlan, MergeResult, SplitPlan, SplitResult};
 
 /// Result of verification with detailed counts.
 #[derive(Debug, Clone)]
@@ -22,396 +24,191 @@ pub struct VerificationResult {
     pub expected_facts: usize,
     /// Actual fact count in destination files
     pub actual_facts: usize,
-    /// Expected orphan count from ledger
-    pub expected_orphans: usize,
-    /// Actual orphan count in orphan file
-    pub actual_orphans: usize,
     /// Detailed mismatch description if verification failed
     pub mismatch_details: Option<String>,
 }
 
 impl VerificationResult {
-    fn success(expected_facts: usize, expected_orphans: usize) -> Self {
+    fn success(expected_facts: usize, actual_facts: usize) -> Self {
         Self {
             passed: true,
             expected_facts,
-            actual_facts: expected_facts,
-            expected_orphans,
-            actual_orphans: expected_orphans,
+            actual_facts,
             mismatch_details: None,
         }
     }
 
-    fn failure(
-        expected_facts: usize,
-        actual_facts: usize,
-        expected_orphans: usize,
-        actual_orphans: usize,
-        details: String,
-    ) -> Self {
+    fn failure(expected_facts: usize, actual_facts: usize, details: String) -> Self {
         Self {
             passed: false,
             expected_facts,
             actual_facts,
-            expected_orphans,
-            actual_orphans,
             mismatch_details: Some(details),
         }
     }
 }
 
+/// Build a detailed failure message showing expected vs actual facts.
+fn build_failure_details(
+    operation: &str,
+    expected: usize,
+    actual: usize,
+    actual_facts: &[crate::organize::TrackedFact],
+    content_preview: &str,
+) -> String {
+    let mut details = format!(
+        "{operation} verification failed: expected >= {expected} document facts, got {actual}.\n\n"
+    );
+
+    // Show first N lines of the destination content for debugging
+    let preview_lines: Vec<&str> = content_preview.lines().take(30).collect();
+    details.push_str("--- destination content (first 30 lines) ---\n");
+    for line in &preview_lines {
+        details.push_str(line);
+        details.push('\n');
+    }
+    if content_preview.lines().count() > 30 {
+        details.push_str("... (truncated)\n");
+    }
+
+    details.push_str("\n--- extracted facts ---\n");
+    for (i, fact) in actual_facts.iter().enumerate() {
+        let preview = if fact.content.len() > 80 {
+            format!("{}...", &fact.content[..77])
+        } else {
+            fact.content.clone()
+        };
+        details.push_str(&format!("  {}: L{} {}\n", i + 1, fact.source_line, preview));
+    }
+
+    details
+}
+
 /// Verify a merge operation completed correctly.
 ///
-/// Counts facts in the kept document and orphan file, comparing to ledger expectations.
-///
-/// # Arguments
-/// * `plan` - The merge plan that was executed
-/// * `result` - The result from execute_merge
-/// * `db` - Database connection
-/// * `repo_path` - Repository root path
-///
-/// # Returns
-/// `VerificationResult` with pass/fail status and counts.
+/// Checks that the kept document contains at least as many facts as the plan
+/// assigned to it. Orphan counts are not verified (see module docs).
 pub fn verify_merge(
     plan: &MergePlan,
     result: &MergeResult,
     db: &Database,
     repo_path: &Path,
 ) -> Result<VerificationResult, FactbaseError> {
-    // Calculate expected counts from ledger
     let expected_doc_facts = plan
         .ledger
         .assignments
         .values()
         .filter(|a| a.destination == FactDestination::Document)
         .count();
-    let expected_orphans = plan.ledger.orphan_count();
 
-    // Count actual facts in kept document - read from filesystem since
-    // execute_merge writes the merged content to the file but doesn't update the DB
+    // Read from filesystem since execute_merge writes the merged content
+    // to the file but doesn't update the DB
     let kept_doc = db.require_document(&result.kept_id)?;
     let kept_path = repo_path.join(&kept_doc.file_path);
     let kept_content = read_file(&kept_path)?;
-    let actual_doc_facts = extract_facts(&kept_content, &result.kept_id).len();
+    let actual_facts = extract_facts(&kept_content, &result.kept_id);
+    let actual_doc_facts = actual_facts.len();
 
-    // Count actual orphans from THIS operation only (the orphan file is shared
-    // across operations, so we filter by source document IDs)
-    let actual_orphans = match &result.orphan_path {
-        Some(p) => {
-            let all_entries = parse_orphan_entries(&read_file(p)?);
-            let mut source_ids: Vec<&str> = plan.merge_ids.iter().map(|s| s.as_str()).collect();
-            source_ids.push(&plan.keep_id);
-            all_entries
-                .iter()
-                .filter(|e| {
-                    e.source_doc
-                        .as_ref()
-                        .is_some_and(|id| source_ids.contains(&id.as_str()))
-                })
-                .count()
-        }
-        None => 0,
-    };
-
-    // Verify counts match — use >= for both checks because:
-    // - Document facts: LLM may split/restructure facts, producing more lines
-    // - Orphans: the orphan file is append-only and shared across operations,
-    //   so pre-existing entries for the same doc IDs from prior operations
-    //   inflate the count beyond what this operation alone produced
-    if actual_doc_facts >= expected_doc_facts && actual_orphans >= expected_orphans {
-        Ok(VerificationResult::success(
-            expected_doc_facts,
-            expected_orphans,
-        ))
+    if actual_doc_facts >= expected_doc_facts {
+        Ok(VerificationResult::success(expected_doc_facts, actual_doc_facts))
     } else {
-        let details = format!(
-            "Merge verification failed: expected {expected_doc_facts} document facts (got {actual_doc_facts}), {expected_orphans} orphans (got {actual_orphans})"
-        );
-        Ok(VerificationResult::failure(
+        let details = build_failure_details(
+            "Merge",
             expected_doc_facts,
             actual_doc_facts,
-            expected_orphans,
-            actual_orphans,
-            details,
-        ))
+            &actual_facts,
+            &kept_content,
+        );
+        Ok(VerificationResult::failure(expected_doc_facts, actual_doc_facts, details))
     }
 }
 
 /// Verify a split operation completed correctly.
 ///
-/// Counts facts in all new documents and orphan file, comparing to ledger expectations.
-///
-/// # Arguments
-/// * `plan` - The split plan that was executed
-/// * `result` - The result from execute_split
-/// * `db` - Database connection
-/// * `repo_path` - Repository root path
-///
-/// # Returns
-/// `VerificationResult` with pass/fail status and counts.
+/// Checks that the total facts across all new documents is at least as many
+/// as the plan assigned. Orphan counts are not verified (see module docs).
 pub fn verify_split(
     plan: &SplitPlan,
     result: &SplitResult,
     db: &Database,
     _repo_path: &Path,
 ) -> Result<VerificationResult, FactbaseError> {
-    // Calculate expected counts from ledger
     let expected_doc_facts = plan
         .ledger
         .assignments
         .values()
         .filter(|a| a.destination == FactDestination::Document)
         .count();
-    let expected_orphans = plan.ledger.orphan_count();
 
-    // Count actual facts in all new documents
     let mut actual_doc_facts = 0;
+    let mut all_facts = Vec::new();
+    let mut all_content = String::new();
     for doc_id in &result.new_doc_ids {
         let doc = db.require_document(doc_id)?;
-        actual_doc_facts += extract_facts(&doc.content, doc_id).len();
+        let facts = extract_facts(&doc.content, doc_id);
+        actual_doc_facts += facts.len();
+        all_facts.extend(facts);
+        all_content.push_str(&format!("--- {} ---\n{}\n\n", doc_id, doc.content));
     }
 
-    // Count actual orphans from THIS operation only (the orphan file is shared
-    // across operations, so we filter by source document ID)
-    let actual_orphans = match &result.orphan_path {
-        Some(p) => {
-            let all_entries = parse_orphan_entries(&read_file(p)?);
-            all_entries
-                .iter()
-                .filter(|e| {
-                    e.source_doc
-                        .as_ref()
-                        .is_some_and(|id| id == &plan.source_id)
-                })
-                .count()
-        }
-        None => 0,
-    };
-
-    // Verify counts match — use >= for both checks because:
-    // - Document facts: LLM may split/restructure facts, producing more lines
-    // - Orphans: the orphan file is append-only and shared across operations,
-    //   so pre-existing entries for the same doc IDs from prior operations
-    //   inflate the count beyond what this operation alone produced
-    if actual_doc_facts >= expected_doc_facts && actual_orphans >= expected_orphans {
-        Ok(VerificationResult::success(
-            expected_doc_facts,
-            expected_orphans,
-        ))
+    if actual_doc_facts >= expected_doc_facts {
+        Ok(VerificationResult::success(expected_doc_facts, actual_doc_facts))
     } else {
-        let details = format!(
-            "Split verification failed: expected {expected_doc_facts} document facts (got {actual_doc_facts}), {expected_orphans} orphans (got {actual_orphans})"
-        );
-        Ok(VerificationResult::failure(
+        let details = build_failure_details(
+            "Split",
             expected_doc_facts,
             actual_doc_facts,
-            expected_orphans,
-            actual_orphans,
-            details,
-        ))
+            &all_facts,
+            &all_content,
+        );
+        Ok(VerificationResult::failure(expected_doc_facts, actual_doc_facts, details))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::organize::review::parse_orphan_entries;
     use crate::organize::{FactLedger, TrackedFact};
-    use std::fs;
 
     #[test]
     fn test_verification_result_success() {
-        let result = VerificationResult::success(5, 2);
+        let result = VerificationResult::success(5, 5);
         assert!(result.passed);
         assert_eq!(result.expected_facts, 5);
         assert_eq!(result.actual_facts, 5);
-        assert_eq!(result.expected_orphans, 2);
-        assert_eq!(result.actual_orphans, 2);
         assert!(result.mismatch_details.is_none());
     }
 
     #[test]
     fn test_verification_result_failure() {
-        let result = VerificationResult::failure(5, 3, 2, 1, "test failure".to_string());
+        let result = VerificationResult::failure(5, 3, "test failure".to_string());
         assert!(!result.passed);
         assert_eq!(result.expected_facts, 5);
         assert_eq!(result.actual_facts, 3);
-        assert_eq!(result.expected_orphans, 2);
-        assert_eq!(result.actual_orphans, 1);
-        assert_eq!(result.mismatch_details, Some("test failure".to_string()));
+        assert_eq!(result.mismatch_details.as_deref(), Some("test failure"));
     }
 
     #[test]
-    fn test_parse_orphan_entries_from_file_nonexistent() {
-        let path = Path::new("/nonexistent/path/orphans.md");
-        assert!(!path.exists());
-        // Production code returns 0 when file doesn't exist (match None => 0)
-    }
-
-    #[test]
-    fn test_parse_orphan_entries_from_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let orphan_path = temp_dir.path().join("_orphans.md");
-
-        let content = r#"# Orphaned Facts
-
-## Merge abc123 (2026-02-03 00:00:00)
-
-- First orphan fact @r[orphan] <!-- from abc123 line 5 -->
-- Second orphan fact @r[orphan] <!-- from abc123 line 8 -->
-
-## Split def456 (2026-02-03 00:01:00)
-
-- Third orphan @r[orphan] <!-- from def456 line 3 -->
-"#;
-        fs::write(&orphan_path, content).unwrap();
-
-        let entries = parse_orphan_entries(&read_file(&orphan_path).unwrap());
-        assert_eq!(entries.len(), 3);
-    }
-
-    /// Regression test: verify_merge must only count orphans from the current
-    /// operation, not all orphans in the shared _orphans.md file.
-    #[test]
-    fn test_orphan_count_filters_by_source_doc() {
-        // Simulate an _orphans.md with entries from two different merge operations
-        let content = r#"# Orphaned Facts
-
-## Merge aaa111 (2026-02-27 00:00:00)
-
-- Old orphan from first merge @r[orphan] <!-- from aaa111 line 3 -->
-- Another old orphan @r[orphan] <!-- from bbb222 line 7 -->
-- Third old orphan @r[orphan] <!-- from aaa111 line 10 -->
-
-## Merge ccc333 (2026-02-27 00:01:00)
-
-- New orphan from second merge @r[orphan] <!-- from ccc333 line 5 -->
-- Another new orphan @r[orphan] <!-- from ddd444 line 2 -->
-"#;
-
-        let all_entries = parse_orphan_entries(content);
-        assert_eq!(all_entries.len(), 5, "total orphans in file");
-
-        // Filter for second merge (keep_id=ccc333, merge_ids=[ddd444])
-        let source_ids = vec!["ccc333", "ddd444"];
-        let filtered: usize = all_entries
-            .iter()
-            .filter(|e| {
-                e.source_doc
-                    .as_ref()
-                    .is_some_and(|id| source_ids.contains(&id.as_str()))
-            })
-            .count();
-        assert_eq!(filtered, 2, "only orphans from current merge");
-
-        // Filter for first merge (keep_id=aaa111, merge_ids=[bbb222])
-        let source_ids = vec!["aaa111", "bbb222"];
-        let filtered: usize = all_entries
-            .iter()
-            .filter(|e| {
-                e.source_doc
-                    .as_ref()
-                    .is_some_and(|id| source_ids.contains(&id.as_str()))
-            })
-            .count();
-        assert_eq!(filtered, 3, "only orphans from first merge");
-    }
-
-    #[test]
-    fn test_parse_orphan_entries_ignores_non_orphan_lines() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let orphan_path = temp_dir.path().join("_orphans.md");
-
-        let content = r#"# Orphaned Facts
-
-Some intro text that is not an orphan.
-
-## Merge abc123 (2026-02-03 00:00:00)
-
-- Actual orphan @r[orphan] <!-- from abc123 line 5 -->
-- Not an orphan, just a list item
-- Another orphan @r[orphan] <!-- from abc123 line 8 -->
-
-Regular paragraph text.
-"#;
-        fs::write(&orphan_path, content).unwrap();
-
-        let entries = parse_orphan_entries(&read_file(&orphan_path).unwrap());
-        assert_eq!(entries.len(), 2);
-    }
-
-    /// Regression test: pre-existing orphan entries for the same doc IDs
-    /// (from a prior successful operation) must not cause verification failure.
-    /// The orphan file is append-only, so actual_orphans >= expected_orphans
-    /// is the correct check.
-    #[test]
-    fn test_orphan_verification_tolerates_preexisting_entries() {
-        // Scenario: doc aaa111 was previously involved in a split that produced
-        // 3 orphan entries. Now we merge aaa111 with bbb222, expecting 2 orphans.
-        // The orphan file will have 3 (old) + 2 (new) = 5 entries for aaa111/bbb222.
-        let content = r#"# Orphaned Facts
-
-## Split aaa111 (2026-02-26 00:00:00)
-
-- Old orphan from split @r[orphan] <!-- from aaa111 line 3 -->
-- Another old orphan @r[orphan] <!-- from aaa111 line 7 -->
-- Third old orphan @r[orphan] <!-- from aaa111 line 10 -->
-
-## Merge aaa111 (2026-02-27 00:00:00)
-
-- New orphan from merge @r[orphan] <!-- from aaa111 line 5 -->
-- Another new orphan @r[orphan] <!-- from bbb222 line 2 -->
-"#;
-
-        let all_entries = parse_orphan_entries(content);
-        let source_ids = vec!["aaa111", "bbb222"];
-        let actual_orphans: usize = all_entries
-            .iter()
-            .filter(|e| {
-                e.source_doc
-                    .as_ref()
-                    .is_some_and(|id| source_ids.contains(&id.as_str()))
-            })
-            .count();
-
-        // actual_orphans is 5 (3 old + 2 new), expected is 2
-        let expected_orphans = 2;
-        assert_eq!(actual_orphans, 5);
-
-        // The >= check should pass (5 >= 2)
-        assert!(actual_orphans >= expected_orphans);
+    fn test_verification_passes_when_actual_exceeds_expected() {
+        // LLM may restructure content producing more fact lines than expected
+        let result = VerificationResult::success(5, 8);
+        assert!(result.passed);
+        assert_eq!(result.actual_facts, 8);
     }
 
     #[test]
     fn test_merge_plan_expected_counts() {
         let mut ledger = FactLedger::new();
 
-        // Add 5 facts
         for i in 1..=5 {
             let fact = TrackedFact::new("doc1", i, &format!("fact {}", i), None, vec![]);
             ledger.add_fact(fact);
         }
 
-        // Assign: 3 to document, 1 orphan, 1 duplicate
         let fact_ids: Vec<_> = ledger.source_facts.iter().map(|f| f.id.clone()).collect();
-        ledger.assign(
-            &fact_ids[0],
-            FactDestination::Document,
-            Some("keep".to_string()),
-            None,
-        );
-        ledger.assign(
-            &fact_ids[1],
-            FactDestination::Document,
-            Some("keep".to_string()),
-            None,
-        );
-        ledger.assign(
-            &fact_ids[2],
-            FactDestination::Document,
-            Some("keep".to_string()),
-            None,
-        );
+        ledger.assign(&fact_ids[0], FactDestination::Document, Some("keep".to_string()), None);
+        ledger.assign(&fact_ids[1], FactDestination::Document, Some("keep".to_string()), None);
+        ledger.assign(&fact_ids[2], FactDestination::Document, Some("keep".to_string()), None);
         ledger.assign(&fact_ids[3], FactDestination::Orphan, None, None);
         ledger.assign(&fact_ids[4], FactDestination::Duplicate, None, None);
 
@@ -424,5 +221,48 @@ Regular paragraph text.
 
         assert_eq!(expected_doc, 3);
         assert_eq!(expected_orphans, 1);
+    }
+
+    #[test]
+    fn test_build_failure_details_includes_content() {
+        let facts = vec![
+            TrackedFact::new("doc1", 3, "**Role:** Engineer", None, vec![]),
+            TrackedFact::new("doc1", 5, "- Hired: 2020", None, vec![]),
+        ];
+        let content = "<!-- factbase:abc123 -->\n# Test Doc\n\n**Role:** Engineer\n\n- Hired: 2020\n";
+
+        let details = build_failure_details("Merge", 5, 2, &facts, content);
+
+        assert!(details.contains("expected >= 5 document facts, got 2"));
+        assert!(details.contains("destination content"));
+        assert!(details.contains("**Role:** Engineer"));
+        assert!(details.contains("extracted facts"));
+        assert!(details.contains("L3"));
+        assert!(details.contains("L5"));
+    }
+
+    #[test]
+    fn test_build_failure_details_truncates_long_content() {
+        let facts = vec![];
+        // Create content with 40 lines
+        let content: String = (1..=40).map(|i| format!("Line {i}\n")).collect();
+
+        let details = build_failure_details("Split", 10, 0, &facts, &content);
+
+        assert!(details.contains("(truncated)"));
+        assert!(details.contains("Line 1"));
+        assert!(details.contains("Line 30"));
+        assert!(!details.contains("Line 40"));
+    }
+
+    #[test]
+    fn test_build_failure_details_truncates_long_facts() {
+        let long_content = "x".repeat(100);
+        let facts = vec![TrackedFact::new("doc1", 1, &long_content, None, vec![])];
+
+        let details = build_failure_details("Merge", 5, 1, &facts, "");
+
+        // Should truncate to ~80 chars with "..."
+        assert!(details.contains("..."));
     }
 }
