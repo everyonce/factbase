@@ -48,7 +48,7 @@ pub struct WorkflowsConfig {
 /// | `update.summary` | _(none)_ |
 /// | `resolve.queue` | `ctx`, `deferred_note` |
 /// | `resolve.answer` | `stale`, `ctx` |
-/// | `resolve.answer_intro` | `ctx` |
+/// | `resolve.answer_intro` | `stale`, `ctx` |
 /// | `resolve.apply` | _(none)_ |
 /// | `resolve.verify` | _(none)_ |
 /// | `ingest.search` | `topic`, `ctx` |
@@ -78,7 +78,7 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("update.summary", &[] as &[&str]),
         ("resolve.queue", &["ctx", "deferred_note"]),
         ("resolve.answer", &["stale", "ctx"]),
-        ("resolve.answer_intro", &["ctx"]),
+        ("resolve.answer_intro", &["stale", "ctx"]),
         ("resolve.apply", &[] as &[&str]),
         ("resolve.verify", &[] as &[&str]),
         ("ingest.search", &["topic", "ctx"]),
