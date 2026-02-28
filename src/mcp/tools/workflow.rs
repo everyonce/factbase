@@ -54,9 +54,9 @@ pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate) to work in batches.{ctx}{deferred_note}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions for this knowledge base. Each question has a type that tells you what kind of issue was detected:\n\n- **temporal**: The fact line is MISSING an @t[...] date tag. Your answer MUST include the tag.\n- **stale**: The source is old. Search for current info to confirm or update.\n- **conflict**: Two facts disagree. Check the [pattern:...] tag for guidance.\n- **missing**: A fact lacks a source citation. Find one.\n- **ambiguous**: A term is unclear. Clarify it or create a definitions document.\n- **duplicate**: A fact appears in multiple documents. Identify the canonical one.\n\nFor each batch of questions below, answer them using answer_questions with doc_id, question_index, and your answer. If you can't resolve one, defer it: answer with 'defer: <what you tried>'.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time — answer them, then call step 2 again for the next batch.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([URL]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Search \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't resolve? → \"defer: searched [what], found [nothing/insufficient]\"\nAlways include your source.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "For each unanswered question, resolve it:\n\n1. Read the question description and context lines. Check if a previous attempt left a note — avoid repeating the same search.\n2. Research the answer using your available tools:\n   - **Web search** for current data: try '{entity name} {fact} {current year}' for stale questions, '{entity name} {date/timeline}' for temporal questions\n   - **Read full pages** when a search snippet looks promising — don't rely on snippets alone\n   - **Cross-reference**: verify critical facts against 2+ sources\n3. Call answer_questions with doc_id, question_index, and your answer\n\nHow to answer each type:\n- stale: Source is older than {stale} days. Search for current info. Answer: 'Still accurate per [source], verified [date]' or 'Updated: [new info] per [source]'\n- missing: Find a source. Answer: 'Source: [type], [date]'\n- conflict: Check the [pattern:...] tag in the description for the likely cause:\n  • [pattern:parallel_overlap] — Two overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' (this adds a <!-- reviewed --> marker so the question won't recur).\n  • [pattern:same_entity_transition] — Two overlapping facts about the same entity where one likely supersedes the other. Usually a transition where date sources lack precise changeover dates. Answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the earlier entry's end date.\n  • [pattern:date_imprecision] — Small overlap relative to the date ranges, likely from month-level imprecision in the data source. Answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.\n  • [pattern:unknown] — No recognized pattern. Investigate which fact is current. Answer: '[fact A] is current, [fact B] ended [date] per [source]'.\n  For cross-document conflicts (description mentions a source document ID), use get_entity to read that document for context.\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source citation. Research when the fact was/is true, then answer: '@t[YYYY] per [source name] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges, '@t[YYYY..] per [source]' for ongoing. Use @t[?] only when no date is findable at all. Examples: '@t[=480-BCE] per Herodotus (Histories VII); verified via Britannica 2024-03-15', '@t[2020..2023] per annual report 2023'. Just citing a source in prose without providing the @t[...] tag does NOT resolve the question — the tag must appear in your answer. Every datable fact gets a tag regardless of domain, era, or how well-known it is. NEVER answer with bare dismissals like 'static fact', 'well-known', 'historical constant', or 'doesn\\'t change' — these provide no audit trail and will be rejected\n- ambiguous: For acronyms or domain terms, create or update a definitions/ file (e.g., definitions/business-terms.md) with the definition, then answer: 'See [[id]] definitions file'. For one-off clarifications (home vs work address), answer directly: 'This refers to [clarification] per [source]'\n- duplicate: Identify canonical. Answer: 'Duplicate of [doc_id], remove from here'\n\nIf you cannot find sufficient data to resolve a question, defer it instead of guessing: answer with 'defer: <what you searched and why it was insufficient>'. This leaves the question in the queue with your note for future reviewers.\n\nAlways include your source.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Call answer_questions with doc_id, question_index, and your answer for each.\n\nResearch when needed — web search for stale/temporal, get_entity for cross-doc conflicts.\n\nThen call workflow with workflow='resolve', step=2 for the next batch.{ctx}";
 
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If the response includes `continue: true`, call it again until complete. Use dry_run=true first to preview, then without dry_run to apply.";
 
@@ -597,7 +597,7 @@ fn resolve_step2_batch(
             wf,
             "resolve.answer_intro",
             DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
-            &[("ctx", &ctx)],
+            &[("stale", &stale.to_string()), ("ctx", &ctx)],
         );
         result
             .as_object_mut()
@@ -1023,7 +1023,9 @@ mod tests {
         let content = "<!-- factbase:stl001 -->\n# Stale Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source (line 4)\n";
         insert_test_doc(&db, "stl001", content);
         let step = resolve_step(2, &serde_json::json!({}), &p, 0, &db, &wf());
-        assert!(step["instruction"].as_str().unwrap().contains("180 days"));
+        // Stale days now appear in the intro (first batch), not the per-batch instruction
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("180 days"));
     }
 
     #[test]
@@ -1057,11 +1059,10 @@ mod tests {
         let content = "<!-- factbase:cfp001 -->\n# Conflict Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[conflict]` Two facts overlap (line 4)\n";
         insert_test_doc(&db, "cfp001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("[pattern:parallel_overlap]"));
-        assert!(instruction.contains("[pattern:same_entity_transition]"));
-        assert!(instruction.contains("[pattern:date_imprecision]"));
-        assert!(instruction.contains("[pattern:unknown]"));
+        // Conflict pattern names now in intro (first batch), not per-batch instruction
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("CONFLICT"), "intro should cover conflict type");
+        assert!(intro.contains("[pattern:"), "intro should mention pattern tags");
         // Structured conflict_patterns field should also be present
         let patterns = &step["conflict_patterns"];
         assert!(patterns["parallel_overlap"].is_string());
@@ -1076,13 +1077,14 @@ mod tests {
         let content = "<!-- factbase:tmp001 -->\n# Temporal Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Missing date (line 4)\n";
         insert_test_doc(&db, "tmp001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("MISSING an @t[...]"), "temporal guidance must explain the fact line is missing a tag");
-        assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
-        assert!(instruction.contains("verified"), "temporal guidance must require verification date");
-        assert!(instruction.contains("NEVER answer with bare dismissals"), "must reject bare dismissals");
-        assert!(instruction.contains("static fact"), "must explicitly name 'static fact' as rejected");
-        assert!(instruction.contains("no audit trail"), "must explain why dismissals are rejected");
+        // Temporal guidance now in intro (first batch)
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("TEMPORAL"), "intro should cover temporal type");
+        assert!(intro.contains("@t[YYYY]"), "intro must show tag format");
+        assert!(intro.contains("verified"), "intro must require verification date");
+        assert!(intro.contains("WRONG"), "intro must flag rejected answers");
+        assert!(intro.contains("well-known"), "intro must explicitly name 'well-known' as rejected");
+        assert!(intro.contains("no audit trail"), "intro must explain why dismissals are rejected");
     }
 
     #[test]
@@ -1683,8 +1685,8 @@ mod tests {
         // First batch (resolved_so_far=0) should have intro
         assert!(step["intro"].is_string(), "first batch should include intro");
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("temporal"), "intro should describe question types");
-        assert!(intro.contains("stale"), "intro should describe question types");
+        assert!(intro.contains("TEMPORAL"), "intro should describe question types");
+        assert!(intro.contains("STALE"), "intro should describe question types");
     }
 
     #[test]
