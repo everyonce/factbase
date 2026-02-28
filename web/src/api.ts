@@ -107,8 +107,6 @@ export interface MisplacedCandidate {
   current_type: string;
   suggested_type: string;
   reason: string;
-  current_folder?: string;
-  suggested_folder?: string;
 }
 
 export interface SuggestionsResponse {

@@ -429,6 +429,12 @@ pub async fn check_all_documents(
         all_results.len()
     };
 
+    // Folder placement check (no LLM needed — pure link graph analysis).
+    // Runs after cross-validation, respects deadline.
+    if !deadline_hit && !config.deadline.is_some_and(|d| Instant::now() > d) {
+        run_placement_check(docs, db, &mut all_results);
+    }
+
     // Acquire write guard for non-dry-run (writes review queue to disk+DB).
     // Acquired here — after all read-only question generation — so dry-run
     // and read-only phases are never blocked by a concurrent write.
@@ -491,6 +497,33 @@ pub async fn check_all_documents(
 
 /// Check if a document path is in an archive folder.
 /// Matches paths containing `/archive/` or starting with `archive/`.
+/// Run folder placement check and merge questions into all_results.
+fn run_placement_check<'a>(
+    docs: &[Document],
+    db: &Database,
+    all_results: &mut Vec<(
+        &&'a Document,
+        Vec<ReviewQuestion>,
+        String,
+        usize,
+        usize,
+        usize,
+        usize,
+        usize,
+    )>,
+) {
+    match super::placement::check_folder_placement(docs, db) {
+        Ok(placement_qs) => {
+            for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
+                if let Some(pqs) = placement_qs.get(&doc.id) {
+                    questions.extend(pqs.iter().cloned());
+                }
+            }
+        }
+        Err(e) => warn!("Folder placement check failed: {e}"),
+    }
+}
+
 fn is_archived(file_path: &str) -> bool {
     file_path.contains("/archive/") || file_path.starts_with("archive/")
 }

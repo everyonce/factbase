@@ -43,6 +43,7 @@ pub(crate) mod facts;
 mod fields;
 pub mod check;
 mod missing;
+pub(crate) mod placement;
 mod stale;
 mod temporal;
 
