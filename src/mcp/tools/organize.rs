@@ -1,12 +1,12 @@
 //! Organize-related MCP tools.
 
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
+use crate::mcp::tools::helpers::WriteGuard;
 use crate::mcp::tools::{get_bool_arg, get_str_arg, get_str_arg_required, run_blocking};
 use crate::organize::{
     assess_staleness, create_snapshot, cleanup, rollback,
@@ -18,32 +18,6 @@ use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
-
-/// Guard that prevents concurrent destructive organize operations (merge, split).
-/// These operations modify shared files (documents, _orphans.md) and database state,
-/// so concurrent execution causes race conditions and verification failures.
-static ORGANIZE_LOCK: AtomicBool = AtomicBool::new(false);
-
-/// RAII guard that releases the organize lock on drop.
-struct OrganizeLockGuard;
-
-impl OrganizeLockGuard {
-    fn try_acquire() -> Result<Self, FactbaseError> {
-        if ORGANIZE_LOCK.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
-            return Err(FactbaseError::internal(
-                "Another organize operation (merge/split) is already in progress. \
-                 Wait for it to complete before starting another."
-            ));
-        }
-        Ok(Self)
-    }
-}
-
-impl Drop for OrganizeLockGuard {
-    fn drop(&mut self) {
-        ORGANIZE_LOCK.store(false, Ordering::SeqCst);
-    }
-}
 
 /// Resolve a repository from the database, optionally filtered by ID.
 fn resolve_repo(db: &Database, repo_id: Option<&str>) -> Result<crate::models::Repository, FactbaseError> {
@@ -267,7 +241,7 @@ async fn organize_merge(
     }
 
     // Acquire lock for destructive operation
-    let _guard = OrganizeLockGuard::try_acquire()?;
+    let _guard = WriteGuard::try_acquire()?;
 
     // Execute with snapshot-based rollback
     let doc_ids: Vec<&str> = vec![&keep_id, merge_id.as_str()];
@@ -357,7 +331,7 @@ async fn organize_split(
     }
 
     // Acquire lock for destructive operation
-    let _guard = OrganizeLockGuard::try_acquire()?;
+    let _guard = WriteGuard::try_acquire()?;
 
     let doc_ids: Vec<&str> = vec![doc_id.as_str()];
     let snapshot = create_snapshot(&doc_ids, db, &repo.path)?;
@@ -526,19 +500,19 @@ mod tests {
     }
 
     #[test]
-    fn test_organize_lock_guard_prevents_concurrent() {
-        let guard1 = OrganizeLockGuard::try_acquire();
+    fn test_write_guard_prevents_concurrent() {
+        let guard1 = WriteGuard::try_acquire();
         assert!(guard1.is_ok());
 
         // Second acquire should fail while first is held
-        let guard2 = OrganizeLockGuard::try_acquire();
+        let guard2 = WriteGuard::try_acquire();
         assert!(guard2.is_err());
 
         // Drop first guard
         drop(guard1);
 
         // Now acquire should succeed
-        let guard3 = OrganizeLockGuard::try_acquire();
+        let guard3 = WriteGuard::try_acquire();
         assert!(guard3.is_ok());
     }
 }

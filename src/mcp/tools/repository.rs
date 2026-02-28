@@ -5,6 +5,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::mcp::tools::get_str_arg;
+use crate::mcp::tools::helpers::WriteGuard;
 use crate::{
     Config, DocumentProcessor, LinkDetector, ProgressReporter, ScanContext, ScanOptions, Scanner,
 };
@@ -42,6 +43,9 @@ pub async fn scan_repository(
     // MCP scan uses NoOpLlm — manual [[id]] links are still detected.
     // For LLM-powered entity detection, run check_repository after scanning.
     let link_detector = LinkDetector::new(Box::new(NoOpLlm));
+
+    // Acquire write guard — scan rewrites all DB content from disk
+    let _guard = WriteGuard::try_acquire()?;
 
     progress.log(&format!("Scanning repository '{}'...", repo.id));
 

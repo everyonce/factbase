@@ -2,6 +2,10 @@
 //!
 //! These functions provide consistent argument parsing across all MCP tools.
 
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::processor::{
@@ -9,11 +13,41 @@ use crate::processor::{
     parse_source_references, parse_temporal_tags,
 };
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
 // Re-export shared run_blocking for MCP tool modules
 pub(crate) use crate::async_helpers::run_blocking;
+
+/// Global lock preventing concurrent destructive MCP operations (scan, check,
+/// apply, organize merge/split). On HTTP transport axum dispatches requests
+/// concurrently — this guard serialises operations that write to disk and DB.
+static WRITE_LOCK: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard that releases [`WRITE_LOCK`] on drop.
+#[derive(Debug)]
+pub(crate) struct WriteGuard;
+
+impl WriteGuard {
+    /// Try to acquire the write lock. Returns an error if another destructive
+    /// operation is already in progress.
+    pub fn try_acquire() -> Result<Self, FactbaseError> {
+        if WRITE_LOCK
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return Err(FactbaseError::internal(
+                "Another write operation (scan/check/apply/merge/split) is already in progress. \
+                 Wait for it to complete before starting another.",
+            ));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for WriteGuard {
+    fn drop(&mut self) {
+        WRITE_LOCK.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Extract optional string argument from JSON value.
 pub(crate) fn get_str_arg<'a>(args: &'a Value, key: &str) -> Option<&'a str> {
@@ -564,5 +598,20 @@ mod tests {
         let mut resp = serde_json::json!({"ok": true});
         apply_time_budget_progress(&mut resp, 5, 10, "t", false);
         assert!(resp.get("continue").is_none());
+    }
+
+    #[test]
+    fn test_write_guard_acquire_and_release() {
+        let guard = WriteGuard::try_acquire().expect("first acquire should succeed");
+        drop(guard);
+        // After drop, re-acquire should succeed
+        let _g2 = WriteGuard::try_acquire().expect("re-acquire after drop should succeed");
+    }
+
+    #[test]
+    fn test_write_guard_concurrent_rejected() {
+        let _guard = WriteGuard::try_acquire().expect("first acquire should succeed");
+        let err = WriteGuard::try_acquire().unwrap_err();
+        assert!(err.to_string().contains("Another write operation"));
     }
 }
