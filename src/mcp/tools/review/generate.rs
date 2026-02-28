@@ -35,7 +35,7 @@ use super::format_question_json;
 /// # Arguments (from JSON)
 /// - `doc_id` (optional): Document ID (6-char hex). If omitted, checks all documents.
 /// - `dry_run` (optional): Preview questions without modifying file (default: false)
-/// - `time_budget_secs` (optional): Time budget in seconds (5-60) for multi-doc mode.
+/// - `time_budget_secs` (optional): Time budget in seconds (5-600) for multi-doc mode.
 ///
 /// # Returns
 /// JSON with results. For multi-doc mode, may include `continue: true` if

@@ -202,7 +202,7 @@ pub fn tools_list() -> Value {
                         "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
                         "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, significantly slower)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
                         "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Fact-pair IDs already cross-validated (from previous call's response). Pass back to resume deep_check where it left off. Format: fact_a_id:fact_b_id." },
                         "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Legacy: Doc IDs already cross-validated. Use checked_pair_ids instead for precise resumption." }
                     }
@@ -217,7 +217,7 @@ pub fn tools_list() -> Value {
                         "doc_id": { "type": "string", "description": "Document ID (optional, generates for all documents if omitted)" },
                         "repo": { "type": "string", "description": "Filter by repository ID (optional, used when doc_id is omitted)" },
                         "dry_run": { "type": "boolean", "description": "Preview questions without modifying files (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }
             },
@@ -229,7 +229,7 @@ pub fn tools_list() -> Value {
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" },
                         "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings even if content is unchanged (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }
             },
@@ -255,7 +255,7 @@ pub fn tools_list() -> Value {
                         "doc_id": { "type": "string", "description": "Apply only for this document (optional, applies all if omitted)" },
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
                         "dry_run": { "type": "boolean", "description": "Preview changes without modifying files (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }
             },
@@ -295,7 +295,7 @@ pub fn tools_list() -> Value {
                         "focus": { "type": "string", "enum": ["duplicates", "structure"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info. 'structure' returns misplaced document candidates." },
                         "merge_threshold": { "type": "number", "description": "Minimum similarity for merge candidates (default: 0.95)" },
                         "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-60). Falls back to server.time_budget_secs config." },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600). Falls back to server.time_budget_secs config." },
                         "completed_phases": { "type": "array", "items": { "type": "string" }, "description": "Cursor: phases already completed in a previous call (returned when deadline fires)." },
                         "analyzed_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Cursor: document IDs already analyzed (for future within-phase resumption)." }
                     }

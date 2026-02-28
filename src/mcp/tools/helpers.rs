@@ -251,7 +251,7 @@ pub(crate) fn detect_weak_identification(
 pub(crate) fn resolve_time_budget(args: &Value) -> Option<u64> {
     // Per-call override takes priority
     if let Some(v) = args.get("time_budget_secs").and_then(Value::as_u64) {
-        return Some(v.clamp(5, 60));
+        return Some(v.clamp(5, 600));
     }
     // Fall back to config
     let config = crate::Config::load(None).unwrap_or_default();
@@ -512,23 +512,23 @@ mod tests {
         let args = serde_json::json!({"time_budget_secs": 1});
         assert_eq!(resolve_time_budget(&args), Some(5));
         let args = serde_json::json!({"time_budget_secs": 999});
-        assert_eq!(resolve_time_budget(&args), Some(60));
+        assert_eq!(resolve_time_budget(&args), Some(600));
     }
 
     #[test]
     fn test_resolve_time_budget_falls_back_to_config() {
         let args = serde_json::json!({});
-        // Should return the config default (30)
+        // Should return the config default (180)
         let budget = resolve_time_budget(&args);
         assert!(budget.is_some());
-        assert_eq!(budget.unwrap(), 30);
+        assert_eq!(budget.unwrap(), 180);
     }
 
     #[test]
     fn test_resolve_time_budget_mcp_default_30_when_no_arg_no_config() {
-        // MCP calls get 30s default when neither arg nor config is set
+        // MCP calls get 180s default when neither arg nor config is set
         let args = serde_json::json!({});
-        assert_eq!(resolve_time_budget(&args), Some(30));
+        assert_eq!(resolve_time_budget(&args), Some(180));
     }
 
     #[test]

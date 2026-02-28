@@ -23,7 +23,7 @@ fn default_port() -> u16 {
 }
 
 fn default_time_budget_secs() -> u64 {
-    30
+    180
 }
 
 impl Default for ServerConfig {
@@ -111,7 +111,7 @@ mod tests {
         let config = ServerConfig::default();
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 3000);
-        assert_eq!(config.time_budget_secs, 30);
+        assert_eq!(config.time_budget_secs, 180);
     }
 
     #[test]
@@ -125,7 +125,7 @@ mod tests {
     fn test_server_config_time_budget_default_when_missing() {
         let yaml = "host: 127.0.0.1\nport: 3000\n";
         let config: ServerConfig = serde_yaml_ng::from_str(yaml).unwrap();
-        assert_eq!(config.time_budget_secs, 30);
+        assert_eq!(config.time_budget_secs, 180);
     }
 
     #[test]
