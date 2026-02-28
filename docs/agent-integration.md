@@ -30,6 +30,8 @@ The agent launches factbase as a subprocess — no server to start or manage:
 
 Set `cwd` to the directory containing your knowledge base. The factbase auto-initializes on first launch — no `init` or `scan` needed beforehand. Just tell your agent "scan the factbase" to index.
 
+The stdio transport automatically exits when the parent process dies or after 5 minutes of inactivity, preventing orphaned processes.
+
 ### HTTP transport (for shared or remote access)
 
 Start the server first, then point your agent at it:

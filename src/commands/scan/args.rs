@@ -82,7 +82,7 @@ pub struct ScanArgs {
     pub hard: bool,
     #[arg(
         long,
-        help = "Force re-generation of embeddings even if content unchanged (useful after model upgrade)"
+        help = "Force re-generation of all embeddings (document and fact-level) even if content unchanged"
     )]
     pub reindex: bool,
     #[arg(

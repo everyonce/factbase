@@ -39,7 +39,7 @@ echo "# Project Alpha\n\n- Started Q1 2025\n- Lead: Alice" > projects/alpha.md
 factbase scan
 ```
 
-Factbase reads every `.md` file, generates embeddings for semantic search, and detects cross-references between documents using an LLM.
+Factbase reads every `.md` file, generates embeddings for semantic search and cross-document validation, and detects cross-references between documents using an LLM.
 
 First scan takes a few seconds per document. Subsequent scans only process changed files.
 
@@ -129,7 +129,7 @@ Factbase includes an MCP server so AI agents can search and manage your knowledg
 }
 ```
 
-Set `cwd` to the directory where you ran `factbase init`. Run `factbase scan` first to index your documents — the stdio transport doesn't auto-scan.
+Set `cwd` to the directory where you ran `factbase init`. Run `factbase scan` first to index your documents — the stdio transport doesn't auto-scan. It automatically exits when the parent process dies or after 5 minutes of inactivity.
 
 **HTTP (for shared or remote access)** — start the server first, then point your agent at it:
 

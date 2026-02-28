@@ -71,6 +71,7 @@ Triggers:
 - Overlapping date ranges for mutually exclusive facts (e.g., two full-time jobs)
 - Same fact with different values (e.g., two different graduation years)
 - Timeline gaps that seem implausible
+- Cross-document: `check --deep-check` uses pre-computed fact-level embeddings to find semantically similar facts across documents and classifies pairs as contradicting, superseding, or consistent
 
 ### `@q[missing]` - Missing Data
 
@@ -86,6 +87,7 @@ Triggers:
 - Location without context (home vs. work vs. birth)
 - Relationship without direction (advisor to whom?)
 - Undefined acronyms or abbreviations (e.g., "TAM" without expansion)
+- Folder placement anomaly: `check --deep-check` flags documents whose outgoing links point predominantly to a different container than their own (link majority rule)
 
 ### `@q[stale]` - Potentially Outdated
 

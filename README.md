@@ -123,7 +123,7 @@ See [docs/cli-reference.md](docs/cli-reference.md) for the full command referenc
 | Command | Description |
 |---------|-------------|
 | `factbase init <path>` | Initialize a new repository |
-| `factbase scan` | Index documents (embeddings + link detection) |
+| `factbase scan` | Index documents (document + fact embeddings, link detection) |
 | `factbase search <query>` | Semantic search across documents |
 | `factbase grep <pattern>` | Exact text search (like grep) |
 | `factbase serve` | Start MCP server + file watcher |
@@ -168,6 +168,10 @@ server:
 web:
   enabled: false
   port: 3001
+
+cross_validate:
+  fact_similarity_threshold: 0.5  # Minimum similarity for fact pairs (0.0-1.0)
+  batch_size: 10                  # Fact pairs per LLM batch call (1-50)
 ```
 
 See [examples/config.yaml](examples/config.yaml) for all options including watcher, rate limiting, and compression settings.
