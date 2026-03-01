@@ -43,6 +43,7 @@ This document defines the LLM prompt for generating review questions during `fac
 | `stale` | `@t[~...]` date older than threshold; source date older than threshold |
 | `duplicate` | High similarity with entity in known_entities list |
 | `corruption` | Temporal tag contains non-date content (entity names, descriptions, statistics) |
+| `precision` | Vague qualifiers whose interpretation could change truth value (e.g. 'heavy losses', 'shortly after', 'approximately') |
 
 ## Final Prompt Template
 
@@ -69,6 +70,8 @@ Question Types:
 - ambiguous: Unclear meaning (location context, vague phrasing)
 - stale: @t[~...] dates older than threshold, or @t[YYYY..] ongoing roles >1 year old
 - duplicate: Similar to known entities
+- corruption: Temporal tag contains non-date content (entity names, descriptions)
+- precision: Vague qualifiers whose interpretation could change truth value (e.g. 'heavy losses', 'shortly after')
 
 IMPORTANT: In the description field, QUOTE the specific text from the document and ask a specific question about it.
 
@@ -83,7 +86,7 @@ Examples of BAD descriptions (too generic):
 - 'Missing temporal information'
 
 Return ONLY a JSON array with objects having:
-- "type": one of temporal, conflict, missing, ambiguous, stale, duplicate
+- "type": one of temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision
 - "line_ref": line number (integer, 1-indexed)
 - "description": specific question quoting the text
 
@@ -146,6 +149,8 @@ fn validate_question(raw: RawQuestion) -> Option<ReviewQuestion> {
         "ambiguous" => QuestionType::Ambiguous,
         "stale" => QuestionType::Stale,
         "duplicate" => QuestionType::Duplicate,
+        "corruption" => QuestionType::Corruption,
+        "precision" => QuestionType::Precision,
         _ => return None,
     };
     

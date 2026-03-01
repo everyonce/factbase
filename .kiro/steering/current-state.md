@@ -181,7 +181,7 @@ The codebase has been modularized into focused submodules. See `.kiro/steering/m
 | `llm/` | ollama, link_detector, review, test_helpers |
 | `scanner/` | options, progress, orchestration/ |
 | `organize/` | types, extract, links, orphans, review, audit, snapshot, verify, detect/, plan/, execute/ |
-| `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, fields, facts, cross_validate, check |
+| `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, placement, fields, facts, cross_validate, check |
 | `answer_processor/` | mod, interpret, apply, temporal, inbox, apply_all, validate |
 | `commands/` | scan/, search/, grep/, status/, check/, review/, export/, import/, doctor/, organize/, mcp |
 | `mcp/` | protocol, stdio, server, tools/ |
