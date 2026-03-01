@@ -90,6 +90,20 @@ pub async fn apply_all_review_answers(
     let repos = db.list_repositories()?;
     let repo_paths: HashMap<_, _> = repos.iter().map(|r| (r.id.as_str(), &r.path)).collect();
 
+    // Load glossary terms for stripping redundant reviewed markers
+    let glossary_terms = {
+        let types = ["definition", "glossary", "reference"];
+        let mut terms = std::collections::HashSet::new();
+        for t in &types {
+            if let Ok(gdocs) = db.list_documents(Some(t), None, None, 100) {
+                for gdoc in &gdocs {
+                    terms.extend(crate::extract_defined_terms(&gdoc.content));
+                }
+            }
+        }
+        terms
+    };
+
     let mut result = ApplyResult::default();
     let mut work = Vec::new();
 
@@ -219,6 +233,12 @@ pub async fn apply_all_review_answers(
 
         match apply_result {
             Ok(Ok((applied, new_content))) => {
+                // Strip reviewed markers that are now redundant due to glossary coverage
+                let new_content = if !config.dry_run && !new_content.is_empty() && !glossary_terms.is_empty() {
+                    crate::processor::strip_glossary_reviewed_markers(&new_content, &glossary_terms)
+                } else {
+                    new_content
+                };
                 // Sync cleaned content to database using the exact content
                 // that was written to disk (avoids read-back race with watcher).
                 if !config.dry_run && !new_content.is_empty() {
