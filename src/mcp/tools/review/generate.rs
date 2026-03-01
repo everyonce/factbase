@@ -10,7 +10,8 @@ use crate::patterns::has_corruption_artifacts;
 use crate::processor::{append_review_questions, content_hash, parse_review_queue};
 use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
-    filter_sequential_conflicts, generate_ambiguous_questions, generate_conflict_questions,
+    collect_defined_terms, filter_sequential_conflicts,
+    generate_ambiguous_questions_with_type, generate_conflict_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_precision_questions, generate_stale_questions, generate_temporal_questions,
 };
@@ -99,12 +100,22 @@ async fn generate_questions_single(
     // entries as document facts.
     let body = crate::patterns::content_body(content);
 
+    // Collect defined terms from glossary/definition/reference documents
+    let all_docs = {
+        let mut docs = Vec::new();
+        for repo in db.list_repositories()? {
+            docs.extend(db.get_documents_for_repo(&repo.id)?.into_values());
+        }
+        docs
+    };
+    let defined_terms = collect_defined_terms(&all_docs);
+
     // Generate all question types
     let mut new_questions = generate_temporal_questions(body);
     new_questions.extend(generate_conflict_questions(body));
     new_questions.extend(generate_duplicate_entry_questions(body));
     new_questions.extend(generate_missing_questions(body));
-    new_questions.extend(generate_ambiguous_questions(body));
+    new_questions.extend(generate_ambiguous_questions_with_type(body, doc.doc_type.as_deref(), &defined_terms));
     new_questions.extend(generate_stale_questions(body, 365)); // Default 365 days
     new_questions.extend(generate_precision_questions(body));
 

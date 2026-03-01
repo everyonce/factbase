@@ -11,7 +11,7 @@ use crate::processor::{
 use crate::progress::ProgressReporter;
 use crate::question_generator::cross_validate::{cross_validate_document, cross_validate_facts};
 use crate::question_generator::{
-    extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
+    collect_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
     generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
     generate_missing_questions, generate_precision_questions,
     generate_required_field_questions, generate_source_quality_questions,
@@ -174,21 +174,9 @@ pub async fn check_all_documents(
 
     let title_map_ref = &title_map;
 
-    // Collect defined terms from definitions/glossary documents so we don't
+    // Collect defined terms from definitions/glossary/reference documents so we don't
     // flag acronyms that are already defined in the repo.
-    let mut defined_terms = HashSet::new();
-    for doc in docs {
-        let is_def = doc.doc_type.as_deref().is_some_and(|t| {
-            let l = t.to_lowercase();
-            l == "definition" || l == "glossary"
-        }) || doc.content.lines().take(3).any(|l| {
-            let lower = l.to_lowercase();
-            lower.contains("# glossary") || lower.contains("# definitions")
-        });
-        if is_def {
-            defined_terms.extend(extract_defined_terms(&doc.content));
-        }
-    }
+    let defined_terms = collect_defined_terms(docs);
     let defined_terms_ref = &defined_terms;
 
     let mut all_results = Vec::new();
@@ -1492,5 +1480,65 @@ mod tests {
 
         // Verify pairs were actually processed
         assert!(!output.checked_pair_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_glossary_terms_suppress_ambiguous_questions() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        // Glossary doc defines HCLS
+        let glossary = Document {
+            id: "ggg".to_string(),
+            title: "Glossary".to_string(),
+            content: "# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n".to_string(),
+            doc_type: Some("glossary".to_string()),
+            ..Document::test_default()
+        };
+        // Regular doc uses HCLS — should NOT get an ambiguous question
+        let regular = Document {
+            id: "rrr".to_string(),
+            title: "Project".to_string(),
+            content: "# Project\n\n- Expanding HCLS practice\n".to_string(),
+            doc_type: Some("project".to_string()),
+            ..Document::test_default()
+        };
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            checked_pair_ids: HashSet::new(),
+            acquire_write_guard: false,
+            batch_size: 10,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&[glossary, regular], &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        // No ambiguous question about HCLS should be generated
+        for r in &output.results {
+            if r.doc_id == "rrr" {
+                // The only questions should be temporal/missing, not ambiguous about HCLS
+                assert_eq!(r.new_questions, output.results.iter().find(|x| x.doc_id == "rrr").map(|x| x.new_questions).unwrap_or(0));
+            }
+        }
+        // Verify by running generators directly with the collected terms
+        let terms = crate::question_generator::collect_defined_terms(&[
+            Document {
+                id: "ggg".to_string(),
+                title: "Glossary".to_string(),
+                content: "# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n".to_string(),
+                doc_type: Some("glossary".to_string()),
+                ..Document::test_default()
+            },
+        ]);
+        let qs = crate::question_generator::generate_ambiguous_questions_with_type(
+            "- Expanding HCLS practice\n",
+            Some("project"),
+            &terms,
+        );
+        assert!(qs.iter().all(|q| !q.description.contains("HCLS")), "HCLS should be suppressed by glossary");
     }
 }

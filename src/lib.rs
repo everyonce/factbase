@@ -111,7 +111,8 @@ pub use question_generator::cross_validate::cross_validate_document;
 pub use question_generator::cross_validate::cross_validate_facts;
 pub use question_generator::cross_validate::{make_pair_id, CrossValidateOutput};
 pub use question_generator::{
-    extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions,
+    collect_defined_terms, extract_defined_terms, is_glossary_doc,
+    filter_sequential_conflicts, generate_ambiguous_questions,
     generate_conflict_questions, generate_corruption_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_precision_questions, generate_required_field_questions,
