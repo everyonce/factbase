@@ -15,6 +15,20 @@ use super::iter_fact_lines;
 /// Default number of days a reviewed marker suppresses question regeneration.
 const REVIEWED_SKIP_DAYS: i64 = 180;
 
+/// Check if a document is a glossary/definition/reference document.
+///
+/// Matches by doc_type (`definition`, `glossary`, `reference`) or by
+/// title in the first 3 lines (`# Glossary`, `# Definitions`).
+pub fn is_glossary_doc(doc_type: Option<&str>, content: &str) -> bool {
+    doc_type.is_some_and(|t| {
+        let l = t.to_lowercase();
+        l == "definition" || l == "glossary" || l == "reference"
+    }) || content.lines().take(3).any(|l| {
+        let lower = l.to_lowercase();
+        lower.contains("# glossary") || lower.contains("# definitions")
+    })
+}
+
 /// Extract defined terms from a definitions/glossary document.
 ///
 /// Parses `**TERM**:` patterns (the standard definitions file format) and
@@ -38,6 +52,17 @@ pub fn extract_defined_terms(content: &str) -> HashSet<String> {
             if !term.is_empty() && !term.contains(' ') {
                 terms.insert(term.to_string());
             }
+        }
+    }
+    terms
+}
+
+/// Collect all defined terms from glossary/definition/reference documents.
+pub fn collect_defined_terms(docs: &[crate::models::Document]) -> HashSet<String> {
+    let mut terms = HashSet::new();
+    for doc in docs {
+        if is_glossary_doc(doc.doc_type.as_deref(), &doc.content) {
+            terms.extend(extract_defined_terms(&doc.content));
         }
     }
     terms
@@ -68,16 +93,7 @@ pub fn generate_ambiguous_questions_with_type(
     let today = Utc::now().date_naive();
 
     // Skip acronym detection for glossary/definition documents
-    let skip_acronyms = doc_type.is_some_and(|t| {
-        let lower = t.to_lowercase();
-        lower == "definition" || lower == "glossary"
-    }) || content
-        .lines()
-        .take(3)
-        .any(|l| {
-            let lower = l.to_lowercase();
-            lower.contains("# glossary") || lower.contains("# definitions")
-        });
+    let skip_acronyms = is_glossary_doc(doc_type, content);
 
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker
@@ -464,5 +480,74 @@ mod tests {
         // Non-Roman-numeral acronyms still flagged
         let q = generate_ambiguous_questions("# Entity\n\n- Joined XYZQ in 2020");
         assert!(q.iter().any(|q| q.description.contains("XYZQ")));
+    }
+
+    #[test]
+    fn test_is_glossary_doc() {
+        // By doc_type
+        assert!(is_glossary_doc(Some("glossary"), "# Something"));
+        assert!(is_glossary_doc(Some("definition"), "# Something"));
+        assert!(is_glossary_doc(Some("reference"), "# Something"));
+        assert!(is_glossary_doc(Some("Glossary"), "# Something"));
+        assert!(is_glossary_doc(Some("Reference"), "# Something"));
+        // By title in content
+        assert!(is_glossary_doc(None, "<!-- factbase:abc123 -->\n# Glossary\n\n- **TERM**: def"));
+        assert!(is_glossary_doc(None, "# Definitions\n\n- **TERM**: def"));
+        // Not a glossary
+        assert!(!is_glossary_doc(Some("person"), "# John Smith"));
+        assert!(!is_glossary_doc(None, "# Project Overview"));
+    }
+
+    #[test]
+    fn test_collect_defined_terms() {
+        use crate::models::Document;
+        let glossary = Document {
+            id: "aaa".to_string(),
+            title: "Glossary".to_string(),
+            content: "# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n- **RFP**: Request for Proposal\n".to_string(),
+            doc_type: Some("glossary".to_string()),
+            ..Document::test_default()
+        };
+        let regular = Document {
+            id: "bbb".to_string(),
+            title: "Project".to_string(),
+            content: "# Project\n\n- Uses HCLS framework\n".to_string(),
+            doc_type: Some("project".to_string()),
+            ..Document::test_default()
+        };
+        let terms = collect_defined_terms(&[glossary, regular]);
+        assert!(terms.contains("HCLS"));
+        assert!(terms.contains("RFP"));
+        assert_eq!(terms.len(), 2);
+    }
+
+    #[test]
+    fn test_glossary_terms_suppress_ambiguous_in_other_docs() {
+        use crate::models::Document;
+        let glossary = Document {
+            id: "ggg".to_string(),
+            title: "Glossary".to_string(),
+            content: "# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n- **RFP**: Request for Proposal\n".to_string(),
+            doc_type: Some("glossary".to_string()),
+            ..Document::test_default()
+        };
+        let terms = collect_defined_terms(&[glossary]);
+        // HCLS defined in glossary → not flagged
+        let q = generate_ambiguous_questions_with_type("# Project\n\n- Expanding HCLS practice", None, &terms);
+        assert!(q.iter().all(|q| !q.description.contains("HCLS")));
+        // Unknown acronym still flagged
+        let q2 = generate_ambiguous_questions_with_type("# Project\n\n- Working on XYZQ initiative", None, &terms);
+        assert!(q2.iter().any(|q| q.description.contains("XYZQ")));
+    }
+
+    #[test]
+    fn test_reference_type_skips_acronym_detection() {
+        // Documents with type "reference" should skip acronym detection entirely
+        let q = generate_ambiguous_questions_with_type(
+            "# AWS Lambda\n\n- Uses XYZQ for processing",
+            Some("reference"),
+            &HashSet::new(),
+        );
+        assert!(q.iter().all(|q| !q.description.contains("XYZQ")));
     }
 }
