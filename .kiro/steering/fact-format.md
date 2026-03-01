@@ -60,7 +60,7 @@ See [docs/review-system.md](../../docs/review-system.md) for full design.
 
 ### Quick Reference
 
-Question types: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]`
+Question types: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]`, `@q[corruption]`, `@q[precision]`
 
 Commands:
 - `factbase check` - Generate questions

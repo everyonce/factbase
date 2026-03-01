@@ -117,7 +117,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Review System
 - Review Queue section in documents marked by `<!-- factbase:review -->` comment
-- Six question types: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]`
+- Six question types: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]` (plus `@q[corruption]` and `@q[precision]` added later)
 - `lint --review` generates review questions using rule-based analysis
 - `review --apply` processes answered questions and updates documents via LLM
 - `review --status` shows queue summary with breakdown by question type

@@ -140,6 +140,9 @@ src/
 │   ├── ambiguous.rs     # Ambiguous fact questions
 │   ├── stale.rs         # Stale fact questions
 │   ├── duplicate.rs     # Duplicate questions
+│   ├── corruption.rs    # Corruption questions
+│   ├── precision.rs     # Precision questions
+│   ├── placement.rs     # Placement questions
 │   ├── fields.rs        # Field extraction
 │   ├── facts.rs         # Fact extraction for cross-validation
 │   ├── cross_validate.rs # Cross-document fact validation

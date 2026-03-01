@@ -359,7 +359,7 @@ Generate review questions for documents using LLM analysis.
 - `--check-temporal` - Validate temporal tag format and consistency
 - `--check-sources` - Validate source footnotes for orphans
 
-Generates questions for: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]`, `@q[precision]`.
+Generates questions for: `@q[temporal]`, `@q[conflict]`, `@q[missing]`, `@q[ambiguous]`, `@q[stale]`, `@q[duplicate]`, `@q[corruption]`, `@q[precision]`.
 
 ## `factbase review --apply [--repo <repo>] [--dry-run]`
 
