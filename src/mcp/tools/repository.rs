@@ -39,10 +39,9 @@ pub async fn scan_repository(
     opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
 
     // Set deadline for time-boxed operation.
-    // force_reindex bypasses the default time budget — the user explicitly asked for a full reindex.
-    // If the caller also passed an explicit time_budget_secs, respect it.
-    let explicit_budget = args.get("time_budget_secs").and_then(Value::as_u64);
-    let time_budget = if opts.force_reindex && explicit_budget.is_none() {
+    // force_reindex always bypasses the time budget — there's no cursor for reindex progress,
+    // so a budget would cause an infinite restart-from-beginning loop.
+    let time_budget = if opts.force_reindex {
         None
     } else {
         crate::mcp::tools::helpers::resolve_time_budget(args)
