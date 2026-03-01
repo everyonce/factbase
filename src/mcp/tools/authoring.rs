@@ -88,16 +88,17 @@ pub fn get_authoring_guide() -> Value {
             "format": "Add [^N] after the fact, define [^N]: at the bottom after a --- separator",
             "types": "Journal article, Database record, Official report, News article, Book, Website, Field observation, Author knowledge (human-only), Archival document, Personal communication, Inferred, Unverified",
             "traceability": "A source name alone is NEVER sufficient. Always include dates, URLs, page numbers, or other identifiers. BAD: 'Wikipedia'. GOOD: 'Wikipedia \"Amanita muscaria\", accessed 2024-01-15, https://en.wikipedia.org/wiki/Amanita_muscaria'",
-            "author_knowledge": "Facts known firsthand by the knowledge base owner belong in dedicated author-knowledge/ documents. Cite as: 'Author knowledge, see [[id]]'. Agents must NEVER create author knowledge files or use 'Author knowledge' as a source — always cite the actual data source instead.",
+            "author_knowledge": "Facts known firsthand by the knowledge base owner belong in dedicated author-knowledge/ documents. Cite as: 'Author knowledge, see [[author-knowledge-doc-name]]'. Agents must NEVER create author knowledge files or use 'Author knowledge' as a source — always cite the actual data source instead.",
             "example": "- First described by Linnaeus @t[=1753] [^1][^2]\n\n---\n[^1]: Linnaeus, Species Plantarum, vol. 2, p. 1171, 1753\n[^2]: MycoBank record #120098, accessed 2024-01-10"
         },
         "linking": {
-            "description": "Factbase detects cross-entity links in TWO ways: (1) During scan_repository, an LLM scans each document's text for mentions of other entity TITLES — if your document text contains another entity's exact title, a link is created automatically. (2) Manual [[doc_id]] syntax for explicit references.",
-            "warning": "⚠️ Markdown links like [Entity Name](../path/file.md) are NOT detected by factbase and do NOT create cross-entity links. Only plain text entity title mentions and [[doc_id]] syntax work.",
+            "description": "Factbase detects cross-entity links in TWO ways: (1) During scan_repository, an LLM scans each document's text for mentions of other entity TITLES — if your document text contains another entity's exact title, a link is created automatically. (2) Manual [[name]] syntax for explicit references, where 'name' is the target document's filename stem (e.g., [[alice-chen]] for alice-chen.md).",
+            "warning": "⚠️ Markdown links like [Entity Name](../path/file.md) are NOT detected by factbase and do NOT create cross-entity links. Only plain text entity title mentions and [[name]] syntax work.",
             "good": "Amanita muscaria forms mycorrhizal associations with Betula pendula ← 'Betula pendula' matches a document title, auto-detected as a link",
             "bad": "[Betula pendula](../species/betula-pendula.md) ← NOT detected, creates no link",
             "tip": "Use the EXACT entity title as it appears in the document's # heading. 'Delta Air Lines' not 'Delta' or 'the airline'. 'Mount Vesuvius' not 'the volcano'.",
-            "manual": "See [[a1b2c3]] for the full specification"
+            "manual": "See [[betula-pendula]] for the full specification ← use the filename stem (lowercase-with-hyphens), not the hex ID",
+            "style": "Always use the filename stem (e.g., [[alice-chen]], [[project-atlas]]) rather than the hex document ID (e.g., [[a1b2c3]]). Readable names make cross-references understandable without looking up IDs. The `factbase check` command flags hex-ID cross-refs and suggests the readable alternative."
         },
         "inbox_blocks": {
             "description": "Stage corrections or new facts for LLM-assisted integration into the document body.",
@@ -108,7 +109,7 @@ pub fn get_authoring_guide() -> Value {
             "Putting text/descriptions inside @t[...] instead of dates — WRONG: @t[seasonal], @t[Wolfgang Amadeus Mozart], @t[Active Production Status: Ongoing], @t[Total Produced: 650+] — RIGHT: @t[~2024] or @t[2020..2023] or @t[?]",
             "Missing temporal tags on dynamic facts (status, classification, population, roles)",
             "Vague entity references ('the species', 'the project') instead of exact names ('Amanita muscaria', 'Platform API')",
-            "Duplicate content across documents — link instead with [[id]]",
+            "Duplicate content across documents — link instead with [[filename-stem]]",
             "Missing source footnotes — always cite where facts came from",
             "Untraceable sources — 'Wikipedia' or 'a paper' alone is insufficient; include title, date, URL, or DOI",
             "Using 'Author knowledge' as a source — this is reserved for human-authored knowledge files only; agents must cite the actual data source",
@@ -137,7 +138,7 @@ pub fn get_authoring_guide() -> Value {
         "definitions_files": {
             "description": "When encountering undefined acronyms or ambiguous terms (@q[ambiguous] questions), create or update a definitions file rather than only answering inline. This builds a reusable glossary that prevents the same question from recurring across documents.",
             "folder": "Place in a definitions/ folder (type: 'definition'). Organize by domain: definitions/taxonomy-terms.md, definitions/technical-terms.md, definitions/historical-terms.md",
-            "workflow": "1. Check if a definitions file already covers the term. 2. If not, create or update the appropriate definitions file. 3. Answer the review question with: 'See [[id]] definitions file' so the fact gets linked. 4. The definition is now searchable and reusable across the knowledge base.",
+            "workflow": "1. Check if a definitions file already covers the term. 2. If not, create or update the appropriate definitions file. 3. Answer the review question with: 'See [[definitions-file-name]] definitions file' so the fact gets linked. 4. The definition is now searchable and reusable across the knowledge base.",
             "when_to_create": "Create definitions files when you encounter @q[ambiguous] questions about acronyms, jargon, or domain-specific terms. Do NOT create them for one-off clarifications (like 'is this the common or scientific name')."
         }
     })
@@ -204,12 +205,15 @@ mod tests {
         let desc = linking["description"].as_str().unwrap();
         assert!(desc.contains("TWO ways"), "should explain two detection methods");
         assert!(desc.contains("LLM scans"), "should mention LLM scanning");
-        assert!(desc.contains("[[doc_id]]"), "should mention manual syntax");
+        assert!(desc.contains("[[name]]"), "should mention manual syntax with readable names");
         assert!(linking["warning"].as_str().unwrap().contains("NOT detected"), "should warn about markdown links");
         assert!(linking["tip"].as_str().unwrap().contains("EXACT entity title"), "should emphasize exact titles");
         let bad = linking["bad"].as_str().unwrap();
         assert!(bad.contains("[Betula pendula]("), "bad example should show markdown link");
         assert!(bad.contains("NOT detected"), "bad example should say not detected");
+        let style = linking["style"].as_str().unwrap();
+        assert!(style.contains("filename stem"), "should recommend filename stems");
+        assert!(style.contains("hex"), "should mention hex IDs to avoid");
     }
 
     #[test]

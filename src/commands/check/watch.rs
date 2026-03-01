@@ -48,6 +48,17 @@ fn run_quick_check(
     let docs = db.list_documents(None, Some(&repo.id), None, 10000)?;
     let doc_ids: HashSet<_> = docs.iter().map(|d| d.id.as_str()).collect();
 
+    // Build mapping from document ID to filename stem for readable link suggestions
+    let doc_id_to_stem: std::collections::HashMap<&str, &str> = docs
+        .iter()
+        .filter_map(|d| {
+            std::path::Path::new(&d.file_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|stem| (d.id.as_str(), stem))
+        })
+        .collect();
+
     // Batch fetch links for all documents (2 queries instead of 2*N)
     let doc_id_refs: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
     let all_links = db.get_links_for_documents(&doc_id_refs)?;
@@ -56,7 +67,7 @@ fn run_quick_check(
     let mut watch_warnings = 0;
 
     for doc in &docs {
-        // Check for broken links
+        // Check for broken links and hex-ID link style
         for cap in MANUAL_LINK_REGEX.captures_iter(&doc.content) {
             let link_id = &cap[1];
             if !doc_ids.contains(link_id) {
@@ -67,6 +78,14 @@ fn run_quick_check(
                     );
                 }
                 watch_errors += 1;
+            } else if let Some(stem) = doc_id_to_stem.get(link_id) {
+                if !quiet {
+                    println!(
+                        "  WARN: Prefer [[{}]] over [[{}]] in {} [{}]",
+                        stem, link_id, doc.title, doc.id
+                    );
+                }
+                watch_warnings += 1;
             }
         }
 

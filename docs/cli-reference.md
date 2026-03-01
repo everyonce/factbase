@@ -343,7 +343,7 @@ Check knowledge base quality for common issues.
 - `-p, --parallel` - Process documents in parallel for faster checking
 - `--batch-size` - Process documents in batches of N to limit memory usage (default: 0 = no batching)
 
-Checks for: orphan documents, broken `[[id]]` links, stub documents, unknown types, stale documents, duplicates.
+Checks for: orphan documents, broken `[[id]]` links, hex-ID link style (suggests readable names), stub documents, unknown types, stale documents, duplicates.
 
 ```bash
 factbase check

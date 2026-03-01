@@ -4,9 +4,17 @@
 
 use super::LinkCheckResult;
 use factbase::{Document, Link, MANUAL_LINK_REGEX};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
+
+/// Extract the filename stem from a file path (e.g., "people/alice-chen.md" → "alice-chen").
+fn file_stem(file_path: &str) -> Option<&str> {
+    Path::new(file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+}
 
 /// Check a document for orphan and broken links.
 ///
@@ -18,6 +26,7 @@ use std::io::{self, Write};
 /// * `fix` - Whether to fix broken links
 /// * `dry_run` - Whether to show what would be fixed without making changes
 /// * `is_table_format` - Whether to print table-formatted output
+/// * `doc_id_to_stem` - Mapping from document ID to filename stem (for readable name suggestions)
 pub fn check_document_links(
     doc: &Document,
     doc_ids: &HashSet<&str>,
@@ -26,12 +35,14 @@ pub fn check_document_links(
     fix: bool,
     dry_run: bool,
     is_table_format: bool,
+    doc_id_to_stem: &HashMap<&str, &str>,
 ) -> anyhow::Result<LinkCheckResult> {
     let mut result = LinkCheckResult {
         warnings: 0,
         errors: 0,
         fixed: 0,
         broken_links: Vec::new(),
+        hex_id_link_warnings: 0,
     };
 
     // Check for orphan documents
@@ -45,7 +56,7 @@ pub fn check_document_links(
         result.warnings += 1;
     }
 
-    // Check for broken links
+    // Check for broken links and hex-ID link style
     for cap in MANUAL_LINK_REGEX.captures_iter(&doc.content) {
         let link_id = &cap[1];
         if !doc_ids.contains(link_id) {
@@ -57,6 +68,16 @@ pub fn check_document_links(
                 );
             }
             result.errors += 1;
+        } else if let Some(stem) = doc_id_to_stem.get(link_id) {
+            // Valid link using hex ID — suggest readable name
+            if is_table_format {
+                println!(
+                    "  WARN: Prefer [[{}]] over [[{}]] in {} [{}]",
+                    stem, link_id, doc.title, doc.id
+                );
+            }
+            result.hex_id_link_warnings += 1;
+            result.warnings += 1;
         }
     }
 
@@ -124,13 +145,17 @@ mod tests {
         }
     }
 
+    fn empty_stem_map<'a>() -> HashMap<&'a str, &'a str> {
+        HashMap::new()
+    }
+
     #[test]
     fn test_check_document_links_orphan() {
         let doc = make_test_doc_with_id("doc001", "# Test\n\nNo links here.");
         let doc_ids: HashSet<&str> = ["doc001", "doc002"].iter().copied().collect();
 
         // No links = orphan
-        let result = check_document_links(&doc, &doc_ids, &[], &[], false, false, false).unwrap();
+        let result = check_document_links(&doc, &doc_ids, &[], &[], false, false, false, &empty_stem_map()).unwrap();
         assert_eq!(result.warnings, 1); // orphan warning
         assert_eq!(result.errors, 0);
         assert!(result.broken_links.is_empty());
@@ -150,7 +175,7 @@ mod tests {
         }];
 
         let result =
-            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false).unwrap();
+            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false, &empty_stem_map()).unwrap();
         assert_eq!(result.warnings, 0); // not orphan
         assert_eq!(result.errors, 0);
     }
@@ -169,7 +194,7 @@ mod tests {
         }];
 
         let result =
-            check_document_links(&doc2, &doc_ids, &[], &incoming, false, false, false).unwrap();
+            check_document_links(&doc2, &doc_ids, &[], &incoming, false, false, false, &empty_stem_map()).unwrap();
         assert_eq!(result.warnings, 0); // not orphan (has incoming)
         assert_eq!(result.errors, 0);
     }
@@ -189,7 +214,7 @@ mod tests {
         }];
 
         let result =
-            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false).unwrap();
+            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false, &empty_stem_map()).unwrap();
         assert_eq!(result.warnings, 0);
         assert_eq!(result.errors, 1); // broken link [[aaaaaa]]
         assert_eq!(result.broken_links, vec!["aaaaaa"]);
@@ -209,9 +234,81 @@ mod tests {
         }];
 
         let result =
-            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false).unwrap();
+            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false, &empty_stem_map()).unwrap();
         assert_eq!(result.warnings, 0);
         assert_eq!(result.errors, 0); // valid link
         assert!(result.broken_links.is_empty());
+    }
+
+    #[test]
+    fn test_hex_id_link_warns_with_readable_alternative() {
+        // doc002 has hex ID "doc002" and stem "alice-chen"
+        let doc1 = make_test_doc_with_id("aaa111", "# Test\n\nSee [[bbb222]] for details.");
+        let doc_ids: HashSet<&str> = ["aaa111", "bbb222"].iter().copied().collect();
+        let outgoing = vec![Link {
+            source_id: "aaa111".to_string(),
+            target_id: "bbb222".to_string(),
+            context: Some("link".to_string()),
+            created_at: Utc::now(),
+        }];
+        let stem_map: HashMap<&str, &str> = [("bbb222", "alice-chen")].into_iter().collect();
+
+        let result =
+            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false, &stem_map).unwrap();
+        assert_eq!(result.hex_id_link_warnings, 1);
+        assert_eq!(result.warnings, 1); // hex-ID style warning
+        assert_eq!(result.errors, 0);
+    }
+
+    #[test]
+    fn test_hex_id_link_no_warn_without_stem() {
+        // If no stem mapping exists, no warning
+        let doc1 = make_test_doc_with_id("aaa111", "# Test\n\nSee [[bbb222]] for details.");
+        let doc_ids: HashSet<&str> = ["aaa111", "bbb222"].iter().copied().collect();
+        let outgoing = vec![Link {
+            source_id: "aaa111".to_string(),
+            target_id: "bbb222".to_string(),
+            context: Some("link".to_string()),
+            created_at: Utc::now(),
+        }];
+
+        let result =
+            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false, &empty_stem_map()).unwrap();
+        assert_eq!(result.hex_id_link_warnings, 0);
+        assert_eq!(result.warnings, 0);
+    }
+
+    #[test]
+    fn test_hex_id_link_multiple_in_one_doc() {
+        let doc1 = make_test_doc_with_id(
+            "aaa111",
+            "# Test\n\nSee [[bbb222]] and [[ccc333]] for details.",
+        );
+        let doc_ids: HashSet<&str> = ["aaa111", "bbb222", "ccc333"].iter().copied().collect();
+        let outgoing = vec![Link {
+            source_id: "aaa111".to_string(),
+            target_id: "bbb222".to_string(),
+            context: None,
+            created_at: Utc::now(),
+        }];
+        let stem_map: HashMap<&str, &str> = [
+            ("bbb222", "alice-chen"),
+            ("ccc333", "project-atlas"),
+        ]
+        .into_iter()
+        .collect();
+
+        let result =
+            check_document_links(&doc1, &doc_ids, &outgoing, &[], false, false, false, &stem_map).unwrap();
+        assert_eq!(result.hex_id_link_warnings, 2);
+        assert_eq!(result.warnings, 2);
+    }
+
+    #[test]
+    fn test_file_stem_extraction() {
+        assert_eq!(file_stem("people/alice-chen.md"), Some("alice-chen"));
+        assert_eq!(file_stem("projects/atlas.md"), Some("atlas"));
+        assert_eq!(file_stem("notes.md"), Some("notes"));
+        assert_eq!(file_stem("deep/nested/path/doc.md"), Some("doc"));
     }
 }

@@ -124,7 +124,7 @@ Multiple sources for one fact:
 | Press release | `Press release, YYYY-MM-DD` |
 | News | `News article, <publication>, YYYY-MM-DD` |
 | Filing | `Public filing (<type>), YYYY` |
-| Author knowledge | `Author knowledge, see [[id]]` |
+| Author knowledge | `Author knowledge, see [[author-knowledge-doc]]` |
 | Email | `Email from <person>, subject "<subject>", YYYY-MM-DD` |
 | Event | `Conference bio, <event name> YYYY` |
 | Slack | `Slack #<channel>, YYYY-MM-DD, <message URL>` |
@@ -143,7 +143,7 @@ Every source definition MUST include enough detail to locate the original data. 
 Facts known firsthand by the knowledge base owner belong in dedicated author knowledge documents (placed in an `author-knowledge/` folder). Other documents cite them as a source:
 
 ```
-[^1]: Author knowledge, see [[a1b2c3]]
+[^1]: Author knowledge, see [[author-knowledge-doc]]
 ```
 
 Author knowledge files are exclusively human-authored. Agents must never create them or use "Author knowledge" as a source for agent-obtained data.
