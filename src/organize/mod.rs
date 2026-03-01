@@ -24,10 +24,10 @@ pub(crate) use audit::{
     SplitDetails,
 };
 pub use detect::{
-    assess_staleness, cosine_similarity, detect_duplicate_entries, detect_merge_candidates,
-    detect_misplaced, detect_split_candidates, discover_entities, extract_entity_entries,
-    extract_sections, generate_stale_entry_questions, EntityEntry, StaleDuplicate,
-    SuggestedEntity,
+    assess_staleness, cosine_similarity, detect_duplicate_entries, detect_ghost_files,
+    detect_merge_candidates, detect_misplaced, detect_split_candidates, discover_entities,
+    extract_entity_entries, extract_sections, generate_stale_entry_questions, EntityEntry,
+    StaleDuplicate, SuggestedEntity,
 };
 pub use execute::{
     execute_merge, execute_move, execute_retype, execute_split, extract_type_override, MergeResult,
@@ -43,7 +43,7 @@ pub use review::{
 };
 pub use snapshot::{cleanup, create_snapshot, rollback, DocumentBackup, FileBackup, Snapshot};
 pub use types::{
-    DuplicateEntry, EntryLocation, FactAssignment, FactDestination, FactLedger, MergeCandidate,
-    MisplacedCandidate, SplitCandidate, SplitSection, TrackedFact,
+    DuplicateEntry, EntryLocation, FactAssignment, FactDestination, FactLedger, GhostFile,
+    MergeCandidate, MisplacedCandidate, SplitCandidate, SplitSection, TrackedFact,
 };
 pub use verify::{verify_merge, verify_split, VerificationResult};

@@ -10,9 +10,9 @@ use crate::mcp::tools::helpers::WriteGuard;
 use crate::mcp::tools::{get_bool_arg, get_str_arg, get_str_arg_required, run_blocking};
 use crate::organize::{
     assess_staleness, create_snapshot, cleanup, rollback,
-    detect_duplicate_entries, detect_merge_candidates, detect_misplaced, detect_split_candidates,
-    execute_merge, execute_move, execute_retype, execute_split, extract_sections,
-    plan_merge, plan_split, process_orphan_answers, verify_merge, verify_split,
+    detect_duplicate_entries, detect_ghost_files, detect_merge_candidates, detect_misplaced,
+    detect_split_candidates, execute_merge, execute_move, execute_retype, execute_split,
+    extract_sections, plan_merge, plan_split, process_orphan_answers, verify_merge, verify_split,
 };
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
@@ -196,11 +196,23 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     let mut misplaced_candidates = Vec::new();
     let mut duplicate_entries = Vec::new();
     let mut stale_entries = Vec::new();
+    let mut ghost_files = Vec::new();
     let mut phases_done: Vec<String> = completed_phases.iter().cloned().collect();
-    let phase_names = ["merge", "split", "misplaced", "duplicates"];
+    let phase_names = ["ghost_files", "merge", "split", "misplaced", "duplicates"];
+
+    if !completed_phases.contains("ghost_files") && !deadline_hit(&deadline) {
+        progress.phase("Analysis 1/5: Ghost files");
+        ghost_files = {
+            let db2 = db.clone();
+            let p = progress.clone();
+            let rid2 = rid.map(String::from);
+            run_blocking(move || detect_ghost_files(&db2, rid2.as_deref(), &p)).await?
+        };
+        phases_done.push("ghost_files".into());
+    }
 
     if !completed_phases.contains("merge") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 1/4: Merge candidates");
+        progress.phase("Analysis 2/5: Merge candidates");
         merge_candidates = {
             let db2 = db.clone();
             let p = progress.clone();
@@ -211,13 +223,13 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     }
 
     if !completed_phases.contains("split") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 2/4: Split candidates");
+        progress.phase("Analysis 3/5: Split candidates");
         split_candidates = detect_split_candidates(db, embedding, split_threshold, rid, progress).await?;
         phases_done.push("split".into());
     }
 
     if !completed_phases.contains("misplaced") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 3/4: Misplaced documents");
+        progress.phase("Analysis 4/5: Misplaced documents");
         misplaced_candidates = {
             let db2 = db.clone();
             let p = progress.clone();
@@ -228,7 +240,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     }
 
     if !completed_phases.contains("duplicates") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 4/4: Duplicate entries");
+        progress.phase("Analysis 5/5: Duplicate entries");
         duplicate_entries = detect_duplicate_entries(db, embedding, rid, progress).await?;
         let db2 = db.clone();
         let dups = duplicate_entries.clone();
@@ -242,6 +254,15 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     let processed = total_docs * phases_completed_now / total_phases.max(1);
 
     let mut result = serde_json::json!({
+        "ghost_files": ghost_files.iter().map(|g| serde_json::json!({
+            "doc_id": g.doc_id,
+            "title": g.title,
+            "tracked_path": g.tracked_path,
+            "ghost_path": g.ghost_path,
+            "tracked_lines": g.tracked_lines,
+            "ghost_lines": g.ghost_lines,
+            "reason": g.reason,
+        })).collect::<Vec<_>>(),
         "merge_candidates": merge_candidates.iter().map(|c| serde_json::json!({
             "doc1_id": c.doc1_id,
             "doc1_title": c.doc1_title,
@@ -270,7 +291,8 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
         }).collect::<Vec<_>>(),
         "duplicate_entries": duplicate_entries.len(),
         "stale_entries": stale_entries.len(),
-        "total_suggestions": merge_candidates.len() + split_candidates.len() + misplaced_candidates.len() + duplicate_entries.len() + stale_entries.len(),
+        "ghost_file_count": ghost_files.len(),
+        "total_suggestions": ghost_files.len() + merge_candidates.len() + split_candidates.len() + misplaced_candidates.len() + duplicate_entries.len() + stale_entries.len(),
     });
 
     let all_done = phases_completed_now >= total_phases;

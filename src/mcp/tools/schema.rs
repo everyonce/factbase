@@ -292,7 +292,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "organize_analyze",
-                "description": "Analyze repository for reorganization opportunities: merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only. Supports time-boxing via time_budget_secs; pass completed_phases to resume.",
+                "description": "Analyze repository for reorganization opportunities: ghost files (duplicate files sharing an ID/title in the same directory), merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only. Supports time-boxing via time_budget_secs; pass completed_phases to resume.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

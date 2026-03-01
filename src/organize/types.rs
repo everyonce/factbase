@@ -181,6 +181,29 @@ pub struct DuplicateEntry {
     pub entries: Vec<EntryLocation>,
 }
 
+/// Two files in the same directory that share a factbase document ID or title.
+///
+/// This happens when organize/merge creates one copy but the other persists on
+/// disk. The database only tracks one file per doc ID, so the second file is a
+/// "ghost" that accumulates stale content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GhostFile {
+    /// The shared factbase document ID (if both files have the same header).
+    pub doc_id: String,
+    /// Document title.
+    pub title: String,
+    /// File path the database tracks (relative to repo root).
+    pub tracked_path: String,
+    /// File path of the ghost (relative to repo root).
+    pub ghost_path: String,
+    /// Line count of the tracked file.
+    pub tracked_lines: usize,
+    /// Line count of the ghost file.
+    pub ghost_lines: usize,
+    /// Why these were flagged: "same_id" or "same_title".
+    pub reason: String,
+}
+
 /// Ledger tracking all facts through a reorganization operation.
 ///
 /// The key invariant is: `source_facts.len() == assignments.len()`

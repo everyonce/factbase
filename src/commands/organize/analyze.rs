@@ -7,9 +7,9 @@ use crate::commands::{
     find_repo_with_config, print_output, setup_embedding_with_timeout, OutputFormat,
 };
 use factbase::{
-    assess_staleness, detect_duplicate_entries, detect_merge_candidates, detect_misplaced,
-    detect_split_candidates, DuplicateEntry, MergeCandidate, MisplacedCandidate, SplitCandidate,
-    StaleDuplicate,
+    assess_staleness, detect_duplicate_entries, detect_ghost_files, detect_merge_candidates,
+    detect_misplaced, detect_split_candidates, DuplicateEntry, GhostFile, MergeCandidate,
+    MisplacedCandidate, SplitCandidate, StaleDuplicate,
 };
 use serde::Serialize;
 
@@ -26,6 +26,8 @@ pub struct AnalysisResults {
     pub duplicate_entries: Vec<DuplicateEntry>,
     /// Stale duplicate entries with newer versions elsewhere
     pub stale_entries: Vec<StaleDuplicate>,
+    /// Ghost files (same ID or title in same directory)
+    pub ghost_files: Vec<GhostFile>,
 }
 
 impl AnalysisResults {
@@ -36,6 +38,7 @@ impl AnalysisResults {
             + self.misplaced_candidates.len()
             + self.duplicate_entries.len()
             + self.stale_entries.len()
+            + self.ghost_files.len()
     }
 
     /// Check if there are any suggestions.
@@ -53,21 +56,24 @@ pub async fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
     let repo_id = Some(repo.id.as_str());
 
     // Detect merge candidates (no embedding needed, uses existing embeddings)
-    progress.phase("Analysis 1/4: Merge candidates");
+    progress.phase("Analysis 1/5: Ghost files");
+    let ghost_files = detect_ghost_files(&db, Some(repo.id.as_str()), &progress)?;
+
+    progress.phase("Analysis 2/5: Merge candidates");
     let merge_candidates = detect_merge_candidates(&db, args.merge_threshold, repo_id, &progress)?;
 
     // Detect split candidates (needs embedding provider for section embeddings)
-    progress.phase("Analysis 2/4: Split candidates");
+    progress.phase("Analysis 3/5: Split candidates");
     let embedding = setup_embedding_with_timeout(&config, args.timeout).await;
     let split_candidates =
         detect_split_candidates(&db, &embedding, args.split_threshold, repo_id, &progress).await?;
 
     // Detect misplaced documents (uses existing embeddings)
-    progress.phase("Analysis 3/4: Misplaced documents");
+    progress.phase("Analysis 4/5: Misplaced documents");
     let misplaced_candidates = detect_misplaced(&db, repo_id, &progress)?;
 
     // Detect duplicate entity entries across documents
-    progress.phase("Analysis 4/4: Duplicate entries");
+    progress.phase("Analysis 5/5: Duplicate entries");
     let duplicate_entries = detect_duplicate_entries(&db, &*embedding, repo_id, &progress).await?;
 
     // Assess staleness of duplicate entries
@@ -79,6 +85,7 @@ pub async fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
         misplaced_candidates,
         duplicate_entries,
         stale_entries,
+        ghost_files,
     };
 
     print_output(format, &results, || print_table(&results, &repo.id))?;
@@ -194,6 +201,26 @@ fn print_table(results: &AnalysisResults, repo_id: &str) {
         }
     }
 
+    // Ghost files (same ID or title in same directory)
+    if !results.ghost_files.is_empty() {
+        println!("\nGhost Files ({}):", results.ghost_files.len());
+        println!("{}", "-".repeat(40));
+        for g in &results.ghost_files {
+            println!(
+                "  [{}] {} [{}]",
+                g.reason, g.title, g.doc_id
+            );
+            println!(
+                "         tracked: {} ({} lines)",
+                g.tracked_path, g.tracked_lines
+            );
+            println!(
+                "         ghost:   {} ({} lines)",
+                g.ghost_path, g.ghost_lines
+            );
+        }
+    }
+
     println!("\nTotal: {} suggestion(s)", results.total_count());
 }
 
@@ -209,6 +236,7 @@ mod tests {
             misplaced_candidates: vec![],
             duplicate_entries: vec![],
             stale_entries: vec![],
+            ghost_files: vec![],
         };
         assert!(results.is_empty());
         assert_eq!(results.total_count(), 0);
@@ -230,6 +258,7 @@ mod tests {
             misplaced_candidates: vec![],
             duplicate_entries: vec![],
             stale_entries: vec![],
+            ghost_files: vec![],
         };
         assert!(!results.is_empty());
         assert_eq!(results.total_count(), 1);
@@ -282,6 +311,7 @@ mod tests {
             }],
             duplicate_entries: vec![],
             stale_entries: vec![],
+            ghost_files: vec![],
         };
         assert_eq!(results.total_count(), 3);
     }
@@ -318,6 +348,7 @@ mod tests {
                 current: loc_globex,
                 stale: vec![loc_acme],
             }],
+            ghost_files: vec![],
         };
 
         // Verify it doesn't panic and counts correctly

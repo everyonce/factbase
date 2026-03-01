@@ -8,6 +8,7 @@
 mod duplicate_entries;
 mod entity_discovery;
 mod entity_entries;
+mod ghost_files;
 mod merge;
 mod misplaced;
 mod split;
@@ -16,6 +17,7 @@ mod staleness;
 pub use duplicate_entries::detect_duplicate_entries;
 pub use entity_discovery::{discover_entities, SuggestedEntity};
 pub use entity_entries::{extract_entity_entries, EntityEntry};
+pub use ghost_files::detect_ghost_files;
 pub use merge::detect_merge_candidates;
 pub use misplaced::detect_misplaced;
 pub use split::{detect_split_candidates, extract_sections};
