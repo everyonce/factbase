@@ -78,6 +78,7 @@ where
                     || msg.contains("throttl")
                     || msg.contains("Throttl")
                     || msg.contains("TimedOut")
+                    || msg.contains("ModelErrorException")
                 {
                     tracing::warn!("Retrying after error (attempt {}): {}", attempt + 1, msg);
                     tokio::time::sleep(delay).await;
@@ -478,6 +479,26 @@ mod tests {
                 let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if n < 1 {
                     Err("throttling: rate exceeded".to_string())
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_model_error_exception() {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = count.clone();
+        let result: Result<u32, String> = retry_with_backoff(|| {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 1 {
+                    Err("ModelErrorException: The system encountered an unexpected error during processing. Try your request again.".to_string())
                 } else {
                     Ok(42)
                 }
