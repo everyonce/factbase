@@ -1997,9 +1997,11 @@ mod tests {
         let mut resp = serde_json::json!({"ok": true});
         crate::mcp::tools::helpers::apply_time_budget_progress(&mut resp, 3, 10, "check_repository", true);
         let msg = resp["message"].as_str().unwrap();
-        assert!(msg.contains("7 remaining"));
-        assert!(msg.contains("same arguments"));
-        assert!(msg.contains("Do NOT report partial results"));
+        assert!(msg.contains("INCOMPLETE"));
+        assert!(msg.contains("AUTOMATICALLY"));
+        assert!(msg.contains("Do NOT stop"));
+        assert!(resp["when_done"].as_str().unwrap().contains("AUTOMATICALLY"));
+        assert_eq!(resp["progress"]["percent_complete"], 30);
     }
 
     #[test]

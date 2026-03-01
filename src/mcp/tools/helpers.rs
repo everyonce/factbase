@@ -276,14 +276,19 @@ pub(crate) fn apply_time_budget_progress(
     if remaining == 0 || !budget_active {
         return;
     }
+    let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
     response["progress"] = serde_json::json!({
         "processed": processed,
         "remaining": remaining,
         "total": total,
+        "percent_complete": pct,
     });
     response["continue"] = serde_json::json!(true);
     response["message"] = serde_json::json!(format!(
-        "⚠️ Processed {processed}/{total} ({remaining} remaining). Call {tool_name} again with the same arguments to continue. Do NOT report partial results — the operation is incomplete."
+        "⚠️ INCOMPLETE — {processed}/{total} processed ({pct}%). AUTOMATICALLY call {tool_name} again with identical arguments to continue. Do NOT stop, ask the user, or report partial results."
+    ));
+    response["when_done"] = serde_json::json!(format!(
+        "AUTOMATICALLY call {tool_name} again with the same arguments. Do not ask the user — continue until the operation completes."
     ));
 }
 
@@ -550,10 +555,16 @@ mod tests {
         assert_eq!(resp["progress"]["processed"], 5);
         assert_eq!(resp["progress"]["remaining"], 5);
         assert_eq!(resp["progress"]["total"], 10);
+        assert_eq!(resp["progress"]["percent_complete"], 50);
         assert_eq!(resp["continue"], true);
         let msg = resp["message"].as_str().unwrap();
         assert!(msg.contains("5/10"));
         assert!(msg.contains("my_tool"));
+        assert!(msg.contains("AUTOMATICALLY"));
+        assert!(msg.contains("INCOMPLETE"));
+        let when_done = resp["when_done"].as_str().unwrap();
+        assert!(when_done.contains("AUTOMATICALLY"));
+        assert!(when_done.contains("my_tool"));
     }
 
     #[test]
