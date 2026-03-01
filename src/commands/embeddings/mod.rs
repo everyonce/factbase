@@ -20,14 +20,17 @@ fn cmd_export(args: args::ExportArgs) -> anyhow::Result<()> {
     let db = setup_database_only()?;
     let model = config.embedding.model.clone();
 
-    let count = factbase::export_embeddings_to_file(
+    let (chunk_count, fact_count) = factbase::export_embeddings_to_file(
         &db,
         args.repo.as_deref(),
         &model,
         &args.output,
     )?;
 
-    eprintln!("Exported {count} embedding chunks to {}", args.output.display());
+    eprintln!(
+        "Exported {chunk_count} embedding chunks and {fact_count} fact embeddings to {}",
+        args.output.display()
+    );
     Ok(())
 }
 
@@ -37,8 +40,10 @@ fn cmd_import(args: args::ImportArgs) -> anyhow::Result<()> {
     let result = factbase::import_embeddings_from_file(&db, &args.input, args.force)?;
 
     eprintln!(
-        "Imported {} chunks ({} skipped) — model: {}, dimension: {}",
-        result.imported_chunks, result.skipped_chunks, result.model, result.dimension
+        "Imported {} chunks ({} skipped), {} fact embeddings ({} skipped) — model: {}, dimension: {}",
+        result.imported_chunks, result.skipped_chunks,
+        result.imported_facts, result.skipped_facts,
+        result.model, result.dimension
     );
     Ok(())
 }

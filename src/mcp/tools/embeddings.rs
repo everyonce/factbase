@@ -15,12 +15,13 @@ pub fn embeddings_export(db: &Database, args: &Value) -> Result<Value, FactbaseE
     let model = config.embedding.model;
 
     let mut buf = Vec::new();
-    let count = embeddings_io::export_embeddings(db, repo, &model, &mut buf)?;
+    let (chunk_count, fact_count) = embeddings_io::export_embeddings(db, repo, &model, &mut buf)?;
     let output = String::from_utf8(buf)
         .map_err(|e| FactbaseError::internal(format!("UTF-8 error: {e}")))?;
 
     Ok(serde_json::json!({
-        "chunk_count": count,
+        "chunk_count": chunk_count,
+        "fact_embedding_count": fact_count,
         "model": model,
         "format": "jsonl",
         "data": output,
@@ -41,6 +42,8 @@ pub fn embeddings_import(db: &Database, args: &Value) -> Result<Value, FactbaseE
     Ok(serde_json::json!({
         "imported_chunks": result.imported_chunks,
         "skipped_chunks": result.skipped_chunks,
+        "imported_facts": result.imported_facts,
+        "skipped_facts": result.skipped_facts,
         "model": result.model,
         "dimension": result.dimension,
     }))

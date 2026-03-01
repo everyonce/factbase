@@ -206,6 +206,7 @@ impl Database {
                 .collect();
 
             records.push(crate::embeddings_io::EmbeddingRecord {
+                record_type: "chunk".to_string(),
                 doc_id,
                 chunk_index: chunk_index as usize,
                 chunk_start: chunk_start as usize,

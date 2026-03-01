@@ -262,6 +262,63 @@ impl Database {
         pairs.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
         Ok(pairs)
     }
+
+    /// Export all fact embeddings with metadata for backup/transfer.
+    pub fn export_all_fact_embeddings(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<Vec<crate::embeddings_io::FactEmbeddingRecord>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(rid) =
+            repo_id
+        {
+            (
+                "SELECT m.id, m.document_id, m.line_number, m.fact_text, m.fact_hash, e.embedding
+                 FROM fact_metadata m
+                 JOIN fact_embeddings e ON m.id = e.id
+                 JOIN documents d ON m.document_id = d.id
+                 WHERE d.repo_id = ?1 AND d.is_deleted = FALSE
+                 ORDER BY m.document_id, m.line_number"
+                    .to_string(),
+                vec![Box::new(rid.to_string())],
+            )
+        } else {
+            (
+                "SELECT m.id, m.document_id, m.line_number, m.fact_text, m.fact_hash, e.embedding
+                 FROM fact_metadata m
+                 JOIN fact_embeddings e ON m.id = e.id
+                 ORDER BY m.document_id, m.line_number"
+                    .to_string(),
+                vec![],
+            )
+        };
+
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(rusqlite::params_from_iter(&params))?;
+        let mut records = Vec::new();
+        while let Some(row) = rows.next()? {
+            let fact_id: String = row.get(0)?;
+            let doc_id: String = row.get(1)?;
+            let line_number: i64 = row.get(2)?;
+            let fact_text: String = row.get(3)?;
+            let fact_hash: String = row.get(4)?;
+            let bytes: Vec<u8> = row.get(5)?;
+            let embedding: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+
+            records.push(crate::embeddings_io::FactEmbeddingRecord {
+                doc_id,
+                fact_id,
+                line_number: line_number as usize,
+                fact_text,
+                fact_hash,
+                embedding,
+            });
+        }
+        Ok(records)
+    }
 }
 
 #[cfg(test)]
