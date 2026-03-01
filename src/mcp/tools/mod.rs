@@ -1034,7 +1034,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_scan_repository_force_reindex_respects_explicit_budget() {
+    async fn test_scan_repository_force_reindex_ignores_explicit_budget() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
         use tempfile::TempDir;
@@ -1053,13 +1053,14 @@ mod tests {
         let args = serde_json::json!({});
         scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
 
-        // force_reindex WITH explicit time_budget_secs: budget should be active
-        // (MockEmbedding is instant so it completes, but the deadline is set)
+        // force_reindex WITH explicit time_budget_secs: budget should be ignored
         let args = serde_json::json!({"force_reindex": true, "time_budget_secs": 10});
         let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
 
-        // Should complete (MockEmbedding is instant) with reindexed count
+        // Should complete with reindexed count (budget was ignored, not enforced)
         assert_eq!(r["reindexed"].as_u64().unwrap(), 1);
+        // Verify no continuation — force_reindex bypasses time budget entirely
+        assert!(r.get("continue").is_none(), "force_reindex should bypass time budget, no continuation expected");
     }
 
     #[tokio::test]
