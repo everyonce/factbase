@@ -1,3 +1,4 @@
+#![recursion_limit = "256"]
 /// Write formatted text to a `String`. Wraps `write!` with `std::fmt::Write`,
 /// panicking on error (writing to `String` is infallible).
 #[macro_export]
