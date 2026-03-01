@@ -71,6 +71,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
             source_coverage,
         }),
         interrupted: true,
+        embeddings_skipped: false,
     }
 }
 

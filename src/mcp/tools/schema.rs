@@ -231,6 +231,7 @@ pub fn tools_list() -> Value {
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" },
                         "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings even if content is unchanged (default: false). When true, time_budget_secs is ignored to prevent infinite restart loops." },
+                        "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation — index documents into DB without calling embedding provider (default: false). Useful when importing pre-computed embeddings." },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Ignored when force_reindex is true. Operation returns progress and asks to be called again if budget is exceeded." }
                     }
                 }

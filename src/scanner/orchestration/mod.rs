@@ -18,7 +18,7 @@ use crate::models::TemporalScanStats;
 use crate::processor::content_hash;
 use crate::ProgressReporter;
 use crate::{
-    calculate_fact_stats, count_facts_with_sources, Database, DocumentProcessor,
+    calculate_fact_stats, count_facts_with_sources, Database, Document, DocumentProcessor,
     EmbeddingProvider, LinkDetector, Repository, ScanResult, ScanStats,
 };
 use crate::models::{normalize_pair, DuplicatePair};
@@ -397,6 +397,29 @@ pub async fn full_scan(
 
         // Embed this chunk's pending docs before moving to next chunk
         if !ctx.opts.dry_run && !pending.is_empty() {
+            if ctx.opts.skip_embeddings {
+                // Index-only mode: upsert documents to DB without generating embeddings
+                let db_start = Instant::now();
+                for doc in pending.drain(..) {
+                    let document = Document {
+                        id: doc.id,
+                        repo_id: repo.id.clone(),
+                        file_path: doc.relative,
+                        file_hash: doc.hash,
+                        title: doc.title,
+                        doc_type: Some(doc.doc_type),
+                        content: doc.content,
+                        file_modified_at: fs::metadata(&doc.path)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .map(chrono::DateTime::from),
+                        indexed_at: Utc::now(),
+                        is_deleted: false,
+                    };
+                    db.upsert_document(&document)?;
+                }
+                total_db_write_ms += db_start.elapsed().as_millis() as u64;
+            } else {
             let chunk_output = run_embedding_phase(EmbeddingPhaseInput {
                 pending: std::mem::take(&mut pending),
                 repo_id: &repo.id,
@@ -441,6 +464,7 @@ pub async fn full_scan(
                     fact_embeddings_generated: 0,
                 }));
             }
+            } // end else (embedding enabled)
         }
     } // end file_chunk loop
 
@@ -552,7 +576,8 @@ pub async fn full_scan(
     let link_detection_ms = link_output.link_detection_ms;
     let docs_link_detected = link_output.docs_link_detected;
 
-    // Pass 3: Generate fact-level embeddings for cross-validation
+    // Pass 3: Generate fact-level embeddings for cross-validation (skip if --no-embed)
+    if !ctx.opts.skip_embeddings {
     // Auto-populate when fact_embeddings table is empty (e.g., after migration)
     let fact_ids = if !changed_ids.is_empty() {
         changed_ids.clone()
@@ -576,6 +601,7 @@ pub async fn full_scan(
         })
         .await?;
     }
+    } // end skip_embeddings check
 
     // Set total document count
     // moved = files that changed path only (no content change)
@@ -583,6 +609,7 @@ pub async fn full_scan(
     // reindexed = files with unchanged content but regenerated embeddings
     result.total =
         result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+    result.embeddings_skipped = ctx.opts.skip_embeddings;
 
     // Collect stats if requested
     if ctx.opts.collect_stats {
