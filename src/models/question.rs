@@ -18,6 +18,8 @@ pub enum QuestionType {
     Duplicate,
     /// Document corruption detected (garbage footnotes, corrupted titles, etc.)
     Corruption,
+    /// Imprecise language that could change truth value (weasel words, vague qualifiers)
+    Precision,
 }
 
 impl QuestionType {
@@ -31,6 +33,7 @@ impl QuestionType {
             QuestionType::Stale => "stale",
             QuestionType::Duplicate => "duplicate",
             QuestionType::Corruption => "corruption",
+            QuestionType::Precision => "precision",
         }
     }
 }
@@ -53,6 +56,7 @@ impl std::str::FromStr for QuestionType {
             "stale" => Ok(QuestionType::Stale),
             "duplicate" => Ok(QuestionType::Duplicate),
             "corruption" => Ok(QuestionType::Corruption),
+            "precision" => Ok(QuestionType::Precision),
             _ => Err(format!("Unknown question type: {s}")),
         }
     }
@@ -145,6 +149,10 @@ mod tests {
             "corruption".parse::<QuestionType>().unwrap(),
             QuestionType::Corruption
         );
+        assert_eq!(
+            "precision".parse::<QuestionType>().unwrap(),
+            QuestionType::Precision
+        );
     }
 
     #[test]
@@ -163,6 +171,7 @@ mod tests {
         assert_eq!(QuestionType::Stale.as_str(), "stale");
         assert_eq!(QuestionType::Duplicate.as_str(), "duplicate");
         assert_eq!(QuestionType::Corruption.as_str(), "corruption");
+        assert_eq!(QuestionType::Precision.as_str(), "precision");
     }
 
     #[test]
@@ -174,6 +183,7 @@ mod tests {
         assert_eq!(QuestionType::Stale.to_string(), "stale");
         assert_eq!(QuestionType::Duplicate.to_string(), "duplicate");
         assert_eq!(QuestionType::Corruption.to_string(), "corruption");
+        assert_eq!(QuestionType::Precision.to_string(), "precision");
     }
 
     #[test]
@@ -186,6 +196,7 @@ mod tests {
             QuestionType::Stale,
             QuestionType::Duplicate,
             QuestionType::Corruption,
+            QuestionType::Precision,
         ] {
             let s = qt.to_string();
             let parsed: QuestionType = s.parse().unwrap();

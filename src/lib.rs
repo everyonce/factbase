@@ -113,7 +113,8 @@ pub use question_generator::{
     extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions,
     generate_conflict_questions, generate_corruption_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
-    generate_required_field_questions, generate_source_quality_questions,
+    generate_precision_questions, generate_required_field_questions,
+    generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };
 pub use scanner::{full_scan, scan_all_repositories, ScanContext, ScanOptions, Scanner};

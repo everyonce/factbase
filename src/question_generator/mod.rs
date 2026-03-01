@@ -8,6 +8,7 @@
 //! - `@q[stale]` for facts with old sources or old `@t[~...]` dates
 //! - `@q[duplicate]` for documents with high similarity to other documents
 //! - `@q[corruption]` for document corruption (garbage footnotes, corrupted titles, etc.)
+//! - `@q[precision]` for imprecise language that could change truth value
 //!
 //! # Module Organization
 //!
@@ -17,6 +18,7 @@
 //! - `ambiguous` - Ambiguous question generation (`@q[ambiguous]`)
 //! - `stale` - Stale question generation (`@q[stale]`)
 //! - `duplicate` - Duplicate question generation (`@q[duplicate]`)
+//! - `precision` - Precision question generation (`@q[precision]`)
 //! - `fields` - Field detection and required field questions
 //!
 //! # Public API
@@ -29,6 +31,7 @@
 //! - [`generate_ambiguous_questions`] - Generate ambiguous questions
 //! - [`generate_stale_questions`] - Generate stale questions
 //! - [`generate_duplicate_questions`] - Generate duplicate questions
+//! - [`generate_precision_questions`] - Generate precision questions
 //!
 //! ## Field Detection
 //! - [`detect_document_fields`] - Detect fields in a document
@@ -44,6 +47,7 @@ mod fields;
 pub mod check;
 mod missing;
 pub(crate) mod placement;
+mod precision;
 mod stale;
 mod temporal;
 
@@ -59,6 +63,7 @@ pub use corruption::generate_corruption_questions;
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};
+pub use precision::generate_precision_questions;
 pub use stale::generate_stale_questions;
 pub use temporal::generate_temporal_questions;
 

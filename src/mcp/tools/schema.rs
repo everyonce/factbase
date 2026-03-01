@@ -160,7 +160,7 @@ pub fn tools_list() -> Value {
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
                         "doc_id": { "type": "string", "description": "Filter by document ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption)" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision)" },
                         "status": { "type": "string", "description": "Filter by status: 'unanswered' (default), 'answered', 'deferred', 'all'" },
                         "limit": { "type": "integer", "description": "Max questions to return (default: 10)" },
                         "offset": { "type": "integer", "description": "Skip this many questions for pagination (default: 0)" }
@@ -329,7 +329,7 @@ pub fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption)" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision)" },
                         "limit": { "type": "integer", "description": "Max items to return (default: 10)" },
                         "offset": { "type": "integer", "description": "Skip items for pagination (default: 0)" }
                     }

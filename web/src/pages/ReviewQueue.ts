@@ -39,7 +39,7 @@ const state: ReviewQueueState = {
   bulkMode: false,
 };
 
-const QUESTION_TYPES = ['temporal', 'conflict', 'missing', 'ambiguous', 'stale', 'duplicate'];
+const QUESTION_TYPES = ['temporal', 'conflict', 'missing', 'ambiguous', 'stale', 'duplicate', 'precision'];
 
 function escapeHtml(text: string): string {
   const div = document.createElement('div');

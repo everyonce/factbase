@@ -432,6 +432,7 @@ pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> S
                 QuestionType::Stale => "stale",
                 QuestionType::Duplicate => "duplicate",
                 QuestionType::Corruption => "corruption",
+                QuestionType::Precision => "precision",
             };
             {
                 write_str!(

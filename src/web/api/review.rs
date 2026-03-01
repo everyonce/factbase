@@ -21,7 +21,7 @@ use super::errors::ApiError;
 pub struct ReviewQueueQuery {
     /// Filter by repository ID
     pub repo: Option<String>,
-    /// Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption)
+    /// Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision)
     #[serde(rename = "type")]
     pub question_type: Option<String>,
 }
