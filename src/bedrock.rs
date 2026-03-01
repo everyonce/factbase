@@ -61,6 +61,9 @@ where
                     || msg.contains("TimedOut")
                     || msg.contains("dispatch failure")
                     || msg.contains("DispatchFailure")
+                    || msg.contains("service error")
+                    || msg.contains("GoAway")
+                    || msg.contains("connection reset")
                 {
                     tracing::warn!("Retrying after error (attempt {}): {}", attempt + 1, msg);
                     tokio::time::sleep(delay).await;
@@ -227,7 +230,10 @@ impl EmbeddingProvider for BedrockEmbedding {
     ) -> BoxFuture<'a, Result<Vec<Vec<f32>>, FactbaseError>> {
         Box::pin(async move {
             let mut results = Vec::with_capacity(texts.len());
-            for text in texts {
+            for (i, text) in texts.iter().enumerate() {
+                if i > 0 {
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
                 results.push(retry_with_backoff(|| self.invoke_embed(text)).await?);
             }
             Ok(results)
@@ -351,5 +357,82 @@ mod tests {
         // Can't construct without async, but we can test the logic
         assert!("amazon.nova-2-multimodal-embeddings-v1:0".contains("nova"));
         assert!(!"amazon.titan-embed-text-v2:0".contains("nova"));
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_service_error() {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = count.clone();
+        let result: Result<u32, String> = retry_with_backoff(|| {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 1 {
+                    Err("service error: GoAway".to_string())
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_goaway() {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = count.clone();
+        let result: Result<u32, String> = retry_with_backoff(|| {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 1 {
+                    Err("GoAway { error_code: NO_ERROR }".to_string())
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_retry_on_connection_reset() {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = count.clone();
+        let result: Result<u32, String> = retry_with_backoff(|| {
+            let c = c.clone();
+            async move {
+                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 1 {
+                    Err("connection reset by peer".to_string())
+                } else {
+                    Ok(42)
+                }
+            }
+        })
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn test_no_retry_on_unknown_error() {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let c = count.clone();
+        let result: Result<u32, String> = retry_with_backoff(|| {
+            let c = c.clone();
+            async move {
+                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Err("access denied".to_string())
+            }
+        })
+        .await;
+        assert!(result.is_err());
+        // Should not retry — only 1 attempt
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
