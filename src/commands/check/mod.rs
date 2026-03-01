@@ -209,6 +209,17 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
 
         let doc_ids: HashSet<_> = docs.iter().map(|d| d.id.as_str()).collect();
 
+        // Build mapping from document ID to filename stem for readable link suggestions
+        let doc_id_to_stem: std::collections::HashMap<&str, &str> = docs
+            .iter()
+            .filter_map(|d| {
+                std::path::Path::new(&d.file_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|stem| (d.id.as_str(), stem))
+            })
+            .collect();
+
         // Aggregate document type counts
         for doc in &docs {
             let doc_type = doc
@@ -332,6 +343,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     args.fix,
                     args.dry_run,
                     is_table_format,
+                    &doc_id_to_stem,
                 )?;
                 warnings += link_result.warnings;
                 errors += link_result.errors;

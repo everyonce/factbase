@@ -109,11 +109,11 @@ The LLM scans documents to find mentions of other entities. To maximize detectio
    Alice Chen leads the team. Alice Chen presented...        ← consistent
    ```
 
-4. **Manual links for precision** - Use `[[id]]` syntax for explicit links:
+4. **Manual links for precision** - Use `[[name]]` syntax for explicit links, where `name` is the target document's filename stem:
    ```markdown
-   See [[a1b2c3]] for the full specification.
+   See [[platform-api]] for the full specification.
    ```
-   The 6-character hex ID is shown in search results and the `get_entity` response.
+   Use the filename stem (lowercase-with-hyphens) rather than the hex document ID. Readable names make cross-references understandable without looking up IDs. The `factbase check` command flags hex-ID cross-refs and suggests the readable alternative.
 
 ## Recommended Document Templates
 
@@ -132,7 +132,7 @@ Brief professional background and expertise areas.
 - Previous Role at OtherCo @t[2020..2023] [^1]
 
 ## Projects
-- Leading [[project-id]] Project Name @t[2024..]
+- Leading [[project-name]] Project Name @t[2024..]
 - Previously led Project Beta @t[2022..2023]
 
 ## Contact
@@ -161,8 +161,8 @@ In development @t[2024-Q1..], targeting Q2 release.
 Architecture, key technologies, dependencies.
 
 ## Related
-- Depends on: [[abc123]] Infrastructure Platform
-- Used by: [[def456]] Mobile App
+- Depends on: [[infrastructure-platform]] Infrastructure Platform
+- Used by: [[mobile-app]] Mobile App
 ```
 
 ### Concept

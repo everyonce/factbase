@@ -161,7 +161,7 @@ Use markdown footnotes to cite sources. This enables fact verification and confi
 | Press release | `Press release, 2024-01-15` |
 | News | `News article, TechCrunch, 2024-01-15` |
 | Filing | `SEC filing (10-K), 2024` |
-| Author knowledge | `Author knowledge, see [[a1b2c3]]` |
+| Author knowledge | `Author knowledge, see [[author-knowledge-doc]]` |
 | Email | `Email from John Smith, 2024-01-15` |
 | Event | `Conference bio, AWS re:Invent 2024` |
 | Slack | `Slack #channel-name, 2024-01-15, https://workspace.slack.com/archives/...` |
@@ -177,7 +177,7 @@ Every source MUST include enough detail to locate the original data. A platform 
 [^1]: LinkedIn profile (linkedin.com/in/jsmith), scraped 2024-01-15
 [^2]: Slack #project-alpha, 2024-01-10, https://workspace.slack.com/archives/C01234/p1234
 [^3]: Email from Jane Doe, subject "Q4 Reorg", 2024-01-15
-[^4]: Author knowledge, see [[a1b2c3]]
+[^4]: Author knowledge, see [[author-knowledge-doc]]
 ```
 
 **Bad sources** — cannot be verified or relocated:
@@ -210,7 +210,7 @@ Place these in an `author-knowledge/` folder (type: "author-knowledge"). Other d
 - Alice Chen reports to Bob Martinez @t[2024..] [^3]
 
 ---
-[^3]: Author knowledge, see [[a1b2c3]]
+[^3]: Author knowledge, see [[author-knowledge-project-context]]
 ```
 
 **Important:** Author knowledge files are for facts the human owner knows firsthand. Agents must NEVER create or populate these files. Agents must not use "Author knowledge" as a source for facts they obtained from other data — use the actual source instead.
@@ -260,7 +260,7 @@ When resolving `@q[ambiguous]` questions about acronyms or terms:
 
 1. Check if a `definitions/` file already covers the term
 2. If not, create or update the appropriate definitions file with the term
-3. Answer the review question with: `See [[id]] definitions file`
+3. Answer the review question with: `See [[definitions-file-name]] definitions file`
 4. The definition becomes searchable and linked across the knowledge base
 
 Do **not** create definitions files for one-off clarifications (like "is this home or work address?") — answer those directly.
@@ -290,8 +290,9 @@ Do **not** create definitions files for one-off clarifications (like "is this ho
 
 3. **Manual links for precision**:
    ```markdown
-   See [[a1b2c3]] for the full specification.
+   See [[platform-api]] for the full specification.
    ```
+   Use the filename stem (e.g., `[[alice-chen]]`, `[[project-atlas]]`) rather than the hex document ID. Readable names make cross-references understandable without looking up IDs.
 
 ---
 

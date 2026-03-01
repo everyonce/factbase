@@ -20,6 +20,8 @@ pub struct LinkCheckResult {
     pub errors: usize,
     pub fixed: usize,
     pub broken_links: Vec<String>,
+    /// Number of `[[hex-id]]` cross-refs that could use readable names instead.
+    pub hex_id_link_warnings: usize,
 }
 
 /// Options for review question generation.
