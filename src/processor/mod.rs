@@ -36,6 +36,7 @@
 //! - Stats: [`calculate_fact_stats`], [`count_facts`], [`count_facts_with_temporal_tags`]
 
 // Submodules
+mod acronyms;
 mod chunks;
 mod core;
 pub mod repair;
@@ -47,6 +48,9 @@ mod temporal;
 // Re-export core types and functions
 pub(crate) use core::normalize_type;
 pub use core::{content_hash, DocumentProcessor};
+
+// Re-export acronym deduplication
+pub use acronyms::dedup_acronym_expansions;
 
 // Re-export temporal types and functions
 pub use temporal::{
