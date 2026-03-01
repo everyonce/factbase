@@ -218,14 +218,19 @@ pub async fn apply_all_review_answers(
         .await;
 
         match apply_result {
-            Ok(Ok(applied)) => {
-                // Sync updated file content back to database
-                if !config.dry_run {
-                    if let Ok(new_content) = fs::read_to_string(abs_path) {
-                        let new_hash = content_hash(&new_content);
-                        if let Err(e) = db.update_document_content(&doc.id, &new_content, &new_hash) {
-                            warn!(doc_id = %doc.id, error = %e, "Failed to sync content to database after apply");
-                        }
+            Ok(Ok((applied, new_content))) => {
+                // Sync cleaned content to database using the exact content
+                // that was written to disk (avoids read-back race with watcher).
+                if !config.dry_run && !new_content.is_empty() {
+                    let new_hash = content_hash(&new_content);
+                    if let Err(e) = db.update_document_content(&doc.id, &new_content, &new_hash) {
+                        warn!(doc_id = %doc.id, error = %e, "Failed to sync content to database after apply");
+                    }
+                    // Defensive: ensure disk matches DB (guards against
+                    // concurrent watcher overwriting the file between
+                    // apply_one_document's write and this point).
+                    if let Err(e) = fs::write(abs_path, &new_content) {
+                        warn!(doc_id = %doc.id, error = %e, "Failed to write cleaned content back to disk");
                     }
                 }
                 result.total_applied += applied;
@@ -280,7 +285,7 @@ async fn apply_one_document(
     file_path: &Path,
     answered: &[(usize, crate::models::ReviewQuestion)],
     dry_run: bool,
-) -> Result<usize, FactbaseError> {
+) -> Result<(usize, String), FactbaseError> {
     let content = fs::read_to_string(file_path)
         .map_err(|e| FactbaseError::internal(format!("{}: {}", file_path.display(), e)))?;
 
@@ -305,7 +310,7 @@ async fn apply_one_document(
     });
 
     if dry_run {
-        return Ok(if has_active_changes { review_questions.len() } else { 0 });
+        return Ok((if has_active_changes { review_questions.len() } else { 0 }, String::new()));
     }
 
     let today = chrono::Local::now().date_naive();
@@ -460,7 +465,8 @@ async fn apply_one_document(
     }
 
     write_file(file_path, &new_content)?;
-    Ok(if has_active_changes { review_questions.len() } else { 0 })
+    let applied = if has_active_changes { review_questions.len() } else { 0 };
+    Ok((applied, new_content))
 }
 
 /// Collect line refs to stamp as reviewed for a dismissed question.
@@ -1197,6 +1203,112 @@ mod tests {
         assert!(
             result.documents[0].error.is_some(),
             "Should include error message"
+        );
+    }
+
+    /// After apply, disk file and DB content must both have no @q tags,
+    /// and the DB file_hash must match the disk content hash so a
+    /// subsequent scan sees the document as unchanged.
+    #[tokio::test]
+    async fn test_apply_disk_and_db_in_sync_no_stale_review_queue() {
+        use crate::database::Database;
+        use crate::llm::test_helpers::MockLlm;
+        use crate::models::{Document, Repository};
+        use crate::processor::content_hash;
+        use crate::progress::ProgressReporter;
+
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        let content = "\
+<!-- factbase:aaa111 -->\n\
+# Test Doc\n\
+\n\
+- Fact one\n\
+- Fact two\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [x] `@q[temporal]` Line 4: When was fact one true?\n\
+> dismiss\n\
+- [x] `@q[missing]` Line 5: Source for fact two?\n\
+> dismiss\n";
+
+        let doc_file = repo_dir.join("test.md");
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = Database::new(&db_path).unwrap();
+
+        let repo = Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "aaa111".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            file_hash: content_hash(content),
+            title: "Test Doc".into(),
+            doc_type: Some("note".into()),
+            content: content.to_string(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let llm = MockLlm::new("no changes needed");
+        let config = ApplyConfig {
+            doc_id_filter: Some("aaa111"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
+
+        let result = apply_all_review_answers(&db, &llm, &config, &ProgressReporter::Silent)
+            .await
+            .unwrap();
+        assert_eq!(result.documents.len(), 1);
+
+        // Disk must have no @q tags
+        let disk_content = std::fs::read_to_string(&doc_file).unwrap();
+        assert!(
+            !disk_content.contains("@q["),
+            "Disk file must have no @q tags after apply, got:\n{disk_content}"
+        );
+
+        // DB must have no @q tags
+        let db_doc = db.get_document("aaa111").unwrap().unwrap();
+        assert!(
+            !db_doc.content.contains("@q["),
+            "DB content must have no @q tags after apply"
+        );
+
+        // Disk and DB content must match
+        assert_eq!(
+            disk_content, db_doc.content,
+            "Disk and DB content must be identical after apply"
+        );
+
+        // DB file_hash must match disk content hash (scan would see UNCHANGED)
+        let disk_hash = content_hash(&disk_content);
+        assert_eq!(
+            db_doc.file_hash, disk_hash,
+            "DB file_hash must match disk content hash so scan sees no update"
         );
     }
 }
