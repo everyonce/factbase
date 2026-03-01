@@ -56,7 +56,7 @@ pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue
 
 pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Use available research tools for EVERY question. Do not answer from memory alone.\n\nFor each question: research for confirming evidence, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nIf you researched and found no confirming source, defer. This is the correct action.\n\nAfter answering, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3 — the system will tell you when all questions are resolved.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Use available research tools for EVERY question. Do not answer from memory alone.\n\nFor each question: research for confirming evidence, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nIf you researched and found no confirming source, defer. This is the correct action.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\nAfter answering, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3 — the system will tell you when all questions are resolved.{ctx}";
 
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If the response includes `continue: true`, call it again until complete. Use dry_run=true first to preview, then without dry_run to apply.";
 
@@ -123,7 +123,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure using LLM. Provide domain='mycology' (or any domain) and get suggested document types, folder structure, templates, temporal patterns, and example documents. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
                 {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
                 {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
-                {"name": "resolve", "description": "Fix quality issues by resolving review queue questions using external sources"},
+                {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (stale, temporal, etc.)."},
                 {"name": "ingest", "description": "Research a topic and create/update factbase documents"},
                 {"name": "enrich", "description": "Find and fill gaps in existing documents"},
                 {"name": "improve", "description": "Improve a single document end-to-end: cleanup, resolve questions, enrich, then quality check. Requires doc_id."}
@@ -428,7 +428,7 @@ fn question_type_priority(qt: &QuestionType) -> u8 {
 
 fn resolve_step(
     step: usize,
-    _args: &Value,
+    args: &Value,
     perspective: &Option<Perspective>,
     deferred: usize,
     db: &Database,
@@ -453,7 +453,7 @@ fn resolve_step(
             "deferred_count": deferred,
             "when_done": "Call workflow with workflow='resolve', step=2"
         }),
-        2 => resolve_step2_batch(perspective, db, wf),
+        2 => resolve_step2_batch(args, perspective, db, wf),
         3 => serde_json::json!({
             "workflow": "resolve",
             "step": 3, "total_steps": total,
@@ -484,6 +484,7 @@ fn resolve_step(
 /// sorts them (grouped by document, then by type priority), and returns the
 /// next batch. The agent just answers what it sees and calls step 2 again.
 fn resolve_step2_batch(
+    args: &Value,
     perspective: &Option<Perspective>,
     db: &Database,
     wf: &WorkflowsConfig,
@@ -492,17 +493,35 @@ fn resolve_step2_batch(
     let stale = stale_days(perspective);
     let total_steps = 4;
 
+    // Optional question_type filter
+    let type_filter: Option<QuestionType> = get_str_arg(args, "question_type")
+        .and_then(|s| s.parse::<QuestionType>().ok());
+
     // Collect all questions from the review queue
     let docs = db.get_documents_with_review_queue(None).unwrap_or_else(|_| Vec::new());
     let mut unanswered: Vec<Value> = Vec::new();
-    let mut resolved_so_far: usize = 0;
+    let mut resolved_verified: usize = 0;
+    let mut resolved_believed: usize = 0;
+    let mut resolved_deferred: usize = 0;
 
     for doc in &docs {
         if let Some(questions) = parse_review_queue(&doc.content) {
             for (idx, q) in questions.iter().enumerate() {
-                if q.answered || q.is_deferred() {
-                    resolved_so_far += 1;
+                if q.answered {
+                    resolved_verified += 1;
+                } else if q.is_deferred() {
+                    if q.answer.as_deref().map_or(false, |a| a.starts_with("believed: ")) {
+                        resolved_believed += 1;
+                    } else {
+                        resolved_deferred += 1;
+                    }
                 } else {
+                    // Apply type filter
+                    if let Some(ref filter) = type_filter {
+                        if &q.question_type != filter {
+                            continue;
+                        }
+                    }
                     let mut qjson = format_question_json(q, Some((&doc.id, &doc.title)));
                     if let Some(obj) = qjson.as_object_mut() {
                         obj.insert("question_index".to_string(), serde_json::json!(idx));
@@ -518,6 +537,8 @@ fn resolve_step2_batch(
             }
         }
     }
+
+    let resolved_so_far = resolved_verified + resolved_believed + resolved_deferred;
 
     // Sort: group by document, then by type priority within each doc
     unanswered.sort_by(|a, b| {
@@ -551,6 +572,9 @@ fn resolve_step2_batch(
                 "batch_number": 0,
                 "total_batches_estimate": 0,
                 "resolved_so_far": resolved_so_far,
+                "resolved_verified": resolved_verified,
+                "resolved_believed": resolved_believed,
+                "resolved_deferred": resolved_deferred,
                 "remaining": 0
             },
             "when_done": "Call workflow with workflow='resolve', step=3"
@@ -588,6 +612,9 @@ fn resolve_step2_batch(
             "batch_number": batch_number,
             "total_batches_estimate": total_batches_estimate,
             "resolved_so_far": resolved_so_far,
+            "resolved_verified": resolved_verified,
+            "resolved_believed": resolved_believed,
+            "resolved_deferred": resolved_deferred,
             "remaining": remaining
         },
         "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
@@ -1907,5 +1934,76 @@ mod tests {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
         assert!(instr.contains("available research tools"), "answer instruction must require research tools");
         assert!(instr.contains("confidence"), "answer instruction must mention confidence field");
+    }
+
+    #[test]
+    fn test_resolve_step2_type_filter_returns_only_matching() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "flt001", &["temporal", "stale", "missing"]);
+        let args = serde_json::json!({"question_type": "stale"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0]["type"], "stale");
+    }
+
+    #[test]
+    fn test_resolve_step2_type_filter_no_match_advances() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "flt002", &["temporal"]);
+        let args = serde_json::json!({"question_type": "stale"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        assert_eq!(step["batch"]["remaining"], 0);
+        assert!(step["when_done"].as_str().unwrap().contains("step=3"));
+    }
+
+    #[test]
+    fn test_resolve_step2_no_type_filter_returns_all() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "flt003", &["temporal", "stale", "missing"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["batch"]["questions"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_resolve_step2_progress_includes_breakdown() {
+        let (db, _tmp) = test_db();
+        // One verified (answered), one believed (deferred with "believed:"), one deferred, one unanswered
+        let content = "<!-- factbase:brk001 -->\n# Breakdown\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[stale]` Believed (line 5)\n  > believed: still accurate per source\n- [ ] `@q[missing]` Deferred (line 6)\n  > defer: could not find source\n- [ ] `@q[conflict]` Unanswered (line 7)\n";
+        insert_test_doc(&db, "brk001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        assert_eq!(batch["resolved_verified"], 1);
+        assert_eq!(batch["resolved_believed"], 1);
+        assert_eq!(batch["resolved_deferred"], 1);
+        assert_eq!(batch["resolved_so_far"], 3);
+        assert_eq!(batch["remaining"], 1);
+    }
+
+    #[test]
+    fn test_resolve_step2_empty_queue_includes_breakdown() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        assert_eq!(batch["resolved_verified"], 0);
+        assert_eq!(batch["resolved_believed"], 0);
+        assert_eq!(batch["resolved_deferred"], 0);
+    }
+
+    #[test]
+    fn test_resolve_answer_instruction_prohibits_scan_check() {
+        let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
+        assert!(instr.contains("Do NOT call scan_repository or check_repository"), "answer instruction must prohibit scan/check");
+    }
+
+    #[test]
+    fn test_resolve_workflow_list_description_mentions_no_scan() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "list"});
+        let result = workflow(&db, &args).unwrap();
+        let workflows = result["workflows"].as_array().unwrap();
+        let resolve_wf = workflows.iter().find(|w| w["name"] == "resolve").unwrap();
+        let desc = resolve_wf["description"].as_str().unwrap();
+        assert!(desc.contains("Does NOT scan or check"), "resolve description should clarify no scan/check");
     }
 }
