@@ -102,6 +102,11 @@ pub struct ScanArgs {
     pub no_links: bool,
     #[arg(
         long,
+        help = "Skip embedding generation (index documents into DB without calling embedding provider)"
+    )]
+    pub no_embed: bool,
+    #[arg(
+        long,
         help = "Force link detection on all documents (useful for migrated/copied KBs)"
     )]
     pub relink: bool,
@@ -241,5 +246,17 @@ mod tests {
     fn test_scan_args_relink_default_false() {
         let args = ScanArgs::try_parse_from(["scan"]).unwrap();
         assert!(!args.relink);
+    }
+
+    #[test]
+    fn test_scan_args_no_embed() {
+        let args = ScanArgs::try_parse_from(["scan", "--no-embed"]).unwrap();
+        assert!(args.no_embed);
+    }
+
+    #[test]
+    fn test_scan_args_no_embed_default_false() {
+        let args = ScanArgs::try_parse_from(["scan"]).unwrap();
+        assert!(!args.no_embed);
     }
 }

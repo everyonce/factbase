@@ -37,6 +37,7 @@ pub async fn scan_repository(
 
     // Wire force_reindex from MCP args
     opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
+    opts.skip_embeddings = crate::mcp::tools::helpers::get_bool_arg(args, "skip_embeddings", false);
 
     // Set deadline for time-boxed operation.
     // force_reindex always bypasses the time budget — there's no cursor for reindex progress,
@@ -104,6 +105,18 @@ pub async fn scan_repository(
         return Ok(response);
     }
 
+    let summary = if result.embeddings_skipped {
+        format!(
+            "Indexed {} documents (embeddings skipped \u{2014} use embeddings import to load)",
+            result.total
+        )
+    } else {
+        format!(
+            "{} added, {} updated (temporal coverage: {:.0}%, source coverage: {:.0}%)",
+            result.added, result.updated, temporal_coverage, source_coverage
+        )
+    };
+
     Ok(serde_json::json!({
         "added": result.added,
         "updated": result.updated,
@@ -113,12 +126,10 @@ pub async fn scan_repository(
         "links_detected": result.links_detected,
         "fact_embeddings_generated": result.fact_embeddings_generated,
         "total": result.total,
+        "embeddings_skipped": result.embeddings_skipped,
         "temporal_coverage_percent": temporal_coverage,
         "source_coverage_percent": source_coverage,
-        "summary": format!(
-            "{} added, {} updated (temporal coverage: {:.0}%, source coverage: {:.0}%)",
-            result.added, result.updated, temporal_coverage, source_coverage
-        ),
+        "summary": summary,
         "hint": if result.links_detected == 0 && result.total > 1 {
             Some("Tip: Link detection finds entity title mentions in document text. If you expected links, check that documents reference other entities by their exact title (not markdown links or abbreviations).")
         } else {

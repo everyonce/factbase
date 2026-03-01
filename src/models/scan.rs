@@ -32,11 +32,20 @@ pub struct ScanResult {
     /// True if scan was interrupted by Ctrl+C
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub interrupted: bool,
+    /// True if embedding generation was skipped (--no-embed)
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub embeddings_skipped: bool,
 }
 
 impl std::fmt::Display for ScanResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.reindexed > 0 {
+        if self.embeddings_skipped {
+            write!(
+                f,
+                "Indexed {} documents (embeddings skipped \u{2014} use embeddings import to load)",
+                self.total
+            )
+        } else if self.reindexed > 0 {
             write!(
                 f,
                 "{} added, {} updated, {} reindexed, {} deleted, {} moved, {} unchanged (total: {})",
@@ -142,6 +151,7 @@ mod tests {
         assert!(r.stats.is_none());
         assert!(r.temporal_stats.is_none());
         assert!(!r.interrupted);
+        assert!(!r.embeddings_skipped);
     }
 
     #[test]
@@ -204,5 +214,19 @@ mod tests {
             s,
             "1 added, 0 updated, 4 reindexed, 0 deleted, 0 moved, 3 unchanged (total: 8)"
         );
+    }
+
+    #[test]
+    fn test_scan_result_display_embeddings_skipped() {
+        let r = ScanResult {
+            added: 10,
+            updated: 2,
+            total: 15,
+            embeddings_skipped: true,
+            ..Default::default()
+        };
+        let s = format!("{r}");
+        assert!(s.contains("Indexed 15 documents"));
+        assert!(s.contains("embeddings skipped"));
     }
 }

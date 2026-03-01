@@ -158,12 +158,17 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         force_reindex: args.reindex,
         embedding_batch_size: batch_size,
         skip_links: args.no_links,
+        skip_embeddings: args.no_embed,
         force_relink: args.relink,
         ..ScanOptions::from_config(&config)
     };
 
     if args.no_links && !quiet {
         println!("Link detection skipped. Run `factbase scan` without --no-links to detect links.");
+    }
+
+    if args.no_embed && !quiet {
+        println!("Embedding generation skipped. Use `factbase embeddings import` to load embeddings.");
     }
 
     if args.reindex && !quiet {

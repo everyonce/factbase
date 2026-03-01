@@ -31,6 +31,8 @@ pub struct ScanOptions {
     pub link_batch_size: usize,
     /// Skip link detection phase for faster indexing
     pub skip_links: bool,
+    /// Skip embedding generation (index docs into DB only)
+    pub skip_embeddings: bool,
     /// Force link detection on all documents regardless of changes
     pub force_relink: bool,
     /// Optional deadline for time-boxed operations
@@ -53,6 +55,7 @@ impl Default for ScanOptions {
             embedding_batch_size: 10,
             link_batch_size: 5,
             skip_links: false,
+            skip_embeddings: false,
             force_relink: false,
             deadline: None,
         }
@@ -90,6 +93,7 @@ mod tests {
         assert_eq!(opts.embedding_batch_size, 10);
         assert!(!opts.force_reindex);
         assert!(!opts.skip_links);
+        assert!(!opts.skip_embeddings);
         assert!(!opts.force_relink);
     }
 
@@ -110,6 +114,7 @@ mod tests {
         assert!(!opts.verbose);
         assert!(!opts.dry_run);
         assert!(!opts.force_reindex);
+        assert!(!opts.skip_embeddings);
         assert!(!opts.force_relink);
         assert!(opts.since.is_none());
     }
