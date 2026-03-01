@@ -3,7 +3,7 @@
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::mcp::tools::helpers::resolve_doc_path;
-use crate::mcp::tools::{get_str_arg_required, get_u64_arg_required};
+use crate::mcp::tools::{get_str_arg, get_str_arg_required, get_u64_arg_required};
 use crate::processor::{content_hash, parse_review_queue};
 use crate::ProgressReporter;
 use serde_json::Value;
@@ -17,6 +17,28 @@ use tracing::instrument;
 /// When `defer` is false, marks the question as answered by changing `[ ]` to `[x]`.
 /// When `defer` is true, keeps `[ ]` unchecked but writes the note as a blockquote,
 /// so the question remains unanswered but carries context for the next reviewer.
+
+/// Resolve confidence from args: "believed" answers are stored as deferred.
+/// Returns (is_defer, answer_text) after applying confidence logic.
+fn resolve_confidence(answer: &str, confidence: Option<&str>) -> Result<(bool, String), FactbaseError> {
+    let lower = answer.to_lowercase();
+    let explicit_defer = lower.starts_with("defer:");
+
+    if explicit_defer {
+        let note = answer["defer:".len()..].trim();
+        if note.is_empty() {
+            return Err(FactbaseError::parse(
+                "defer: requires a note explaining why (e.g., 'defer: no matching records found')",
+            ));
+        }
+        return Ok((true, note.to_string()));
+    }
+
+    match confidence {
+        Some("believed") => Ok((true, format!("believed: {answer}"))),
+        _ => Ok((false, answer.to_string())),
+    }
+}
 fn modify_question_in_queue(
     queue_content: &str,
     question_index: usize,
@@ -91,6 +113,7 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let doc_id = get_str_arg_required(args, "doc_id")?;
     let question_index = get_u64_arg_required(args, "question_index")? as usize;
     let answer = get_str_arg_required(args, "answer")?;
+    let confidence = get_str_arg(args, "confidence");
 
     // Validate answer is not empty
     let answer = answer.trim();
@@ -98,22 +121,8 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         return Err(FactbaseError::parse("answer cannot be empty"));
     }
 
-    // Detect defer prefix (case-insensitive)
-    let lower_answer = answer.to_lowercase();
-    let (defer, answer_text) = if let Some(rest_pos) = lower_answer
-        .strip_prefix("defer:")
-        .map(|_| "defer:".len())
-    {
-        let note = answer[rest_pos..].trim();
-        if note.is_empty() {
-            return Err(FactbaseError::parse(
-                "defer: requires a note explaining why (e.g., 'defer: no matching records in Salesforce')",
-            ));
-        }
-        (true, note)
-    } else {
-        (false, answer)
-    };
+    // Resolve confidence: believed → defer, defer: prefix → defer, else → answer
+    let (defer, answer_text) = resolve_confidence(answer, confidence)?;
 
     // Get the document (for file_path metadata)
     let doc = db.require_document(&doc_id)?;
@@ -165,7 +174,7 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // Modify the question using the extracted helper
     let modified_queue =
-        modify_question_in_queue(queue_content, question_index, answer_text, defer)
+        modify_question_in_queue(queue_content, question_index, &answer_text, defer)
             .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
     // Reconstruct the document
@@ -180,6 +189,12 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let type_str = question.question_type.as_str();
 
     if defer {
+        let believed = answer_text.starts_with("believed: ");
+        let message = if believed {
+            "Answer recorded as 'believed' (unverified). It stays in the review queue for human confirmation."
+        } else {
+            "Question deferred with note. It remains in the review queue for future resolution."
+        };
         Ok(serde_json::json!({
             "success": true,
             "doc_id": doc_id,
@@ -187,8 +202,9 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
             "question_type": type_str,
             "description": question.description,
             "deferred": true,
+            "believed": believed,
             "note": answer_text,
-            "message": "Question deferred with note. It remains in the review queue for future resolution."
+            "message": message
         }))
     } else {
         Ok(serde_json::json!({
@@ -245,7 +261,7 @@ pub fn bulk_answer_questions(
     }
 
     // Parse and validate all answers first
-    let mut parsed_answers: Vec<(String, usize, String)> = Vec::new();
+    let mut parsed_answers: Vec<(String, usize, String, Option<String>)> = Vec::new();
     for (i, answer) in answers.iter().enumerate() {
         let doc_id = answer
             .get("doc_id")
@@ -269,16 +285,18 @@ pub fn bulk_answer_questions(
             )));
         }
 
-        parsed_answers.push((doc_id.to_string(), question_index, answer_text.to_string()));
+        let confidence = answer.get("confidence").and_then(|v| v.as_str()).map(String::from);
+
+        parsed_answers.push((doc_id.to_string(), question_index, answer_text.to_string(), confidence));
     }
 
     // Group answers by document for efficient processing
-    let mut by_doc: HashMap<String, Vec<(usize, String)>> = HashMap::new();
-    for (doc_id, question_index, answer_text) in parsed_answers {
+    let mut by_doc: HashMap<String, Vec<(usize, String, Option<String>)>> = HashMap::new();
+    for (doc_id, question_index, answer_text, confidence) in parsed_answers {
         by_doc
             .entry(doc_id)
             .or_default()
-            .push((question_index, answer_text));
+            .push((question_index, answer_text, confidence));
     }
 
     // Validate all documents and questions exist before making any changes.
@@ -303,7 +321,7 @@ pub fn bulk_answer_questions(
         })?;
 
         // Validate all question indices
-        for (question_index, _) in answers_for_doc {
+        for (question_index, _, _) in answers_for_doc {
             if *question_index >= questions.len() {
                 return Err(FactbaseError::parse(format!(
                     "Invalid question_index {} for document {}. Document has {} questions.",
@@ -347,7 +365,7 @@ pub fn bulk_answer_questions(
         let mut content = disk_content.clone();
         let marker = "<!-- factbase:review -->";
 
-        for (question_index, answer_text) in &sorted_answers {
+        for (question_index, answer_text, confidence) in &sorted_answers {
             let marker_pos = content
                 .find(marker)
                 .ok_or_else(|| FactbaseError::internal("Review Queue marker not found"))?;
@@ -355,16 +373,11 @@ pub fn bulk_answer_questions(
             let (before_marker, after_marker) = content.split_at(marker_pos);
             let queue_content = &after_marker[marker.len()..];
 
-            let defer = answer_text.to_lowercase().starts_with("defer:");
-            let text = if defer {
-                answer_text["defer:".len()..].trim()
-            } else {
-                answer_text
-            };
+            let (defer, text) = resolve_confidence(answer_text, confidence.as_deref())?;
 
             // Use the extracted helper
             let modified_queue =
-                modify_question_in_queue(queue_content, *question_index, text, defer)
+                modify_question_in_queue(queue_content, *question_index, &text, defer)
                     .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
             content = format!("{before_marker}{marker}{modified_queue}");
@@ -377,7 +390,7 @@ pub fn bulk_answer_questions(
         let new_hash = content_hash(&content);
         db.update_document_content(doc_id, &content, &new_hash)?;
 
-        for (question_index, answer_text) in answers_for_doc {
+        for (question_index, answer_text, _) in answers_for_doc {
             results.push(serde_json::json!({
                 "doc_id": doc_id,
                 "question_index": question_index,
@@ -595,5 +608,153 @@ Some footer text.
         let modified = result.unwrap();
         assert!(modified.contains("- [ ] `@q[conflict]`"));
         assert!(modified.contains("> Searched Salesforce, no matching records"));
+    }
+
+    #[test]
+    fn test_resolve_confidence_verified_default() {
+        let (defer, text) = resolve_confidence("@t[2020] per Wikipedia", None).unwrap();
+        assert!(!defer);
+        assert_eq!(text, "@t[2020] per Wikipedia");
+    }
+
+    #[test]
+    fn test_resolve_confidence_verified_explicit() {
+        let (defer, text) = resolve_confidence("@t[2020] per Wikipedia", Some("verified")).unwrap();
+        assert!(!defer);
+        assert_eq!(text, "@t[2020] per Wikipedia");
+    }
+
+    #[test]
+    fn test_resolve_confidence_believed_becomes_defer() {
+        let (defer, text) = resolve_confidence("Still accurate based on training data", Some("believed")).unwrap();
+        assert!(defer);
+        assert_eq!(text, "believed: Still accurate based on training data");
+    }
+
+    #[test]
+    fn test_resolve_confidence_defer_prefix_takes_precedence() {
+        let (defer, text) = resolve_confidence("defer: searched web, no results", Some("verified")).unwrap();
+        assert!(defer);
+        assert_eq!(text, "searched web, no results");
+    }
+
+    #[test]
+    fn test_resolve_confidence_defer_empty_note_errors() {
+        let result = resolve_confidence("defer:", None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_believed_answer_stays_in_queue() {
+        // A believed answer should be stored as deferred (unchecked) so it
+        // won't be picked up by apply_review_answers.
+        use crate::processor::parse_review_queue;
+
+        let original_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[stale]` Line 4: Source is 200 days old\n\
+  > \n";
+
+        let marker = "<!-- factbase:review -->";
+        let marker_pos = original_content.find(marker).unwrap();
+        let (before_marker, after_marker) = original_content.split_at(marker_pos);
+        let queue_content = &after_marker[marker.len()..];
+
+        // Simulate believed confidence: resolve_confidence returns defer=true
+        let (defer, text) = resolve_confidence("Still accurate from training data", Some("believed")).unwrap();
+        assert!(defer);
+
+        let modified_queue = modify_question_in_queue(queue_content, 0, &text, defer).unwrap();
+        let content = format!("{before_marker}{marker}{modified_queue}");
+
+        // Parse: question should be deferred (unchecked with answer), NOT answered
+        let questions = parse_review_queue(&content).unwrap();
+        assert_eq!(questions.len(), 1);
+        assert!(!questions[0].answered, "believed answer must NOT be marked as answered");
+        assert!(questions[0].is_deferred(), "believed answer should be deferred");
+        assert!(questions[0].answer.as_ref().unwrap().contains("believed:"));
+    }
+
+    #[test]
+    fn test_verified_answer_gets_applied() {
+        // A verified answer should be marked as answered (checked) so
+        // apply_review_answers will process it.
+        use crate::processor::parse_review_queue;
+
+        let original_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[stale]` Line 4: Source is 200 days old\n\
+  > \n";
+
+        let marker = "<!-- factbase:review -->";
+        let marker_pos = original_content.find(marker).unwrap();
+        let (before_marker, after_marker) = original_content.split_at(marker_pos);
+        let queue_content = &after_marker[marker.len()..];
+
+        // Simulate verified confidence (default)
+        let (defer, text) = resolve_confidence("@t[2020] per Wikipedia (https://example.com)", None).unwrap();
+        assert!(!defer);
+
+        let modified_queue = modify_question_in_queue(queue_content, 0, &text, defer).unwrap();
+        let content = format!("{before_marker}{marker}{modified_queue}");
+
+        let questions = parse_review_queue(&content).unwrap();
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].answered, "verified answer must be marked as answered");
+        assert!(questions[0].answer.is_some());
+    }
+
+    #[test]
+    fn test_defer_stored_with_reasoning() {
+        use crate::processor::parse_review_queue;
+
+        let original_content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+---\n\
+\n\
+## Review Queue\n\
+\n\
+<!-- factbase:review -->\n\
+- [ ] `@q[stale]` Line 4: Source is 200 days old\n\
+  > \n";
+
+        let marker = "<!-- factbase:review -->";
+        let marker_pos = original_content.find(marker).unwrap();
+        let (before_marker, after_marker) = original_content.split_at(marker_pos);
+        let queue_content = &after_marker[marker.len()..];
+
+        let (defer, text) = resolve_confidence("defer: searched web for 'entity fact 2026', no confirming results", None).unwrap();
+        assert!(defer);
+
+        let modified_queue = modify_question_in_queue(queue_content, 0, &text, defer).unwrap();
+        let content = format!("{before_marker}{marker}{modified_queue}");
+
+        let questions = parse_review_queue(&content).unwrap();
+        assert_eq!(questions.len(), 1);
+        assert!(!questions[0].answered, "deferred question must not be answered");
+        assert!(questions[0].is_deferred());
+        assert!(questions[0].answer.as_ref().unwrap().contains("searched web"));
     }
 }

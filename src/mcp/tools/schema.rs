@@ -169,13 +169,14 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "answer_questions",
-                "description": "Answer or defer review questions. For a single question: provide doc_id, question_index, answer. For bulk: provide answers array. Prefix with 'defer:' to leave in queue with a note.",
+                "description": "Answer or defer review questions. For a single question: provide doc_id, question_index, answer. For bulk: provide answers array. Prefix with 'defer:' to leave in queue with a note. Use confidence field to distinguish verified (applied) from believed (stays in queue for human review).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "doc_id": { "type": "string", "description": "Document ID (single mode)" },
                         "question_index": { "type": "integer", "description": "0-based question index (single mode)" },
                         "answer": { "type": "string", "description": "Answer text or 'defer: <reason>' (single mode)" },
+                        "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "Confidence level. 'verified' (default): confirmed via external source, will be applied. 'believed': confident from training data but no external confirmation, stays in queue for human review." },
                         "answers": {
                             "type": "array",
                             "description": "Array of answers for bulk mode (max 50)",
@@ -184,7 +185,8 @@ pub fn tools_list() -> Value {
                                 "properties": {
                                     "doc_id": { "type": "string" },
                                     "question_index": { "type": "integer" },
-                                    "answer": { "type": "string" }
+                                    "answer": { "type": "string" },
+                                    "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "'verified' (default) or 'believed' (stays in queue)" }
                                 },
                                 "required": ["doc_id", "question_index", "answer"]
                             }
