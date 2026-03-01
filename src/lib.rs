@@ -72,7 +72,7 @@ pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding, Persist
 pub use embeddings_io::{
     embeddings_status, export_embeddings, export_embeddings_to_file, import_embeddings,
     import_embeddings_from_file, EmbeddingExportHeader, EmbeddingRecord, EmbeddingsStatusInfo,
-    ImportResult, FORMAT_VERSION as EMBEDDING_FORMAT_VERSION,
+    FactEmbeddingRecord, ImportResult, FORMAT_VERSION as EMBEDDING_FORMAT_VERSION,
 };
 pub use error::{format_user_error, format_warning, repo_not_found, FactbaseError};
 pub use llm::{DetectedLink, LinkDetector, LlmProvider, OllamaLlm, ReviewLlm};
