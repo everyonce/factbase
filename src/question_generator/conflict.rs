@@ -345,6 +345,13 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
         return None;
     }
 
+    // Suppress when an ongoing (open-ended) range contains the other fact's
+    // entire range.  An ongoing fact represents a persistent state; point events
+    // or sub-ranges within it are definitionally parallel, not conflicts.
+    if is_contained_in_ongoing(fact1, fact2, start1, end1, start2, end2) {
+        return None;
+    }
+
     // Classify the conflict pattern and include hint in description
     let pattern = classify_conflict_pattern(
         &fact1.text, &fact2.text, start1, end1, start2, end2,
@@ -525,6 +532,46 @@ fn is_shared_entity_sequential(text1: &str, text2: &str, start1: &str, start2: &
     let s1 = normalize_date_for_comparison(start1);
     let s2 = normalize_date_for_comparison(start2);
     date_cmp(&s1, &s2) != std::cmp::Ordering::Equal
+}
+
+/// Returns true when one fact has an ongoing (open-ended) range and the other
+/// fact's range is entirely contained within it.  A point event or sub-range
+/// inside an ongoing range is a parallel overlap, not a conflict.
+/// When both facts are ongoing, neither is "contained" — they're concurrent
+/// open-ended states that may genuinely conflict.
+fn is_contained_in_ongoing(
+    fact1: &FactWithRange,
+    fact2: &FactWithRange,
+    start1: &str,
+    end1: &str,
+    start2: &str,
+    end2: &str,
+) -> bool {
+    // Both ongoing → genuine concurrent states, not containment
+    if fact1.is_ongoing && fact2.is_ongoing {
+        return false;
+    }
+
+    let s1 = normalize_date_for_comparison(start1);
+    let s2 = normalize_date_for_comparison(start2);
+    let e2 = normalize_date_for_comparison(end2);
+    let e1 = normalize_date_for_comparison(end1);
+
+    // fact1 ongoing, fact2 (closed) contained: start1 <= start2 AND end1 >= end2
+    if fact1.is_ongoing
+        && date_cmp(&s1, &s2) != std::cmp::Ordering::Greater
+        && date_cmp(&e1, &e2) != std::cmp::Ordering::Less
+    {
+        return true;
+    }
+    // fact2 ongoing, fact1 (closed) contained
+    if fact2.is_ongoing
+        && date_cmp(&s2, &s1) != std::cmp::Ordering::Greater
+        && date_cmp(&e2, &e1) != std::cmp::Ordering::Less
+    {
+        return true;
+    }
+    false
 }
 
 /// Check if two fact texts share a significant word (likely an entity/company name).
@@ -871,6 +918,58 @@ mod tests {
     #[test]
     fn test_point_in_time_outside_range_no_conflict() {
         let content = "# Person\n\n- CTO at Acme @t[=2018]\n- CEO at BigCo @t[2022..2024]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty());
+    }
+
+    // --- ongoing containment suppression tests ---
+
+    #[test]
+    fn test_ongoing_contains_point_event_no_conflict() {
+        // Point event during an ongoing range is parallel, not a conflict
+        let content = "# Entity\n\n## History\n- Status active @t[2023..]\n- Event occurred @t[=2024-06]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "Point event within ongoing range should be suppressed");
+    }
+
+    #[test]
+    fn test_ongoing_contains_subrange_no_conflict() {
+        // Sub-range within an ongoing range is parallel
+        let content = "# Entity\n\n## History\n- Status active @t[2020..]\n- Phase completed @t[2022..2024]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "Sub-range within ongoing range should be suppressed");
+    }
+
+    #[test]
+    fn test_two_ongoing_same_start_still_conflicts() {
+        // Two ongoing facts starting at the same time could conflict
+        let content = "# Entity\n\n## Roles\n- Role A @t[2023..]\n- Role B @t[2023..]";
+        let questions = generate_conflict_questions(content);
+        // Both ongoing with same start — neither contains the other exclusively
+        // (they're identical ranges), so this should NOT be suppressed
+        assert_eq!(questions.len(), 1);
+    }
+
+    #[test]
+    fn test_ongoing_contains_multiple_events_no_conflict() {
+        // Multiple point events during an ongoing range — all suppressed
+        let content = "# Entity\n\n## Timeline\n- Active status @t[2020..]\n- Event A @t[=2021]\n- Event B @t[=2023-06]\n- Event C @t[=2024-01]";
+        let questions = generate_conflict_questions(content);
+        assert!(questions.is_empty(), "All point events within ongoing range should be suppressed");
+    }
+
+    #[test]
+    fn test_closed_range_contains_point_still_conflicts() {
+        // Closed range containing a point — NOT suppressed (only ongoing triggers this)
+        let content = "# Person\n\n- CTO at Acme @t[=2023]\n- CEO at BigCo @t[2022..2024]";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(questions.len(), 1, "Closed range containment should still conflict");
+    }
+
+    #[test]
+    fn test_ongoing_does_not_contain_earlier_event() {
+        // Event before the ongoing range starts — no overlap at all
+        let content = "# Entity\n\n## History\n- Status active @t[2023..]\n- Old event @t[=2020]";
         let questions = generate_conflict_questions(content);
         assert!(questions.is_empty());
     }
