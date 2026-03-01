@@ -12,7 +12,7 @@ use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
     filter_sequential_conflicts, generate_ambiguous_questions, generate_conflict_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
-    generate_stale_questions, generate_temporal_questions,
+    generate_precision_questions, generate_stale_questions, generate_temporal_questions,
 };
 use serde_json::Value;
 use std::collections::HashSet;
@@ -106,6 +106,7 @@ async fn generate_questions_single(
     new_questions.extend(generate_missing_questions(body));
     new_questions.extend(generate_ambiguous_questions(body));
     new_questions.extend(generate_stale_questions(body, 365)); // Default 365 days
+    new_questions.extend(generate_precision_questions(body));
 
     // Generate duplicate questions
     if let Ok(similar_docs) = db.find_similar_documents(&doc.id, 0.95) {

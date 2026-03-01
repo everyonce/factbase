@@ -125,6 +125,8 @@ function getPlaceholder(questionType: string): string {
       return 'e.g., "Still accurate as of today" or provide update';
     case 'duplicate':
       return 'e.g., "Keep this one" or "Merge into [other_id]"';
+    case 'precision':
+      return 'e.g., "Heavy means >500 casualties" or provide specific number';
     default:
       return 'Enter your answer...';
   }

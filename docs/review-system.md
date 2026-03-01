@@ -109,6 +109,18 @@ Triggers:
 - Temporal tag contains non-date content (entity names, descriptions, statistics)
 - Malformed temporal tag syntax
 
+### `@q[precision]` - Imprecise Language
+
+Triggers:
+- Vague qualifiers whose interpretation could change truth value ("heavy", "significant", "crucial")
+- Ambiguous quantities ("approximately", "several", "many", "few")
+- Vague time references ("shortly", "soon", "recently")
+- Ambiguous scope ("overall", "generally", "largely", "mostly")
+
+Not flagged:
+- Specific numbers, named dates, proper nouns, well-defined terms
+- Facts with recent reviewed markers (within 180 days)
+
 ## Answer Processing
 
 When `review --apply` processes answered questions, it classifies each answer and handles it accordingly:

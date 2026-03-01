@@ -259,8 +259,8 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
             _ => ChangeInstruction::Dismiss,
         },
 
-        // Ambiguous: informational only, except explicit "split:" corrections
-        Ambiguous => {
+        // Ambiguous/Precision: informational only, except explicit "split:" corrections
+        Ambiguous | Precision => {
             if let AnswerType::Correction { ref detail } = answer_type {
                 if let Some(split) = try_split(detail, &line_text) {
                     return split;

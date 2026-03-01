@@ -13,7 +13,7 @@ use crate::question_generator::cross_validate::{cross_validate_document, cross_v
 use crate::question_generator::{
     extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
     generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
-    generate_missing_questions,
+    generate_missing_questions, generate_precision_questions,
     generate_required_field_questions, generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };
@@ -49,6 +49,7 @@ pub fn run_generators(
     }
     questions.extend(generate_ambiguous_questions_with_type(body, doc_type, defined_terms));
     questions.extend(generate_stale_questions(body, stale_days));
+    questions.extend(generate_precision_questions(body));
     if full {
         questions.extend(generate_corruption_questions(body));
     }

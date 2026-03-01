@@ -241,6 +241,7 @@ Factbase can analyze documents and generate questions about inconsistencies, mis
 | `@q[stale]` | Data may be outdated (based on `@t[~...]` age) |
 | `@q[duplicate]` | Possible duplicate of another entity |
 | `@q[corruption]` | Data corruption (malformed temporal tags, non-date content in `@t[...]`) |
+| `@q[precision]` | Imprecise language that could change truth value (vague qualifiers, weasel words) |
 
 ### Answering Questions
 
