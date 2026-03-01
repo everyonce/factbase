@@ -42,13 +42,25 @@ fn llm_err(ctx: &str, e: impl Display) -> FactbaseError {
     FactbaseError::llm(format!("{ctx}: {e}"))
 }
 
+/// Returns true if the error message indicates a connection-level failure
+/// (GoAway, dispatch failure, connection reset) that requires a fresh client.
+fn is_connection_error(msg: &str) -> bool {
+    msg.contains("GoAway")
+        || msg.contains("dispatch failure")
+        || msg.contains("DispatchFailure")
+        || msg.contains("connection reset")
+}
+
 /// Retry an async operation with exponential backoff.
-/// Retries on throttling/timeout errors, up to 3 attempts.
-async fn retry_with_backoff<F, Fut, T, E>(mut f: F) -> Result<T, E>
+/// Retries on throttling/timeout/connection errors, up to 3 attempts.
+/// Calls `on_retry` before each retry — use this to rebuild clients on connection errors.
+async fn retry_with_backoff<F, Fut, T, E, R, RFut>(mut f: F, mut on_retry: R) -> Result<T, E>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, E>>,
     E: std::fmt::Display,
+    R: FnMut(bool) -> RFut,
+    RFut: std::future::Future<Output = ()>,
 {
     let mut delay = std::time::Duration::from_millis(500);
     for attempt in 0..3u32 {
@@ -56,16 +68,15 @@ where
             Ok(v) => return Ok(v),
             Err(e) if attempt < 2 => {
                 let msg = e.to_string();
-                if msg.contains("throttl")
+                let conn_err = is_connection_error(&msg);
+                if conn_err
+                    || msg.contains("throttl")
                     || msg.contains("Throttl")
                     || msg.contains("TimedOut")
-                    || msg.contains("dispatch failure")
-                    || msg.contains("DispatchFailure")
                     || msg.contains("service error")
-                    || msg.contains("GoAway")
-                    || msg.contains("connection reset")
                 {
                     tracing::warn!("Retrying after error (attempt {}): {}", attempt + 1, msg);
+                    on_retry(conn_err).await;
                     tokio::time::sleep(delay).await;
                     delay *= 2;
                     continue;
@@ -80,7 +91,10 @@ where
 
 /// Bedrock embedding provider supporting Titan and Nova models.
 pub struct BedrockEmbedding {
-    client: Client,
+    client: tokio::sync::Mutex<Client>,
+    region: Option<String>,
+    profile: Option<String>,
+    timeout_secs: u64,
     model_id: String,
     dim: usize,
 }
@@ -143,10 +157,24 @@ impl BedrockEmbedding {
         timeout_secs: u64,
     ) -> Self {
         Self {
-            client: build_client(region, profile, timeout_secs).await,
+            client: tokio::sync::Mutex::new(build_client(region, profile, timeout_secs).await),
+            region: region.map(String::from),
+            profile: profile.map(String::from),
+            timeout_secs,
             model_id: model_id.to_string(),
             dim: dimension,
         }
+    }
+
+    async fn rebuild_client(&self) {
+        tracing::info!("Rebuilding Bedrock client (connection reset)");
+        let new_client = build_client(
+            self.region.as_deref(),
+            self.profile.as_deref(),
+            self.timeout_secs,
+        )
+        .await;
+        *self.client.lock().await = new_client;
     }
 
     fn is_nova(&self) -> bool {
@@ -179,6 +207,8 @@ impl BedrockEmbedding {
 
         let resp = self
             .client
+            .lock()
+            .await
             .invoke_model()
             .model_id(&self.model_id)
             .content_type("application/json")
@@ -221,7 +251,17 @@ impl BedrockEmbedding {
 
 impl EmbeddingProvider for BedrockEmbedding {
     fn generate<'a>(&'a self, text: &'a str) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
-        Box::pin(async move { retry_with_backoff(|| self.invoke_embed(text)).await })
+        Box::pin(async move {
+            retry_with_backoff(
+                || self.invoke_embed(text),
+                |conn_err| async move {
+                    if conn_err {
+                        self.rebuild_client().await;
+                    }
+                },
+            )
+            .await
+        })
     }
 
     fn generate_batch<'a>(
@@ -234,7 +274,17 @@ impl EmbeddingProvider for BedrockEmbedding {
                 if i > 0 {
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 }
-                results.push(retry_with_backoff(|| self.invoke_embed(text)).await?);
+                results.push(
+                    retry_with_backoff(
+                        || self.invoke_embed(text),
+                        |conn_err| async move {
+                            if conn_err {
+                                self.rebuild_client().await;
+                            }
+                        },
+                    )
+                    .await?,
+                );
             }
             Ok(results)
         })
@@ -247,16 +297,33 @@ impl EmbeddingProvider for BedrockEmbedding {
 
 /// Bedrock LLM provider using the Converse API (model-agnostic).
 pub struct BedrockLlm {
-    client: Client,
+    client: tokio::sync::Mutex<Client>,
+    region: Option<String>,
+    profile: Option<String>,
+    timeout_secs: u64,
     model_id: String,
 }
 
 impl BedrockLlm {
     pub async fn new(model_id: &str, region: Option<&str>, profile: Option<&str>, timeout_secs: u64) -> Self {
         Self {
-            client: build_client(region, profile, timeout_secs).await,
+            client: tokio::sync::Mutex::new(build_client(region, profile, timeout_secs).await),
+            region: region.map(String::from),
+            profile: profile.map(String::from),
+            timeout_secs,
             model_id: model_id.to_string(),
         }
+    }
+
+    async fn rebuild_client(&self) {
+        tracing::info!("Rebuilding Bedrock LLM client (connection reset)");
+        let new_client = build_client(
+            self.region.as_deref(),
+            self.profile.as_deref(),
+            self.timeout_secs,
+        )
+        .await;
+        *self.client.lock().await = new_client;
     }
 
     pub fn model(&self) -> &str {
@@ -274,6 +341,8 @@ impl BedrockLlm {
 
         let resp = self
             .client
+            .lock()
+            .await
             .converse()
             .model_id(&self.model_id)
             .messages(msg)
@@ -299,7 +368,17 @@ impl BedrockLlm {
 
 impl LlmProvider for BedrockLlm {
     fn complete<'a>(&'a self, prompt: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
-        Box::pin(async move { retry_with_backoff(|| self.invoke_converse(prompt)).await })
+        Box::pin(async move {
+            retry_with_backoff(
+                || self.invoke_converse(prompt),
+                |conn_err| async move {
+                    if conn_err {
+                        self.rebuild_client().await;
+                    }
+                },
+            )
+            .await
+        })
     }
 }
 
@@ -363,17 +442,20 @@ mod tests {
     async fn test_retry_on_service_error() {
         let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let c = count.clone();
-        let result: Result<u32, String> = retry_with_backoff(|| {
-            let c = c.clone();
-            async move {
-                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n < 1 {
-                    Err("service error: GoAway".to_string())
-                } else {
-                    Ok(42)
+        let result: Result<u32, String> = retry_with_backoff(
+            || {
+                let c = c.clone();
+                async move {
+                    let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < 1 {
+                        Err("service error: GoAway".to_string())
+                    } else {
+                        Ok(42)
+                    }
                 }
-            }
-        })
+            },
+            |_| async {},
+        )
         .await;
         assert_eq!(result.unwrap(), 42);
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -383,17 +465,20 @@ mod tests {
     async fn test_retry_on_goaway() {
         let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let c = count.clone();
-        let result: Result<u32, String> = retry_with_backoff(|| {
-            let c = c.clone();
-            async move {
-                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n < 1 {
-                    Err("GoAway { error_code: NO_ERROR }".to_string())
-                } else {
-                    Ok(42)
+        let result: Result<u32, String> = retry_with_backoff(
+            || {
+                let c = c.clone();
+                async move {
+                    let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < 1 {
+                        Err("GoAway { error_code: NO_ERROR }".to_string())
+                    } else {
+                        Ok(42)
+                    }
                 }
-            }
-        })
+            },
+            |_| async {},
+        )
         .await;
         assert_eq!(result.unwrap(), 42);
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -403,17 +488,20 @@ mod tests {
     async fn test_retry_on_connection_reset() {
         let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let c = count.clone();
-        let result: Result<u32, String> = retry_with_backoff(|| {
-            let c = c.clone();
-            async move {
-                let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                if n < 1 {
-                    Err("connection reset by peer".to_string())
-                } else {
-                    Ok(42)
+        let result: Result<u32, String> = retry_with_backoff(
+            || {
+                let c = c.clone();
+                async move {
+                    let n = c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < 1 {
+                        Err("connection reset by peer".to_string())
+                    } else {
+                        Ok(42)
+                    }
                 }
-            }
-        })
+            },
+            |_| async {},
+        )
         .await;
         assert_eq!(result.unwrap(), 42);
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 2);
@@ -423,16 +511,94 @@ mod tests {
     async fn test_no_retry_on_unknown_error() {
         let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
         let c = count.clone();
-        let result: Result<u32, String> = retry_with_backoff(|| {
-            let c = c.clone();
-            async move {
-                c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Err("access denied".to_string())
-            }
-        })
+        let result: Result<u32, String> = retry_with_backoff(
+            || {
+                let c = c.clone();
+                async move {
+                    c.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Err("access denied".to_string())
+                }
+            },
+            |_| async {},
+        )
         .await;
         assert!(result.is_err());
         // Should not retry — only 1 attempt
         assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_on_retry_called_with_conn_error_flag() {
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let rebuild_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cc = call_count.clone();
+        let rc = rebuild_count.clone();
+        let result: Result<u32, String> = retry_with_backoff(
+            || {
+                let cc = cc.clone();
+                async move {
+                    let n = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < 1 {
+                        Err("GoAway received".to_string())
+                    } else {
+                        Ok(42)
+                    }
+                }
+            },
+            |conn_err| {
+                let rc = rc.clone();
+                async move {
+                    if conn_err {
+                        rc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(rebuild_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_on_retry_not_called_for_throttle() {
+        let rebuild_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let call_count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let cc = call_count.clone();
+        let rc = rebuild_count.clone();
+        let result: Result<u32, String> = retry_with_backoff(
+            || {
+                let cc = cc.clone();
+                async move {
+                    let n = cc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if n < 1 {
+                        Err("throttling: rate exceeded".to_string())
+                    } else {
+                        Ok(42)
+                    }
+                }
+            },
+            |conn_err| {
+                let rc = rc.clone();
+                async move {
+                    if conn_err {
+                        rc.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                }
+            },
+        )
+        .await;
+        assert_eq!(result.unwrap(), 42);
+        // on_retry called but conn_err=false, so rebuild_count stays 0
+        assert_eq!(rebuild_count.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn test_is_connection_error() {
+        assert!(is_connection_error("GoAway { error_code: NO_ERROR }"));
+        assert!(is_connection_error("dispatch failure"));
+        assert!(is_connection_error("DispatchFailure"));
+        assert!(is_connection_error("connection reset by peer"));
+        assert!(!is_connection_error("throttling: rate exceeded"));
+        assert!(!is_connection_error("access denied"));
     }
 }
