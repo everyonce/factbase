@@ -50,7 +50,7 @@ pub(crate) use core::normalize_type;
 pub use core::{content_hash, DocumentProcessor};
 
 // Re-export acronym deduplication
-pub use acronyms::dedup_acronym_expansions;
+pub use acronyms::{dedup_acronym_expansions, strip_glossary_reviewed_markers};
 
 // Re-export temporal types and functions
 pub use temporal::{

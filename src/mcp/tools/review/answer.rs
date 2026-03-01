@@ -39,7 +39,7 @@ fn resolve_confidence(answer: &str, confidence: Option<&str>) -> Result<(bool, S
         _ => Ok((false, answer.to_string())),
     }
 }
-fn modify_question_in_queue(
+pub(crate) fn modify_question_in_queue(
     queue_content: &str,
     question_index: usize,
     answer: &str,

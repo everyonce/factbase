@@ -18,7 +18,7 @@
 //! - `generate_questions` - Generate review questions for a document
 //! - `apply_review_answers` - Apply answered questions to document content
 
-mod answer;
+pub(crate) mod answer;
 mod apply;
 mod generate;
 mod check;

@@ -12,7 +12,9 @@ use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::models::{Perspective, QuestionType};
 use crate::processor::parse_review_queue;
+use crate::question_generator::extract_acronym_from_question;
 use serde_json::Value;
+use std::collections::HashSet;
 
 use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
 use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective};
@@ -502,6 +504,46 @@ fn resolve_step(
     }
 }
 
+/// Load glossary terms from all repositories.
+fn load_all_glossary_terms(db: &Database) -> HashSet<String> {
+    let types = ["definition", "glossary", "reference"];
+    let mut terms = HashSet::new();
+    for t in &types {
+        if let Ok(docs) = db.list_documents(Some(t), None, None, 100) {
+            for doc in &docs {
+                terms.extend(crate::extract_defined_terms(&doc.content));
+            }
+        }
+    }
+    terms
+}
+
+/// Auto-dismiss a single question by marking it answered in the document.
+fn auto_dismiss_question(db: &Database, doc_id: &str, question_index: usize) -> Result<(), FactbaseError> {
+    let doc = db.require_document(doc_id)?;
+    let marker = "<!-- factbase:review -->";
+    let Some(marker_pos) = doc.content.find(marker) else {
+        return Ok(());
+    };
+    let (before, after) = doc.content.split_at(marker_pos);
+    let queue_content = &after[marker.len()..];
+
+    // Mark the question as answered with a glossary note
+    let answer = "Defined in glossary — auto-resolved";
+    let Some(modified) = super::review::answer::modify_question_in_queue(queue_content, question_index, answer, false) else {
+        return Ok(());
+    };
+    let new_content = format!("{before}{marker}{modified}");
+    let new_hash = crate::processor::content_hash(&new_content);
+    db.update_document_content(doc_id, &new_content, &new_hash)?;
+
+    // Also write to disk if possible
+    if let Ok(file_path) = super::helpers::resolve_doc_path(db, &doc) {
+        let _ = std::fs::write(&file_path, &new_content);
+    }
+    Ok(())
+}
+
 /// Build the step 2 response with inline question batching.
 ///
 /// Reads the actual review queue from the DB, collects unanswered questions,
@@ -529,6 +571,10 @@ fn resolve_step2_batch(
     let mut resolved_believed: usize = 0;
     let mut resolved_deferred: usize = 0;
 
+    // Load glossary terms to auto-dismiss acronym questions already covered
+    let glossary_terms = load_all_glossary_terms(db);
+    let mut glossary_auto_resolved: usize = 0;
+
     for doc in &docs {
         if let Some(questions) = parse_review_queue(&doc.content) {
             for (idx, q) in questions.iter().enumerate() {
@@ -541,6 +587,18 @@ fn resolve_step2_batch(
                         resolved_deferred += 1;
                     }
                 } else {
+                    // Auto-dismiss ambiguous acronym questions covered by glossary
+                    if q.question_type == QuestionType::Ambiguous {
+                        if let Some(acronym) = extract_acronym_from_question(&q.description) {
+                            if glossary_terms.iter().any(|t| t.eq_ignore_ascii_case(&acronym)) {
+                                glossary_auto_resolved += 1;
+                                // Auto-answer in DB+file so the question doesn't reappear
+                                let _ = auto_dismiss_question(db, &doc.id, idx);
+                                continue;
+                            }
+                        }
+                    }
+
                     // Apply type filter
                     if let Some(ref filter) = type_filter {
                         if &q.question_type != filter {
@@ -570,7 +628,7 @@ fn resolve_step2_batch(
         }
     }
 
-    let resolved_so_far = resolved_verified + resolved_believed + resolved_deferred;
+    let resolved_so_far = resolved_verified + resolved_believed + resolved_deferred + glossary_auto_resolved;
 
     // Sort: group by document, then by type priority within each doc
     unanswered.sort_by(|a, b| {
@@ -595,7 +653,7 @@ fn resolve_step2_batch(
 
     // If no unanswered questions remain, advance to step 3
     if remaining == 0 {
-        return serde_json::json!({
+        let mut result = serde_json::json!({
             "workflow": "resolve",
             "step": 2, "total_steps": total_steps,
             "instruction": "All review questions have been resolved. Proceeding to apply answers.",
@@ -611,6 +669,10 @@ fn resolve_step2_batch(
             },
             "when_done": "Call workflow with workflow='resolve', step=3"
         });
+        if glossary_auto_resolved > 0 {
+            result["batch"]["glossary_auto_resolved"] = serde_json::json!(glossary_auto_resolved);
+        }
+        return result;
     }
 
     let batch_size = RESOLVE_BATCH_SIZE;
@@ -716,6 +778,13 @@ fn resolve_step2_batch(
             .as_object_mut()
             .unwrap()
             .insert("intro".to_string(), Value::String(intro));
+    }
+
+    if glossary_auto_resolved > 0 {
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("glossary_auto_resolved".to_string(), serde_json::json!(glossary_auto_resolved));
     }
 
     result
@@ -2257,5 +2326,71 @@ mod tests {
         assert!(values.contains(&"baseline"));
         assert!(values.contains(&"type_evidence"));
         assert!(values.contains(&"research_batch"));
+    }
+
+    #[test]
+    fn test_resolve_step2_glossary_auto_resolves_acronym_questions() {
+        let (db, _tmp) = test_db();
+        // Insert a glossary document defining "HCLS"
+        let glossary_content = "<!-- factbase:gls001 -->\n# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n";
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+        db.upsert_document(&Document {
+            id: "gls001".to_string(),
+            content: glossary_content.to_string(),
+            title: "Glossary".to_string(),
+            file_path: "definitions/glossary.md".to_string(),
+            doc_type: Some("definition".to_string()),
+            ..Document::test_default()
+        }).unwrap();
+
+        // Insert a doc with an ambiguous acronym question about HCLS
+        let doc_content = "<!-- factbase:acr001 -->\n# Project\n\n- Expanding HCLS practice\n\n<!-- factbase:review -->\n- [ ] `@q[ambiguous]` \"Expanding HCLS practice\" - what does \"HCLS\" mean in this context?\n";
+        db.upsert_document(&Document {
+            id: "acr001".to_string(),
+            content: doc_content.to_string(),
+            title: "Project".to_string(),
+            file_path: "acr001.md".to_string(),
+            ..Document::test_default()
+        }).unwrap();
+
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        // The HCLS question should be auto-resolved, not in the batch
+        assert_eq!(batch["remaining"], 0, "glossary-defined acronym question should be auto-resolved");
+        assert_eq!(batch["glossary_auto_resolved"], 1, "should report glossary_auto_resolved count");
+    }
+
+    #[test]
+    fn test_resolve_step2_glossary_does_not_resolve_non_acronym_questions() {
+        let (db, _tmp) = test_db();
+        // Insert a glossary document
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+        db.upsert_document(&Document {
+            id: "gls002".to_string(),
+            content: "<!-- factbase:gls002 -->\n# Glossary\n\n- **HCLS**: Healthcare\n".to_string(),
+            title: "Glossary".to_string(),
+            file_path: "definitions/glossary.md".to_string(),
+            doc_type: Some("definition".to_string()),
+            ..Document::test_default()
+        }).unwrap();
+
+        // Insert a doc with a non-acronym ambiguous question (location)
+        let doc_content = "<!-- factbase:loc001 -->\n# Person\n\n- Lives in NYC\n\n<!-- factbase:review -->\n- [ ] `@q[ambiguous]` \"Lives in NYC\" - is this home, work, or another type of location?\n";
+        db.upsert_document(&Document {
+            id: "loc001".to_string(),
+            content: doc_content.to_string(),
+            title: "Person".to_string(),
+            file_path: "loc001.md".to_string(),
+            ..Document::test_default()
+        }).unwrap();
+
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        // Location question should NOT be auto-resolved
+        assert_eq!(batch["remaining"], 1, "non-acronym question should remain");
     }
 }

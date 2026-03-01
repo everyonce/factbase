@@ -3,10 +3,15 @@
 //! Detects parenthetical acronym expansions like `DR (Disaster Recovery)` and
 //! ensures each acronym is expanded at most once per document. Expansions for
 //! terms that exist in a glossary are stripped entirely.
+//!
+//! Also provides `strip_glossary_reviewed_markers` to remove `<!-- reviewed:… -->`
+//! markers from fact lines whose only ambiguity was a glossary-defined acronym.
 
 use regex::Regex;
 use std::collections::HashSet;
 use std::sync::LazyLock;
+
+use crate::patterns::{extract_reviewed_date, REVIEWED_MARKER_REGEX};
 
 /// Matches `ACRONYM (Expansion…)` where ACRONYM is 2-10 uppercase letters/digits/&
 /// and the parenthetical starts with an uppercase letter (distinguishing expansions
@@ -58,6 +63,61 @@ fn dedup_line(line: &str, seen: &mut HashSet<String>, glossary_terms: &HashSet<S
 
     out.push_str(&line[last_end..]);
     out
+}
+
+/// Strip `<!-- reviewed:YYYY-MM-DD -->` markers from fact lines whose only
+/// ambiguity was a glossary-defined acronym.
+///
+/// A line qualifies for marker removal when:
+/// 1. It has a reviewed marker
+/// 2. It contains an uppercase acronym (2-5 chars) that appears in `glossary_terms`
+/// 3. It has no other ambiguity patterns (location/relationship phrases)
+///
+/// This removes line bloat from documents that were reviewed before the
+/// glossary covered the acronyms.
+pub fn strip_glossary_reviewed_markers(content: &str, glossary_terms: &HashSet<String>) -> String {
+    if glossary_terms.is_empty() {
+        return content.to_string();
+    }
+    content
+        .lines()
+        .map(|line| {
+            if extract_reviewed_date(line).is_some() && line_only_had_glossary_acronym(line, glossary_terms) {
+                REVIEWED_MARKER_REGEX.replace(line, "").trim_end().to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Returns true if the line's only detectable ambiguity was an acronym now in the glossary.
+fn line_only_had_glossary_acronym(line: &str, glossary_terms: &HashSet<String>) -> bool {
+    let stripped = REVIEWED_MARKER_REGEX.replace(line, "");
+    let text = stripped.trim().trim_start_matches("- ").trim_start_matches("* ");
+    let lower = text.to_lowercase();
+
+    // If the line has location or relationship ambiguity, keep the marker
+    let location_phrases = ["lives in", "based in", "located in", "resides in"];
+    let relationship_phrases = ["knows ", "connected to ", "associated with ", "works with ", "met "];
+    if location_phrases.iter().any(|p| lower.contains(p)) {
+        return false;
+    }
+    if relationship_phrases.iter().any(|p| lower.contains(p)) {
+        return false;
+    }
+
+    // Must contain at least one glossary-defined acronym
+    text.split(|c: char| !c.is_alphanumeric() && c != '&')
+        .any(|word| {
+            let t = word.trim();
+            t.len() >= 2
+                && t.len() <= 5
+                && t.chars().filter(|c| c.is_alphabetic()).count() >= 2
+                && t.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+                && glossary_terms.iter().any(|g| g.eq_ignore_ascii_case(t))
+        })
 }
 
 #[cfg(test)]
@@ -202,5 +262,68 @@ mod tests {
 - SLA review\n\
 - DR site";
         assert_eq!(dedup_acronym_expansions(input, &glossary), expected);
+    }
+
+    #[test]
+    fn test_strip_glossary_reviewed_markers_basic() {
+        let mut glossary = HashSet::new();
+        glossary.insert("SA".to_string());
+        let input = "# Doc\n\n- Works as SA lead <!-- reviewed:2026-02-21 -->\n- Lives in NYC";
+        let result = strip_glossary_reviewed_markers(input, &glossary);
+        assert!(!result.contains("reviewed:"), "Should strip marker for glossary acronym");
+        assert!(result.contains("- Works as SA lead"));
+        assert!(result.contains("- Lives in NYC"));
+    }
+
+    #[test]
+    fn test_strip_glossary_reviewed_markers_keeps_non_glossary() {
+        let glossary = HashSet::new();
+        let input = "- Some fact <!-- reviewed:2026-02-21 -->";
+        let result = strip_glossary_reviewed_markers(input, &glossary);
+        assert!(result.contains("reviewed:"), "Should keep marker when no glossary terms");
+    }
+
+    #[test]
+    fn test_strip_glossary_reviewed_markers_keeps_location_ambiguity() {
+        let mut glossary = HashSet::new();
+        glossary.insert("SA".to_string());
+        // Line has both a glossary acronym AND a location ambiguity — keep the marker
+        let input = "- SA lives in Boston <!-- reviewed:2026-02-21 -->";
+        let result = strip_glossary_reviewed_markers(input, &glossary);
+        assert!(result.contains("reviewed:"), "Should keep marker when location ambiguity exists");
+    }
+
+    #[test]
+    fn test_strip_glossary_reviewed_markers_keeps_relationship_ambiguity() {
+        let mut glossary = HashSet::new();
+        glossary.insert("SA".to_string());
+        let input = "- Knows SA team lead <!-- reviewed:2026-02-21 -->";
+        let result = strip_glossary_reviewed_markers(input, &glossary);
+        assert!(result.contains("reviewed:"), "Should keep marker when relationship ambiguity exists");
+    }
+
+    #[test]
+    fn test_strip_glossary_reviewed_markers_empty_glossary_noop() {
+        let glossary = HashSet::new();
+        let input = "- Uses XYZQ for analytics <!-- reviewed:2026-02-21 -->";
+        let result = strip_glossary_reviewed_markers(input, &glossary);
+        assert_eq!(result, input, "Empty glossary should be a no-op");
+    }
+
+    #[test]
+    fn test_strip_glossary_reviewed_markers_multiple_lines() {
+        let mut glossary = HashSet::new();
+        glossary.insert("HCLS".to_string());
+        glossary.insert("RFP".to_string());
+        let input = "# Project\n\n\
+- Expanding HCLS practice <!-- reviewed:2026-02-21 -->\n\
+- Submitted RFP to client <!-- reviewed:2026-02-21 -->\n\
+- Regular fact without acronym <!-- reviewed:2026-02-21 -->";
+        let result = strip_glossary_reviewed_markers(input, &glossary);
+        // HCLS and RFP lines should have markers stripped
+        assert!(result.contains("- Expanding HCLS practice\n"));
+        assert!(result.contains("- Submitted RFP to client\n"));
+        // Non-acronym line keeps its marker
+        assert!(result.contains("Regular fact without acronym <!-- reviewed:2026-02-21 -->"));
     }
 }
