@@ -8,6 +8,7 @@ use crate::patterns::{
     body_end_offset, FACT_LINE_REGEX, SOURCE_DEF_REGEX, SOURCE_REF_CAPTURE_REGEX,
     TEMPORAL_TAG_CONTENT_REGEX, TEMPORAL_TAG_DETECT_REGEX, YEAR_REGEX,
 };
+use chrono::{Datelike, Utc};
 use std::collections::{HashMap, HashSet};
 
 /// Phrases in footnote definitions that indicate review-answer text was dumped
@@ -41,7 +42,7 @@ pub fn generate_corruption_questions(content: &str) -> Vec<ReviewQuestion> {
     check_duplicate_footnote_defs(content, &mut questions);
     check_orphaned_footnote_defs(content, &mut questions);
     check_duplicate_fact_lines(content, &mut questions);
-    check_citation_year_as_temporal(content, &mut questions);
+    check_citation_year_as_temporal(content, &mut questions, Utc::now().year());
 
     questions
 }
@@ -177,7 +178,7 @@ fn check_duplicate_fact_lines(content: &str, questions: &mut Vec<ReviewQuestion>
 ///
 /// Only flags bare-year tags (e.g. `@t[~1991]`, `@t[=2024]`) — not ranges or
 /// month-precision tags, which indicate intentional dating.
-fn check_citation_year_as_temporal(content: &str, questions: &mut Vec<ReviewQuestion>) {
+fn check_citation_year_as_temporal(content: &str, questions: &mut Vec<ReviewQuestion>, current_year: i32) {
     // Build map of footnote number -> set of years in definition text
     let mut footnote_years: HashMap<u32, HashSet<String>> = HashMap::new();
     for line in content.lines() {
@@ -232,6 +233,14 @@ fn check_citation_year_as_temporal(content: &str, questions: &mut Vec<ReviewQues
             let num: u32 = ref_cap[1].parse().unwrap_or(0);
             if let Some(def_years) = footnote_years.get(&num) {
                 for year in tag_years.intersection(def_years) {
+                    // Suppress for recent years: a fact tagged with the current or
+                    // previous year sourced from that same year is expected — the
+                    // source is contemporaneous with the observation.
+                    if let Ok(y) = year.parse::<i32>() {
+                        if y >= current_year - 1 {
+                            continue;
+                        }
+                    }
                     questions.push(ReviewQuestion::new(
                         QuestionType::Corruption,
                         Some(line_idx + 1),
@@ -452,5 +461,42 @@ mod tests {
         let questions = generate_corruption_questions(content);
         assert!(questions.iter().any(|q| q.description.contains("[^1]")));
         assert!(!questions.iter().any(|q| q.description.contains("[^2]")));
+    }
+
+    #[test]
+    fn test_citation_year_current_year_suppressed() {
+        // Bare year matching current year should be suppressed — contemporaneous source
+        let current_year = Utc::now().year();
+        let content = format!(
+            "# Entity\n\n- Fact @t[{current_year}] [^1]\n\n---\n[^1]: Lookup, {current_year}-02-10\n"
+        );
+        let mut questions = Vec::new();
+        check_citation_year_as_temporal(&content, &mut questions, current_year);
+        assert!(questions.is_empty(), "Current year should be suppressed: {:?}", questions);
+    }
+
+    #[test]
+    fn test_citation_year_previous_year_suppressed() {
+        // Previous year also suppressed — source may have been scraped late last year
+        let current_year = Utc::now().year();
+        let prev = current_year - 1;
+        let content = format!(
+            "# Entity\n\n- Fact @t[{prev}] [^1]\n\n---\n[^1]: Report, {prev}-11-30\n"
+        );
+        let mut questions = Vec::new();
+        check_citation_year_as_temporal(&content, &mut questions, current_year);
+        assert!(questions.is_empty(), "Previous year should be suppressed: {:?}", questions);
+    }
+
+    #[test]
+    fn test_citation_year_old_year_still_flagged() {
+        // A year well in the past should still be flagged
+        let content = "# Entity\n\n- Fact @t[1991] [^1]\n\n---\n[^1]: Book, 1991\n";
+        let mut questions = Vec::new();
+        check_citation_year_as_temporal(&content, &mut questions, 2026);
+        assert!(
+            questions.iter().any(|q| q.description.contains("1991")),
+            "Old year should still be flagged: {:?}", questions
+        );
     }
 }
