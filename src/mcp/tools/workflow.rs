@@ -58,6 +58,16 @@ pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resol
 
 pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Use available research tools for EVERY question. Do not answer from memory alone.\n\nFor each question: research for confirming evidence, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nIf you researched and found no confirming source, defer. This is the correct action.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\nAfter answering, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3 — the system will tell you when all questions are resolved.{ctx}";
 
+// --- Variant A: Type-specific evidence standards ---
+pub(crate) const VARIANT_TYPE_EVIDENCE_INTRO: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT — varies by question type:\n\nSTALE: Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nTEMPORAL: Search for the specific event date. Cite a URL with the date.\n→ Format: \"@t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n\nAMBIGUOUS: Check the KB first (get_entity, read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.\n→ KB has answer: \"Clarified per [doc_id]: [definition]\"\n→ External: \"Clarified per [source] ([URL]): [definition]\"\n\nCONFLICT: Read BOTH referenced documents (get_entity). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.\n→ Both valid: \"Not a conflict: [reason] per [source]\"\n→ One supersedes: \"[correct fact] per [source], supersedes [old fact]\"\n→ Unresolvable: \"defer: [analysis of both sides with sources]\"\n\nPRECISION: Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.\n→ Found: \"[specific value] per [source] ([URL])\"\n→ Not found: \"defer: searched for specific value, no authoritative source found\"\n\nMISSING: Find a source citation for the unsourced fact.\n→ \"Source: [name] ([URL]), [date]\"\n\nDUPLICATE: Identify the canonical entry.\n→ \"Duplicate of [doc_id], remove from here\"\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nEXAMPLES:\n✅ GOOD: \"@t[1942-06-04..1942-06-07] per Wikipedia (https://en.wikipedia.org/wiki/Battle_of_Midway); verified 2026-03-01\"\n✅ GOOD defer: \"defer: Searched 'entity role 2026' — no results confirming current status\"\n❌ BAD: \"Well-known historical fact\" (no source)\n\nCan't find a source? → defer. This is the correct action.{ctx}";
+
+pub(crate) const VARIANT_TYPE_EVIDENCE_ANSWER: &str = "Answer the questions in this batch. Each question has an `evidence_guidance` field with type-specific research instructions — follow them.\n\nFor each question: follow the evidence_guidance, research, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed'\n- Researched and found nothing? → 'defer: researched [what], found [nothing]'\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository.\n\nAfter answering, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3.{ctx}";
+
+// --- Variant B: Research-then-batch ---
+pub(crate) const VARIANT_RESEARCH_BATCH_INTRO: &str = "You are resolving review questions using a research-first approach. Questions are grouped by document. For each document group:\n\nPHASE 1 — RESEARCH: Call get_entity to read the full document. Then do ONE comprehensive search covering all its questions. Gather all evidence before answering anything.\n\nPHASE 2 — ANSWER: Answer ALL questions for that document in one answer_questions call, citing the research from Phase 1.\n\nThis reduces redundant searches — multiple questions about the same document/topic share research.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source. If you cannot find evidence, DEFER.\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nANSWER FORMAT BY TYPE:\nTEMPORAL → \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\nSTALE → \"Still accurate per [source] ([reference]), verified [date]\" or \"Updated: [new info] per [source]\"\nCONFLICT → Read [pattern:...] tag. Both valid: \"Not a conflict: [reason]\". One wrong: cite source.\nMISSING → \"Source: [name] ([reference]), [date]\"\nAMBIGUOUS → clarify with KB context or external source\nPRECISION → replace vague term with specific value per source\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't find a source? → defer. This is the correct action.{ctx}";
+
+pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call get_entity with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one answer_questions call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call scan_repository or check_repository.\n\nAfter answering all groups, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3.{ctx}";
+
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If the response includes `continue: true`, call it again until complete. Use dry_run=true first to preview, then without dry_run to apply.";
 
 pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call generate_questions with dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
@@ -426,6 +436,20 @@ fn question_type_priority(qt: &QuestionType) -> u8 {
     }
 }
 
+/// Returns type-specific evidence guidance for Variant A.
+fn type_evidence_guidance(qt: &QuestionType) -> &'static str {
+    match qt {
+        QuestionType::Stale => "Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.",
+        QuestionType::Temporal => "Search for the specific event date. Cite a URL with the date. Format: @t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD",
+        QuestionType::Ambiguous => "Check the KB first (get_entity, read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.",
+        QuestionType::Conflict => "Read BOTH referenced documents (get_entity). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.",
+        QuestionType::Precision => "Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.",
+        QuestionType::Missing => "Find a source citation for this unsourced fact. Search for the specific claim and cite a URL.",
+        QuestionType::Duplicate => "Identify the canonical entry by reading both documents. Cite which one should be kept.",
+        QuestionType::Corruption => "Read the document to identify the corruption. Describe what needs to be fixed.",
+    }
+}
+
 fn resolve_step(
     step: usize,
     args: &Value,
@@ -492,6 +516,7 @@ fn resolve_step2_batch(
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
     let total_steps = 4;
+    let variant = get_str_arg(args, "variant").unwrap_or("baseline");
 
     // Optional question_type filter
     let type_filter: Option<QuestionType> = get_str_arg(args, "question_type")
@@ -531,6 +556,13 @@ fn resolve_step2_batch(
                             "_type_priority".to_string(),
                             serde_json::json!(question_type_priority(&q.question_type)),
                         );
+                        // Variant A: add per-question evidence guidance
+                        if variant == "type_evidence" {
+                            obj.insert(
+                                "evidence_guidance".to_string(),
+                                Value::String(type_evidence_guidance(&q.question_type).to_string()),
+                            );
+                        }
                     }
                     unanswered.push(qjson);
                 }
@@ -587,27 +619,63 @@ fn resolve_step2_batch(
     let total_batches_estimate = (total_questions + batch_size - 1) / batch_size;
     let batch: Vec<Value> = unanswered.into_iter().take(batch_size).collect();
 
+    // Select instruction based on variant
+    let (answer_default, intro_default) = match variant {
+        "type_evidence" => (VARIANT_TYPE_EVIDENCE_ANSWER, VARIANT_TYPE_EVIDENCE_INTRO),
+        "research_batch" => (VARIANT_RESEARCH_BATCH_ANSWER, VARIANT_RESEARCH_BATCH_INTRO),
+        _ => (DEFAULT_RESOLVE_ANSWER_INSTRUCTION, DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION),
+    };
+
     let instruction = resolve(
         wf,
         "resolve.answer",
-        DEFAULT_RESOLVE_ANSWER_INSTRUCTION,
+        answer_default,
         &[("stale", &stale.to_string()), ("ctx", &ctx)],
     );
 
     let is_first_batch = resolved_so_far == 0;
 
-    let mut result = serde_json::json!({
-        "workflow": "resolve",
-        "step": 2, "total_steps": total_steps,
-        "instruction": instruction,
-        "next_tool": "answer_questions",
-        "conflict_patterns": {
-            "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
-            "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
-            "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
-            "unknown": "No recognized pattern — investigate which fact is current."
-        },
-        "batch": {
+    // Variant B: group questions by document for the agent
+    let batch_value = if variant == "research_batch" {
+        let mut doc_groups: Vec<Value> = Vec::new();
+        let mut current_doc_id = String::new();
+        let mut current_questions: Vec<Value> = Vec::new();
+        let mut current_doc_title = String::new();
+
+        for q in &batch {
+            let did = q["doc_id"].as_str().unwrap_or("").to_string();
+            if did != current_doc_id && !current_doc_id.is_empty() {
+                doc_groups.push(serde_json::json!({
+                    "doc_id": current_doc_id,
+                    "doc_title": current_doc_title,
+                    "questions": current_questions,
+                }));
+                current_questions = Vec::new();
+            }
+            current_doc_id = did;
+            current_doc_title = q["doc_title"].as_str().unwrap_or("").to_string();
+            current_questions.push(q.clone());
+        }
+        if !current_doc_id.is_empty() {
+            doc_groups.push(serde_json::json!({
+                "doc_id": current_doc_id,
+                "doc_title": current_doc_title,
+                "questions": current_questions,
+            }));
+        }
+
+        serde_json::json!({
+            "document_groups": doc_groups,
+            "batch_number": batch_number,
+            "total_batches_estimate": total_batches_estimate,
+            "resolved_so_far": resolved_so_far,
+            "resolved_verified": resolved_verified,
+            "resolved_believed": resolved_believed,
+            "resolved_deferred": resolved_deferred,
+            "remaining": remaining
+        })
+    } else {
+        serde_json::json!({
             "questions": batch,
             "batch_number": batch_number,
             "total_batches_estimate": total_batches_estimate,
@@ -616,7 +684,22 @@ fn resolve_step2_batch(
             "resolved_believed": resolved_believed,
             "resolved_deferred": resolved_deferred,
             "remaining": remaining
+        })
+    };
+
+    let mut result = serde_json::json!({
+        "workflow": "resolve",
+        "step": 2, "total_steps": total_steps,
+        "instruction": instruction,
+        "next_tool": "answer_questions",
+        "variant": variant,
+        "conflict_patterns": {
+            "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
+            "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
+            "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
+            "unknown": "No recognized pattern — investigate which fact is current."
         },
+        "batch": batch_value,
         "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
         "completion_gate": format!("⚠️ {remaining} questions remain. Do NOT proceed to step 3 until remaining is 0. Call workflow with workflow='resolve', step=2 for the next batch."),
         "when_done": "Call workflow with workflow='resolve', step=2"
@@ -626,7 +709,7 @@ fn resolve_step2_batch(
         let intro = resolve(
             wf,
             "resolve.answer_intro",
-            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
+            intro_default,
             &[("stale", &stale.to_string()), ("ctx", &ctx)],
         );
         result
@@ -2005,5 +2088,172 @@ mod tests {
         let resolve_wf = workflows.iter().find(|w| w["name"] == "resolve").unwrap();
         let desc = resolve_wf["description"].as_str().unwrap();
         assert!(desc.contains("Does NOT scan or check"), "resolve description should clarify no scan/check");
+    }
+
+    // --- resolve variant tests ---
+
+    #[test]
+    fn test_resolve_step2_baseline_variant_is_default() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "var001", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["variant"], "baseline");
+        // No evidence_guidance on questions
+        let q = &step["batch"]["questions"].as_array().unwrap()[0];
+        assert!(q.get("evidence_guidance").is_none());
+    }
+
+    #[test]
+    fn test_resolve_step2_type_evidence_variant_adds_guidance() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "var002", &["temporal", "stale", "ambiguous"]);
+        let args = serde_json::json!({"variant": "type_evidence"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        assert_eq!(step["variant"], "type_evidence");
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        for q in questions {
+            assert!(q["evidence_guidance"].is_string(), "type_evidence variant should add evidence_guidance to each question");
+        }
+        // Check type-specific guidance content
+        let temporal_q = questions.iter().find(|q| q["type"] == "temporal").unwrap();
+        assert!(temporal_q["evidence_guidance"].as_str().unwrap().contains("specific event date"));
+        let stale_q = questions.iter().find(|q| q["type"] == "stale").unwrap();
+        assert!(stale_q["evidence_guidance"].as_str().unwrap().contains("current year"));
+        let ambiguous_q = questions.iter().find(|q| q["type"] == "ambiguous").unwrap();
+        assert!(ambiguous_q["evidence_guidance"].as_str().unwrap().contains("Check the KB first"));
+    }
+
+    #[test]
+    fn test_resolve_step2_type_evidence_variant_intro() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "var003", &["temporal"]);
+        let args = serde_json::json!({"variant": "type_evidence"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("varies by question type"), "type_evidence intro should mention type-specific evidence");
+        assert!(intro.contains("STALE:"), "type_evidence intro should have STALE section");
+        assert!(intro.contains("TEMPORAL:"), "type_evidence intro should have TEMPORAL section");
+        assert!(intro.contains("AMBIGUOUS:"), "type_evidence intro should have AMBIGUOUS section");
+        assert!(intro.contains("CONFLICT:"), "type_evidence intro should have CONFLICT section");
+        assert!(intro.contains("PRECISION:"), "type_evidence intro should have PRECISION section");
+    }
+
+    #[test]
+    fn test_resolve_step2_type_evidence_variant_answer_instruction() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "var004", &["temporal"]);
+        let args = serde_json::json!({"variant": "type_evidence"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("evidence_guidance"), "type_evidence answer instruction should reference evidence_guidance field");
+    }
+
+    #[test]
+    fn test_resolve_step2_research_batch_variant_groups_by_doc() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "rbat01", &["temporal", "stale"]);
+        insert_doc_with_questions(&db, "rbat02", &["missing"]);
+        let args = serde_json::json!({"variant": "research_batch"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        assert_eq!(step["variant"], "research_batch");
+        // Should have document_groups instead of flat questions
+        let groups = step["batch"]["document_groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 2, "should have 2 document groups");
+        // First group should be rbat01 (alphabetical)
+        assert_eq!(groups[0]["doc_id"], "rbat01");
+        assert_eq!(groups[0]["questions"].as_array().unwrap().len(), 2);
+        // Second group should be rbat02
+        assert_eq!(groups[1]["doc_id"], "rbat02");
+        assert_eq!(groups[1]["questions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_step2_research_batch_variant_intro() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "rbat03", &["temporal"]);
+        let args = serde_json::json!({"variant": "research_batch"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("research-first"), "research_batch intro should mention research-first approach");
+        assert!(intro.contains("PHASE 1"), "research_batch intro should have Phase 1");
+        assert!(intro.contains("PHASE 2"), "research_batch intro should have Phase 2");
+        assert!(intro.contains("get_entity"), "research_batch intro should mention get_entity");
+    }
+
+    #[test]
+    fn test_resolve_step2_research_batch_variant_answer_instruction() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "rbat04", &["temporal"]);
+        let args = serde_json::json!({"variant": "research_batch"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("research-first"), "research_batch answer instruction should mention research-first");
+        assert!(instr.contains("document group"), "research_batch answer instruction should mention document groups");
+    }
+
+    #[test]
+    fn test_resolve_step2_baseline_has_flat_questions() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "flat01", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Baseline should have flat questions array, not document_groups
+        assert!(step["batch"]["questions"].is_array());
+        assert!(step["batch"].get("document_groups").is_none());
+    }
+
+    #[test]
+    fn test_resolve_step2_variant_empty_queue_still_works() {
+        let (db, _tmp) = test_db();
+        for variant in &["baseline", "type_evidence", "research_batch"] {
+            let args = serde_json::json!({"variant": variant});
+            let step = resolve_step(2, &args, &None, 0, &db, &wf());
+            assert_eq!(step["batch"]["remaining"], 0);
+            assert!(step["when_done"].as_str().unwrap().contains("step=3"));
+        }
+    }
+
+    #[test]
+    fn test_resolve_step2_type_evidence_all_types_have_guidance() {
+        // Verify every QuestionType has a non-empty evidence guidance
+        let types = [
+            QuestionType::Stale,
+            QuestionType::Temporal,
+            QuestionType::Ambiguous,
+            QuestionType::Conflict,
+            QuestionType::Precision,
+            QuestionType::Missing,
+            QuestionType::Duplicate,
+            QuestionType::Corruption,
+        ];
+        for qt in &types {
+            let guidance = type_evidence_guidance(qt);
+            assert!(!guidance.is_empty(), "type_evidence_guidance should be non-empty for {:?}", qt);
+        }
+    }
+
+    #[test]
+    fn test_resolve_step2_variant_preserves_type_filter() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "vflt01", &["temporal", "stale", "missing"]);
+        let args = serde_json::json!({"variant": "type_evidence", "question_type": "stale"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0]["type"], "stale");
+        assert!(questions[0]["evidence_guidance"].is_string());
+    }
+
+    #[test]
+    fn test_workflow_schema_has_variant_param() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
+        let props = &wf_tool["inputSchema"]["properties"];
+        assert!(props.get("variant").is_some(), "workflow schema should have variant param");
+        let variant_enum = props["variant"]["enum"].as_array().unwrap();
+        let values: Vec<&str> = variant_enum.iter().filter_map(|v| v.as_str()).collect();
+        assert!(values.contains(&"baseline"));
+        assert!(values.contains(&"type_evidence"));
+        assert!(values.contains(&"research_batch"));
     }
 }
