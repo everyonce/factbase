@@ -8,6 +8,7 @@ use crate::patterns::{body_end_offset, ID_REGEX};
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
@@ -159,6 +160,21 @@ fn strip_leading_title<'a>(content: &'a str, title: &str) -> &'a str {
     content
 }
 
+/// Load glossary-defined terms for a repository (for acronym dedup).
+fn load_glossary_terms(db: &Database, repo_id: &str) -> HashSet<String> {
+    // Query glossary-type documents; fall back to empty set on error.
+    let types = ["definition", "glossary", "reference"];
+    let mut terms = HashSet::new();
+    for t in &types {
+        if let Ok(docs) = db.list_documents(Some(t), Some(repo_id), None, 50) {
+            for doc in &docs {
+                terms.extend(crate::extract_defined_terms(&doc.content));
+            }
+        }
+    }
+    terms
+}
+
 /// Creates a new document in a repository.
 ///
 /// Writes a markdown file with factbase header and title to the specified path.
@@ -194,8 +210,12 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Strip duplicate title from content if the agent included it
     let content_trimmed = strip_leading_title(content, &title);
 
+    // Deduplicate inline acronym expansions
+    let glossary = load_glossary_terms(db, &repo_id);
+    let content_deduped = crate::processor::dedup_acronym_expansions(content_trimmed, &glossary);
+
     // Build document content with header and title
-    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{content_trimmed}");
+    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{content_deduped}");
 
     // Construct full file path
     let file_path: PathBuf = repo.path.join(&path);
@@ -307,6 +327,13 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
             }
             body.push_str(old_review_queue);
         }
+    }
+
+    // Deduplicate inline acronym expansions (e.g. "DR (Disaster Recovery)" repeated 4x).
+    // Strip all expansions for terms defined in glossary documents.
+    if new_content.is_some() {
+        let glossary = load_glossary_terms(db, &doc.repo_id);
+        body = crate::processor::dedup_acronym_expansions(&body, &glossary);
     }
 
     let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{body}");
@@ -481,12 +508,15 @@ pub fn bulk_create_documents(
     // Create all documents using validated data
     let mut created: Vec<Value> = Vec::with_capacity(validated_docs.len());
     let total = validated_docs.len();
+    let glossary = load_glossary_terms(db, &repo_id);
     for (i, validated) in validated_docs.iter().enumerate() {
         let id = processor.generate_unique_id(db);
         let content_trimmed = strip_leading_title(validated.content, validated.title);
+        let content_deduped =
+            crate::processor::dedup_acronym_expansions(content_trimmed, &glossary);
         let doc_content = format!(
             "<!-- factbase:{} -->\n# {}\n\n{}",
-            id, validated.title, content_trimmed
+            id, validated.title, content_deduped
         );
         let file_path: PathBuf = repo.path.join(validated.path);
 
@@ -1118,5 +1148,141 @@ mod tests {
         let result = strip_leading_title(content, "Amanita muscaria");
         // Should not strip — the first non-whitespace is a comment, not a heading
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_update_document_deduplicates_acronym_expansions() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\nOld").unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\nOld".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site\n- DR (Disaster Recovery) budget"
+        });
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        // First expansion kept, subsequent stripped
+        assert!(on_disk.contains("DR (Disaster Recovery) plan"), "{on_disk}");
+        assert!(on_disk.contains("- DR site"), "second should be stripped: {on_disk}");
+        assert!(on_disk.contains("- DR budget"), "third should be stripped: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_strips_glossary_acronyms() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // Create a glossary document that defines "SLA"
+        let glossary_doc = Document {
+            id: "glos01".into(),
+            repo_id: "r1".into(),
+            file_path: "glossary.md".into(),
+            title: "Glossary".into(),
+            doc_type: Some("glossary".into()),
+            content: "# Glossary\n\n**SLA**: Service Level Agreement\n**DR**: Disaster Recovery".into(),
+            file_hash: "g1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&glossary_doc).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\nOld").unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\nOld".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "- SLA (Service Level Agreement) defined\n- DR (Disaster Recovery) plan"
+        });
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        // Both terms in glossary → all expansions stripped
+        assert!(on_disk.contains("- SLA defined"), "glossary term stripped: {on_disk}");
+        assert!(on_disk.contains("- DR plan"), "glossary term stripped: {on_disk}");
+    }
+
+    #[test]
+    fn test_create_document_deduplicates_acronym_expansions() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "test.md",
+            "title": "Test",
+            "content": "- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site"
+        });
+        create_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(repo_dir.path().join("test.md")).unwrap();
+        assert!(on_disk.contains("DR (Disaster Recovery) plan"), "{on_disk}");
+        assert!(on_disk.contains("- DR site"), "deduped: {on_disk}");
     }
 }
