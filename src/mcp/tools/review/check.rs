@@ -185,15 +185,21 @@ pub async fn check_repository(
         if let Some((processed, total)) = output.pair_progress {
             if processed < total {
                 result["checked_pair_ids"] = serde_json::to_value(&output.checked_pair_ids).unwrap_or_default();
+                let remaining = total.saturating_sub(processed);
+                let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
                 result["progress"] = serde_json::json!({
                     "processed": processed,
+                    "remaining": remaining,
                     "total": total,
+                    "percent_complete": pct,
                 });
                 result["continue"] = serde_json::json!(true);
-                let remaining = total.saturating_sub(processed);
                 result["message"] = serde_json::json!(format!(
-                    "⚠️ Processed {processed}/{total} fact pairs ({remaining} remaining). Call check_repository again with the `checked_pair_ids` array to continue. Do NOT report partial results — the operation is incomplete."
+                    "⚠️ INCOMPLETE — {processed}/{total} fact pairs processed ({pct}%). AUTOMATICALLY call check_repository again with the `checked_pair_ids` array to continue. Do NOT stop, ask the user, or report partial results."
                 ));
+                result["when_done"] = serde_json::json!(
+                    "AUTOMATICALLY call check_repository again with the same arguments. Do not ask the user — continue until the operation completes."
+                );
             }
         }
     }
