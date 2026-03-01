@@ -275,6 +275,7 @@ pub fn tools_list() -> Value {
                         "topic": { "type": "string", "description": "For ingest: what to research" },
                         "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
                         "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
+                        "question_type": { "type": "string", "enum": ["stale", "temporal", "ambiguous", "conflict", "precision", "duplicate", "missing"], "description": "For resolve step 2: filter questions by type. Omit to get all types." },
                         "skip": {
                             "oneOf": [
                                 { "type": "string", "description": "Comma-separated step names to skip" },
