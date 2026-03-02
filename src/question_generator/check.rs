@@ -528,7 +528,7 @@ const VOCAB_MAX_CONTENT_LEN: usize = 8_000;
 const VOCAB_BATCH_SIZE: usize = 5;
 
 /// Extract domain vocabulary from documents using LLM.
-async fn extract_vocabulary(
+pub async fn extract_vocabulary(
     docs: &[&Document],
     defined_terms: &HashSet<String>,
     llm: &dyn LlmProvider,
