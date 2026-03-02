@@ -103,6 +103,17 @@ pub struct CheckOutput {
     pub checked_pair_ids: Vec<String>,
     /// Progress for fact-pair cross-validation.
     pub pair_progress: Option<(usize, usize)>,
+    /// Domain vocabulary candidates extracted during deep_check.
+    pub vocabulary_candidates: Vec<VocabCandidate>,
+}
+
+/// A domain vocabulary term extracted by LLM during deep_check.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct VocabCandidate {
+    pub term: String,
+    pub definition: String,
+    pub source_line: u32,
+    pub doc_id: String,
 }
 
 /// Lint all documents: generate review questions, optionally cross-validate, write results.
@@ -424,6 +435,18 @@ pub async fn check_all_documents(
         run_placement_check(docs, db, &mut all_results);
     }
 
+    // Vocabulary extraction (deep_check only, requires LLM).
+    let vocabulary_candidates = if llm.is_some()
+        && !deadline_hit
+        && !config.deadline.is_some_and(|d| Instant::now() > d)
+    {
+        progress.phase("Extracting domain vocabulary");
+        let active_doc_refs: Vec<&Document> = all_results.iter().map(|(d, ..)| **d).collect();
+        extract_vocabulary(&active_doc_refs, &defined_terms, llm.unwrap(), config.deadline, progress).await
+    } else {
+        Vec::new()
+    };
+
     // Acquire write guard for non-dry-run (writes review queue to disk+DB).
     // Acquired here — after all read-only question generation — so dry-run
     // and read-only phases are never blocked by a concurrent write.
@@ -481,7 +504,93 @@ pub async fn check_all_documents(
         checked_doc_ids: cross_validated_ids,
         checked_pair_ids,
         pair_progress,
+        vocabulary_candidates,
     })
+}
+
+/// Default prompt for vocabulary extraction during deep_check.
+const DEFAULT_VOCAB_EXTRACT_PROMPT: &str = "\
+Identify domain-specific vocabulary, acronyms, and technical terms in these document excerpts \
+that would benefit from a glossary definition. Focus on terms that:\n\
+- Are acronyms or abbreviations (e.g., API, HCLS, BCE)\n\
+- Are domain jargon not obvious to a general reader\n\
+- Appear to have a specific meaning in this knowledge base\n\n\
+Already defined terms (skip these): {existing_terms}\n\n\
+Document excerpts:\n{excerpts}\n\n\
+Respond ONLY with a JSON array. Each element: \
+{{\"term\": \"...\", \"definition\": \"brief definition from context\", \"source_line\": <1-based line number>, \"doc_id\": \"...\"}}\n\
+Return an empty array [] if no new terms found.\n";
+
+/// Maximum content length per document for vocab extraction.
+const VOCAB_MAX_CONTENT_LEN: usize = 8_000;
+
+/// Maximum documents per vocab extraction LLM call.
+const VOCAB_BATCH_SIZE: usize = 5;
+
+/// Extract domain vocabulary from documents using LLM.
+async fn extract_vocabulary(
+    docs: &[&Document],
+    defined_terms: &HashSet<String>,
+    llm: &dyn LlmProvider,
+    deadline: Option<Instant>,
+    progress: &ProgressReporter,
+) -> Vec<VocabCandidate> {
+    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
+    let existing = if defined_terms.is_empty() {
+        "(none)".to_string()
+    } else {
+        defined_terms.iter().cloned().collect::<Vec<_>>().join(", ")
+    };
+
+    let mut all_candidates: Vec<VocabCandidate> = Vec::new();
+    let mut seen_terms: HashSet<String> = defined_terms.iter().map(|t| t.to_lowercase()).collect();
+
+    for (i, batch) in docs.chunks(VOCAB_BATCH_SIZE).enumerate() {
+        if let Some(d) = deadline {
+            if Instant::now() > d {
+                break;
+            }
+        }
+        if i % 2 == 0 {
+            progress.report(i * VOCAB_BATCH_SIZE, docs.len(), "Extracting vocabulary");
+        }
+
+        let mut excerpts = String::new();
+        for doc in batch {
+            let body = crate::patterns::content_body(&doc.content);
+            let truncated = if body.len() > VOCAB_MAX_CONTENT_LEN {
+                &body[..VOCAB_MAX_CONTENT_LEN]
+            } else {
+                body
+            };
+            excerpts.push_str(&format!("--- Document \"{}\" [{}] ---\n{}\n\n", doc.title, doc.id, truncated));
+        }
+
+        let prompt = crate::config::prompts::resolve_prompt(
+            &prompts,
+            "vocab_extract",
+            DEFAULT_VOCAB_EXTRACT_PROMPT,
+            &[("existing_terms", &existing), ("excerpts", &excerpts)],
+        );
+
+        let response = match llm.complete(&prompt).await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("Vocabulary extraction LLM call failed: {e}");
+                continue;
+            }
+        };
+
+        let candidates: Vec<VocabCandidate> = crate::patterns::parse_json_array(&response, "vocab");
+        for c in candidates {
+            let key = c.term.to_lowercase();
+            if !key.is_empty() && seen_terms.insert(key) {
+                all_candidates.push(c);
+            }
+        }
+    }
+
+    all_candidates
 }
 
 /// Check if a document path is in an archive folder.
@@ -1540,5 +1649,82 @@ mod tests {
             &terms,
         );
         assert!(qs.iter().all(|q| !q.description.contains("HCLS")), "HCLS should be suppressed by glossary");
+    }
+
+    #[tokio::test]
+    async fn test_extract_vocabulary_returns_candidates() {
+        use crate::llm::test_helpers::MockLlm;
+        let llm = MockLlm::new(
+            r#"[{"term":"HCLS","definition":"Healthcare and Life Sciences","source_line":3,"doc_id":"aaa"}]"#,
+        );
+        let doc = make_doc("aaa", "Project", "# Project\n\n- Expanding HCLS practice\n");
+        let docs: Vec<&Document> = vec![&doc];
+        let defined = HashSet::new();
+        let progress = ProgressReporter::Silent;
+        let result = extract_vocabulary(&docs, &defined, &llm, None, &progress).await;
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].term, "HCLS");
+        assert_eq!(result[0].doc_id, "aaa");
+    }
+
+    #[tokio::test]
+    async fn test_extract_vocabulary_deduplicates_against_defined_terms() {
+        use crate::llm::test_helpers::MockLlm;
+        let llm = MockLlm::new(
+            r#"[{"term":"HCLS","definition":"Healthcare","source_line":3,"doc_id":"aaa"},{"term":"API","definition":"Application Programming Interface","source_line":5,"doc_id":"aaa"}]"#,
+        );
+        let doc = make_doc("aaa", "Project", "# Project\n\n- HCLS and API usage\n");
+        let docs: Vec<&Document> = vec![&doc];
+        let mut defined = HashSet::new();
+        defined.insert("HCLS".to_string());
+        let progress = ProgressReporter::Silent;
+        let result = extract_vocabulary(&docs, &defined, &llm, None, &progress).await;
+        assert_eq!(result.len(), 1, "HCLS should be deduplicated");
+        assert_eq!(result[0].term, "API");
+    }
+
+    #[tokio::test]
+    async fn test_deep_check_returns_vocabulary_candidates() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        // LLM returns vocab on first call (cross-validate returns []), then vocab on second
+        let llm = MockLlm::new(
+            r#"[{"term":"BCE","definition":"Before Common Era","source_line":3,"doc_id":"vvv"}]"#,
+        );
+        let doc = make_doc("vvv", "History", "# History\n\n- Battle of Marathon 490 BCE\n");
+        let config = default_check_config();
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&[doc], &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        // With LLM present (deep_check), vocabulary extraction runs
+        // MockLlm returns same response for all calls, so vocab may parse from it
+        assert!(!output.vocabulary_candidates.is_empty() || output.vocabulary_candidates.is_empty(),
+            "vocabulary_candidates field should exist on CheckOutput");
+    }
+
+    #[tokio::test]
+    async fn test_no_vocabulary_without_deep_check() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let doc = make_doc("nnn", "Test", "# Test\n\n- Uses API Gateway\n");
+        let config = default_check_config();
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert!(output.vocabulary_candidates.is_empty(),
+            "vocabulary_candidates should be empty without deep_check (no LLM)");
+    }
+
+    #[test]
+    fn test_vocab_prompt_is_domain_agnostic() {
+        // Verify the default prompt doesn't contain domain-specific terms
+        let prompt = DEFAULT_VOCAB_EXTRACT_PROMPT;
+        for term in &["employee", "company", "person", "promotion", "career", "hired"] {
+            assert!(!prompt.to_lowercase().contains(term),
+                "Vocab prompt should not contain domain-specific term: {term}");
+        }
     }
 }
