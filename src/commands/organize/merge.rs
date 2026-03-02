@@ -27,6 +27,7 @@ pub struct MergePlanOutput {
     pub fact_count: usize,
     pub duplicate_count: usize,
     pub orphan_count: usize,
+    pub temporal_issues: Vec<TemporalIssueOutput>,
     pub dry_run: bool,
 }
 
@@ -40,6 +41,14 @@ pub struct MergeResultOutput {
     pub orphan_count: usize,
     pub orphan_path: Option<String>,
     pub links_redirected: usize,
+    pub temporal_issues: Vec<TemporalIssueOutput>,
+}
+
+/// Temporal issue output for serialization.
+#[derive(Debug, Clone, Serialize)]
+pub struct TemporalIssueOutput {
+    pub line_ref: usize,
+    pub description: String,
 }
 
 impl From<MergeResult> for MergeResultOutput {
@@ -52,7 +61,18 @@ impl From<MergeResult> for MergeResultOutput {
             orphan_count: r.orphan_count,
             orphan_path: r.orphan_path.map(|p| p.display().to_string()),
             links_redirected: r.links_redirected,
+            temporal_issues: Vec::new(),
         }
+    }
+}
+
+impl MergeResultOutput {
+    fn with_temporal_issues(mut self, plan: &MergePlan) -> Self {
+        self.temporal_issues = plan.temporal_issues.iter().map(|t| TemporalIssueOutput {
+            line_ref: t.line_ref,
+            description: t.description.clone(),
+        }).collect();
+        self
     }
 }
 
@@ -121,6 +141,10 @@ pub async fn run(args: MergeArgs) -> anyhow::Result<()> {
             fact_count: plan.ledger.source_facts.len(),
             duplicate_count: plan.duplicate_count(),
             orphan_count: plan.orphan_count(),
+            temporal_issues: plan.temporal_issues.iter().map(|t| TemporalIssueOutput {
+                line_ref: t.line_ref,
+                description: t.description.clone(),
+            }).collect(),
             dry_run: true,
         };
         print_output(format, &MergeOutput::Plan(output), || {
@@ -149,7 +173,7 @@ pub async fn run(args: MergeArgs) -> anyhow::Result<()> {
         |r| verify_merge(&plan, r, &db, &repo.path),
     )?;
 
-    let output = MergeResultOutput::from(result);
+    let output = MergeResultOutput::from(result).with_temporal_issues(&plan);
 
     print_output(format, &MergeOutput::Result(output.clone()), || {
         print_result(&output)
@@ -184,6 +208,13 @@ fn print_plan(plan: &MergePlan, keep_title: &str, merge_title: &str) {
             plan.orphan_count()
         );
     }
+
+    if !plan.temporal_issues.is_empty() {
+        println!("\nTemporal Issues ({}):", plan.temporal_issues.len());
+        for issue in &plan.temporal_issues {
+            println!("  Line {}: {}", issue.line_ref, issue.description);
+        }
+    }
 }
 
 /// Print merge result in table format.
@@ -202,6 +233,13 @@ fn print_result(result: &MergeResultOutput) {
     if let Some(ref path) = result.orphan_path {
         println!("\nOrphans written to: {path}");
     }
+
+    if !result.temporal_issues.is_empty() {
+        println!("\nTemporal Issues ({}):", result.temporal_issues.len());
+        for issue in &result.temporal_issues {
+            println!("  Line {}: {}", issue.line_ref, issue.description);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -218,10 +256,16 @@ mod tests {
             fact_count: 10,
             duplicate_count: 2,
             orphan_count: 1,
+            temporal_issues: vec![TemporalIssueOutput {
+                line_ref: 5,
+                description: "Boundary overlap on transition date".to_string(),
+            }],
             dry_run: true,
         };
         assert_eq!(output.keep_id, "abc123");
         assert!(output.dry_run);
+        assert_eq!(output.temporal_issues.len(), 1);
+        assert_eq!(output.temporal_issues[0].line_ref, 5);
     }
 
     #[test]
