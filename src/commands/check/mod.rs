@@ -522,6 +522,35 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         }
         } // end --no-questions guard
 
+        // Vocabulary extraction (deep_check only, requires LLM)
+        if let Some((_, ref llm)) = deep_check_providers {
+            progress.phase("Extracting domain vocabulary");
+            let vocab_docs = db.list_documents(None, Some(&repo.id), None, 10000)?;
+            let defined_terms = factbase::collect_defined_terms(&vocab_docs);
+            let doc_refs: Vec<&factbase::models::Document> = docs.iter().collect();
+            let candidates = factbase::extract_vocabulary(
+                &doc_refs,
+                &defined_terms,
+                llm.as_ref(),
+                None,
+                &progress,
+            )
+            .await;
+            if is_table_format && !args.quiet {
+                if candidates.is_empty() {
+                    println!("  No new vocabulary candidates found.");
+                } else {
+                    println!("  Vocabulary candidates ({}):", candidates.len());
+                    for c in &candidates {
+                        println!("    {} — {} (from [{}])", c.term, c.definition, c.doc_id);
+                    }
+                }
+                if !defined_terms.is_empty() {
+                    println!("  ({} terms already defined in glossary/reference docs)", defined_terms.len());
+                }
+            }
+        }
+
         if is_table_format && !type_counts.is_empty() {
             println!("  Type distribution:");
             let mut types: Vec<_> = type_counts.iter().collect();
