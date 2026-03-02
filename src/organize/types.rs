@@ -292,6 +292,15 @@ impl FactLedger {
     }
 }
 
+/// A temporal consistency issue detected during reorganization planning.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalIssue {
+    /// Line reference (1-based) in the source document
+    pub line_ref: usize,
+    /// Description of the temporal issue
+    pub description: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

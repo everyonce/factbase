@@ -179,6 +179,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content: "test".to_string(),
+            temporal_issues: vec![],
         };
 
         let result = execute_merge(&plan, &db, repo_path);
@@ -233,6 +234,7 @@ mod tests {
             combined_content:
                 "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A\n\n## Merged Content\n\n- Fact B\n"
                     .to_string(),
+            temporal_issues: vec![],
         };
 
         let result = execute_merge(&plan, &db, repo_path).expect("merge should succeed");
@@ -315,6 +317,7 @@ mod tests {
             combined_content:
                 "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A\n\n## Merged Content\n\n- Fact B\n"
                     .to_string(),
+            temporal_issues: vec![],
         };
 
         let result = execute_merge(&plan, &db, repo_path).expect("merge should succeed");
@@ -390,6 +393,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content: "merged".to_string(),
+            temporal_issues: vec![],
         };
 
         let result = execute_merge(&plan, &db, repo_path).expect("merge should succeed");
