@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::organize::{extract_facts, FactDestination, FactLedger, TrackedFact};
+use crate::organize::{extract_facts, FactDestination, FactLedger, TemporalIssue, TrackedFact};
 
 /// A plan for merging multiple documents into one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -21,6 +21,8 @@ pub struct MergePlan {
     pub ledger: FactLedger,
     /// Combined content for the kept document
     pub combined_content: String,
+    /// Temporal consistency issues detected during planning
+    pub temporal_issues: Vec<TemporalIssue>,
 }
 
 impl MergePlan {
@@ -94,7 +96,8 @@ pub async fn plan_merge(
     let response = llm.complete(&prompt).await?;
 
     // Parse LLM response and assign facts
-    let assignments = parse_merge_response(&response, &keep_facts, &all_merge_facts)?;
+    let (assignments, temporal_issues) =
+        parse_merge_response(&response, &keep_facts, &all_merge_facts)?;
 
     // Apply assignments to ledger
     for (fact_id, destination, reason) in assignments {
@@ -114,6 +117,7 @@ pub async fn plan_merge(
         merge_ids: merge_ids.iter().map(ToString::to_string).collect(),
         ledger,
         combined_content,
+        temporal_issues,
     })
 }
 
@@ -131,14 +135,24 @@ For each fact from the merge documents, decide:
 - DUPLICATE: Same as a fact in target (specify which K# it duplicates)
 - ORPHAN: Doesn't fit the target document's topic
 
+TEMPORAL AUDIT: Also identify any timeline or timing inconsistencies across all documents that could affect merge decisions. Flag:
+- Contradictory dates for the same event across documents
+- Overlapping date ranges that conflict when combined
+- Missing dates that make the combined timeline unclear
+- Any temporal feature that could be an issue when merging
+
 Respond in JSON format:
 {
   "decisions": [
     {"fact": "M<doc_id>_<index>", "action": "KEEP|DUPLICATE|ORPHAN", "reason": "brief explanation", "duplicates": "K#" (if DUPLICATE)}
+  ],
+  "temporal_issues": [
+    {"line_ref": 5, "description": "description of the temporal issue"}
   ]
 }
 
 Only include facts from merge documents (M*), not target facts (K*).
+Return an empty temporal_issues array if no issues are found.
 "#;
 
 /// Build the LLM prompt for merge analysis.
@@ -178,7 +192,7 @@ fn parse_merge_response(
     response: &str,
     keep_facts: &[TrackedFact],
     merge_facts: &[(String, Vec<TrackedFact>)],
-) -> Result<Vec<(String, FactDestination, String)>, FactbaseError> {
+) -> Result<(Vec<(String, FactDestination, String)>, Vec<TemporalIssue>), FactbaseError> {
     // All keep_facts automatically go to Document destination
     let mut assignments: Vec<(String, FactDestination, String)> = keep_facts
         .iter()
@@ -190,6 +204,8 @@ fn parse_merge_response(
             )
         })
         .collect();
+
+    let mut temporal_issues = Vec::new();
 
     // Try to parse JSON from response
     let json_start = response.find('{');
@@ -210,6 +226,14 @@ fn parse_merge_response(
                     assignments.push((fact.id.clone(), destination, decision.reason));
                 }
             }
+
+            // Process temporal issues
+            for issue in parsed.temporal_issues {
+                temporal_issues.push(TemporalIssue {
+                    line_ref: issue.line_ref,
+                    description: issue.description,
+                });
+            }
         }
     }
 
@@ -226,7 +250,7 @@ fn parse_merge_response(
         }
     }
 
-    Ok(assignments)
+    Ok((assignments, temporal_issues))
 }
 
 /// Find a fact by its reference string (e.g., "Mabc123_0").
@@ -287,6 +311,8 @@ fn build_combined_content(keep_doc: &crate::models::Document, ledger: &FactLedge
 #[derive(Deserialize)]
 struct MergeResponse {
     decisions: Vec<MergeDecision>,
+    #[serde(default)]
+    temporal_issues: Vec<RawTemporalIssue>,
 }
 
 #[derive(Deserialize)]
@@ -297,6 +323,12 @@ struct MergeDecision {
     #[serde(default)]
     #[allow(dead_code)] // Used for context in duplicate decisions
     duplicates: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawTemporalIssue {
+    line_ref: usize,
+    description: String,
 }
 
 #[cfg(test)]
@@ -321,6 +353,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content: "test".to_string(),
+            temporal_issues: vec![],
         };
 
         assert!(plan.is_valid());
@@ -348,6 +381,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content: "test".to_string(),
+            temporal_issues: vec![],
         };
 
         assert_eq!(plan.orphan_count(), 1);
@@ -375,6 +409,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content: "test".to_string(),
+            temporal_issues: vec![],
         };
 
         assert_eq!(plan.duplicate_count(), 1);
@@ -431,7 +466,8 @@ mod tests {
         let response =
             r#"{"decisions": [{"fact": "Mdoc2_0", "action": "KEEP", "reason": "new info"}]}"#;
 
-        let assignments = parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
+        let (assignments, temporal_issues) =
+            parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
 
         // Should have 2 assignments: 1 for keep_fact, 1 for merge_fact
         assert_eq!(assignments.len(), 2);
@@ -441,6 +477,7 @@ mod tests {
 
         // Second is the merge_fact (KEEP -> Document)
         assert_eq!(assignments[1].1, FactDestination::Document);
+        assert!(temporal_issues.is_empty());
     }
 
     #[test]
@@ -453,7 +490,8 @@ mod tests {
 
         let response = r#"{"decisions": [{"fact": "Mdoc2_0", "action": "DUPLICATE", "reason": "same as K0", "duplicates": "K0"}]}"#;
 
-        let assignments = parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
+        let (assignments, _) =
+            parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
 
         // Merge fact should be marked as duplicate
         let merge_assignment = assignments
@@ -474,7 +512,8 @@ mod tests {
         // Empty decisions - LLM didn't assign the merge fact
         let response = r#"{"decisions": []}"#;
 
-        let assignments = parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
+        let (assignments, _) =
+            parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
 
         // Merge fact should default to orphan
         let merge_assignment = assignments
@@ -482,5 +521,51 @@ mod tests {
             .find(|(id, _, _)| id == &merge_facts[0].1[0].id);
         assert!(merge_assignment.is_some());
         assert_eq!(merge_assignment.unwrap().1, FactDestination::Orphan);
+    }
+
+    #[test]
+    fn test_parse_merge_response_with_temporal_issues() {
+        let keep_facts = vec![TrackedFact::new("doc1", 1, "- Fact A", None, vec![])];
+        let merge_facts = vec![(
+            "doc2".to_string(),
+            vec![TrackedFact::new("doc2", 1, "- Fact B", None, vec![])],
+        )];
+
+        let response = r#"{
+            "decisions": [{"fact": "Mdoc2_0", "action": "KEEP", "reason": "new info"}],
+            "temporal_issues": [
+                {"line_ref": 2, "description": "Contradictory dates across documents"},
+                {"line_ref": 5, "description": "Overlapping date ranges conflict when combined"}
+            ]
+        }"#;
+
+        let (_, temporal_issues) =
+            parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
+
+        assert_eq!(temporal_issues.len(), 2);
+        assert_eq!(temporal_issues[0].line_ref, 2);
+        assert_eq!(
+            temporal_issues[0].description,
+            "Contradictory dates across documents"
+        );
+        assert_eq!(temporal_issues[1].line_ref, 5);
+    }
+
+    #[test]
+    fn test_parse_merge_response_no_temporal_issues_field() {
+        let keep_facts = vec![TrackedFact::new("doc1", 1, "- Fact A", None, vec![])];
+        let merge_facts = vec![(
+            "doc2".to_string(),
+            vec![TrackedFact::new("doc2", 1, "- Fact B", None, vec![])],
+        )];
+
+        // Response without temporal_issues field
+        let response =
+            r#"{"decisions": [{"fact": "Mdoc2_0", "action": "KEEP", "reason": "new info"}]}"#;
+
+        let (_, temporal_issues) =
+            parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
+
+        assert!(temporal_issues.is_empty());
     }
 }

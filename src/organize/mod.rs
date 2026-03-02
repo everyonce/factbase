@@ -44,6 +44,6 @@ pub use review::{
 pub use snapshot::{cleanup, create_snapshot, rollback, DocumentBackup, FileBackup, Snapshot};
 pub use types::{
     DuplicateEntry, EntryLocation, FactAssignment, FactDestination, FactLedger, GhostFile,
-    MergeCandidate, MisplacedCandidate, SplitCandidate, SplitSection, TrackedFact,
+    MergeCandidate, MisplacedCandidate, SplitCandidate, SplitSection, TemporalIssue, TrackedFact,
 };
 pub use verify::{verify_merge, verify_split, VerificationResult};

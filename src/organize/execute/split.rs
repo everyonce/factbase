@@ -207,6 +207,7 @@ mod tests {
             source_id: "doc1".to_string(),
             new_documents: vec![],
             ledger,
+            temporal_issues: vec![],
         };
 
         let result = execute_split(&plan, &db, repo_path);
@@ -277,6 +278,7 @@ mod tests {
                 },
             ],
             ledger,
+            temporal_issues: vec![],
         };
 
         let result = execute_split(&plan, &db, repo_path).expect("split should succeed");
@@ -351,6 +353,7 @@ mod tests {
                 content: "# New Doc\n\n- Fact A\n".to_string(),
             }],
             ledger,
+            temporal_issues: vec![],
         };
 
         let result = execute_split(&plan, &db, repo_path).expect("split should succeed");

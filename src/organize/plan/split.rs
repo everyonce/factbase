@@ -8,11 +8,13 @@ use serde::{Deserialize, Serialize};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::organize::{extract_facts, FactDestination, FactLedger, SplitSection, TrackedFact};
+use crate::organize::{
+    extract_facts, FactDestination, FactLedger, SplitSection, TemporalIssue, TrackedFact,
+};
 
-/// Type alias for split response parsing result: (assignments, titles)
+/// Type alias for split response parsing result: (assignments, titles, temporal_issues)
 /// Each assignment is (fact_id, section_index, section_name)
-type SplitParseResult = (Vec<(String, usize, String)>, Vec<String>);
+type SplitParseResult = (Vec<(String, usize, String)>, Vec<String>, Vec<TemporalIssue>);
 
 /// A plan for splitting a document into multiple documents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +25,8 @@ pub struct SplitPlan {
     pub new_documents: Vec<ProposedDocument>,
     /// Fact ledger tracking all facts through the split
     pub ledger: FactLedger,
+    /// Temporal consistency issues detected during planning
+    pub temporal_issues: Vec<TemporalIssue>,
 }
 
 /// A proposed new document from a split operation.
@@ -87,7 +91,8 @@ pub async fn plan_split(
     let response = llm.complete(&prompt).await?;
 
     // Parse LLM response and assign facts
-    let (assignments, titles) = parse_split_response(&response, &facts, sections)?;
+    let (assignments, titles, temporal_issues) =
+        parse_split_response(&response, &facts, sections)?;
 
     // Apply assignments to ledger
     for (fact_id, section_idx, reason) in &assignments {
@@ -111,6 +116,7 @@ pub async fn plan_split(
         source_id: doc_id.to_string(),
         new_documents,
         ledger,
+        temporal_issues,
     })
 }
 
@@ -129,6 +135,12 @@ For each fact, decide which section it belongs to:
 
 Also propose a title for each section's new document.
 
+TEMPORAL AUDIT: Also identify any timeline or timing inconsistencies in this document that may complicate the reorganization. Flag:
+- Contradictory dates (e.g., ended before it started, marked as both ended and ongoing)
+- Boundary overlaps where transitions occur on the same date
+- Missing dates that make the sequence of events unclear
+- Any temporal feature that could be an issue during reorganization
+
 Respond in JSON format:
 {
   "assignments": [
@@ -136,10 +148,14 @@ Respond in JSON format:
   ],
   "titles": [
     {"section": "S0", "title": "Proposed Document Title"}
+  ],
+  "temporal_issues": [
+    {"line_ref": 5, "description": "description of the temporal issue"}
   ]
 }
 
 Use ORPHAN as section value for facts that don't fit any section.
+Return an empty temporal_issues array if no issues are found.
 "#;
 
 /// Build the LLM prompt for split analysis.
@@ -188,6 +204,7 @@ fn parse_split_response(
 ) -> Result<SplitParseResult, FactbaseError> {
     let mut assignments = Vec::new();
     let mut titles: Vec<String> = sections.iter().map(|s| s.title.clone()).collect();
+    let mut temporal_issues = Vec::new();
 
     // Try to parse JSON from response
     let json_start = response.find('{');
@@ -212,6 +229,14 @@ fn parse_split_response(
                     }
                 }
             }
+
+            // Process temporal issues
+            for issue in parsed.temporal_issues {
+                temporal_issues.push(TemporalIssue {
+                    line_ref: issue.line_ref,
+                    description: issue.description,
+                });
+            }
         }
     }
 
@@ -226,7 +251,7 @@ fn parse_split_response(
         }
     }
 
-    Ok((assignments, titles))
+    Ok((assignments, titles, temporal_issues))
 }
 
 /// Find a fact by its reference string (e.g., "F0").
@@ -314,6 +339,8 @@ struct SplitResponse {
     assignments: Vec<SplitAssignment>,
     #[serde(default)]
     titles: Vec<SplitTitle>,
+    #[serde(default)]
+    temporal_issues: Vec<RawTemporalIssue>,
 }
 
 #[derive(Deserialize)]
@@ -327,6 +354,12 @@ struct SplitAssignment {
 struct SplitTitle {
     section: String,
     title: String,
+}
+
+#[derive(Deserialize)]
+struct RawTemporalIssue {
+    line_ref: usize,
+    description: String,
 }
 
 #[cfg(test)]
@@ -354,6 +387,7 @@ mod tests {
                 content: "# New Doc\n\n- test fact\n".to_string(),
             }],
             ledger,
+            temporal_issues: vec![],
         };
 
         assert!(plan.is_valid());
@@ -380,6 +414,7 @@ mod tests {
             source_id: "doc1".to_string(),
             new_documents: vec![],
             ledger,
+            temporal_issues: vec![],
         };
 
         assert_eq!(plan.orphan_count(), 1);
@@ -402,6 +437,7 @@ mod tests {
                 },
             ],
             ledger: FactLedger::new(),
+            temporal_issues: vec![],
         };
 
         assert_eq!(plan.document_count(), 2);
@@ -505,13 +541,15 @@ mod tests {
             ]
         }"#;
 
-        let (assignments, titles) = parse_split_response(response, &facts, &sections).unwrap();
+        let (assignments, titles, temporal_issues) =
+            parse_split_response(response, &facts, &sections).unwrap();
 
         assert_eq!(assignments.len(), 2);
         assert_eq!(assignments[0].1, 0); // Section 0
         assert_eq!(assignments[1].1, 1); // Section 1
         assert_eq!(titles[0], "Career History");
         assert_eq!(titles[1], "Academic Background");
+        assert!(temporal_issues.is_empty());
     }
 
     #[test]
@@ -532,7 +570,7 @@ mod tests {
             "titles": []
         }"#;
 
-        let (assignments, _) = parse_split_response(response, &facts, &sections).unwrap();
+        let (assignments, _, _) = parse_split_response(response, &facts, &sections).unwrap();
 
         assert_eq!(assignments.len(), 1);
         assert_eq!(assignments[0].1, usize::MAX); // Orphan
@@ -558,7 +596,7 @@ mod tests {
         // Empty assignments - LLM didn't assign the fact
         let response = r#"{"assignments": [], "titles": []}"#;
 
-        let (assignments, _) = parse_split_response(response, &facts, &sections).unwrap();
+        let (assignments, _, _) = parse_split_response(response, &facts, &sections).unwrap();
 
         assert_eq!(assignments.len(), 1);
         assert_eq!(assignments[0].1, usize::MAX); // Defaults to orphan
@@ -594,5 +632,62 @@ mod tests {
         assert_eq!(docs[0].section_title, "Career");
         assert!(docs[0].content.contains("# Career History"));
         assert!(docs[0].content.contains("- CTO at Acme"));
+    }
+
+    #[test]
+    fn test_parse_split_response_with_temporal_issues() {
+        let facts = vec![TrackedFact::new("doc1", 1, "- Fact A", None, vec![])];
+        let sections = vec![SplitSection {
+            title: "Section".to_string(),
+            level: 2,
+            start_line: 1,
+            end_line: 5,
+            content: "content".to_string(),
+        }];
+
+        let response = r#"{
+            "assignments": [
+                {"fact": "F0", "section": "S0", "reason": "fits section"}
+            ],
+            "titles": [],
+            "temporal_issues": [
+                {"line_ref": 3, "description": "Date range ends before it starts"},
+                {"line_ref": 7, "description": "Missing date makes sequence unclear"}
+            ]
+        }"#;
+
+        let (_, _, temporal_issues) =
+            parse_split_response(response, &facts, &sections).unwrap();
+
+        assert_eq!(temporal_issues.len(), 2);
+        assert_eq!(temporal_issues[0].line_ref, 3);
+        assert_eq!(
+            temporal_issues[0].description,
+            "Date range ends before it starts"
+        );
+        assert_eq!(temporal_issues[1].line_ref, 7);
+    }
+
+    #[test]
+    fn test_parse_split_response_no_temporal_issues_field() {
+        let facts = vec![TrackedFact::new("doc1", 1, "- Fact A", None, vec![])];
+        let sections = vec![SplitSection {
+            title: "Section".to_string(),
+            level: 2,
+            start_line: 1,
+            end_line: 5,
+            content: "content".to_string(),
+        }];
+
+        // Response without temporal_issues field at all
+        let response = r#"{
+            "assignments": [{"fact": "F0", "section": "S0", "reason": "fits"}],
+            "titles": []
+        }"#;
+
+        let (_, _, temporal_issues) =
+            parse_split_response(response, &facts, &sections).unwrap();
+
+        assert!(temporal_issues.is_empty());
     }
 }
