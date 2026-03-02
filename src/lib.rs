@@ -92,7 +92,7 @@ pub use organize::{
     process_orphan_answers, rollback, verify_merge, verify_split, DuplicateEntry, EntryLocation,
     GhostFile, MergeCandidate, MergePlan, MergeResult, MisplacedCandidate, MoveResult,
     SplitCandidate, SplitPlan, SplitResult, SplitSection, StaleDuplicate, SuggestedEntity,
-    VerificationResult,
+    TemporalIssue, VerificationResult,
 };
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
 pub use patterns::{
@@ -108,6 +108,7 @@ pub use processor::{
     DocumentProcessor,
 };
 pub use progress::{ProgressReporter, ProgressSender};
+pub use question_generator::check::{extract_vocabulary, VocabCandidate};
 pub use question_generator::cross_validate::cross_validate_document;
 pub use question_generator::cross_validate::cross_validate_facts;
 pub use question_generator::cross_validate::{make_pair_id, CrossValidateOutput};

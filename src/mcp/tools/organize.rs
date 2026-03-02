@@ -347,6 +347,11 @@ async fn organize_merge(
     progress.log(&format!("Planning merge: keep {} ← {}", keep_id, merge_id));
     let plan = plan_merge(&keep_id, &[merge_id.as_str()], db, llm).await?;
 
+    let temporal_issues: Vec<Value> = plan.temporal_issues.iter().map(|t| serde_json::json!({
+        "line_ref": t.line_ref,
+        "description": t.description,
+    })).collect();
+
     if dry_run {
         return Ok(serde_json::json!({
             "dry_run": true,
@@ -355,6 +360,7 @@ async fn organize_merge(
             "fact_count": plan.ledger.source_facts.len(),
             "duplicate_count": plan.duplicate_count(),
             "orphan_count": plan.orphan_count(),
+            "temporal_issues": temporal_issues,
         }));
     }
 
@@ -391,6 +397,7 @@ async fn organize_merge(
         "orphan_count": result.orphan_count,
         "orphan_path": result.orphan_path.map(|p| p.display().to_string()),
         "links_redirected": result.links_redirected,
+        "temporal_issues": temporal_issues,
         "message": format!("Merged {} into {}. Run scan_repository to re-index.", merge_id, keep_id),
     }))
 }
@@ -434,6 +441,11 @@ async fn organize_split(
     progress.log(&format!("Planning split for {} ({} sections)", doc_id, sections.len()));
     let plan = plan_split(&doc_id, &sections, db, llm).await?;
 
+    let temporal_issues: Vec<Value> = plan.temporal_issues.iter().map(|t| serde_json::json!({
+        "line_ref": t.line_ref,
+        "description": t.description,
+    })).collect();
+
     if dry_run {
         return Ok(serde_json::json!({
             "dry_run": true,
@@ -445,6 +457,7 @@ async fn organize_split(
             })).collect::<Vec<_>>(),
             "fact_count": plan.ledger.source_facts.len(),
             "orphan_count": plan.orphan_count(),
+            "temporal_issues": temporal_issues,
         }));
     }
 
@@ -478,6 +491,7 @@ async fn organize_split(
         "fact_count": result.fact_count,
         "orphan_count": result.orphan_count,
         "orphan_path": result.orphan_path.map(|p| p.display().to_string()),
+        "temporal_issues": temporal_issues,
         "message": format!("Split {} into {} documents. Run scan_repository to re-index.", doc_id, result.new_doc_ids.len()),
     }))
 }
@@ -733,5 +747,64 @@ mod tests {
         assert!(props.get("time_budget_secs").is_some());
         assert!(props.get("completed_phases").is_some());
         assert!(props.get("analyzed_doc_ids").is_some());
+    }
+
+    #[test]
+    fn test_temporal_issues_serialized_in_merge_dry_run() {
+        use crate::organize::TemporalIssue;
+        let issues = vec![
+            TemporalIssue { line_ref: 3, description: "Boundary overlap on transition date".into() },
+            TemporalIssue { line_ref: 8, description: "Missing end date makes timeline unclear".into() },
+            TemporalIssue { line_ref: 12, description: "Contradictory dates for same event".into() },
+        ];
+        let json: Vec<Value> = issues.iter().map(|t| serde_json::json!({
+            "line_ref": t.line_ref,
+            "description": t.description,
+        })).collect();
+        let response = serde_json::json!({
+            "dry_run": true,
+            "keep_id": "aaa",
+            "merge_id": "bbb",
+            "temporal_issues": json,
+        });
+        let ti = response["temporal_issues"].as_array().unwrap();
+        assert_eq!(ti.len(), 3);
+        assert_eq!(ti[0]["line_ref"], 3);
+        assert_eq!(ti[0]["description"], "Boundary overlap on transition date");
+        assert_eq!(ti[1]["description"], "Missing end date makes timeline unclear");
+        assert_eq!(ti[2]["description"], "Contradictory dates for same event");
+    }
+
+    #[test]
+    fn test_temporal_issues_serialized_in_split_dry_run() {
+        use crate::organize::TemporalIssue;
+        let issues = vec![
+            TemporalIssue { line_ref: 5, description: "Timeline contradiction: ended before started".into() },
+        ];
+        let json: Vec<Value> = issues.iter().map(|t| serde_json::json!({
+            "line_ref": t.line_ref,
+            "description": t.description,
+        })).collect();
+        let response = serde_json::json!({
+            "dry_run": true,
+            "source_id": "abc",
+            "temporal_issues": json,
+        });
+        let ti = response["temporal_issues"].as_array().unwrap();
+        assert_eq!(ti.len(), 1);
+        assert_eq!(ti[0]["line_ref"], 5);
+        assert!(ti[0]["description"].as_str().unwrap().contains("contradiction"));
+    }
+
+    #[test]
+    fn test_temporal_issues_empty_when_none_detected() {
+        let json: Vec<Value> = Vec::new();
+        let response = serde_json::json!({
+            "dry_run": true,
+            "keep_id": "aaa",
+            "temporal_issues": json,
+        });
+        let ti = response["temporal_issues"].as_array().unwrap();
+        assert!(ti.is_empty());
     }
 }

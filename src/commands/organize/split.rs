@@ -3,6 +3,7 @@
 //! Splits a multi-topic document into separate documents with fact-level accounting.
 
 use super::SplitArgs;
+use super::merge::TemporalIssueOutput;
 use crate::commands::{
     confirm_prompt, find_repo_with_config, print_output, setup_llm_with_timeout, OutputFormat,
 };
@@ -27,6 +28,7 @@ pub struct SplitPlanOutput {
     pub sections: Vec<SectionInfo>,
     pub fact_count: usize,
     pub orphan_count: usize,
+    pub temporal_issues: Vec<TemporalIssueOutput>,
     pub dry_run: bool,
 }
 
@@ -47,6 +49,7 @@ pub struct SplitResultOutput {
     pub fact_count: usize,
     pub orphan_count: usize,
     pub orphan_path: Option<String>,
+    pub temporal_issues: Vec<TemporalIssueOutput>,
 }
 
 impl From<SplitResult> for SplitResultOutput {
@@ -57,7 +60,18 @@ impl From<SplitResult> for SplitResultOutput {
             fact_count: r.fact_count,
             orphan_count: r.orphan_count,
             orphan_path: r.orphan_path.map(|p| p.display().to_string()),
+            temporal_issues: Vec::new(),
         }
+    }
+}
+
+impl SplitResultOutput {
+    fn with_temporal_issues(mut self, plan: &SplitPlan) -> Self {
+        self.temporal_issues = plan.temporal_issues.iter().map(|t| TemporalIssueOutput {
+            line_ref: t.line_ref,
+            description: t.description.clone(),
+        }).collect();
+        self
     }
 }
 
@@ -137,7 +151,7 @@ pub async fn run(args: SplitArgs) -> anyhow::Result<()> {
         |r| verify_split(&plan, r, &db, &repo.path),
     )?;
 
-    let output = SplitResultOutput::from(result);
+    let output = SplitResultOutput::from(result).with_temporal_issues(&plan);
 
     print_output(format, &SplitOutput::Result(output.clone()), || {
         print_result(&output)
@@ -170,6 +184,10 @@ fn build_plan_output(
         sections: section_infos,
         fact_count: plan.ledger.source_facts.len(),
         orphan_count: plan.orphan_count(),
+        temporal_issues: plan.temporal_issues.iter().map(|t| TemporalIssueOutput {
+            line_ref: t.line_ref,
+            description: t.description.clone(),
+        }).collect(),
         dry_run: true,
     }
 }
@@ -211,6 +229,13 @@ fn print_plan(plan: &SplitPlan, source_title: &str, sections: &[SplitSection]) {
             plan.orphan_count()
         );
     }
+
+    if !plan.temporal_issues.is_empty() {
+        println!("\nTemporal Issues ({}):", plan.temporal_issues.len());
+        for issue in &plan.temporal_issues {
+            println!("  Line {}: {}", issue.line_ref, issue.description);
+        }
+    }
 }
 
 /// Print split result in table format.
@@ -230,6 +255,13 @@ fn print_result(result: &SplitResultOutput) {
 
     if let Some(ref path) = result.orphan_path {
         println!("\nOrphans written to: {path}");
+    }
+
+    if !result.temporal_issues.is_empty() {
+        println!("\nTemporal Issues ({}):", result.temporal_issues.len());
+        for issue in &result.temporal_issues {
+            println!("  Line {}: {}", issue.line_ref, issue.description);
+        }
     }
 }
 
@@ -258,11 +290,17 @@ mod tests {
             ],
             fact_count: 8,
             orphan_count: 1,
+            temporal_issues: vec![TemporalIssueOutput {
+                line_ref: 7,
+                description: "Missing end date makes timeline unclear".to_string(),
+            }],
             dry_run: true,
         };
         assert_eq!(output.source_id, "abc123");
         assert_eq!(output.sections.len(), 2);
         assert!(output.dry_run);
+        assert_eq!(output.temporal_issues.len(), 1);
+        assert_eq!(output.temporal_issues[0].line_ref, 7);
     }
 
     #[test]
