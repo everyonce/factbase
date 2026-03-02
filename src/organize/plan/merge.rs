@@ -568,4 +568,48 @@ mod tests {
 
         assert!(temporal_issues.is_empty());
     }
+
+    #[test]
+    fn test_merge_prompt_is_domain_agnostic() {
+        let prompt = DEFAULT_ORGANIZE_MERGE_PROMPT;
+        for term in &["employee", "company", "person", "promotion", "career", "hired", "job", "role", "staff"] {
+            assert!(!prompt.to_lowercase().contains(term),
+                "Merge prompt should not contain domain-specific term: {term}");
+        }
+    }
+
+    #[test]
+    fn test_build_merge_prompt_botany_domain() {
+        let keep_facts = vec![TrackedFact::new("doc1", 1, "- Native to North America", None, vec![])];
+        let merge_facts = vec![(
+            "doc2".to_string(),
+            vec![TrackedFact::new("doc2", 1, "- Fruiting season: autumn", None, vec![])],
+        )];
+
+        let prompt = build_merge_prompt("Chanterelle", &keep_facts, &merge_facts);
+
+        assert!(prompt.contains("TARGET DOCUMENT: \"Chanterelle\""));
+        assert!(prompt.contains("Native to North America"));
+        assert!(prompt.contains("Fruiting season: autumn"));
+    }
+
+    #[test]
+    fn test_parse_merge_response_history_domain() {
+        let keep_facts = vec![TrackedFact::new("doc1", 1, "- Founded 753 BCE", None, vec![])];
+        let merge_facts = vec![(
+            "doc2".to_string(),
+            vec![TrackedFact::new("doc2", 1, "- Republic established 509 BCE", None, vec![])],
+        )];
+
+        let response = r#"{
+            "decisions": [{"fact": "Mdoc2_0", "action": "KEEP", "reason": "new temporal info"}],
+            "temporal_issues": [{"line_ref": 1, "description": "BCE dates span centuries"}]
+        }"#;
+
+        let (assignments, temporal_issues) =
+            parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
+
+        assert_eq!(assignments.len(), 2);
+        assert_eq!(temporal_issues.len(), 1);
+    }
 }

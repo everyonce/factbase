@@ -201,8 +201,8 @@ Common mistakes to avoid:\n\
 ✗ WRONG: Flagging as CONTRADICTS because the SOURCES are different. Two sources can confirm the same fact.\n\
 ✗ WRONG: Flagging as SUPERSEDES because one source is older. A 2019 source citing \
 \"founded in 1924\" is NOT superseded — the fact is timeless.\n\
-✗ WRONG: Flagging boundary-month overlaps as CONTRADICTS. \"Role A ends 2016-11\" + \
-\"Role B starts 2016-11\" = normal transition.\n\
+✗ WRONG: Flagging boundary-month overlaps as CONTRADICTS. \"Entry A ends 2016-11\" + \
+\"Entry B starts 2016-11\" = normal transition.\n\
 ✗ WRONG: Flagging two DIFFERENT facts about the same entity as contradicting. \
 \"Fleet size: 900\" and \"Destinations: 200\" coexist.\n\
 ✓ RIGHT: CONTRADICTS only when two sources give DIFFERENT answers to the SAME question \
@@ -530,8 +530,8 @@ Statuses:\n\
 Common mistakes to avoid:\n\
 ✗ WRONG: Flagging a fact as STALE because the SOURCE is old. A 2019 source citing \
 \"founded in 1924\" is NOT stale — the fact is timeless.\n\
-✗ WRONG: Flagging boundary-month overlaps as CONFLICT. \"Role A ends 2016-11\" + \
-\"Role B starts 2016-11\" = normal transition.\n\
+✗ WRONG: Flagging boundary-month overlaps as CONFLICT. \"Entry A ends 2016-11\" + \
+\"Entry B starts 2016-11\" = normal transition.\n\
 ✗ WRONG: Flagging two DIFFERENT facts about the same entity as conflicting. \
 \"Fleet size: 900\" and \"Destinations: 200\" coexist.\n\
 ✓ RIGHT: CONFLICT only when two sources give DIFFERENT answers to the SAME question \
@@ -2389,5 +2389,18 @@ mod tests {
 
         assert_eq!(llm.calls(), 2, "20 pairs with batch_size=10 should make exactly 2 LLM calls");
         assert_eq!(result.processed, 20);
+    }
+
+    #[test]
+    fn test_cross_validate_prompts_are_domain_agnostic() {
+        for (name, prompt) in [
+            ("pair", DEFAULT_PAIR_CROSS_VALIDATE_PROMPT),
+            ("doc", DEFAULT_CROSS_VALIDATE_PROMPT),
+        ] {
+            for term in &["employee", "company", "person", "promotion", "career", "hired", "job", "role", "staff"] {
+                assert!(!prompt.to_lowercase().contains(term),
+                    "Cross-validate {name} prompt should not contain domain-specific term: {term}");
+            }
+        }
     }
 }
