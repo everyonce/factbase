@@ -54,6 +54,19 @@ impl Database {
             "DELETE FROM document_content_fts WHERE doc_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
             rusqlite::params![doc.repo_id, doc.file_path, doc.id],
         )?;
+        // Clean up fact-level embeddings and metadata (foreign key on document_id)
+        let stale_fact_ids: Vec<String> = conn
+            .prepare("SELECT fm.id FROM fact_metadata fm JOIN documents d ON fm.document_id = d.id WHERE d.repo_id = ?1 AND d.file_path = ?2 AND d.id != ?3")?
+            .query_map(rusqlite::params![doc.repo_id, doc.file_path, doc.id], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+        for fact_id in &stale_fact_ids {
+            let _ = conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [fact_id]);
+        }
+        conn.execute(
+            "DELETE FROM fact_metadata WHERE document_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
         conn.execute(
             "DELETE FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3",
             rusqlite::params![doc.repo_id, doc.file_path, doc.id],
@@ -285,6 +298,16 @@ impl Database {
             [id],
         )?;
         conn.execute("DELETE FROM document_content_fts WHERE doc_id = ?1", [id])?;
+        // Clean up fact-level embeddings and metadata (foreign key on document_id)
+        let fact_ids: Vec<String> = conn
+            .prepare("SELECT id FROM fact_metadata WHERE document_id = ?1")?
+            .query_map([id], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+        for fact_id in &fact_ids {
+            let _ = conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [fact_id]);
+        }
+        conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [id])?;
         conn.execute("DELETE FROM documents WHERE id = ?1", [id])?;
         if let Some(rid) = repo_id {
             self.invalidate_stats_cache(&rid);
@@ -437,5 +460,51 @@ mod tests {
             .expect("query word_count");
 
         assert_eq!(word_count, 5);
+    }
+
+    #[test]
+    fn test_upsert_cleans_fact_metadata_for_stale_doc() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("create repo");
+
+        // Create a document at a specific path
+        let mut doc = test_doc_with_repo("old_id", "repo1", "Test Doc");
+        doc.file_path = "test/doc.md".to_string();
+        db.upsert_document(&doc).expect("upsert old doc");
+
+        // Add fact_metadata referencing the old document (id, doc_id, line, text, hash, embedding)
+        db.upsert_fact_embedding("fact1", "old_id", 1, "some fact", "hash1", &[0.1; 1024])
+            .expect("insert fact");
+
+        // Now upsert a new document at the same path with a different ID
+        let mut new_doc = test_doc_with_repo("new_id", "repo1", "Test Doc Updated");
+        new_doc.file_path = "test/doc.md".to_string();
+        // This should not fail with FK constraint
+        db.upsert_document(&new_doc)
+            .expect("upsert new doc at same path should clean up stale fact_metadata");
+
+        // Old doc should be gone
+        assert!(db.get_document("old_id").expect("query").is_none());
+        // New doc should exist
+        assert!(db.get_document("new_id").expect("query").is_some());
+    }
+
+    #[test]
+    fn test_hard_delete_cleans_fact_metadata() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("create repo");
+
+        let doc = test_doc_with_repo("abc123", "repo1", "Test Doc");
+        db.upsert_document(&doc).expect("upsert");
+
+        // Add fact_metadata referencing the document (id, doc_id, line, text, hash, embedding)
+        db.upsert_fact_embedding("fact1", "abc123", 1, "some fact", "hash1", &[0.1; 1024])
+            .expect("insert fact");
+
+        // Hard delete should not fail with FK constraint
+        db.hard_delete_document("abc123")
+            .expect("hard delete should clean up fact_metadata");
     }
 }
