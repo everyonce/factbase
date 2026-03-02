@@ -209,6 +209,11 @@ pub async fn check_repository(
             .unwrap_or_default();
     }
 
+    if !output.vocabulary_candidates.is_empty() {
+        result["vocabulary_candidates"] = serde_json::to_value(&output.vocabulary_candidates)
+            .unwrap_or_default();
+    }
+
     Ok(result)
 }
 
