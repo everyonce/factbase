@@ -157,6 +157,15 @@ impl Database {
                 "DELETE FROM document_links WHERE source_id = ?1 OR target_id = ?1",
                 [doc_id],
             )?;
+            // Delete fact-level embeddings and metadata (foreign key on document_id)
+            let fact_ids: Vec<String> = conn
+                .prepare_cached("SELECT id FROM fact_metadata WHERE document_id = ?1")?
+                .query_map([doc_id], |r| r.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            for fact_id in &fact_ids {
+                let _ = conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [fact_id]);
+            }
+            conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [doc_id])?;
             // Delete from chunks table first
             conn.execute(
                 "DELETE FROM embedding_chunks WHERE document_id = ?1",
@@ -307,6 +316,26 @@ mod tests {
             .get_document("doc1")
             .expect("get_document should succeed");
         assert!(doc.is_none());
+    }
+
+    #[test]
+    fn test_remove_repository_with_fact_metadata() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.add_repository(&repo)
+            .expect("add_repository should succeed");
+        db.upsert_document(&test_doc("doc1", "Doc 1"))
+            .expect("upsert_document should succeed");
+
+        // Add fact_metadata referencing the document
+        db.upsert_fact_embedding("fact1", "doc1", 1, "some fact", "hash1", &[0.1; 1024])
+            .expect("insert fact");
+
+        // Remove should not fail with FK constraint
+        let deleted = db
+            .remove_repository("test-repo")
+            .expect("remove_repository should clean up fact_metadata");
+        assert_eq!(deleted, 1);
     }
 
     #[test]
