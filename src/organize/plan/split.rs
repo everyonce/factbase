@@ -690,4 +690,77 @@ mod tests {
 
         assert!(temporal_issues.is_empty());
     }
+
+    #[test]
+    fn test_split_prompt_is_domain_agnostic() {
+        let prompt = DEFAULT_ORGANIZE_SPLIT_PROMPT;
+        for term in &["employee", "company", "person", "promotion", "career", "hired", "job", "role", "staff"] {
+            assert!(!prompt.to_lowercase().contains(term),
+                "Split prompt should not contain domain-specific term: {term}");
+        }
+    }
+
+    #[test]
+    fn test_build_split_prompt_botany_domain() {
+        let facts = vec![
+            TrackedFact::new("doc1", 3, "- Grows in temperate forests @t[=2023]", None, vec![]),
+            TrackedFact::new("doc1", 5, "- Cap diameter 5-15cm", None, vec![]),
+        ];
+        let sections = vec![
+            SplitSection {
+                title: "Habitat".to_string(),
+                level: 2,
+                start_line: 1,
+                end_line: 6,
+                content: "Habitat content".to_string(),
+            },
+            SplitSection {
+                title: "Morphology".to_string(),
+                level: 2,
+                start_line: 7,
+                end_line: 12,
+                content: "Morphology content".to_string(),
+            },
+        ];
+
+        let prompt = build_split_prompt("Amanita muscaria", &facts, &sections);
+
+        assert!(prompt.contains("SOURCE DOCUMENT: \"Amanita muscaria\""));
+        assert!(prompt.contains("S0: Habitat"));
+        assert!(prompt.contains("S1: Morphology"));
+        assert!(prompt.contains("temperate forests"));
+    }
+
+    #[test]
+    fn test_parse_split_response_history_domain() {
+        let facts = vec![
+            TrackedFact::new("doc1", 1, "- Battle began @t[=480 BCE]", None, vec![]),
+            TrackedFact::new("doc1", 2, "- Greek forces numbered 7000", None, vec![]),
+        ];
+        let sections = vec![
+            SplitSection {
+                title: "Timeline".to_string(),
+                level: 2,
+                start_line: 1,
+                end_line: 5,
+                content: "content".to_string(),
+            },
+        ];
+
+        let response = r#"{
+            "assignments": [
+                {"fact": "F0", "section": "S0", "reason": "temporal event"},
+                {"fact": "F1", "section": "S0", "reason": "battle detail"}
+            ],
+            "titles": [{"section": "S0", "title": "Battle of Thermopylae Timeline"}],
+            "temporal_issues": [{"line_ref": 1, "description": "BCE date may need verification"}]
+        }"#;
+
+        let (assignments, titles, temporal_issues) =
+            parse_split_response(response, &facts, &sections).unwrap();
+
+        assert_eq!(assignments.len(), 2);
+        assert_eq!(titles[0], "Battle of Thermopylae Timeline");
+        assert_eq!(temporal_issues.len(), 1);
+    }
 }
