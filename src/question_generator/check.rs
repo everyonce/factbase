@@ -174,6 +174,22 @@ pub async fn check_all_documents(
     let active_docs = clean_docs;
     let total_active = active_docs.len();
 
+    // Build repo_id → repo_path map so we can resolve relative file paths.
+    // Documents store paths relative to their repository root; without this
+    // map, disk reads/writes silently fail when CWD ≠ repo root (e.g. MCP).
+    let repo_paths: HashMap<String, PathBuf> = {
+        let mut m = HashMap::new();
+        for doc in docs {
+            if !m.contains_key(&doc.repo_id) {
+                if let Ok(Some(repo)) = db.get_repository(&doc.repo_id) {
+                    m.insert(doc.repo_id.clone(), repo.path.clone());
+                }
+            }
+        }
+        m
+    };
+    let repo_paths_ref = &repo_paths;
+
     // Build title → doc IDs map for duplicate title detection (all docs, not just active)
     let mut title_map: HashMap<String, Vec<(&str, &str)>> = HashMap::new();
     for doc in docs {
@@ -215,7 +231,12 @@ pub async fn check_all_documents(
                     // Prefer fresh content from disk over potentially stale database content.
                     // apply_review_answers writes reviewed markers to files but doesn't
                     // update the database, so the DB content may lack those markers.
-                    let disk_content = std::fs::read_to_string(&doc.file_path).ok();
+                    let abs_path = repo_paths_ref
+                        .get(&doc.repo_id)
+                        .map(|rp| rp.join(&doc.file_path));
+                    let disk_content = abs_path
+                        .as_ref()
+                        .and_then(|p| std::fs::read_to_string(p).ok());
                     let content = disk_content.as_deref().unwrap_or(&doc.content);
 
                     // Strip the review queue section so generators never
@@ -461,7 +482,12 @@ pub async fn check_all_documents(
     for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review) in all_results {
         // Post-filter: remove conflict questions for boundary-month sequential entries.
         // This catches conflicts from any generator (rule-based or LLM cross-validation).
-        let disk_content = std::fs::read_to_string(&doc.file_path).ok();
+        let abs_path = repo_paths
+            .get(&doc.repo_id)
+            .map(|rp| rp.join(&doc.file_path));
+        let disk_content = abs_path
+            .as_ref()
+            .and_then(|p| std::fs::read_to_string(p).ok());
         let content = disk_content.as_deref().unwrap_or(&doc.content);
         filter_sequential_conflicts(content, &mut questions);
 
@@ -469,7 +495,7 @@ pub async fn check_all_documents(
         let needs_write = count > 0 || pruned_count > 0;
         if needs_write && !config.dry_run {
             let updated = append_review_questions(&pruned_content, &questions);
-            let path = PathBuf::from(&doc.file_path);
+            let path = abs_path.unwrap_or_else(|| PathBuf::from(&doc.file_path));
             if path.exists() {
                 std::fs::write(&path, &updated)?;
                 let new_hash = content_hash(&updated);
@@ -1726,5 +1752,64 @@ mod tests {
             assert!(!prompt.to_lowercase().contains(term),
                 "Vocab prompt should not contain domain-specific term: {term}");
         }
+    }
+
+    #[tokio::test]
+    async fn test_check_resolves_relative_file_paths() {
+        // Regression test: check_all_documents must resolve relative file_path
+        // against the repository root, not the process CWD.
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        // Create a temp "repo" directory with a markdown file
+        let repo_dir = tempfile::tempdir().unwrap();
+        let md_path = repo_dir.path().join("test-doc.md");
+        std::fs::write(&md_path, "<!-- factbase:ttt -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+
+        // Register the repo in the database
+        let repo = crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // Document with relative file_path (as stored in DB)
+        let doc = Document {
+            id: "ttt".to_string(),
+            title: "Test".to_string(),
+            content: "<!-- factbase:ttt -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            file_path: "test-doc.md".to_string(),
+            repo_id: "test-repo".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            checked_pair_ids: HashSet::new(),
+            acquire_write_guard: false,
+            batch_size: 10,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+
+        // Should have generated questions (at least temporal)
+        assert!(!output.results.is_empty(), "should generate questions");
+        assert!(output.results[0].new_questions > 0, "should have new questions");
+
+        // Verify questions were written to the file on disk
+        let on_disk = std::fs::read_to_string(&md_path).unwrap();
+        assert!(on_disk.contains("@q["), "questions should be written to file at resolved path");
     }
 }
