@@ -1741,6 +1741,83 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn test_bootstrap_aviation_domain_with_entity_types() {
+        use crate::llm::test_helpers::MockLlm;
+
+        let mock_response = r##"{
+            "document_types": [
+                {"name": "aircraft", "description": "Aircraft models and variants"},
+                {"name": "airline", "description": "Commercial and cargo airlines"},
+                {"name": "airport", "description": "Airports and airfields"},
+                {"name": "incident", "description": "Aviation incidents and investigations"},
+                {"name": "regulation", "description": "Aviation regulations and standards"}
+            ],
+            "folder_structure": ["aircraft/", "airlines/", "airports/", "incidents/", "regulations/"],
+            "templates": {
+                "aircraft": "# Aircraft Name\n\n## Specifications\n- Manufacturer: @t[=2024] [^1]\n- First flight: @t[=2024] [^1]\n\n## Operational History\n- In service with: @t[2020..] [^2]\n\n---\n[^1]: Manufacturer data sheet\n[^2]: Fleet records",
+                "airline": "# Airline Name\n\n## Overview\n- Founded: @t[=1990] [^1]\n- Hub airports: [^1]\n\n## Fleet\n- Operates: @t[~2024] [^2]\n\n---\n[^1]: Corporate filings\n[^2]: Fleet tracker"
+            },
+            "perspective": {
+                "focus": "Aviation industry knowledge covering aircraft, airlines, airports, incidents, and regulations",
+                "allowed_types": ["aircraft", "airline", "airport", "incident", "regulation"]
+            }
+        }"##;
+        let llm = MockLlm::new(mock_response);
+        let args = serde_json::json!({
+            "domain": "aviation",
+            "entity_types": "aircraft, airlines, airports, incidents, regulations"
+        });
+        let result = bootstrap(&llm, &args).await.unwrap();
+
+        assert_eq!(result["workflow"], "bootstrap");
+        assert_eq!(result["domain"], "aviation");
+
+        // Validate structural completeness of suggestions
+        let suggestions = &result["suggestions"];
+        let doc_types = suggestions["document_types"].as_array().unwrap();
+        assert!(doc_types.len() >= 3, "should suggest multiple document types");
+        for dt in doc_types {
+            assert!(dt["name"].is_string(), "each type needs a name");
+            assert!(dt["description"].is_string(), "each type needs a description");
+        }
+
+        let folders = suggestions["folder_structure"].as_array().unwrap();
+        assert!(!folders.is_empty());
+
+        let templates = suggestions["templates"].as_object().unwrap();
+        assert!(!templates.is_empty());
+        // Templates should contain temporal tags
+        for (_name, tmpl) in templates {
+            let t = tmpl.as_str().unwrap();
+            assert!(t.contains("@t["), "template should include temporal tag examples");
+            assert!(t.contains("[^"), "template should include source footnotes");
+        }
+
+        let perspective = suggestions["perspective"].as_object().unwrap();
+        assert!(perspective.contains_key("focus"));
+        assert!(perspective.contains_key("allowed_types"));
+
+        // next_steps should route to setup workflow
+        let steps = result["next_steps"].as_array().unwrap();
+        let all = steps.iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
+        assert!(all.contains("setup"));
+    }
+
+    #[test]
+    fn test_build_bootstrap_prompt_includes_domain_and_entity_types() {
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt(
+            "aviation",
+            Some("aircraft, airlines, airports"),
+            &prompts,
+        );
+        assert!(prompt.contains("aviation"));
+        assert!(prompt.contains("aircraft, airlines, airports"));
+        assert!(prompt.contains("document_types"));
+        assert!(prompt.contains("templates"));
+    }
+
     #[test]
     fn test_workflow_list_includes_bootstrap() {
         let (db, _tmp) = test_db();
