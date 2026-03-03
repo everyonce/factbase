@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 12;
+pub(super) const SCHEMA_VERSION: i32 = 13;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -114,6 +114,31 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         "Add lock columns to cross_validation_state",
         "ALTER TABLE cross_validation_state ADD COLUMN locked_by TEXT;
          ALTER TABLE cross_validation_state ADD COLUMN locked_at TEXT;",
+    ),
+    // Version 13: Cached fact pairs to avoid O(n²) recomputation
+    (
+        13,
+        "Add cached_fact_pairs tables",
+        "CREATE TABLE IF NOT EXISTS cached_fact_pairs (
+            scope TEXT NOT NULL,
+            fact_a_id TEXT NOT NULL,
+            fact_a_doc_id TEXT NOT NULL,
+            fact_a_line INTEGER NOT NULL,
+            fact_a_text TEXT NOT NULL,
+            fact_b_id TEXT NOT NULL,
+            fact_b_doc_id TEXT NOT NULL,
+            fact_b_line INTEGER NOT NULL,
+            fact_b_text TEXT NOT NULL,
+            similarity REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_cached_pairs_scope ON cached_fact_pairs(scope);
+        CREATE TABLE IF NOT EXISTS cached_fact_pairs_meta (
+            scope TEXT PRIMARY KEY,
+            fact_count INTEGER NOT NULL,
+            threshold REAL NOT NULL,
+            limit_per_fact INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );",
     ),
 ];
 
@@ -251,6 +276,30 @@ impl Database {
                 updated_at TIMESTAMP NOT NULL,
                 locked_by TEXT,
                 locked_at TEXT
+            );",
+        )?;
+
+        // Cached fact pairs to avoid O(n²) recomputation
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cached_fact_pairs (
+                scope TEXT NOT NULL,
+                fact_a_id TEXT NOT NULL,
+                fact_a_doc_id TEXT NOT NULL,
+                fact_a_line INTEGER NOT NULL,
+                fact_a_text TEXT NOT NULL,
+                fact_b_id TEXT NOT NULL,
+                fact_b_doc_id TEXT NOT NULL,
+                fact_b_line INTEGER NOT NULL,
+                fact_b_text TEXT NOT NULL,
+                similarity REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_cached_pairs_scope ON cached_fact_pairs(scope);
+            CREATE TABLE IF NOT EXISTS cached_fact_pairs_meta (
+                scope TEXT PRIMARY KEY,
+                fact_count INTEGER NOT NULL,
+                threshold REAL NOT NULL,
+                limit_per_fact INTEGER NOT NULL,
+                created_at TEXT NOT NULL
             );",
         )?;
 

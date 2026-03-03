@@ -600,6 +600,9 @@ pub async fn full_scan(
             progress: ctx.progress,
         })
         .await?;
+        if result.fact_embeddings_generated > 0 {
+            let _ = db.invalidate_fact_pair_cache();
+        }
     }
     } // end skip_embeddings check
 
