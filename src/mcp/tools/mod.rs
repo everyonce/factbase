@@ -714,7 +714,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
         let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
 
-        let args = serde_json::json!({});
+        let args = serde_json::json!({"mode": "questions"});
         check_repository(&db, &embedding, None, &args, &reporter)
             .await
             .unwrap();
@@ -818,7 +818,7 @@ mod tests {
             .unwrap();
 
         // Check with a generous budget — should complete
-        let args = serde_json::json!({"time_budget_secs": 30});
+        let args = serde_json::json!({"mode": "questions", "time_budget_secs": 30});
         let result = check_repository(&db, &embedding, None, &args, &silent)
             .await
             .unwrap();

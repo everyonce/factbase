@@ -28,96 +28,14 @@ fn generate_lock_token() -> String {
     format!("{:x}-{:x}", std::process::id(), nanos)
 }
 
-/// Runs check across all documents in a repository via MCP.
-pub async fn check_repository(
-    db: &Database,
-    embedding: &dyn EmbeddingProvider,
-    llm: Option<&dyn LlmProvider>,
-    args: &Value,
-    progress: &ProgressReporter,
-) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
-    let doc_id = get_str_arg(args, "doc_id");
-    let dry_run = args
-        .get("dry_run")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let deep_check = args
-        .get("deep_check")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-
-    // If doc_id is provided, check just that one document (replaces generate_questions)
-    if doc_id.is_some() {
-        return super::generate_questions(db, embedding, llm, args).await;
-    }
-
-    // Only pass LLM for cross-validation when deep_check is requested
-    let effective_llm: Option<&dyn LlmProvider> = if deep_check { llm } else { None };
-
-    let config_file = crate::Config::load(None);
-    let check_concurrency = config_file
-        .as_ref()
-        .map(|c| c.processor.check_concurrency)
-        .unwrap_or(LINT_CONCURRENCY);
-    let batch_size = config_file
-        .as_ref()
-        .map(|c| c.cross_validate.batch_size)
-        .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
-
-    // Load perspective for stale_days and required_fields
-    let perspective = load_perspective(db, repo_id);
-    let stale_days = perspective
-        .as_ref()
-        .and_then(|p| p.review.as_ref())
-        .and_then(|r| r.stale_days)
-        .unwrap_or(365) as i64;
-    let required_fields = perspective
-        .as_ref()
-        .and_then(|p| p.review.as_ref())
-        .and_then(|r| r.required_fields.clone());
-
-    // Lock/lease for deep_check concurrency control
-    let scope_key = cv_scope_key(repo_id);
-    let lock_token = generate_lock_token();
-    if deep_check {
-        match db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)? {
-            CvLockResult::Acquired => {} // proceed
-            CvLockResult::AlreadyLocked {
-                locked_by,
-                pair_offset,
-                fact_count,
-            } => {
-                let pct = if fact_count > 0 {
-                    // Rough estimate: pair_offset / estimated_total_pairs
-                    // We can't know total without querying, so report offset progress
-                    pair_offset
-                } else {
-                    0
-                };
-                return Ok(serde_json::json!({
-                    "status": "in_progress",
-                    "locked_by": locked_by,
-                    "progress": {
-                        "pairs_checked": pair_offset,
-                        "percent_estimate": pct,
-                    },
-                    "message": format!(
-                        "Cross-validation is already in progress (held by {locked_by}, {pair_offset} pairs checked). \
-                         Call again later or wait for completion."
-                    ),
-                }));
-            }
-        }
-    }
-
-    // Get all active documents
-    let docs = match repo_id {
-        Some(rid) => db
+/// Load active (non-deleted) documents for the given repo scope.
+fn load_docs(db: &Database, repo_id: Option<&str>) -> Result<Vec<crate::models::Document>, FactbaseError> {
+    match repo_id {
+        Some(rid) => Ok(db
             .get_documents_for_repo(rid)?
             .into_values()
             .filter(|d| !d.is_deleted)
-            .collect::<Vec<_>>(),
+            .collect()),
         None => {
             let mut all = Vec::new();
             for repo in db.list_repositories()? {
@@ -127,42 +45,77 @@ pub async fn check_repository(
                         .filter(|d| !d.is_deleted),
                 );
             }
-            all
+            Ok(all)
         }
-    };
+    }
+}
 
-    let _total = docs.len();
+/// Runs check across all documents in a repository via MCP.
+pub async fn check_repository(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    llm: Option<&dyn LlmProvider>,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let doc_id = get_str_arg(args, "doc_id");
+
+    // If doc_id is provided, check just that one document (replaces generate_questions)
+    if doc_id.is_some() {
+        return super::generate_questions(db, embedding, llm, args).await;
+    }
+
+    let mode = get_str_arg(args, "mode");
+
+    match mode {
+        Some("questions") => check_questions(db, embedding, args, progress).await,
+        Some("cross_validate") => check_cross_validate(db, embedding, llm, args, progress).await,
+        Some("discover") => check_discover(db, llm, args, progress).await,
+        Some(other) => Ok(serde_json::json!({
+            "error": format!("Unknown mode '{}'. Must be one of: questions, cross_validate, discover", other)
+        })),
+        None => {
+            // Backward compat: if deep_check is set, treat as old-style call
+            // Otherwise, require mode
+            let deep_check = args.get("deep_check").and_then(Value::as_bool).unwrap_or(false);
+            if deep_check {
+                // Legacy caller using deep_check=true — run cross_validate mode
+                check_cross_validate(db, embedding, llm, args, progress).await
+            } else {
+                Ok(serde_json::json!({
+                    "error": "Missing required parameter 'mode'. Must be one of: questions, cross_validate, discover",
+                    "hint": "check_repository now requires an explicit mode. Use mode='questions' for per-doc quality checks, mode='cross_validate' for cross-doc fact comparison, or mode='discover' for entity suggestions."
+                }))
+            }
+        }
+    }
+}
+
+/// Mode: questions — per-document quality checks only.
+async fn check_questions(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let repo_id = get_str_arg(args, "repo");
+    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+
+    let config_file = crate::Config::load(None);
+    let check_concurrency = config_file
+        .as_ref()
+        .map(|c| c.processor.check_concurrency)
+        .unwrap_or(LINT_CONCURRENCY);
+
+    let perspective = load_perspective(db, repo_id);
+    let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
+    let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
+
+    let docs = load_docs(db, repo_id)?;
     progress.phase("Generating review questions");
 
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
-
-    // Server-side cursor: read pair_offset from DB, validate against current fact count
-    let current_fact_count = db.get_fact_embedding_count().unwrap_or(0);
-    let (pair_offset, cv_state_exists) = if deep_check {
-        match db.get_cross_validation_state(&scope_key)? {
-            Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => (offset, true),
-            Some(_) => {
-                // Fact count changed (rescan happened) — reset cursor
-                db.clear_cross_validation_state(Some(&scope_key))?;
-                // Re-acquire lock since clear deleted the row
-                let _ = db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)?;
-                (0, false)
-            }
-            None => (0, false),
-        }
-    } else {
-        (0, false)
-    };
-    // Continuation when CV state exists (even at offset 0 — means question gen already ran)
-    let is_continuation = cv_state_exists;
-
-    // Backward compat: accept but ignore checked_pair_ids/checked_doc_ids from args
-    let checked_doc_ids: HashSet<String> = args
-        .get("checked_doc_ids")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .unwrap_or_default();
 
     let config = CheckConfig {
         stale_days,
@@ -170,69 +123,35 @@ pub async fn check_repository(
         dry_run,
         concurrency: check_concurrency,
         deadline,
-        checked_doc_ids,
-        pair_offset,
+        checked_doc_ids: HashSet::new(),
+        pair_offset: 0,
         acquire_write_guard: true,
-        batch_size,
+        batch_size: 10,
         repo_id: repo_id.map(String::from),
-        is_continuation,
+        is_continuation: false,
     };
 
-    let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
-
-    // Persist server-side cursor after successful processing
-    if deep_check && output.pair_progress.is_some() {
-        db.set_cross_validation_state(&scope_key, output.pair_offset, current_fact_count)?;
-    }
-
+    // No LLM → no cross-validation
+    let output = check_all_documents(&docs, db, embedding, None, &config, progress).await?;
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
     let total_pruned: usize = results.iter().map(|r| r.pruned_questions).sum();
-    let total_existing: usize = results
-        .iter()
-        .map(|r| r.existing_unanswered + r.existing_answered)
-        .sum();
+    let total_existing: usize = results.iter().map(|r| r.existing_unanswered + r.existing_answered).sum();
     let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
     let total_suppressed: usize = results.iter().map(|r| r.suppressed_by_review).sum();
     let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
-    let details: Vec<Value> = results
-        .iter()
+    let details: Vec<Value> = results.iter()
         .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)
-        .map(|r| {
-            serde_json::json!({
-                "doc_id": r.doc_id,
-                "doc_title": r.doc_title,
-                "new_questions": r.new_questions,
-                "pruned_questions": r.pruned_questions,
-            })
-        })
+        .map(|r| serde_json::json!({
+            "doc_id": r.doc_id, "doc_title": r.doc_title,
+            "new_questions": r.new_questions, "pruned_questions": r.pruned_questions,
+        }))
         .collect();
 
-    // Entity discovery: only when deep_check is enabled (requires LLM).
-    // Skip on continuation calls (already done on first call) and when deadline hit.
-    let deadline_hit = deadline.is_some_and(|d| std::time::Instant::now() > d);
-    let suggested_entities = if deep_check && !is_continuation && !deadline_hit {
-        if let Some(llm_ref) = llm {
-            let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
-            crate::organize::discover_entities(
-                &docs,
-                &existing_titles,
-                llm_ref,
-                perspective.as_ref(),
-                progress,
-            )
-            .await
-            .unwrap_or_default()
-        } else {
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
     let mut result = serde_json::json!({
+        "mode": "questions",
         "documents_scanned": output.docs_processed,
         "documents_with_new_questions": docs_with_questions,
         "total_questions_generated": total_new + total_existing,
@@ -246,25 +165,109 @@ pub async fn check_repository(
         "details": details,
     });
 
-    // On continuation calls, cross-validation completion is the real progress signal.
-    // Also treat "no pairs to check" (pair_progress=None with deep_check) as complete.
-    let cross_validation_complete = match output.pair_progress {
-        None if deep_check => true, // no fact pairs → nothing to cross-validate
-        Some((processed, total)) if processed >= total => true,
-        _ => false,
-    };
-
-    // Add progress/continue fields when deadline was hit
-    let effective_docs_processed = if cross_validation_complete {
-        output.docs_total
-    } else {
-        output.docs_processed
-    };
     crate::mcp::tools::helpers::apply_time_budget_progress(
-        &mut result, effective_docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
+        &mut result, output.docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
     );
 
-    // Server-side cursor progress: no cursor in response, just progress info
+    Ok(result)
+}
+
+/// Mode: cross_validate — cross-document fact comparison.
+async fn check_cross_validate(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    llm: Option<&dyn LlmProvider>,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let repo_id = get_str_arg(args, "repo");
+    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+
+    let config_file = crate::Config::load(None);
+    let check_concurrency = config_file
+        .as_ref()
+        .map(|c| c.processor.check_concurrency)
+        .unwrap_or(LINT_CONCURRENCY);
+    let batch_size = config_file
+        .as_ref()
+        .map(|c| c.cross_validate.batch_size)
+        .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
+
+    let perspective = load_perspective(db, repo_id);
+    let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
+    let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
+
+    // Lock/lease for concurrency control
+    let scope_key = cv_scope_key(repo_id);
+    let lock_token = generate_lock_token();
+    match db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)? {
+        CvLockResult::Acquired => {}
+        CvLockResult::AlreadyLocked { locked_by, pair_offset, fact_count } => {
+            let pct = if fact_count > 0 { pair_offset } else { 0 };
+            return Ok(serde_json::json!({
+                "mode": "cross_validate",
+                "status": "in_progress",
+                "locked_by": locked_by,
+                "progress": { "pairs_checked": pair_offset, "percent_estimate": pct },
+                "message": format!(
+                    "Cross-validation is already in progress (held by {locked_by}, {pair_offset} pairs checked). \
+                     Call again later or wait for completion."
+                ),
+            }));
+        }
+    }
+
+    let docs = load_docs(db, repo_id)?;
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
+
+    // Server-side cursor
+    let current_fact_count = db.get_fact_embedding_count().unwrap_or(0);
+    let pair_offset = match db.get_cross_validation_state(&scope_key)? {
+        Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => offset,
+        Some(_) => {
+            db.clear_cross_validation_state(Some(&scope_key))?;
+            let _ = db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)?;
+            0
+        }
+        None => 0,
+    };
+
+    let config = CheckConfig {
+        stale_days,
+        required_fields,
+        dry_run,
+        concurrency: check_concurrency,
+        deadline,
+        checked_doc_ids: HashSet::new(),
+        pair_offset,
+        acquire_write_guard: true,
+        batch_size,
+        repo_id: repo_id.map(String::from),
+        is_continuation: true, // skip question gen, only run CV
+    };
+
+    progress.phase("Cross-document validation");
+    let output = check_all_documents(&docs, db, embedding, llm, &config, progress).await?;
+
+    // Persist cursor
+    if output.pair_progress.is_some() {
+        db.set_cross_validation_state(&scope_key, output.pair_offset, current_fact_count)?;
+    }
+
+    let results = &output.results;
+    let total_new: usize = results.iter().map(|r| r.new_questions).sum();
+    let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
+
+    let mut result = serde_json::json!({
+        "mode": "cross_validate",
+        "documents_scanned": output.docs_processed,
+        "new_conflict_questions": total_new,
+        "deferred_count": deferred_count,
+        "dry_run": dry_run,
+    });
+
+    // Progress/continue for pair-based paging
     if let Some((processed, total)) = output.pair_progress {
         if processed < total {
             let remaining = total.saturating_sub(processed);
@@ -273,11 +276,8 @@ pub async fn check_repository(
             let estimated_iterations = (remaining + pairs_this_call - 1) / pairs_this_call;
 
             let mut progress_obj = serde_json::json!({
-                "phase": "cross_validation",
-                "pairs_checked": processed,
-                "pairs_total": total,
-                "percent_complete": pct,
-                "estimated_iterations_remaining": estimated_iterations,
+                "pairs_checked": processed, "pairs_total": total,
+                "percent_complete": pct, "estimated_iterations_remaining": estimated_iterations,
             });
             if let Some(elapsed) = output.cv_elapsed_secs {
                 progress_obj["elapsed_this_call_secs"] = serde_json::json!((elapsed * 100.0).round() / 100.0);
@@ -298,26 +298,62 @@ pub async fn check_repository(
                 "MANDATORY: Call check_repository again with the same arguments. Progress is saved automatically. Do NOT use the think tool to decide whether to continue. Just call it."
             );
         }
-        // Release lock and clear state when complete
         if processed >= total {
-            if deep_check {
-                let _ = db.release_cv_lock(&scope_key, &lock_token);
-            }
+            let _ = db.release_cv_lock(&scope_key, &lock_token);
             let _ = db.clear_cross_validation_state(Some(&scope_key));
         }
-    } else if deep_check {
+    } else {
         // No pairs at all — release lock
         let _ = db.release_cv_lock(&scope_key, &lock_token);
     }
 
-    if !suggested_entities.is_empty() {
-        result["suggested_entities"] = serde_json::to_value(&suggested_entities)
-            .unwrap_or_default();
-    }
+    Ok(result)
+}
 
-    if !output.vocabulary_candidates.is_empty() {
-        result["vocabulary_candidates"] = serde_json::to_value(&output.vocabulary_candidates)
-            .unwrap_or_default();
+/// Mode: discover — entity suggestions + vocabulary extraction.
+async fn check_discover(
+    db: &Database,
+    llm: Option<&dyn LlmProvider>,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let repo_id = get_str_arg(args, "repo");
+    let perspective = load_perspective(db, repo_id);
+    let docs = load_docs(db, repo_id)?;
+
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
+
+    let mut result = serde_json::json!({ "mode": "discover" });
+
+    if let Some(llm_ref) = llm {
+        // Entity discovery
+        progress.phase("Discovering entities");
+        let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
+        let suggested_entities = crate::organize::discover_entities(
+            &docs, &existing_titles, llm_ref, perspective.as_ref(), progress,
+        )
+        .await
+        .unwrap_or_default();
+
+        if !suggested_entities.is_empty() {
+            result["suggested_entities"] = serde_json::to_value(&suggested_entities).unwrap_or_default();
+        }
+
+        // Vocabulary extraction
+        if !deadline.is_some_and(|d| std::time::Instant::now() > d) {
+            progress.phase("Extracting domain vocabulary");
+            let defined_terms = crate::question_generator::collect_defined_terms(&docs);
+            let doc_refs: Vec<&crate::models::Document> = docs.iter().collect();
+            let vocab = crate::question_generator::check::extract_vocabulary(
+                &doc_refs, &defined_terms, llm_ref, deadline, progress,
+            ).await;
+            if !vocab.is_empty() {
+                result["vocabulary_candidates"] = serde_json::to_value(&vocab).unwrap_or_default();
+            }
+        }
+    } else {
+        result["warning"] = serde_json::json!("No LLM provider configured — entity discovery and vocabulary extraction require an LLM.");
     }
 
     Ok(result)
@@ -607,9 +643,10 @@ mod tests {
         let embedding = MockEmbedding::new(4);
         let progress = ProgressReporter::Silent;
 
-        // No deep_check — should not acquire lock
+        // No deep_check — should not acquire lock. Use mode='questions'.
         let args = serde_json::json!({
             "repo": "test",
+            "mode": "questions",
             "dry_run": true,
         });
 
@@ -725,5 +762,185 @@ mod tests {
         assert!(scanned > 0, "continuation call should run cross-validation: {result}");
         // Should not have suggested_entities (skipped on continuation)
         assert!(result.get("suggested_entities").is_none(), "continuation should skip entity discovery");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_missing_mode_returns_error() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        // No mode, no deep_check → error
+        let args = serde_json::json!({"repo": "test"});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+        assert!(result.get("error").is_some(), "missing mode should return error: {result}");
+        assert!(result["error"].as_str().unwrap().contains("mode"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_unknown_mode_returns_error() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "bogus"});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+        assert!(result.get("error").is_some());
+        assert!(result["error"].as_str().unwrap().contains("bogus"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_questions_mode_returns_mode_field() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "qm1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:qm1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "questions", "repo": "test", "dry_run": true});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "questions");
+        assert!(result.get("documents_scanned").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_cross_validate_mode_returns_mode_field() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "cv1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:cv1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "cross_validate", "repo": "test", "dry_run": true});
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "cross_validate");
+        assert!(result.get("documents_scanned").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_discover_mode_returns_mode_field() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "ds1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:ds1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "discover", "repo": "test"});
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "discover");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_discover_mode_without_llm_warns() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "discover", "repo": "test"});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "discover");
+        assert!(result.get("warning").is_some(), "discover without LLM should warn");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_deep_check_backward_compat_routes_to_cross_validate() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "bc2222".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:bc2222 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // No mode, but deep_check=true → should route to cross_validate
+        let args = serde_json::json!({"repo": "test", "deep_check": true, "dry_run": true});
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "cross_validate");
+        assert!(result.get("documents_scanned").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_doc_id_bypasses_mode_requirement() {
+        let (db, _tmp) = test_db();
+        let repo_dir = tempfile::TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+        crate::database::tests::test_repo_in_db(&db, "test", repo_path);
+
+        let doc_path = repo_path.join("test.md");
+        std::fs::write(&doc_path, "<!-- factbase:db1111 -->\n# Test Doc\n\n- Some fact\n").unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "db1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:db1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        doc.file_path = "test.md".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        // doc_id provided, no mode → should still work (delegates to generate_questions)
+        let args = serde_json::json!({"doc_id": "db1111"});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+        // Should not have an error
+        assert!(result.get("error").is_none(), "doc_id should bypass mode requirement: {result}");
     }
 }

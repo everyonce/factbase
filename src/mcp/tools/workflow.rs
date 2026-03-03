@@ -40,14 +40,19 @@ pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\
 
 pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
 
-pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings, fact embeddings, and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for any non-trivial repository.\n   When it does, you MUST call it again until `continue` is no longer in the response. Do NOT stop early.\n2. Call check_repository with time_budget_secs=120 to see initial quality.\n   ⚠️ PAGING: Same as above — it WILL return `continue: true`. Progress is saved server-side.\n   You MUST call it again with the same arguments until `continue` is no longer in the response. Do NOT stop early.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
+pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings, fact embeddings, and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for any non-trivial repository.\n   When it does, you MUST call it again until `continue` is no longer in the response. Do NOT stop early.\n2. Call check_repository with mode='questions' and time_budget_secs=120 to see initial quality.\n   ⚠️ PAGING: Same as above — it WILL return `continue: true`. Progress is saved server-side.\n   You MUST call it again with the same arguments until `continue` is no longer in the response. Do NOT stop early.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
 
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
 pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes, detect cross-entity links, and generate fact-level embeddings for cross-validation.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for any non-trivial repository.\n   When it does, you MUST call it again until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation\n\nHow links work: scan_repository finds entity title mentions in document text. Each doc should link to at least 1 other. Low link density means entities are isolated — they discuss related topics but don't reference each other by name.{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run a deep quality check using fact embeddings to find issues across documents and discover missing entities.\n\n1. Call check_repository with deep_check=true (REQUIRED — this enables cross-document conflict detection) and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` when there are more pairs to check.\n   Progress is saved server-side — you MUST call check_repository again with the same arguments.\n   Keep calling until `continue` is no longer in the response. This typically takes 10-30 iterations\n   for medium repositories — that is normal and expected. Do NOT stop early, do NOT reason about\n   whether to continue, do NOT skip ahead, and do NOT report partial results.\n   The response includes `estimated_iterations_remaining` — just call again mechanically until done.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly conflict → documents disagree, contradictions to resolve\n   - Mostly missing → claims lack evidence\n3. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  4. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  5. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete. Then re-run check_repository (progress resets automatically after a rescan).\n     - New entities = new titles for the link detector to find\n  6. Record links_detected as LINKS_AFTER\n  7. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  4. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
+pub(crate) const DEFAULT_UPDATE_QUESTIONS_INSTRUCTION: &str = "Run per-document quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository with mode='questions' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for non-trivial repositories.\n   You MUST call it again with the same arguments until `continue` is no longer in the response.\n   Do NOT stop early, do NOT skip ahead, and do NOT report partial results.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
+
+pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Run cross-document fact comparison to find contradictions between documents.\n\n1. Call check_repository with mode='cross_validate' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` when there are more pairs to check.\n   Progress is saved server-side — you MUST call check_repository again with the same arguments.\n   Keep calling until `continue` is no longer in the response. This typically takes 10-30 iterations\n   for medium repositories — that is normal and expected. Do NOT stop early, do NOT reason about\n   whether to continue, do NOT skip ahead, and do NOT report partial results.\n   The response includes `estimated_iterations_remaining` — just call again mechanically until done.\n\n2. Record: new conflict questions found";
+
+pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing entities and extract domain vocabulary.\n\n1. Call check_repository with mode='discover'.\n2. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  3. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  4. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete.\n     - New entities = new titles for the link detector to find\n  5. Record links_detected as LINKS_AFTER\n  6. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  3. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
+
 
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
@@ -380,9 +385,12 @@ pub async fn bootstrap(
     }))
 }
 
-fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
+fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
     let ctx = perspective_context(perspective);
-    let total = 4;
+    let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
+    // Steps: 1=scan, 2=questions, 3=cross_validate (if enabled), 4=discover, 5=organize, 6=summary
+    // When cross_validate is false, step 3 auto-skips to 4.
+    let total = if do_cv { 6 } else { 5 };
     match step {
         1 => serde_json::json!({
             "workflow": "update",
@@ -394,21 +402,50 @@ fn update_step(step: usize, _args: &Value, perspective: &Option<Perspective>, wf
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
+            "instruction": resolve(wf, "update.questions", DEFAULT_UPDATE_QUESTIONS_INSTRUCTION, &[]),
             "next_tool": "check_repository",
-            "suggested_args": {"dry_run": false},
+            "suggested_args": {"mode": "questions", "dry_run": false},
             "when_done": "Call workflow with workflow='update', step=3"
         }),
-        3 => serde_json::json!({
-            "workflow": "update",
-            "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
-            "next_tool": "organize_analyze",
-            "when_done": "Call workflow with workflow='update', step=4"
-        }),
+        3 => {
+            if do_cv {
+                serde_json::json!({
+                    "workflow": "update",
+                    "step": 3, "total_steps": total,
+                    "instruction": resolve(wf, "update.cross_validate", DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION, &[]),
+                    "next_tool": "check_repository",
+                    "suggested_args": {"mode": "cross_validate"},
+                    "when_done": "Call workflow with workflow='update', step=4"
+                })
+            } else {
+                // Skip cross-validation, advance to discover
+                serde_json::json!({
+                    "workflow": "update",
+                    "step": 3, "total_steps": total,
+                    "instruction": "Cross-validation skipped (cross_validate=false). Proceeding to entity discovery.",
+                    "skip": true,
+                    "when_done": "Call workflow with workflow='update', step=4"
+                })
+            }
+        }
         4 => serde_json::json!({
             "workflow": "update",
             "step": 4, "total_steps": total,
+            "instruction": resolve(wf, "update.discover", DEFAULT_UPDATE_DISCOVER_INSTRUCTION, &[]),
+            "next_tool": "check_repository",
+            "suggested_args": {"mode": "discover"},
+            "when_done": format!("Call workflow with workflow='update', step={}", if do_cv { 5 } else { 5 })
+        }),
+        5 => serde_json::json!({
+            "workflow": "update",
+            "step": 5, "total_steps": total,
+            "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
+            "next_tool": "organize_analyze",
+            "when_done": format!("Call workflow with workflow='update', step={}", if do_cv { 6 } else { 6 })
+        }),
+        6 => serde_json::json!({
+            "workflow": "update",
+            "step": 6, "total_steps": total,
             "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
             "complete": true
         }),
@@ -2073,9 +2110,9 @@ mod tests {
         // Workflow instructions that tell agents to loop on check_repository
         // should mention that progress is saved server-side.
         let setup = setup_step(5, &serde_json::json!({}), &wf());
-        let update = update_step(2, &serde_json::json!({}), &None, &wf());
+        let update_cv = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
-        for (name, step) in [("setup.scan", setup), ("update.check", update)] {
+        for (name, step) in [("setup.scan", setup), ("update.cross_validate", update_cv)] {
             let instruction = step["instruction"].as_str().unwrap();
             assert!(
                 instruction.contains("server-side"),
@@ -2095,8 +2132,8 @@ mod tests {
             "check_repository schema description should mention server-side progress"
         );
         assert!(
-            desc.contains("fact embeddings"),
-            "check_repository schema description should mention fact embeddings"
+            desc.contains("embeddings"),
+            "check_repository schema description should mention embeddings"
         );
     }
 
@@ -2136,7 +2173,7 @@ mod tests {
     fn test_workflow_texts_mention_fact_embeddings() {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
-        let update_check = update_step(2, &serde_json::json!({}), &None, &wf());
+        let update_cv = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
         let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(setup_instr.contains("fact embeddings"), "setup.scan should mention fact embeddings");
@@ -2144,15 +2181,16 @@ mod tests {
         let scan_instr = update_scan["instruction"].as_str().unwrap();
         assert!(scan_instr.contains("fact-level embeddings"), "update.scan should mention fact-level embeddings");
 
-        let check_instr = update_check["instruction"].as_str().unwrap();
-        assert!(check_instr.contains("fact embeddings"), "update.check should mention fact embeddings");
+        let cv_instr = update_cv["instruction"].as_str().unwrap();
+        assert!(cv_instr.contains("fact comparison") || cv_instr.contains("fact pairs"), "update.cross_validate should mention facts");
     }
 
     #[test]
     fn test_workflow_texts_mention_time_budget_secs() {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
-        let update_check = update_step(2, &serde_json::json!({}), &None, &wf());
+        let update_questions = update_step(2, &serde_json::json!({}), &None, &wf());
+        let update_cv = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
         let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(setup_instr.contains("time_budget_secs=120"), "setup.scan should specify time_budget_secs");
@@ -2162,33 +2200,38 @@ mod tests {
         assert!(scan_instr.contains("time_budget_secs=120"), "update.scan should specify time_budget_secs");
         assert!(scan_instr.contains("Do NOT stop early"), "update.scan should warn against stopping early");
 
-        let check_instr = update_check["instruction"].as_str().unwrap();
-        assert!(check_instr.contains("time_budget_secs=120"), "update.check should specify time_budget_secs");
-        assert!(check_instr.contains("Do NOT stop early"), "update.check should warn against stopping early");
-        assert!(check_instr.contains("10-30 iterations"), "update.check should set expectations about iteration count");
+        let q_instr = update_questions["instruction"].as_str().unwrap();
+        assert!(q_instr.contains("time_budget_secs=120"), "update.questions should specify time_budget_secs");
+        assert!(q_instr.contains("Do NOT stop early"), "update.questions should warn against stopping early");
+
+        let cv_instr = update_cv["instruction"].as_str().unwrap();
+        assert!(cv_instr.contains("time_budget_secs=120"), "update.cross_validate should specify time_budget_secs");
+        assert!(cv_instr.contains("10-30 iterations"), "update.cross_validate should set expectations about iteration count");
     }
 
     #[test]
     fn test_paging_instructions_use_mandatory_language() {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
-        let update_check = update_step(2, &serde_json::json!({}), &None, &wf());
+        let update_questions = update_step(2, &serde_json::json!({}), &None, &wf());
+        let update_cv = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
-        // All three should use "WILL return" (not "may return" or "If")
+        // All should use "WILL return" (not "may return" or "If")
         for (name, instr) in [
             ("setup.scan", setup["instruction"].as_str().unwrap()),
             ("update.scan", update_scan["instruction"].as_str().unwrap()),
-            ("update.check", update_check["instruction"].as_str().unwrap()),
+            ("update.questions", update_questions["instruction"].as_str().unwrap()),
+            ("update.cross_validate", update_cv["instruction"].as_str().unwrap()),
         ] {
             assert!(instr.contains("WILL return"), "{name} should say paging WILL happen, not 'may' or 'if'");
             assert!(instr.contains("MUST"), "{name} should use MUST language for continuation");
         }
 
-        // Check instruction should warn against reasoning about stopping
-        let check_instr = update_check["instruction"].as_str().unwrap();
-        assert!(check_instr.contains("do NOT reason about"), "update.check should discourage reasoning about stopping");
-        assert!(check_instr.contains("skip ahead"), "update.check should prohibit skipping ahead");
-        assert!(check_instr.contains("mechanically"), "update.check should tell agent to loop mechanically");
+        // Cross-validate instruction should warn against reasoning about stopping
+        let cv_instr = update_cv["instruction"].as_str().unwrap();
+        assert!(cv_instr.contains("do NOT reason about"), "update.cross_validate should discourage reasoning about stopping");
+        assert!(cv_instr.contains("skip ahead"), "update.cross_validate should prohibit skipping ahead");
+        assert!(cv_instr.contains("mechanically"), "update.cross_validate should tell agent to loop mechanically");
     }
 
     #[test]
@@ -2204,11 +2247,45 @@ mod tests {
     }
 
     #[test]
-    fn test_update_check_marks_deep_check_required() {
-        let check = update_step(2, &serde_json::json!({}), &None, &wf());
-        let instr = check["instruction"].as_str().unwrap();
-        assert!(instr.contains("deep_check=true"), "must instruct deep_check=true");
-        assert!(instr.contains("REQUIRED"), "must emphasize deep_check is REQUIRED");
+    fn test_update_questions_step_uses_mode() {
+        let step = update_step(2, &serde_json::json!({}), &None, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("mode='questions'"), "step 2 must instruct mode='questions'");
+        let suggested = &step["suggested_args"];
+        assert_eq!(suggested["mode"], "questions");
+    }
+
+    #[test]
+    fn test_update_cross_validate_step_when_enabled() {
+        let step = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("mode='cross_validate'"), "step 3 with cross_validate=true must instruct mode='cross_validate'");
+        assert!(step.get("skip").is_none(), "should not skip when cross_validate=true");
+    }
+
+    #[test]
+    fn test_update_cross_validate_step_skipped_when_disabled() {
+        let step = update_step(3, &serde_json::json!({}), &None, &wf());
+        assert_eq!(step["skip"], true, "step 3 without cross_validate should skip");
+    }
+
+    #[test]
+    fn test_update_discover_step() {
+        let step = update_step(4, &serde_json::json!({}), &None, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("mode='discover'"), "step 4 must instruct mode='discover'");
+    }
+
+    #[test]
+    fn test_update_total_steps_with_cross_validate() {
+        let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf());
+        assert_eq!(step["total_steps"], 6);
+    }
+
+    #[test]
+    fn test_update_total_steps_without_cross_validate() {
+        let step = update_step(1, &serde_json::json!({}), &None, &wf());
+        assert_eq!(step["total_steps"], 5);
     }
 
     #[test]
