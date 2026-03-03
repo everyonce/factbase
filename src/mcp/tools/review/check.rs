@@ -105,6 +105,7 @@ pub async fn check_repository(
             .unwrap_or_default(),
         acquire_write_guard: true,
         batch_size,
+        repo_id: repo_id.map(String::from),
     };
 
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
@@ -187,18 +188,30 @@ pub async fn check_repository(
                 result["checked_pair_ids"] = serde_json::to_value(&output.checked_pair_ids).unwrap_or_default();
                 let remaining = total.saturating_sub(processed);
                 let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
+                // Estimate remaining iterations: pairs processed this call = total processed - input cursor size
+                let input_cursor_size = args
+                    .get("checked_pair_ids")
+                    .and_then(Value::as_array)
+                    .map(|a| a.len())
+                    .unwrap_or(0);
+                let pairs_this_call = processed.saturating_sub(input_cursor_size).max(1);
+                let estimated_iterations = (remaining + pairs_this_call - 1) / pairs_this_call;
                 result["progress"] = serde_json::json!({
                     "processed": processed,
                     "remaining": remaining,
                     "total": total,
                     "percent_complete": pct,
+                    "estimated_iterations_remaining": estimated_iterations,
                 });
                 result["continue"] = serde_json::json!(true);
                 result["message"] = serde_json::json!(format!(
-                    "⚠️ INCOMPLETE — {processed}/{total} fact pairs processed ({pct}%). AUTOMATICALLY call check_repository again with the `checked_pair_ids` array to continue. Do NOT stop, ask the user, or report partial results."
+                    "⚠️ MANDATORY CONTINUATION — {processed}/{total} fact pairs checked ({pct}%, ~{estimated_iterations} calls remaining). \
+                     You MUST call check_repository again with the `checked_pair_ids` array from this response. \
+                     Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
+                     Just pass back checked_pair_ids until this message no longer appears."
                 ));
                 result["when_done"] = serde_json::json!(
-                    "AUTOMATICALLY call check_repository again with the same arguments. Do not ask the user — continue until the operation completes."
+                    "MANDATORY: Call check_repository again with the same arguments plus checked_pair_ids. Do NOT use the think tool to decide whether to continue. Just call it."
                 );
             }
         }

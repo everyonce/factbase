@@ -285,10 +285,13 @@ pub(crate) fn apply_time_budget_progress(
     });
     response["continue"] = serde_json::json!(true);
     response["message"] = serde_json::json!(format!(
-        "⚠️ INCOMPLETE — {processed}/{total} processed ({pct}%). AUTOMATICALLY call {tool_name} again with identical arguments to continue. Do NOT stop, ask the user, or report partial results."
+        "⚠️ MANDATORY CONTINUATION — {processed}/{total} processed ({pct}%). \
+         You MUST call {tool_name} again with identical arguments to continue. \
+         Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
+         Just call {tool_name} again until this message no longer appears."
     ));
     response["when_done"] = serde_json::json!(format!(
-        "AUTOMATICALLY call {tool_name} again with the same arguments. Do not ask the user — continue until the operation completes."
+        "MANDATORY: Call {tool_name} again with the same arguments. Do NOT use the think tool to decide whether to continue. Just call it."
     ));
 }
 
@@ -560,10 +563,10 @@ mod tests {
         let msg = resp["message"].as_str().unwrap();
         assert!(msg.contains("5/10"));
         assert!(msg.contains("my_tool"));
-        assert!(msg.contains("AUTOMATICALLY"));
-        assert!(msg.contains("INCOMPLETE"));
+        assert!(msg.contains("MUST"));
+        assert!(msg.contains("MANDATORY"));
         let when_done = resp["when_done"].as_str().unwrap();
-        assert!(when_done.contains("AUTOMATICALLY"));
+        assert!(when_done.contains("MANDATORY"));
         assert!(when_done.contains("my_tool"));
     }
 

@@ -197,32 +197,48 @@ impl Database {
     ///
     /// Iterates all facts, finds neighbors from other documents, and returns
     /// deduplicated pairs (if (A,B) exists, (B,A) is skipped).
+    ///
+    /// When `repo_id` is provided, only facts belonging to documents in that
+    /// repository are considered — both as source and as neighbor candidates.
     pub fn find_all_cross_doc_fact_pairs(
         &self,
         threshold: f32,
         limit_per_fact: usize,
+        repo_id: Option<&str>,
     ) -> Result<Vec<FactPair>, FactbaseError> {
         let conn = self.get_conn()?;
 
-        // Load all fact metadata + embeddings
-        let mut stmt = conn.prepare(
-            "SELECT m.id, m.document_id, m.line_number, m.fact_text, e.embedding
-             FROM fact_metadata m
-             JOIN fact_embeddings e ON m.id = e.id",
-        )?;
-        let facts: Vec<(String, String, i64, String, Vec<u8>)> = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            })?
-            .collect::<Result<_, _>>()?;
-        drop(stmt);
+        // Load fact metadata + embeddings, optionally scoped to a repo
+        let facts: Vec<(String, String, i64, String, Vec<u8>)> = if let Some(rid) = repo_id {
+            let mut stmt = conn.prepare(
+                "SELECT m.id, m.document_id, m.line_number, m.fact_text, e.embedding
+                 FROM fact_metadata m
+                 JOIN fact_embeddings e ON m.id = e.id
+                 JOIN documents d ON m.document_id = d.id
+                 WHERE d.repo_id = ?1",
+            )?;
+            let rows = stmt.query_map([rid], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            })?.collect::<Result<_, _>>()?;
+            rows
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT m.id, m.document_id, m.line_number, m.fact_text, e.embedding
+                 FROM fact_metadata m
+                 JOIN fact_embeddings e ON m.id = e.id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            })?.collect::<Result<_, _>>()?;
+            rows
+        };
         drop(conn);
+
+        // When repo-scoped, build a set of valid doc_ids so we can filter
+        // neighbors returned by the global vector search.
+        let repo_doc_ids: Option<std::collections::HashSet<&str>> = repo_id.map(|_| {
+            facts.iter().map(|(_, did, _, _, _)| did.as_str()).collect()
+        });
 
         let mut seen = std::collections::HashSet::new();
         let mut pairs = Vec::new();
@@ -235,6 +251,12 @@ impl Database {
                 self.search_similar_facts(fact_id, doc_id, embedding, limit_per_fact, threshold)?;
 
             for neighbor in neighbors {
+                // Skip neighbors outside the target repo
+                if let Some(ref valid) = repo_doc_ids {
+                    if !valid.contains(neighbor.document_id.as_str()) {
+                        continue;
+                    }
+                }
                 let key = if fact_id.as_str() < neighbor.id.as_str() {
                     (fact_id.clone(), neighbor.id.clone())
                 } else {
@@ -323,7 +345,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::database::tests::{test_db, test_doc, test_repo};
+    use crate::database::tests::{test_db, test_doc, test_doc_with_repo, test_repo};
 
     #[test]
     fn test_upsert_and_count_fact_embeddings() {
@@ -556,8 +578,7 @@ mod tests {
         db.upsert_fact_embedding("doc1_5", "doc1", 5, "Fact A", "h1", &emb_a).unwrap();
         db.upsert_fact_embedding("doc2_3", "doc2", 3, "Fact B", "h2", &emb_b).unwrap();
 
-        let pairs = db.find_all_cross_doc_fact_pairs(0.5, 10).unwrap();
-        // Should have exactly 1 pair (A,B) — not (A,B) and (B,A)
+        let pairs = db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
         assert_eq!(pairs.len(), 1);
         let pair = &pairs[0];
         assert!(pair.similarity >= 0.5);
@@ -577,15 +598,14 @@ mod tests {
         db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact X", "h1", &emb).unwrap();
         db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact Y", "h2", &emb).unwrap();
 
-        let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10).unwrap();
-        // No pairs — both facts are in the same document
+        let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
         assert!(pairs.is_empty());
     }
 
     #[test]
     fn test_find_all_cross_doc_fact_pairs_empty_db() {
         let (db, _tmp) = test_db();
-        let pairs = db.find_all_cross_doc_fact_pairs(0.5, 10).unwrap();
+        let pairs = db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
         assert!(pairs.is_empty());
     }
 
@@ -613,11 +633,46 @@ mod tests {
         db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact 3", "h3", &emb3).unwrap();
 
         // Use threshold 0.0 so all pairs are included
-        let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10).unwrap();
+        let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
         assert!(pairs.len() >= 2, "expected at least 2 pairs, got {}", pairs.len());
         // Should be sorted descending by similarity
         for w in pairs.windows(2) {
             assert!(w[0].similarity >= w[1].similarity);
         }
+    }
+
+    #[test]
+    fn test_find_all_cross_doc_fact_pairs_repo_scoped() {
+        let (db, _tmp) = test_db();
+        let repo1 = test_repo(); // id = "test-repo"
+        db.upsert_repository(&repo1).unwrap();
+        let mut repo2 = test_repo();
+        repo2.id = "other-repo".to_string();
+        repo2.path = std::path::PathBuf::from("/tmp/other");
+        db.upsert_repository(&repo2).unwrap();
+
+        db.upsert_document(&test_doc_with_repo("d1", "test-repo", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc_with_repo("d2", "test-repo", "Doc 2")).unwrap();
+        db.upsert_document(&test_doc_with_repo("d3", "other-repo", "Doc 3")).unwrap();
+
+        let emb = vec![0.5f32; 1024];
+        db.upsert_fact_embedding("d1_1", "d1", 1, "Fact 1", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("d2_1", "d2", 1, "Fact 2", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("d3_1", "d3", 1, "Fact 3", "h3", &emb).unwrap();
+
+        // Unscoped: all cross-doc pairs (d1-d2, d1-d3, d2-d3)
+        let all = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
+        assert!(all.len() >= 2, "expected cross-repo pairs, got {}", all.len());
+
+        // Scoped to test-repo: only d1-d2 pair
+        let scoped = db.find_all_cross_doc_fact_pairs(0.0, 10, Some("test-repo")).unwrap();
+        assert_eq!(scoped.len(), 1, "expected 1 intra-repo pair, got {}", scoped.len());
+        let pair = &scoped[0];
+        assert!(pair.fact_a.document_id == "d1" || pair.fact_a.document_id == "d2");
+        assert!(pair.fact_b.document_id == "d1" || pair.fact_b.document_id == "d2");
+
+        // Scoped to other-repo: only 1 doc, so no cross-doc pairs
+        let other = db.find_all_cross_doc_fact_pairs(0.0, 10, Some("other-repo")).unwrap();
+        assert!(other.is_empty());
     }
 }
