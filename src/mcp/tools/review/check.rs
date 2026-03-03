@@ -68,7 +68,7 @@ pub async fn check_repository(
     let mode = get_str_arg(args, "mode");
 
     match mode {
-        Some("questions") => check_questions(db, embedding, args, progress).await,
+        Some("questions") => check_questions(db, embedding, llm, args, progress).await,
         Some("cross_validate") => check_cross_validate(db, embedding, llm, args, progress).await,
         Some("discover") => check_discover(db, llm, args, progress).await,
         Some(other) => Ok(serde_json::json!({
@@ -95,6 +95,7 @@ pub async fn check_repository(
 async fn check_questions(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
+    llm: Option<&dyn LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
@@ -132,8 +133,7 @@ async fn check_questions(
         is_continuation: false,
     };
 
-    // No LLM → no cross-validation
-    let output = check_all_documents(&docs, db, embedding, None, &config, progress).await?;
+    let output = check_all_documents(&docs, db, embedding, llm, &config, progress).await?;
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
