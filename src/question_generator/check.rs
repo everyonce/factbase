@@ -390,6 +390,20 @@ pub async fn check_all_documents(
     let mut pair_progress: Option<(usize, usize)> = None;
     let mut cv_elapsed_secs: Option<f64> = None;
     let mut cv_pairs_per_second: Option<f64> = None;
+    if llm.is_some() && deadline_hit {
+        // Question gen exhausted the budget before cross-validation could start.
+        // Peek at the pair count so the caller knows CV is still pending.
+        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        if fact_count > 0 {
+            let total = db
+                .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
+                .map(|p| p.len())
+                .unwrap_or(0);
+            if total > 0 {
+                pair_progress = Some((pair_offset, total));
+            }
+        }
+    }
     if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
         let llm = llm.unwrap();
@@ -1955,5 +1969,55 @@ mod tests {
         // No question gen results — all entries have 0 new questions
         let total_new: usize = output_cont.results.iter().map(|r| r.new_questions).sum();
         assert_eq!(total_new, 0, "continuation should produce 0 new questions from question gen");
+    }
+
+    /// When question gen exhausts the deadline but fact pairs exist,
+    /// pair_progress should signal pending cross-validation work.
+    #[tokio::test]
+    async fn test_deadline_during_question_gen_signals_pending_cv() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+
+        let docs_data = [
+            ("dq1", "Entity A", "# Entity A\n\n- Revenue: $10M\n"),
+            ("dq2", "Entity B", "# Entity B\n\n- Revenue: $50M\n"),
+        ];
+        let mut docs = Vec::new();
+        for (id, title, content) in &docs_data {
+            let doc = make_test_doc(id, title, content);
+            db.upsert_document(&doc).unwrap();
+            docs.push(doc);
+        }
+
+        // Insert fact embeddings so pairs exist
+        db.upsert_fact_embedding("dq1_3", "dq1", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
+        db.upsert_fact_embedding("dq2_3", "dq2", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
+
+        let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap();
+        assert!(!pairs.is_empty(), "should have cross-doc pairs");
+
+        let llm = MockLlm::new(r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#);
+        let embedding = MockEmbedding::new(1024);
+
+        // Use a deadline that allows question gen to run but then expires
+        // (already-expired deadline simulates question gen exhausting the budget)
+        let config = CheckConfig {
+            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+            ..default_check_config()
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+
+        // pair_progress should be set to (0, N) signaling CV is pending
+        assert!(
+            output.pair_progress.is_some(),
+            "pair_progress must be set when deadline hit during question gen but pairs exist"
+        );
+        let (processed, total) = output.pair_progress.unwrap();
+        assert_eq!(processed, 0, "no pairs should be processed yet");
+        assert!(total > 0, "total pairs should be > 0");
     }
 }
