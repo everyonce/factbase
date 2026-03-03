@@ -213,6 +213,20 @@ pub async fn check_all_documents(
 
     let mut all_results = Vec::new();
     let mut deadline_hit = false;
+
+    if config.is_continuation {
+        // Skip question generation — already done on first call.
+        // Build minimal entries so cross-validation can distribute questions.
+        for doc in &active_docs {
+            all_results.push((
+                doc,
+                Vec::new(),
+                doc.content.clone(),
+                0usize, 0usize, 0usize, 0usize, 0usize,
+            ));
+        }
+    } else {
+
     for chunk_start in (0..total_active).step_by(config.concurrency) {
         // Check deadline before starting a new chunk
         if let Some(deadline) = config.deadline {
@@ -363,6 +377,8 @@ pub async fn check_all_documents(
         let batch = futures::future::join_all(futs).await;
         all_results.extend(batch);
     }
+
+    } // end if !is_continuation
 
     // Sequential cross-validation pass
     let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
@@ -1899,5 +1915,48 @@ mod tests {
             .await
             .unwrap();
         assert!(output_cont.vocabulary_candidates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_continuation_skips_question_generation() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        // Document with a fact that would normally trigger temporal questions
+        let docs = vec![make_doc("cont1", "Test Entity", "- Some fact without a date\n")];
+        let progress = ProgressReporter::Silent;
+
+        // First call: should generate questions
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            checked_pair_ids: HashSet::new(),
+            acquire_write_guard: false,
+            batch_size: 10,
+            repo_id: None,
+            is_continuation: false,
+        };
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert!(!output.results.is_empty(), "first call should generate questions");
+        let first_new = output.results[0].new_questions;
+        assert!(first_new > 0, "first call should have new questions");
+
+        // Continuation call: should skip question generation entirely
+        let config_cont = CheckConfig {
+            is_continuation: true,
+            checked_pair_ids: ["fake_a:fake_b".to_string()].into_iter().collect(),
+            ..config
+        };
+        let output_cont = check_all_documents(&docs, &db, &embedding, None, &config_cont, &progress)
+            .await
+            .unwrap();
+        // No question gen results — all entries have 0 new questions
+        let total_new: usize = output_cont.results.iter().map(|r| r.new_questions).sum();
+        assert_eq!(total_new, 0, "continuation should produce 0 new questions from question gen");
     }
 }
