@@ -66,10 +66,10 @@ pub struct CheckConfig {
     pub concurrency: usize,
     /// Optional deadline for time-boxed operations.
     pub deadline: Option<Instant>,
-    /// Doc IDs already cross-validated in a previous call (backward compat).
+    /// Doc IDs already cross-validated in a previous call (backward compat, fallback path only).
     pub checked_doc_ids: HashSet<String>,
-    /// Fact-pair IDs already cross-validated (preferred cursor for resumption).
-    pub checked_pair_ids: HashSet<String>,
+    /// Server-side pair offset for resumption (replaces checked_pair_ids).
+    pub pair_offset: usize,
     /// Whether to acquire the global write guard before writing results.
     /// Set to `true` in MCP context (concurrent requests), `false` in CLI/tests.
     pub acquire_write_guard: bool,
@@ -77,7 +77,7 @@ pub struct CheckConfig {
     pub batch_size: usize,
     /// Optional repo ID to scope cross-validation to a single repository.
     pub repo_id: Option<String>,
-    /// Whether this is a continuation call (checked_pair_ids or checked_doc_ids non-empty).
+    /// Whether this is a continuation call (pair_offset > 0 or checked_doc_ids non-empty).
     /// When true, skip vocabulary extraction and entity discovery (already done on first call).
     pub is_continuation: bool,
 }
@@ -102,11 +102,11 @@ pub struct CheckOutput {
     pub docs_processed: usize,
     /// Total number of active (non-archived, non-corrupted) documents.
     pub docs_total: usize,
-    /// Doc IDs that completed cross-validation (backward compat).
+    /// Doc IDs that completed cross-validation (backward compat, fallback path).
     pub checked_doc_ids: Vec<String>,
-    /// Fact-pair IDs that completed cross-validation (preferred cursor).
-    pub checked_pair_ids: Vec<String>,
-    /// Progress for fact-pair cross-validation.
+    /// Offset into the sorted pair list after processing.
+    pub pair_offset: usize,
+    /// Progress for fact-pair cross-validation: (offset, total).
     pub pair_progress: Option<(usize, usize)>,
     /// Domain vocabulary candidates extracted during deep_check.
     pub vocabulary_candidates: Vec<VocabCandidate>,
@@ -382,7 +382,7 @@ pub async fn check_all_documents(
 
     // Sequential cross-validation pass
     let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
-    let mut checked_pair_ids: Vec<String> = Vec::new();
+    let mut pair_offset: usize = config.pair_offset;
     let mut pair_progress: Option<(usize, usize)> = None;
     if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
@@ -395,23 +395,8 @@ pub async fn check_all_documents(
                 .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
                 .unwrap_or_default();
             if !pairs.is_empty() {
-                // Build effective checked_pair_ids: merge explicit pair IDs with
-                // backward-compat conversion from checked_doc_ids.
-                let mut effective_checked: HashSet<String> = config.checked_pair_ids.clone();
-                if !config.checked_doc_ids.is_empty() && config.checked_pair_ids.is_empty() {
-                    for p in &pairs {
-                        if config.checked_doc_ids.contains(&p.fact_a.document_id)
-                            || config.checked_doc_ids.contains(&p.fact_b.document_id)
-                        {
-                            effective_checked.insert(
-                                super::cross_validate::make_pair_id(&p.fact_a.id, &p.fact_b.id),
-                            );
-                        }
-                    }
-                }
-
                 progress.report(0, pairs.len(), "Cross-validating fact pairs");
-                match cross_validate_facts(&pairs, db, llm, config.deadline, config.batch_size, &effective_checked).await {
+                match cross_validate_facts(&pairs, db, llm, config.deadline, config.batch_size, pair_offset).await {
                     Ok(cv_output) => {
                         // Distribute questions to the correct documents
                         for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
@@ -419,18 +404,15 @@ pub async fn check_all_documents(
                                 questions.extend(qs.iter().cloned());
                             }
                         }
-                        checked_pair_ids = cv_output.checked_pair_ids;
-                        pair_progress = Some((cv_output.processed, cv_output.total));
+                        pair_offset = cv_output.pair_offset;
+                        pair_progress = Some((cv_output.pair_offset, cv_output.total));
 
-                        // Derive docs_processed from unique docs that had at least one pair processed
+                        // Derive docs_processed from pairs processed so far
+                        // (count unique doc IDs from the first pair_offset pairs)
                         let mut docs_with_pairs: HashSet<String> = HashSet::new();
-                        for pid in &checked_pair_ids {
-                            // pair ID format: {fact_a_id}:{fact_b_id}, fact ID format: {doc_id}_{line}
-                            for fact_id in pid.split(':') {
-                                if let Some(pos) = fact_id.rfind('_') {
-                                    docs_with_pairs.insert(fact_id[..pos].to_string());
-                                }
-                            }
+                        for p in pairs.iter().take(pair_offset) {
+                            docs_with_pairs.insert(p.fact_a.document_id.clone());
+                            docs_with_pairs.insert(p.fact_b.document_id.clone());
                         }
                         cross_validated_ids = docs_with_pairs.into_iter().collect();
                     }
@@ -550,7 +532,7 @@ pub async fn check_all_documents(
         docs_processed,
         docs_total: total_active,
         checked_doc_ids: cross_validated_ids,
-        checked_pair_ids,
+        pair_offset,
         pair_progress,
         vocabulary_candidates,
     })
@@ -706,7 +688,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -738,7 +720,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -766,7 +748,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -795,7 +777,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -830,7 +812,7 @@ mod tests {
                     concurrency: 1,
                     deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -860,7 +842,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -900,7 +882,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -931,7 +913,7 @@ mod tests {
                     concurrency: 2,
                     deadline: None,
                     checked_doc_ids: checked.clone(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -961,7 +943,7 @@ mod tests {
                     concurrency: 2,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -996,7 +978,7 @@ mod tests {
             concurrency: 3,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1028,7 +1010,7 @@ mod tests {
             concurrency: 1,
             deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
             checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1062,7 +1044,7 @@ mod tests {
             concurrency: 2,
             deadline: None,
             checked_doc_ids: checked,
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1092,7 +1074,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
             acquire_write_guard: true,
             batch_size: 10,
             repo_id: None,
@@ -1106,7 +1088,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_output_includes_checked_pair_ids() {
+    async fn test_check_output_pair_offset() {
         use crate::llm::test_helpers::MockLlm;
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
@@ -1121,7 +1103,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1131,8 +1113,8 @@ mod tests {
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
             .await
             .unwrap();
-        // No fact embeddings → fallback path, checked_pair_ids stays empty
-        assert!(output.checked_pair_ids.is_empty());
+        // No fact embeddings → fallback path, pair_offset stays 0
+        assert_eq!(output.pair_offset, 0);
     }
 
     #[tokio::test]
@@ -1155,7 +1137,7 @@ mod tests {
             concurrency: 2,
             deadline: None,
             checked_doc_ids: checked,
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1245,7 +1227,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1331,8 +1313,8 @@ mod tests {
         let total_new: usize = output.results.iter().map(|r| r.new_questions).sum();
         assert!(total_new > 0, "should generate conflict questions from cross-validation");
 
-        // checked_pair_ids should be populated
-        assert!(!output.checked_pair_ids.is_empty());
+        // pair_offset should be populated
+        assert!(output.pair_offset > 0);
     }
 
     /// Integration test 2: Time-boxed continuation — run with expired deadline,
@@ -1372,17 +1354,17 @@ mod tests {
         let out1 = check_all_documents(&docs, &db, &embedding, Some(&llm), &config1, &progress)
             .await
             .unwrap();
-        assert!(out1.checked_pair_ids.is_empty(), "expired deadline should process 0 pairs");
+        assert_eq!(out1.pair_offset, 0, "expired deadline should process 0 pairs");
 
         // Run 2: no deadline, pass back cursor — should process all
         let config2 = CheckConfig {
-            checked_pair_ids: out1.checked_pair_ids.into_iter().collect(),
+            pair_offset: out1.pair_offset,
             ..default_check_config()
         };
         let out2 = check_all_documents(&docs, &db, &embedding, Some(&llm), &config2, &progress)
             .await
             .unwrap();
-        assert!(!out2.checked_pair_ids.is_empty(), "should process pairs on resume");
+        assert!(out2.pair_offset > 0, "should process pairs on resume");
         if let Some((processed, total)) = out2.pair_progress {
             assert_eq!(processed, total, "all pairs should be processed");
         }
@@ -1414,8 +1396,8 @@ mod tests {
         let out1 = check_all_documents(
             &[doc_a.clone(), doc_b.clone()], &db, &embedding, Some(&llm), &default_check_config(), &progress,
         ).await.unwrap();
-        let baseline_pairs = out1.checked_pair_ids.clone();
-        assert!(!baseline_pairs.is_empty());
+        let baseline_offset = out1.pair_offset;
+        assert!(baseline_offset > 0);
 
         // "Modify" doc_a — update its fact embedding with new content
         let doc_a_updated = make_test_doc("inc_a", "Entity A", "# Entity A\n\n- Revenue: \n");
@@ -1423,20 +1405,19 @@ mod tests {
         db.delete_fact_embeddings_for_doc("inc_a").unwrap();
         db.upsert_fact_embedding("inc_a_3", "inc_a", 3, "Revenue: $20M", "h1_new", &spike_embedding(0)).unwrap();
 
-        // Re-check with prior cursor — the old pair ID no longer matches
-        // because the fact content changed, so it should be re-processed
+        // Re-check with prior offset — since the pair set changed (new embeddings),
+        // in production the server-side cursor would detect the fact_count change
+        // and reset. Here we pass the old offset directly.
         let config2 = CheckConfig {
-            checked_pair_ids: baseline_pairs.into_iter().collect(),
+            pair_offset: baseline_offset,
             ..default_check_config()
         };
         let out2 = check_all_documents(
             &[doc_a_updated, doc_b], &db, &embedding, Some(&llm), &config2, &progress,
         ).await.unwrap();
-        // The pair IDs use fact IDs which include doc_id + line_number,
-        // so the same pair ID will be found but the content is different.
-        // The cursor still matches the pair ID, so it may be skipped.
-        // This is expected — the cursor tracks pair IDs, not content hashes.
-        assert!(!out2.checked_pair_ids.is_empty());
+        // With offset-based cursor, the offset may be past the end if pair set changed.
+        // The important thing is it doesn't crash.
+        assert!(out2.pair_offset >= baseline_offset);
     }
 
     /// Integration test 4a: Backward compatibility — checked_doc_ids still accepted.
@@ -1460,20 +1441,20 @@ mod tests {
         let embedding = MockEmbedding::new(1024);
         let progress = ProgressReporter::Silent;
 
-        // Pass checked_doc_ids (old-style) with both docs — should convert to pair IDs
+        // Pass checked_doc_ids (old-style) with both docs — still accepted for fallback path
         let mut checked_docs = HashSet::new();
         checked_docs.insert("bc_a".to_string());
         checked_docs.insert("bc_b".to_string());
         let config = CheckConfig {
             checked_doc_ids: checked_docs,
-            checked_pair_ids: HashSet::new(), // empty → triggers backward compat conversion
+            pair_offset: 0,
             ..default_check_config()
         };
         let output = check_all_documents(
             &[doc_a, doc_b], &db, &embedding, Some(&llm), &config, &progress,
         ).await.unwrap();
-        // Should complete without error; pairs involving checked docs are skipped
-        assert!(output.checked_pair_ids.len() >= 1);
+        // Should complete without error; pair_offset should advance
+        assert!(output.pair_offset >= 1);
     }
 
     /// Integration test 4b: Fallback to per-document cross-validation when
@@ -1503,8 +1484,8 @@ mod tests {
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &default_check_config(), &progress)
             .await
             .unwrap();
-        // Fallback path: checked_pair_ids stays empty (per-doc mode doesn't produce pair IDs)
-        assert!(output.checked_pair_ids.is_empty());
+        // Fallback path: pair_offset stays 0 (per-doc mode doesn't produce pair offsets)
+        assert_eq!(output.pair_offset, 0);
         // But docs are still processed via fallback
         assert_eq!(output.docs_processed, 2);
     }
@@ -1531,7 +1512,7 @@ mod tests {
             .await
             .unwrap();
         // No cross-doc pairs → no pair-based cross-validation
-        assert!(output.checked_pair_ids.is_empty() || output.pair_progress == Some((0, 0)));
+        assert!(output.pair_offset == 0 || output.pair_progress == Some((0, 0)));
     }
 
     /// Integration test 5b: No facts above similarity threshold.
@@ -1668,7 +1649,7 @@ mod tests {
         assert!(llm.call_count() > 0, "LLM should be called for fact-pair validation");
 
         // Verify pairs were actually processed
-        assert!(!output.checked_pair_ids.is_empty());
+        assert!(output.pair_offset > 0);
     }
 
     #[tokio::test]
@@ -1698,7 +1679,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1851,7 +1832,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1885,7 +1866,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: HashSet::new(),
+                    pair_offset: 0,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -1905,7 +1886,7 @@ mod tests {
                     concurrency: 1,
                     deadline: None,
                     checked_doc_ids: HashSet::new(),
-                    checked_pair_ids: ["voc_1:other_2".to_string()].into_iter().collect(),
+                    pair_offset: 42,
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
@@ -1933,7 +1914,7 @@ mod tests {
             concurrency: 1,
             deadline: None,
             checked_doc_ids: HashSet::new(),
-            checked_pair_ids: HashSet::new(),
+            pair_offset: 0,
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
@@ -1949,7 +1930,7 @@ mod tests {
         // Continuation call: should skip question generation entirely
         let config_cont = CheckConfig {
             is_continuation: true,
-            checked_pair_ids: ["fake_a:fake_b".to_string()].into_iter().collect(),
+            pair_offset: 42,
             ..config
         };
         let output_cont = check_all_documents(&docs, &db, &embedding, None, &config_cont, &progress)

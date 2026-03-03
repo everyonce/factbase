@@ -139,7 +139,7 @@ async fn generate_questions_single(
                 let batch_size = crate::Config::load(None)
                     .map(|c| c.cross_validate.batch_size)
                     .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
-                match crate::question_generator::cross_validate::cross_validate_facts(&doc_pairs, db, llm, None, batch_size, &std::collections::HashSet::new()).await {
+                match crate::question_generator::cross_validate::cross_validate_facts(&doc_pairs, db, llm, None, batch_size, 0).await {
                     Ok(cv_output) => {
                         if let Some(qs) = cv_output.questions.get(doc_id) {
                             new_questions.extend(qs.iter().cloned());

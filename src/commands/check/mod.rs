@@ -390,7 +390,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                     if is_table_format && !args.quiet {
                         println!("  Cross-checking {} fact pairs...", pairs.len());
                     }
-                    match factbase::cross_validate_facts(&pairs, &db, llm.as_ref(), None, config.cross_validate.batch_size, &std::collections::HashSet::new()).await {
+                    match factbase::cross_validate_facts(&pairs, &db, llm.as_ref(), None, config.cross_validate.batch_size, 0).await {
                         Ok(cv_output) => {
                             for (doc_id, questions) in &cv_output.questions {
                                 if !questions.is_empty() {

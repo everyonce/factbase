@@ -103,6 +103,7 @@
 
 // Submodules
 mod compression;
+mod cross_validation;
 mod documents;
 mod embeddings;
 mod fact_embeddings;

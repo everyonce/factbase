@@ -196,7 +196,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation using pre-computed fact embeddings (slower, requires LLM). This tool is time-boxed and WILL return `continue: true` with a `checked_pair_ids` array for non-trivial repositories — you MUST call again with `checked_pair_ids` to resume until complete. Legacy `checked_doc_ids` is also accepted for backward compatibility.",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation using pre-computed fact embeddings (slower, requires LLM). This tool is time-boxed and WILL return `continue: true` for non-trivial repositories — you MUST call again with the same arguments until done (progress is saved server-side). Legacy `checked_pair_ids` and `checked_doc_ids` parameters are accepted but ignored.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -205,8 +205,8 @@ pub fn tools_list() -> Value {
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
                         "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, enables thorough cross-document validation)" },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Fact-pair IDs already cross-validated (from previous call's response). Pass back to resume deep_check where it left off. Format: fact_a_id:fact_b_id." },
-                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Legacy: Doc IDs already cross-validated. Use checked_pair_ids instead for precise resumption." }
+                        "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Progress is now saved server-side. Kept for backward compatibility." },
+                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Progress is now saved server-side. Kept for backward compatibility." }
                     }
                 }
             },
