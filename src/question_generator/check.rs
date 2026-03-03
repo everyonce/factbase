@@ -77,6 +77,9 @@ pub struct CheckConfig {
     pub batch_size: usize,
     /// Optional repo ID to scope cross-validation to a single repository.
     pub repo_id: Option<String>,
+    /// Whether this is a continuation call (checked_pair_ids or checked_doc_ids non-empty).
+    /// When true, skip vocabulary extraction and entity discovery (already done on first call).
+    pub is_continuation: bool,
 }
 
 /// Result of linting a single document.
@@ -458,8 +461,9 @@ pub async fn check_all_documents(
         run_placement_check(docs, db, &mut all_results);
     }
 
-    // Vocabulary extraction (deep_check only, requires LLM).
+    // Vocabulary extraction (deep_check only, requires LLM). Skip on continuation calls.
     let vocabulary_candidates = if llm.is_some()
+        && !config.is_continuation
         && !deadline_hit
         && !config.deadline.is_some_and(|d| Instant::now() > d)
     {
@@ -690,6 +694,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -721,6 +726,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -748,6 +754,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -776,6 +783,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -810,6 +818,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -839,6 +848,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -878,6 +888,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -908,6 +919,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -937,6 +949,7 @@ mod tests {
                     acquire_write_guard: false,
                     batch_size: 10,
                     repo_id: None,
+                    is_continuation: false,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -971,6 +984,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1002,6 +1016,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1035,6 +1050,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1064,6 +1080,7 @@ mod tests {
             acquire_write_guard: true,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
@@ -1092,6 +1109,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1125,6 +1143,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1214,6 +1233,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         }
     }
 
@@ -1666,6 +1686,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, None, &config, &progress)
@@ -1818,6 +1839,7 @@ mod tests {
             acquire_write_guard: false,
             batch_size: 10,
             repo_id: None,
+                    is_continuation: false,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
@@ -1831,5 +1853,51 @@ mod tests {
         // Verify questions were written to the file on disk
         let on_disk = std::fs::read_to_string(&md_path).unwrap();
         assert!(on_disk.contains("@q["), "questions should be written to file at resolved path");
+    }
+
+    #[tokio::test]
+    async fn test_continuation_skips_vocab_extraction() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let content = "- Some domain fact about widgets\n- Another fact about gadgets\n";
+        let docs = vec![make_doc("voc", "Vocab Test", content)];
+
+        let config = CheckConfig {
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: HashSet::new(),
+                    acquire_write_guard: false,
+                    batch_size: 10,
+                    repo_id: None,
+                    is_continuation: false,
+                };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+            .await
+            .unwrap();
+        assert!(output.vocabulary_candidates.is_empty());
+
+        // Continuation call — is_continuation=true should skip vocab
+        let config_cont = CheckConfig {
+                    stale_days: 365,
+                    required_fields: None,
+                    dry_run: true,
+                    concurrency: 1,
+                    deadline: None,
+                    checked_doc_ids: HashSet::new(),
+                    checked_pair_ids: ["voc_1:other_2".to_string()].into_iter().collect(),
+                    acquire_write_guard: false,
+                    batch_size: 10,
+                    repo_id: None,
+                    is_continuation: true,
+                };
+        let output_cont = check_all_documents(&docs, &db, &embedding, None, &config_cont, &progress)
+            .await
+            .unwrap();
+        assert!(output_cont.vocabulary_candidates.is_empty());
     }
 }

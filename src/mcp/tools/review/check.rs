@@ -8,6 +8,7 @@ use crate::mcp::tools::{get_str_arg, load_perspective};
 use crate::progress::ProgressReporter;
 use crate::question_generator::check::{check_all_documents, CheckConfig};
 use serde_json::Value;
+use std::collections::HashSet;
 
 /// Default concurrency for parallel check (LLM calls).
 const LINT_CONCURRENCY: usize = 5;
@@ -87,25 +88,30 @@ pub async fn check_repository(
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
+    let checked_pair_ids: HashSet<String> = args
+        .get("checked_pair_ids")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+        .unwrap_or_default();
+    let checked_doc_ids: HashSet<String> = args
+        .get("checked_doc_ids")
+        .and_then(Value::as_array)
+        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+        .unwrap_or_default();
+    let is_continuation = !checked_pair_ids.is_empty() || !checked_doc_ids.is_empty();
+
     let config = CheckConfig {
         stale_days,
         required_fields,
         dry_run,
         concurrency: check_concurrency,
         deadline,
-        checked_doc_ids: args
-            .get("checked_doc_ids")
-            .and_then(Value::as_array)
-            .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-            .unwrap_or_default(),
-        checked_pair_ids: args
-            .get("checked_pair_ids")
-            .and_then(Value::as_array)
-            .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-            .unwrap_or_default(),
+        checked_doc_ids,
+        checked_pair_ids,
         acquire_write_guard: true,
         batch_size,
         repo_id: repo_id.map(String::from),
+        is_continuation,
     };
 
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
@@ -134,11 +140,10 @@ pub async fn check_repository(
         })
         .collect();
 
-    // Entity discovery: only when deep_check is enabled (requires LLM)
-    // Skip if deadline already hit — entity discovery is a bonus, not core to the
-    // continue:true loop. It runs to completion on the final round when budget allows.
+    // Entity discovery: only when deep_check is enabled (requires LLM).
+    // Skip on continuation calls (already done on first call) and when deadline hit.
     let deadline_hit = deadline.is_some_and(|d| std::time::Instant::now() > d);
-    let suggested_entities = if deep_check && !deadline_hit {
+    let suggested_entities = if deep_check && !is_continuation && !deadline_hit {
         if let Some(llm_ref) = llm {
             let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
             crate::organize::discover_entities(
@@ -355,5 +360,70 @@ mod tests {
             .await
             .unwrap();
         assert!(result.get("documents_scanned").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_continuation_skips_entity_discovery_and_vocab() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "cn1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:cn1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // Continuation call with checked_pair_ids — should skip entity discovery and vocab
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+            "checked_pair_ids": ["cn1111_3:cn2222_5"],
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        // Continuation should not produce suggested_entities or vocabulary_candidates
+        assert!(result.get("suggested_entities").is_none());
+        assert!(result.get("vocabulary_candidates").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_continuation_via_checked_doc_ids_skips_bonus_phases() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "cd1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:cd1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // Continuation via legacy checked_doc_ids
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+            "checked_doc_ids": ["cd1111"],
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert!(result.get("suggested_entities").is_none());
+        assert!(result.get("vocabulary_candidates").is_none());
     }
 }
