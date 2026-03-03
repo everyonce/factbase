@@ -6,16 +6,16 @@ use crate::error::FactbaseError;
 use crate::Config;
 use serde_json::Value;
 
-use super::helpers::{get_bool_arg, get_str_arg};
+use super::helpers::{get_bool_arg, get_str_arg, resolve_repo_filter};
 
 /// MCP tool: export embeddings to JSONL string.
 pub fn embeddings_export(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
-    let repo = get_str_arg(args, "repo");
+    let repo = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let config = Config::load(None).unwrap_or_default();
     let model = config.embedding.model;
 
     let mut buf = Vec::new();
-    let (chunk_count, fact_count) = embeddings_io::export_embeddings(db, repo, &model, &mut buf)?;
+    let (chunk_count, fact_count) = embeddings_io::export_embeddings(db, repo.as_deref(), &model, &mut buf)?;
     let output = String::from_utf8(buf)
         .map_err(|e| FactbaseError::internal(format!("UTF-8 error: {e}")))?;
 

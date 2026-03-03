@@ -107,7 +107,7 @@ pub fn resolve_repos(
     repo_id: Option<&str>,
 ) -> anyhow::Result<Vec<Repository>> {
     let filtered: Vec<_> = if let Some(id) = repo_id {
-        repos.into_iter().filter(|r| r.id == id).collect()
+        repos.into_iter().filter(|r| r.id == id || r.name == id).collect()
     } else {
         repos
     };
@@ -430,5 +430,16 @@ mod tests {
         let repos = vec![create_repository("r1", "Repo 1", Path::new("/r1"))];
         let result = resolve_repos(repos, Some("nonexistent"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_repos_by_name() {
+        let repos = vec![
+            create_repository("r1", "Repo 1", Path::new("/r1")),
+            create_repository("r2", "Repo 2", Path::new("/r2")),
+        ];
+        let result = resolve_repos(repos, Some("Repo 2")).unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "r2");
     }
 }

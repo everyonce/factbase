@@ -5,7 +5,8 @@ use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::mcp::tools::{
-    extract_type_repo_filters, get_bool_arg, get_str_arg, get_u64_arg, run_blocking,
+    extract_type_repo_filters, get_bool_arg, get_str_arg, get_u64_arg, resolve_repo_filter,
+    run_blocking,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -51,6 +52,7 @@ pub async fn search_knowledge<E: EmbeddingProvider>(
     let limit = get_u64_arg(args, "limit", 10) as usize;
     let offset = get_u64_arg(args, "offset", 0) as usize;
     let (doc_type, repo) = extract_type_repo_filters(args);
+    let repo = resolve_repo_filter(db, repo.as_deref())?;
     let as_of = get_str_arg(args, "as_of").map(String::from);
     let during = get_str_arg(args, "during").map(String::from);
     let exclude_unknown = get_bool_arg(args, "exclude_unknown", false);

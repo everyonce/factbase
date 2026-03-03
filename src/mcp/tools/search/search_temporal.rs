@@ -6,7 +6,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::mcp::tools::{
     extract_type_repo_filters, get_bool_arg, get_str_arg, get_str_arg_required, get_u64_arg,
-    run_blocking,
+    resolve_repo_filter, run_blocking,
 };
 use crate::models::{TemporalTag, TemporalTagType};
 use crate::processor::{calculate_recency_boost, parse_temporal_tags};
@@ -45,6 +45,7 @@ pub async fn search_temporal<E: EmbeddingProvider>(
     let query = get_str_arg_required(args, "query")?;
     let limit = get_u64_arg(args, "limit", 10) as usize;
     let (doc_type, repo) = extract_type_repo_filters(args);
+    let repo = resolve_repo_filter(db, repo.as_deref())?;
     let as_of = get_str_arg(args, "as_of").map(String::from);
     let during = get_str_arg(args, "during").map(String::from);
     let exclude_unknown = get_bool_arg(args, "exclude_unknown", false);

@@ -19,10 +19,11 @@ use crate::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
 
-/// Resolve a repository from the database, optionally filtered by ID.
+/// Resolve a repository from the database, optionally filtered by ID or name.
 fn resolve_repo(db: &Database, repo_id: Option<&str>) -> Result<crate::models::Repository, FactbaseError> {
+    let resolved = crate::mcp::tools::resolve_repo_filter(db, repo_id)?;
     let repos = db.list_repositories()?;
-    let repo = if let Some(id) = repo_id {
+    let repo = if let Some(id) = resolved {
         repos.into_iter().find(|r| r.id == id)
     } else {
         repos.into_iter().next()
@@ -116,7 +117,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo").map(String::from);
+    let repo_id = crate::mcp::tools::resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let focus = get_str_arg(args, "focus").map(String::from);
     let rid = repo_id.as_deref();
 

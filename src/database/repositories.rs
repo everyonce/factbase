@@ -184,6 +184,22 @@ impl Database {
         Ok(deleted)
     }
 
+    /// Resolve a repo identifier that may be either an ID or a name.
+    ///
+    /// Checks `id` first, then `name`. Returns the canonical repo ID.
+    /// Returns `FactbaseError::NotFound` if neither matches.
+    pub fn resolve_repo_id(&self, id_or_name: &str) -> Result<String, FactbaseError> {
+        let conn = self.get_conn()?;
+        let mut stmt =
+            conn.prepare_cached("SELECT id FROM repositories WHERE id = ?1 OR name = ?1 LIMIT 1")?;
+        let mut rows = stmt.query([id_or_name])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Err(repo_not_found(id_or_name))
+        }
+    }
+
     /// Find repository by filesystem path.
     pub fn get_repository_by_path(&self, path: &Path) -> Result<Option<Repository>, FactbaseError> {
         let conn = self.get_conn()?;
@@ -393,5 +409,29 @@ mod tests {
         assert_eq!(repos.len(), 1);
         assert_eq!(repos[0].0.id, "test-repo");
         assert_eq!(repos[0].1, 2);
+    }
+
+    #[test]
+    fn test_resolve_repo_id_by_id() {
+        let (db, _tmp) = test_db();
+        db.add_repository(&test_repo()).unwrap();
+        let resolved = db.resolve_repo_id("test-repo").unwrap();
+        assert_eq!(resolved, "test-repo");
+    }
+
+    #[test]
+    fn test_resolve_repo_id_by_name() {
+        let (db, _tmp) = test_db();
+        db.add_repository(&test_repo()).unwrap();
+        let resolved = db.resolve_repo_id("Test Repo").unwrap();
+        assert_eq!(resolved, "test-repo");
+    }
+
+    #[test]
+    fn test_resolve_repo_id_not_found() {
+        let (db, _tmp) = test_db();
+        let result = db.resolve_repo_id("nonexistent");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("nonexistent"));
     }
 }

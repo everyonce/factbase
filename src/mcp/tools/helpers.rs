@@ -58,6 +58,20 @@ pub(crate) fn get_bool_arg(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
+/// Resolve an optional repo filter (which may be a name or ID) to the canonical repo ID.
+///
+/// Returns `Ok(None)` if input is `None`, `Ok(Some(id))` if resolved,
+/// or `Err(NotFound)` if the value matches neither a repo ID nor name.
+pub(crate) fn resolve_repo_filter(
+    db: &Database,
+    repo: Option<&str>,
+) -> Result<Option<String>, FactbaseError> {
+    match repo {
+        Some(r) => Ok(Some(db.resolve_repo_id(r)?)),
+        None => Ok(None),
+    }
+}
+
 /// Build temporal stats JSON from document content.
 pub(crate) fn build_temporal_stats_json(content: &str) -> Value {
     let fact_stats = calculate_fact_stats(content);
@@ -296,6 +310,9 @@ pub(crate) fn apply_time_budget_progress(
 }
 
 /// Load perspective for a repository (first repo if repo_id is None).
+///
+/// Note: callers should resolve the repo_id via `resolve_repo_filter` before
+/// calling this function to support name-based lookups.
 pub(crate) fn load_perspective(
     db: &Database,
     repo_id: Option<&str>,
@@ -582,5 +599,35 @@ mod tests {
         let mut resp = serde_json::json!({"ok": true});
         apply_time_budget_progress(&mut resp, 5, 10, "t", false);
         assert!(resp.get("continue").is_none());
+    }
+
+    #[test]
+    fn test_resolve_repo_filter_none() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let result = resolve_repo_filter(&db, None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_resolve_repo_filter_by_id() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        let result = resolve_repo_filter(&db, Some("test-repo")).unwrap();
+        assert_eq!(result.as_deref(), Some("test-repo"));
+    }
+
+    #[test]
+    fn test_resolve_repo_filter_by_name() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        let result = resolve_repo_filter(&db, Some("Test Repo")).unwrap();
+        assert_eq!(result.as_deref(), Some("test-repo"));
+    }
+
+    #[test]
+    fn test_resolve_repo_filter_not_found() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let result = resolve_repo_filter(&db, Some("nonexistent"));
+        assert!(result.is_err());
     }
 }
