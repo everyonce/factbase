@@ -47,7 +47,7 @@ pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is s
 // --- Update workflow ---
 pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes, detect cross-entity links, and generate fact-level embeddings for cross-validation.\n\n1. Call scan_repository with time_budget_secs=120. If the response includes `continue: true`, call it again until complete — this may take many iterations for large repositories. Do NOT stop early or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation\n\nHow links work: scan_repository finds entity title mentions in document text. Each doc should link to at least 1 other. Low link density means entities are isolated — they discuss related topics but don't reference each other by name.{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run a deep quality check using fact embeddings to find issues across documents and discover missing entities.\n\n1. Call check_repository with deep_check=true and time_budget_secs=120. If the response includes `continue: true`, call it again with the `checked_pair_ids` array from the response to resume where it left off.\n\n   ⚠️ MANDATORY PAGING LOOP: The deep check may require many iterations (10, 20, or more). You MUST keep calling check_repository with the returned checked_pair_ids until `continue` is no longer in the response. Do NOT stop early, do NOT reason about whether to continue, do NOT report partial results. The response includes `estimated_iterations_remaining` so you can see the finish line. Just pass back checked_pair_ids mechanically until done.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly conflict → documents disagree, contradictions to resolve\n   - Mostly missing → claims lack evidence\n3. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  4. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  5. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete. Then re-run check_repository (without checked_pair_ids, since new entities changed the graph).\n     - New entities = new titles for the link detector to find\n  6. Record links_detected as LINKS_AFTER\n  7. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  4. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run a deep quality check using fact embeddings to find issues across documents and discover missing entities.\n\n1. Call check_repository with deep_check=true (REQUIRED — this enables cross-document conflict detection) and time_budget_secs=120. If the response includes `continue: true`, call it again with the `checked_pair_ids` array from the response to resume where it left off.\n\n   ⚠️ MANDATORY PAGING LOOP: The deep check may require many iterations (10, 20, or more). You MUST keep calling check_repository with the returned checked_pair_ids until `continue` is no longer in the response. Do NOT stop early, do NOT reason about whether to continue, do NOT report partial results. The response includes `estimated_iterations_remaining` so you can see the finish line. Just pass back checked_pair_ids mechanically until done.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly conflict → documents disagree, contradictions to resolve\n   - Mostly missing → claims lack evidence\n3. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  4. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  5. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete. Then re-run check_repository (without checked_pair_ids, since new entities changed the graph).\n     - New entities = new titles for the link detector to find\n  6. Record links_detected as LINKS_AFTER\n  7. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  4. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
 
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
@@ -2101,6 +2101,16 @@ mod tests {
     }
 
     #[test]
+    fn test_check_repository_schema_deep_check_not_discouraging() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let check = tools_arr.iter().find(|t| t["name"] == "check_repository").unwrap();
+        let props = &check["inputSchema"]["properties"]["deep_check"];
+        let desc = props["description"].as_str().unwrap();
+        assert!(!desc.contains("significantly slower"), "deep_check description should not discourage usage with 'significantly slower'");
+    }
+
+    #[test]
     fn test_scan_repository_schema_mentions_fact_embeddings() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
@@ -2168,6 +2178,14 @@ mod tests {
         assert!(msg.contains("Do NOT stop"));
         assert!(resp["when_done"].as_str().unwrap().contains("MANDATORY"));
         assert_eq!(resp["progress"]["percent_complete"], 30);
+    }
+
+    #[test]
+    fn test_update_check_marks_deep_check_required() {
+        let check = update_step(2, &serde_json::json!({}), &None, &wf());
+        let instr = check["instruction"].as_str().unwrap();
+        assert!(instr.contains("deep_check=true"), "must instruct deep_check=true");
+        assert!(instr.contains("REQUIRED"), "must emphasize deep_check is REQUIRED");
     }
 
     #[test]
