@@ -196,7 +196,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation using pre-computed fact embeddings (slower, requires LLM). For large repositories, may return partial results with `continue: true` and a `checked_pair_ids` array — pass `checked_pair_ids` back on the next call to resume where it left off. Legacy `checked_doc_ids` is also accepted for backward compatibility.",
+                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation using pre-computed fact embeddings (slower, requires LLM). This tool is time-boxed and WILL return `continue: true` with a `checked_pair_ids` array for non-trivial repositories — you MUST call again with `checked_pair_ids` to resume until complete. Legacy `checked_doc_ids` is also accepted for backward compatibility.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -225,7 +225,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in deep_check. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
+                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in deep_check. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` for non-trivial repositories — you MUST call again to complete.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -587,5 +587,28 @@ mod tests {
             required.iter().any(|v| v == "id"),
             "delete_document should require id"
         );
+    }
+
+    #[test]
+    fn test_paging_tool_descriptions_use_mandatory_language() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().expect("tools array");
+
+        for name in ["check_repository", "scan_repository"] {
+            let tool = tools.iter().find(|t| t["name"] == name).unwrap();
+            let desc = tool["description"].as_str().unwrap();
+            assert!(
+                desc.contains("WILL return"),
+                "{name} description should say paging WILL happen"
+            );
+            assert!(
+                desc.contains("MUST"),
+                "{name} description should use MUST for continuation"
+            );
+            assert!(
+                !desc.contains("may return partial"),
+                "{name} description should not use weak 'may return' language"
+            );
+        }
     }
 }
