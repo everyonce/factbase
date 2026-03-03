@@ -195,8 +195,8 @@ impl Database {
 
     /// Find all cross-document fact pairs above a similarity threshold.
     ///
-    /// Iterates all facts, finds neighbors from other documents, and returns
-    /// deduplicated pairs (if (A,B) exists, (B,A) is skipped).
+    /// Uses a persistent cache to avoid O(n²) recomputation on every call.
+    /// The cache is invalidated when the fact count or parameters change.
     ///
     /// When `repo_id` is provided, only facts belonging to documents in that
     /// repository are considered — both as source and as neighbor candidates.
@@ -206,9 +206,170 @@ impl Database {
         limit_per_fact: usize,
         repo_id: Option<&str>,
     ) -> Result<Vec<FactPair>, FactbaseError> {
+        let scope = repo_id.unwrap_or("");
+
+        // Check cache validity
+        if let Some(pairs) = self.load_cached_fact_pairs(scope, threshold, limit_per_fact)? {
+            return Ok(pairs);
+        }
+
+        // Cache miss — compute pairs
+        let pairs = self.compute_fact_pairs(threshold, limit_per_fact, repo_id)?;
+
+        // Store in cache
+        self.store_cached_fact_pairs(scope, threshold, limit_per_fact, &pairs)?;
+
+        Ok(pairs)
+    }
+
+    /// Load cached fact pairs if the cache is valid for the given parameters.
+    fn load_cached_fact_pairs(
+        &self,
+        scope: &str,
+        threshold: f32,
+        limit_per_fact: usize,
+    ) -> Result<Option<Vec<FactPair>>, FactbaseError> {
         let conn = self.get_conn()?;
 
-        // Load fact metadata + embeddings, optionally scoped to a repo
+        // Check if cache metadata exists and matches current state
+        let meta: Option<(usize, f32, usize)> = conn
+            .query_row(
+                "SELECT fact_count, threshold, limit_per_fact FROM cached_fact_pairs_meta WHERE scope = ?1",
+                [scope],
+                |row| Ok((row.get::<_, i64>(0)? as usize, row.get(1)?, row.get::<_, i64>(2)? as usize)),
+            )
+            .ok();
+
+        let current_count = if scope.is_empty() {
+            self.get_fact_embedding_count()?
+        } else {
+            // Count facts for this repo
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM fact_metadata m JOIN documents d ON m.document_id = d.id WHERE d.repo_id = ?1",
+                [scope],
+                |row| row.get(0),
+            )?;
+            count as usize
+        };
+
+        match meta {
+            Some((cached_count, cached_thresh, cached_limit))
+                if cached_count == current_count
+                    && (cached_thresh - threshold).abs() < f32::EPSILON
+                    && cached_limit == limit_per_fact =>
+            {
+                // Cache is valid — load pairs
+            }
+            _ => return Ok(None),
+        }
+
+        let mut stmt = conn.prepare(
+            "SELECT fact_a_id, fact_a_doc_id, fact_a_line, fact_a_text,
+                    fact_b_id, fact_b_doc_id, fact_b_line, fact_b_text, similarity
+             FROM cached_fact_pairs WHERE scope = ?1
+             ORDER BY similarity DESC",
+        )?;
+        let pairs = stmt
+            .query_map([scope], |row| {
+                Ok(FactPair {
+                    fact_a: FactSearchResult {
+                        id: row.get(0)?,
+                        document_id: row.get(1)?,
+                        line_number: row.get::<_, i64>(2)? as usize,
+                        fact_text: row.get(3)?,
+                        similarity: row.get(8)?,
+                    },
+                    fact_b: FactSearchResult {
+                        id: row.get(4)?,
+                        document_id: row.get(5)?,
+                        line_number: row.get::<_, i64>(6)? as usize,
+                        fact_text: row.get(7)?,
+                        similarity: row.get(8)?,
+                    },
+                    similarity: row.get(8)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Some(pairs))
+    }
+
+    /// Store computed fact pairs in the cache.
+    fn store_cached_fact_pairs(
+        &self,
+        scope: &str,
+        threshold: f32,
+        limit_per_fact: usize,
+        pairs: &[FactPair],
+    ) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+
+        // Clear old cache for this scope
+        conn.execute("DELETE FROM cached_fact_pairs WHERE scope = ?1", [scope])?;
+        conn.execute("DELETE FROM cached_fact_pairs_meta WHERE scope = ?1", [scope])?;
+
+        let current_count = if scope.is_empty() {
+            self.get_fact_embedding_count()?
+        } else {
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM fact_metadata m JOIN documents d ON m.document_id = d.id WHERE d.repo_id = ?1",
+                [scope],
+                |row| row.get(0),
+            )?;
+            count as usize
+        };
+
+        // Insert pairs in a transaction
+        conn.execute_batch("BEGIN")?;
+        {
+            let mut stmt = conn.prepare_cached(
+                "INSERT INTO cached_fact_pairs (scope, fact_a_id, fact_a_doc_id, fact_a_line, fact_a_text,
+                    fact_b_id, fact_b_doc_id, fact_b_line, fact_b_text, similarity)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            )?;
+            for p in pairs {
+                stmt.execute(rusqlite::params![
+                    scope,
+                    p.fact_a.id,
+                    p.fact_a.document_id,
+                    p.fact_a.line_number as i64,
+                    p.fact_a.fact_text,
+                    p.fact_b.id,
+                    p.fact_b.document_id,
+                    p.fact_b.line_number as i64,
+                    p.fact_b.fact_text,
+                    p.similarity,
+                ])?;
+            }
+        }
+
+        conn.execute(
+            "INSERT INTO cached_fact_pairs_meta (scope, fact_count, threshold, limit_per_fact, created_at)
+             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+            rusqlite::params![scope, current_count as i64, threshold, limit_per_fact as i64],
+        )?;
+        conn.execute_batch("COMMIT")?;
+
+        Ok(())
+    }
+
+    /// Invalidate the fact pair cache (all scopes).
+    pub fn invalidate_fact_pair_cache(&self) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute("DELETE FROM cached_fact_pairs", [])?;
+        conn.execute("DELETE FROM cached_fact_pairs_meta", [])?;
+        Ok(())
+    }
+
+    /// Compute fact pairs (the original O(n²) algorithm).
+    fn compute_fact_pairs(
+        &self,
+        threshold: f32,
+        limit_per_fact: usize,
+        repo_id: Option<&str>,
+    ) -> Result<Vec<FactPair>, FactbaseError> {
+        let conn = self.get_conn()?;
+
         let facts: Vec<(String, String, i64, String, Vec<u8>)> = if let Some(rid) = repo_id {
             let mut stmt = conn.prepare(
                 "SELECT m.id, m.document_id, m.line_number, m.fact_text, e.embedding
@@ -234,8 +395,6 @@ impl Database {
         };
         drop(conn);
 
-        // When repo-scoped, build a set of valid doc_ids so we can filter
-        // neighbors returned by the global vector search.
         let repo_doc_ids: Option<std::collections::HashSet<&str>> = repo_id.map(|_| {
             facts.iter().map(|(_, did, _, _, _)| did.as_str()).collect()
         });
@@ -251,7 +410,6 @@ impl Database {
                 self.search_similar_facts(fact_id, doc_id, embedding, limit_per_fact, threshold)?;
 
             for neighbor in neighbors {
-                // Skip neighbors outside the target repo
                 if let Some(ref valid) = repo_doc_ids {
                     if !valid.contains(neighbor.document_id.as_str()) {
                         continue;
@@ -280,7 +438,6 @@ impl Database {
             }
         }
 
-        // Sort by descending similarity
         pairs.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
         Ok(pairs)
     }
@@ -674,5 +831,101 @@ mod tests {
         // Scoped to other-repo: only 1 doc, so no cross-doc pairs
         let other = db.find_all_cross_doc_fact_pairs(0.0, 10, Some("other-repo")).unwrap();
         assert!(other.is_empty());
+    }
+
+    #[test]
+    fn test_fact_pair_cache_hit() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        let mut emb_a = vec![0.0f32; 1024];
+        emb_a[0] = 1.0;
+        let mut emb_b = vec![0.0f32; 1024];
+        emb_b[0] = 1.0;
+        emb_b[1] = 0.1;
+
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb_a).unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb_b).unwrap();
+
+        // First call computes and caches
+        let pairs1 = db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
+        assert_eq!(pairs1.len(), 1);
+
+        // Second call should hit cache (same result)
+        let pairs2 = db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
+        assert_eq!(pairs2.len(), 1);
+        assert_eq!(pairs1[0].fact_a.id, pairs2[0].fact_a.id);
+        assert_eq!(pairs1[0].fact_b.id, pairs2[0].fact_b.id);
+    }
+
+    #[test]
+    fn test_fact_pair_cache_invalidated_on_count_change() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        let emb = vec![0.5f32; 1024];
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb).unwrap();
+
+        // Populate cache
+        let pairs1 = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
+        assert_eq!(pairs1.len(), 1);
+
+        // Add a third fact — cache should invalidate due to count change
+        db.upsert_document(&test_doc("doc3", "Doc 3")).unwrap();
+        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact C", "h3", &emb).unwrap();
+
+        let pairs2 = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
+        assert!(pairs2.len() > 1, "cache should have been invalidated, got {} pairs", pairs2.len());
+    }
+
+    #[test]
+    fn test_fact_pair_cache_invalidated_by_explicit_call() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        let emb = vec![0.5f32; 1024];
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb).unwrap();
+
+        // Populate cache
+        db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
+
+        // Explicit invalidation
+        db.invalidate_fact_pair_cache().unwrap();
+
+        // Verify cache meta is cleared
+        let conn = db.get_conn().unwrap();
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM cached_fact_pairs_meta", [], |r| r.get(0)).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_fact_pair_cache_different_params_miss() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        let emb = vec![0.5f32; 1024];
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb).unwrap();
+
+        // Cache with threshold=0.5
+        db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
+
+        // Different threshold should miss cache and recompute
+        let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
+        assert_eq!(pairs.len(), 1); // still 1 pair, but cache was recomputed
     }
 }
