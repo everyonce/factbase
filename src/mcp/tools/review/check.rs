@@ -139,22 +139,23 @@ pub async fn check_repository(
 
     // Server-side cursor: read pair_offset from DB, validate against current fact count
     let current_fact_count = db.get_fact_embedding_count().unwrap_or(0);
-    let pair_offset = if deep_check {
+    let (pair_offset, cv_state_exists) = if deep_check {
         match db.get_cross_validation_state(&scope_key)? {
-            Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => offset,
+            Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => (offset, true),
             Some(_) => {
                 // Fact count changed (rescan happened) — reset cursor
                 db.clear_cross_validation_state(Some(&scope_key))?;
                 // Re-acquire lock since clear deleted the row
                 let _ = db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)?;
-                0
+                (0, false)
             }
-            None => 0,
+            None => (0, false),
         }
     } else {
-        0
+        (0, false)
     };
-    let is_continuation = pair_offset > 0;
+    // Continuation when CV state exists (even at offset 0 — means question gen already ran)
+    let is_continuation = cv_state_exists;
 
     // Backward compat: accept but ignore checked_pair_ids/checked_doc_ids from args
     let checked_doc_ids: HashSet<String> = args
@@ -649,5 +650,80 @@ mod tests {
         // Without fact embeddings, no pair progress — timing fields won't appear
         // This test just verifies the code path doesn't crash
         assert!(result.get("documents_scanned").is_some());
+    }
+
+    /// When CV state exists at pair_offset=0 (question gen completed but CV hasn't started),
+    /// the handler should treat it as a continuation, skip question gen, and run CV.
+    #[tokio::test]
+    #[serial]
+    async fn test_deep_check_continues_when_question_gen_exhausts_budget() {
+        fn spike_embedding(index: usize) -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[index] = 1.0;
+            v
+        }
+        fn near_spike(index: usize, offset: f32) -> Vec<f32> {
+            let mut v = vec![0.0f32; 1024];
+            v[index] = 1.0;
+            v[(index + 1) % 1024] = offset;
+            v
+        }
+
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc_a = crate::models::Document::test_default();
+        doc_a.id = "dg1111".to_string();
+        doc_a.title = "Entity A".to_string();
+        doc_a.content = "<!-- factbase:dg1111 -->\n# Entity A\n\n- Revenue: $10M\n".to_string();
+        doc_a.repo_id = "test".to_string();
+        doc_a.file_path = "entity-a.md".to_string();
+        db.upsert_document(&doc_a).unwrap();
+
+        let mut doc_b = crate::models::Document::test_default();
+        doc_b.id = "dg2222".to_string();
+        doc_b.title = "Entity B".to_string();
+        doc_b.content = "<!-- factbase:dg2222 -->\n# Entity B\n\n- Revenue: $50M\n".to_string();
+        doc_b.repo_id = "test".to_string();
+        doc_b.file_path = "entity-b.md".to_string();
+        db.upsert_document(&doc_b).unwrap();
+
+        // Insert fact embeddings so cross-doc pairs exist
+        db.upsert_fact_embedding("dg1111_3", "dg1111", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
+        db.upsert_fact_embedding("dg2222_3", "dg2222", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new(r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#);
+        let progress = ProgressReporter::Silent;
+
+        // Simulate: first call completed question gen but exhausted budget before CV.
+        // The fix persists CV state with pair_offset=0 so the next call skips question gen.
+        let scope_key = cv_scope_key(Some("test"));
+        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        db.set_cross_validation_state(&scope_key, 0, fact_count).unwrap();
+        // Set an expired lock so the handler can re-acquire
+        db.try_acquire_cv_lock(&scope_key, "prior-call", DEFAULT_LOCK_TIMEOUT_SECS).unwrap();
+        let conn = db.get_conn().unwrap();
+        conn.execute(
+            "UPDATE cross_validation_state SET locked_at = datetime('now', '-700 seconds') WHERE scope_key = ?1",
+            [&scope_key],
+        ).unwrap();
+
+        // Second call: should detect CV state, skip question gen, run CV
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+
+        // Should have run CV (documents_scanned > 0) and not loop forever
+        let scanned = result["documents_scanned"].as_u64().unwrap_or(0);
+        assert!(scanned > 0, "continuation call should run cross-validation: {result}");
+        // Should not have suggested_entities (skipped on continuation)
+        assert!(result.get("suggested_entities").is_none(), "continuation should skip entity discovery");
     }
 }
