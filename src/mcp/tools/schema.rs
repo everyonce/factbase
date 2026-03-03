@@ -196,18 +196,20 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks and generate review questions. Checks all documents, or a single document if doc_id is provided. Use deep_check=true for cross-document validation using pre-computed fact embeddings (slower, requires LLM). This tool is time-boxed and WILL return `continue: true` for non-trivial repositories — you MUST call again with the same arguments until done (progress is saved server-side). Legacy `checked_pair_ids` and `checked_doc_ids` parameters are accepted but ignored.",
+                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` for non-trivial repositories — you MUST call again with the same arguments until done (progress is saved server-side).\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via time budget.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via server-side cursor.\n- 'discover': Entity suggestions + vocabulary extraction. Usually completes in one call.\n\nIf doc_id is provided, checks just that document (ignores mode).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
+                        "mode": { "type": "string", "enum": ["questions", "cross_validate", "discover"], "description": "Required. 'questions' for per-doc quality checks, 'cross_validate' for cross-doc fact comparison, 'discover' for entity suggestions + vocabulary." },
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
-                        "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
+                        "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted). Ignores mode when set." },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
-                        "deep_check": { "type": "boolean", "description": "Cross-validate facts against other documents for conflicts (default: false, enables thorough cross-document validation)" },
+                        "deep_check": { "type": "boolean", "description": "Deprecated: accepted but ignored. Use mode='cross_validate' instead." },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Progress is now saved server-side. Kept for backward compatibility." },
-                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Progress is now saved server-side. Kept for backward compatibility." }
-                    }
+                        "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." },
+                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." }
+                    },
+                    "required": ["mode"]
                 }
             },
             {
@@ -278,6 +280,7 @@ pub fn tools_list() -> Value {
                         "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
                         "question_type": { "type": "string", "enum": ["stale", "temporal", "ambiguous", "conflict", "precision", "duplicate", "missing"], "description": "For resolve step 2: filter questions by type. Omit to get all types." },
                         "variant": { "type": "string", "enum": ["baseline", "type_evidence", "research_batch"], "description": "For resolve: prompt variant to use. 'baseline' (default) uses standard prompts. 'type_evidence' uses type-specific evidence standards per question type. 'research_batch' restructures workflow to research per-document first, then answer all questions for that document." },
+                        "cross_validate": { "type": "boolean", "description": "For update: include cross-document fact validation step (default: false). If true, workflow includes a cross_validate mode step after questions." },
                         "skip": {
                             "oneOf": [
                                 { "type": "string", "description": "Comma-separated step names to skip" },
