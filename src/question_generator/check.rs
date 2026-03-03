@@ -75,6 +75,8 @@ pub struct CheckConfig {
     pub acquire_write_guard: bool,
     /// Maximum fact pairs per LLM batch call.
     pub batch_size: usize,
+    /// Optional repo ID to scope cross-validation to a single repository.
+    pub repo_id: Option<String>,
 }
 
 /// Result of linting a single document.
@@ -371,7 +373,7 @@ pub async fn check_all_documents(
         let fact_count = db.get_fact_embedding_count().unwrap_or(0);
         if fact_count > 0 {
             let pairs = db
-                .find_all_cross_doc_fact_pairs(0.3, 5)
+                .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
                 .unwrap_or_default();
             if !pairs.is_empty() {
                 // Build effective checked_pair_ids: merge explicit pair IDs with
@@ -687,6 +689,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -717,6 +720,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -743,6 +747,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -770,6 +775,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -803,6 +809,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -831,6 +838,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -869,6 +877,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -898,6 +907,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -926,6 +936,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
                     acquire_write_guard: false,
                     batch_size: 10,
+                    repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -959,6 +970,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -989,6 +1001,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1021,6 +1034,7 @@ mod tests {
             checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1049,6 +1063,7 @@ mod tests {
                     checked_pair_ids: HashSet::new(),
             acquire_write_guard: true,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
@@ -1076,6 +1091,7 @@ mod tests {
             checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1108,6 +1124,7 @@ mod tests {
             checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1196,6 +1213,7 @@ mod tests {
             checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         }
     }
 
@@ -1252,7 +1270,7 @@ mod tests {
         assert!(db.get_fact_embedding_count().unwrap() >= 7);
 
         // Verify pairs are found
-        let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5).unwrap();
+        let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap();
         assert!(!pairs.is_empty(), "should find cross-doc fact pairs");
 
         // LLM returns CONTRADICTS for all pairs (pair index 1 in each batch)
@@ -1647,6 +1665,7 @@ mod tests {
             checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, None, &config, &progress)
@@ -1798,6 +1817,7 @@ mod tests {
             checked_pair_ids: HashSet::new(),
             acquire_write_guard: false,
             batch_size: 10,
+            repo_id: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)

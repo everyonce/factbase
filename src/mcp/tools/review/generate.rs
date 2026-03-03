@@ -129,7 +129,7 @@ async fn generate_questions_single(
         // Prefer fact-pair mode if fact embeddings exist
         let fact_count = db.get_fact_embedding_count().unwrap_or(0);
         if fact_count > 0 {
-            let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5).unwrap_or_default();
+            let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap_or_default();
             // Filter to pairs involving this document
             let doc_pairs: Vec<_> = pairs
                 .into_iter()

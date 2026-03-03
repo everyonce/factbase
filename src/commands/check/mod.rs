@@ -385,7 +385,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
             // Try fact-pair mode first (uses pre-computed embeddings from scan)
             let fact_count = db.get_fact_embedding_count().unwrap_or(0);
             if fact_count > 0 {
-                let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5).unwrap_or_default();
+                let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, Some(&repo.id)).unwrap_or_default();
                 if !pairs.is_empty() {
                     if is_table_format && !args.quiet {
                         println!("  Cross-checking {} fact pairs...", pairs.len());
