@@ -104,6 +104,7 @@
 // Submodules
 mod compression;
 mod cross_validation;
+pub use cross_validation::{CvLockResult, DEFAULT_LOCK_TIMEOUT_SECS};
 mod documents;
 mod embeddings;
 mod fact_embeddings;

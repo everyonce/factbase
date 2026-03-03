@@ -110,6 +110,10 @@ pub struct CheckOutput {
     pub pair_progress: Option<(usize, usize)>,
     /// Domain vocabulary candidates extracted during deep_check.
     pub vocabulary_candidates: Vec<VocabCandidate>,
+    /// Wall-clock seconds spent in cross-validation (if any).
+    pub cv_elapsed_secs: Option<f64>,
+    /// Pairs processed per second during cross-validation.
+    pub cv_pairs_per_second: Option<f64>,
 }
 
 /// A domain vocabulary term extracted by LLM during deep_check.
@@ -384,9 +388,12 @@ pub async fn check_all_documents(
     let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
     let mut pair_offset: usize = config.pair_offset;
     let mut pair_progress: Option<(usize, usize)> = None;
+    let mut cv_elapsed_secs: Option<f64> = None;
+    let mut cv_pairs_per_second: Option<f64> = None;
     if llm.is_some() && !deadline_hit {
         progress.phase("Cross-document validation");
         let llm = llm.unwrap();
+        let cv_start = Instant::now();
 
         // Try fact-pair mode first (uses pre-computed embeddings from scan)
         let fact_count = db.get_fact_embedding_count().unwrap_or(0);
@@ -444,6 +451,13 @@ pub async fn check_all_documents(
                     Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
                 }
             }
+        }
+        // Record cross-validation timing
+        let cv_elapsed = cv_start.elapsed().as_secs_f64();
+        cv_elapsed_secs = Some(cv_elapsed);
+        let pairs_this_call = pair_offset.saturating_sub(config.pair_offset);
+        if pairs_this_call > 0 && cv_elapsed > 0.0 {
+            cv_pairs_per_second = Some(pairs_this_call as f64 / cv_elapsed);
         }
     }
 
@@ -535,6 +549,8 @@ pub async fn check_all_documents(
         pair_offset,
         pair_progress,
         vocabulary_candidates,
+        cv_elapsed_secs,
+        cv_pairs_per_second,
     })
 }
 
