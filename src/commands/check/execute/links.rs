@@ -7,14 +7,6 @@ use factbase::{Document, Link, MANUAL_LINK_REGEX};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
-
-/// Extract the filename stem from a file path (e.g., "people/alice-chen.md" → "alice-chen").
-fn file_stem(file_path: &str) -> Option<&str> {
-    Path::new(file_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-}
 
 /// Check a document for orphan and broken links.
 ///
@@ -304,11 +296,4 @@ mod tests {
         assert_eq!(result.warnings, 2);
     }
 
-    #[test]
-    fn test_file_stem_extraction() {
-        assert_eq!(file_stem("people/alice-chen.md"), Some("alice-chen"));
-        assert_eq!(file_stem("projects/atlas.md"), Some("atlas"));
-        assert_eq!(file_stem("notes.md"), Some("notes"));
-        assert_eq!(file_stem("deep/nested/path/doc.md"), Some("doc"));
-    }
 }
