@@ -63,6 +63,7 @@ pub struct WorkflowsConfig {
 /// | `improve.resolve` | `doc_hint`, `stale`, `ctx` |
 /// | `improve.enrich` | `doc_hint`, `fields`, `ctx` |
 /// | `improve.check` | `doc_hint`, `compare_note` |
+// TODO: update.check and update.scan instructions should explicitly mention time_budget_secs (#197, #198)
 pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
     HashMap::from([
         ("setup.init", &["path"] as &[&str]),
