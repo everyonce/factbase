@@ -20,7 +20,7 @@ pub async fn scan_repository(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
+    let repo_id = crate::mcp::tools::helpers::resolve_repo_filter(db, get_str_arg(args, "repo"))?;
 
     let repos = db.list_repositories()?;
     let repo = if let Some(id) = repo_id {

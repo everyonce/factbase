@@ -17,7 +17,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 
 use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
-use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective};
+use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective, resolve_repo_filter};
 use super::review::format_question_json;
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
@@ -110,7 +110,8 @@ pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document 
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let workflow = get_str_arg_required(args, "workflow")?;
     let step = get_u64_arg(args, "step", 1) as usize;
-    let perspective = load_perspective(db, get_str_arg(args, "repo"));
+    let repo_resolved = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+    let perspective = load_perspective(db, repo_resolved.as_deref());
     let wf_config = crate::Config::load(None)
         .unwrap_or_default()
         .workflows;
@@ -119,12 +120,12 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
         "update" => Ok(update_step(step, args, &perspective, &wf_config)),
         "resolve" => {
             let deferred = db
-                .count_deferred_questions(get_str_arg(args, "repo"))
+                .count_deferred_questions(repo_resolved.as_deref())
                 .unwrap_or(0);
             Ok(resolve_step(step, args, &perspective, deferred, db, &wf_config))
         }
         "ingest" => Ok(ingest_step(step, args, &perspective, &wf_config)),
-        "enrich" => Ok(enrich_step(step, args, &perspective, db, &wf_config)),
+        "enrich" => Ok(enrich_step(step, args, &perspective, db, repo_resolved.as_deref(), &wf_config)),
         "improve" => {
             let doc_id = get_str_arg(args, "doc_id");
             let skip = parse_skip_steps(args);
@@ -941,7 +942,7 @@ fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&str>) -> Va
     Value::Array(items)
 }
 
-fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database, wf: &WorkflowsConfig) -> Value {
+fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database, repo: Option<&str>, wf: &WorkflowsConfig) -> Value {
     let doc_type = get_str_arg(args, "doc_type").unwrap_or("all types");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
@@ -949,8 +950,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
     match step {
         1 => {
             let type_filter = if doc_type != "all types" { Some(doc_type) } else { None };
-            let repo_filter = get_str_arg(args, "repo");
-            let quality = bulk_quality(db, type_filter, repo_filter);
+            let quality = bulk_quality(db, type_filter, repo);
             serde_json::json!({
                 "workflow": "enrich",
                 "step": 1, "total_steps": total,
@@ -1219,7 +1219,7 @@ mod tests {
     fn test_enrich_includes_required_fields() {
         let p = mock_perspective();
         let (db, _tmp) = test_db();
-        let step = enrich_step(2, &serde_json::json!({}), &p, &db, &wf());
+        let step = enrich_step(2, &serde_json::json!({}), &p, &db, None, &wf());
         assert!(step["instruction"]
             .as_str()
             .unwrap()
@@ -1229,7 +1229,7 @@ mod tests {
     #[test]
     fn test_enrich_step2_mentions_scoring() {
         let (db, _tmp) = test_db();
-        let step = enrich_step(2, &serde_json::json!({}), &None, &db, &wf());
+        let step = enrich_step(2, &serde_json::json!({}), &None, &db, None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("Score this document"));
         assert!(instruction.contains("Temporal"));
@@ -1506,7 +1506,7 @@ mod tests {
         let content_b = "<!-- factbase:bbb001 -->\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
         insert_test_doc(&db, "aaa001", content_a);
         insert_test_doc(&db, "bbb001", content_b);
-        let step = enrich_step(1, &serde_json::json!({}), &None, &db, &wf());
+        let step = enrich_step(1, &serde_json::json!({}), &None, &db, None, &wf());
         let quality = step["entity_quality"].as_array().unwrap();
         assert_eq!(quality.len(), 2);
         // First item should have higher attention_score (aaa001 has no tags/sources)
@@ -1518,7 +1518,7 @@ mod tests {
     #[test]
     fn test_enrich_step1_empty_repo() {
         let (db, _tmp) = test_db();
-        let step = enrich_step(1, &serde_json::json!({}), &None, &db, &wf());
+        let step = enrich_step(1, &serde_json::json!({}), &None, &db, None, &wf());
         let quality = step["entity_quality"].as_array().unwrap();
         assert!(quality.is_empty());
     }
@@ -1558,7 +1558,7 @@ mod tests {
     #[test]
     fn test_enrich_step3_mentions_link_detection() {
         let (db, _tmp) = test_db();
-        let step = enrich_step(3, &serde_json::json!({}), &None, &db, &wf());
+        let step = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("link detection"), "enrich step 3 should mention link detection");
         assert!(instruction.contains("exact title"), "should emphasize exact titles");
@@ -1650,7 +1650,7 @@ mod tests {
         let setup = setup_step(4, &serde_json::json!({}), &wf());
         let ingest = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let (db, _tmp) = test_db();
-        let enrich = enrich_step(3, &serde_json::json!({}), &None, &db, &wf());
+        let enrich = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
 
         for (name, step) in [("setup", setup), ("ingest", ingest), ("enrich", enrich)] {
             let instruction = step["instruction"].as_str().unwrap();

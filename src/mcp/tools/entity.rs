@@ -4,7 +4,7 @@ use super::helpers::{
     build_link_stats_json, build_review_stats_json, build_source_stats_json,
     build_temporal_stats_json,
 };
-use super::{get_bool_arg, get_str_arg, get_u64_arg};
+use super::{get_bool_arg, get_str_arg, get_u64_arg, resolve_repo_filter};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::models::load_perspective_from_file;
@@ -96,11 +96,11 @@ pub fn get_entity(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
 #[instrument(name = "mcp_list_entities", skip(db, args))]
 pub fn list_entities(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let doc_type = get_str_arg(args, "doc_type");
-    let repo = get_str_arg(args, "repo");
+    let repo = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let title_filter = get_str_arg(args, "title_filter");
     let limit = get_u64_arg(args, "limit", 50) as usize;
 
-    let docs = db.list_documents(doc_type, repo, title_filter, limit)?;
+    let docs = db.list_documents(doc_type, repo.as_deref(), title_filter, limit)?;
 
     let items: Vec<Value> = docs.into_iter().map(|d| d.to_summary_json()).collect();
 
@@ -123,7 +123,7 @@ pub fn list_entities(db: &Database, args: &Value) -> Result<Value, FactbaseError
 /// - `FactbaseError::NotFound` if no repositories exist
 #[instrument(name = "mcp_get_perspective", skip(db, args))]
 pub fn get_perspective(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
+    let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
 
     let repos = db.list_repositories_with_stats()?;
     let (repo, doc_count) = if let Some(id) = repo_id {

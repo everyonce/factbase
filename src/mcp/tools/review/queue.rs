@@ -2,7 +2,7 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::mcp::tools::{get_bool_arg, get_str_arg, get_u64_arg};
+use crate::mcp::tools::{get_bool_arg, get_str_arg, get_u64_arg, resolve_repo_filter};
 use crate::models::QuestionType;
 use crate::processor::parse_review_queue;
 use crate::ProgressReporter;
@@ -47,7 +47,7 @@ pub fn get_review_queue(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_filter = get_str_arg(args, "repo").map(String::from);
+    let repo_filter = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let doc_id_owned = args.get("doc_id").and_then(|v| {
         v.as_str()
             .map(String::from)

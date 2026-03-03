@@ -5,7 +5,7 @@ use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
 use crate::mcp::tools::helpers::resolve_doc_path;
-use crate::mcp::tools::{get_bool_arg, get_str_arg};
+use crate::mcp::tools::{get_bool_arg, get_str_arg, resolve_repo_filter};
 use crate::patterns::has_corruption_artifacts;
 use crate::processor::{append_review_questions, content_hash, parse_review_queue};
 use crate::question_generator::cross_validate::cross_validate_document;
@@ -215,7 +215,8 @@ async fn generate_questions_all(
     args: &Value,
     dry_run: bool,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
+    let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+    let repo_id = repo_id.as_deref();
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 

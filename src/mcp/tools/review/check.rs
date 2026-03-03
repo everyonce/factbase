@@ -4,7 +4,7 @@ use crate::database::{CvLockResult, Database, DEFAULT_LOCK_TIMEOUT_SECS};
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::mcp::tools::{get_str_arg, load_perspective};
+use crate::mcp::tools::{get_str_arg, load_perspective, resolve_repo_filter};
 use crate::progress::ProgressReporter;
 use crate::question_generator::check::{check_all_documents, CheckConfig};
 use serde_json::Value;
@@ -98,7 +98,8 @@ async fn check_questions(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
+    let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+    let repo_id = repo_id.as_deref();
     let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
 
     let config_file = crate::Config::load(None);
@@ -180,7 +181,8 @@ async fn check_cross_validate(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
+    let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+    let repo_id = repo_id.as_deref();
     let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
 
     let config_file = crate::Config::load(None);
@@ -317,7 +319,8 @@ async fn check_discover(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg(args, "repo");
+    let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+    let repo_id = repo_id.as_deref();
     let perspective = load_perspective(db, repo_id);
     let docs = load_docs(db, repo_id)?;
 

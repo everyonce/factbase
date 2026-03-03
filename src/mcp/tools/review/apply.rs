@@ -4,7 +4,7 @@ use crate::answer_processor::apply_all::{apply_all_review_answers, ApplyConfig, 
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
-use crate::mcp::tools::{get_bool_arg, get_str_arg};
+use crate::mcp::tools::{get_bool_arg, get_str_arg, resolve_repo_filter};
 use crate::processor::parse_review_queue;
 use crate::progress::ProgressReporter;
 use serde_json::Value;
@@ -35,14 +35,14 @@ pub async fn apply_review_answers(
 
     let doc_id_owned = get_doc_id_arg(args);
     let doc_id_filter = doc_id_owned.as_deref();
-    let repo_filter = get_str_arg(args, "repo");
+    let repo_filter = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let dry_run = get_bool_arg(args, "dry_run", false);
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     let config = ApplyConfig {
         doc_id_filter,
-        repo_filter,
+        repo_filter: repo_filter.as_deref(),
         dry_run,
         since: None,
         deadline,
