@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 11;
+pub(super) const SCHEMA_VERSION: i32 = 12;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -107,6 +107,13 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
             fact_count INTEGER NOT NULL DEFAULT 0,
             updated_at TIMESTAMP NOT NULL
         );",
+    ),
+    // Version 12: Lock/lease columns for cross-validation concurrency
+    (
+        12,
+        "Add lock columns to cross_validation_state",
+        "ALTER TABLE cross_validation_state ADD COLUMN locked_by TEXT;
+         ALTER TABLE cross_validation_state ADD COLUMN locked_at TEXT;",
     ),
 ];
 
@@ -241,7 +248,9 @@ impl Database {
                 scope_key TEXT PRIMARY KEY,
                 pair_offset INTEGER NOT NULL DEFAULT 0,
                 fact_count INTEGER NOT NULL DEFAULT 0,
-                updated_at TIMESTAMP NOT NULL
+                updated_at TIMESTAMP NOT NULL,
+                locked_by TEXT,
+                locked_at TEXT
             );",
         )?;
 
