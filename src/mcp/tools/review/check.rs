@@ -13,6 +13,11 @@ use std::collections::HashSet;
 /// Default concurrency for parallel check (LLM calls).
 const LINT_CONCURRENCY: usize = 5;
 
+/// Scope key for server-side cross-validation state.
+fn cv_scope_key(repo_id: Option<&str>) -> String {
+    repo_id.unwrap_or("__all__").to_string()
+}
+
 /// Runs check across all documents in a repository via MCP.
 pub async fn check_repository(
     db: &Database,
@@ -88,17 +93,30 @@ pub async fn check_repository(
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
-    let checked_pair_ids: HashSet<String> = args
-        .get("checked_pair_ids")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .unwrap_or_default();
+    // Server-side cursor: read pair_offset from DB, validate against current fact count
+    let scope_key = cv_scope_key(repo_id);
+    let current_fact_count = db.get_fact_embedding_count().unwrap_or(0);
+    let pair_offset = if deep_check {
+        match db.get_cross_validation_state(&scope_key)? {
+            Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => offset,
+            Some(_) => {
+                // Fact count changed (rescan happened) — reset cursor
+                db.clear_cross_validation_state(Some(&scope_key))?;
+                0
+            }
+            None => 0,
+        }
+    } else {
+        0
+    };
+    let is_continuation = pair_offset > 0;
+
+    // Backward compat: accept but ignore checked_pair_ids/checked_doc_ids from args
     let checked_doc_ids: HashSet<String> = args
         .get("checked_doc_ids")
         .and_then(Value::as_array)
         .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
         .unwrap_or_default();
-    let is_continuation = !checked_pair_ids.is_empty() || !checked_doc_ids.is_empty();
 
     let config = CheckConfig {
         stale_days,
@@ -107,7 +125,7 @@ pub async fn check_repository(
         concurrency: check_concurrency,
         deadline,
         checked_doc_ids,
-        checked_pair_ids,
+        pair_offset,
         acquire_write_guard: true,
         batch_size,
         repo_id: repo_id.map(String::from),
@@ -115,6 +133,12 @@ pub async fn check_repository(
     };
 
     let output = check_all_documents(&docs, db, embedding, effective_llm, &config, progress).await?;
+
+    // Persist server-side cursor after successful processing
+    if deep_check && output.pair_progress.is_some() {
+        db.set_cross_validation_state(&scope_key, output.pair_offset, current_fact_count)?;
+    }
+
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
@@ -177,13 +201,12 @@ pub async fn check_repository(
     });
 
     // On continuation calls, cross-validation completion is the real progress signal.
-    // If pair_progress is None (no pairs to check) or shows complete, the operation is done
-    // regardless of docs_processed (which is 0 when question gen was skipped).
-    let cross_validation_complete = is_continuation
-        && match output.pair_progress {
-            None => true,
-            Some((processed, total)) => processed >= total,
-        };
+    // Also treat "no pairs to check" (pair_progress=None with deep_check) as complete.
+    let cross_validation_complete = match output.pair_progress {
+        None if deep_check => true, // no fact pairs → nothing to cross-validate
+        Some((processed, total)) if processed >= total => true,
+        _ => false,
+    };
 
     // Add progress/continue fields when deadline was hit
     let effective_docs_processed = if cross_validation_complete {
@@ -195,44 +218,34 @@ pub async fn check_repository(
         &mut result, effective_docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
     );
 
-    // Return checked doc IDs so the caller can resume cross-validation (backward compat)
-    if !output.checked_doc_ids.is_empty() && output.docs_processed < output.docs_total {
-        result["checked_doc_ids"] = serde_json::to_value(&output.checked_doc_ids).unwrap_or_default();
-    }
-
-    // Return checked pair IDs for precise cursor-based resumption
-    if !output.checked_pair_ids.is_empty() {
-        if let Some((processed, total)) = output.pair_progress {
-            if processed < total {
-                result["checked_pair_ids"] = serde_json::to_value(&output.checked_pair_ids).unwrap_or_default();
-                let remaining = total.saturating_sub(processed);
-                let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
-                // Estimate remaining iterations: pairs processed this call = total processed - input cursor size
-                let input_cursor_size = args
-                    .get("checked_pair_ids")
-                    .and_then(Value::as_array)
-                    .map(|a| a.len())
-                    .unwrap_or(0);
-                let pairs_this_call = processed.saturating_sub(input_cursor_size).max(1);
-                let estimated_iterations = (remaining + pairs_this_call - 1) / pairs_this_call;
-                result["progress"] = serde_json::json!({
-                    "processed": processed,
-                    "remaining": remaining,
-                    "total": total,
-                    "percent_complete": pct,
-                    "estimated_iterations_remaining": estimated_iterations,
-                });
-                result["continue"] = serde_json::json!(true);
-                result["message"] = serde_json::json!(format!(
-                    "⚠️ MANDATORY CONTINUATION — {processed}/{total} fact pairs checked ({pct}%, ~{estimated_iterations} calls remaining). \
-                     You MUST call check_repository again with the `checked_pair_ids` array from this response. \
-                     Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
-                     Just pass back checked_pair_ids until this message no longer appears."
-                ));
-                result["when_done"] = serde_json::json!(
-                    "MANDATORY: Call check_repository again with the same arguments plus checked_pair_ids. Do NOT use the think tool to decide whether to continue. Just call it."
-                );
-            }
+    // Server-side cursor progress: no cursor in response, just progress info
+    if let Some((processed, total)) = output.pair_progress {
+        if processed < total {
+            let remaining = total.saturating_sub(processed);
+            let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
+            let pairs_this_call = processed.saturating_sub(pair_offset).max(1);
+            let estimated_iterations = (remaining + pairs_this_call - 1) / pairs_this_call;
+            result["progress"] = serde_json::json!({
+                "processed": processed,
+                "remaining": remaining,
+                "total": total,
+                "percent_complete": pct,
+                "estimated_iterations_remaining": estimated_iterations,
+            });
+            result["continue"] = serde_json::json!(true);
+            result["message"] = serde_json::json!(format!(
+                "⚠️ MANDATORY CONTINUATION — {processed}/{total} fact pairs checked ({pct}%, ~{estimated_iterations} calls remaining). \
+                 You MUST call check_repository again with the same arguments (progress is saved server-side). \
+                 Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
+                 Just call check_repository again until this message no longer appears."
+            ));
+            result["when_done"] = serde_json::json!(
+                "MANDATORY: Call check_repository again with the same arguments. Progress is saved automatically. Do NOT use the think tool to decide whether to continue. Just call it."
+            );
+        }
+        // Clear server-side state when complete
+        if processed >= total {
+            let _ = db.clear_cross_validation_state(Some(&scope_key));
         }
     }
 
@@ -272,15 +285,9 @@ mod tests {
         db.upsert_document(&doc).unwrap();
 
         let embedding = MockEmbedding::new(4);
-        // MockLlm returns "[]" — if entity discovery ran, it would still produce
-        // an empty vec, but the key point is it shouldn't even be called.
         let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
-        // time_budget_secs=5 is the minimum, but we set it so a deadline exists.
-        // The check_all_documents call with a past-deadline config will finish
-        // instantly (0 docs processed), then the deadline_hit guard should skip
-        // entity discovery.
         let args = serde_json::json!({
             "repo": "test",
             "deep_check": true,
@@ -291,31 +298,24 @@ mod tests {
         let _result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
             .await
             .unwrap();
-
-        // With a 5s budget the deadline won't be hit for this tiny dataset,
-        // so suggested_entities may appear. The important invariant is that
-        // when the deadline IS hit, entity discovery is skipped. We test that
-        // by verifying the deadline_hit logic directly below.
     }
 
     #[test]
     fn test_deadline_hit_skips_entity_discovery_logic() {
-        // Verify the guard condition: past deadline → deadline_hit = true
         let past = Some(std::time::Instant::now() - std::time::Duration::from_secs(1));
         assert!(past.is_some_and(|d| std::time::Instant::now() > d));
 
-        // No deadline → deadline_hit = false
         let none: Option<std::time::Instant> = None;
         assert!(!none.is_some_and(|d| std::time::Instant::now() > d));
 
-        // Future deadline → deadline_hit = false
         let future = Some(std::time::Instant::now() + std::time::Duration::from_secs(60));
         assert!(!future.is_some_and(|d| std::time::Instant::now() > d));
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_check_repository_accepts_checked_pair_ids() {
+    async fn test_check_repository_accepts_legacy_checked_pair_ids() {
+        // Legacy checked_pair_ids in args should be accepted without error (ignored)
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
@@ -330,7 +330,6 @@ mod tests {
         let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
-        // Pass checked_pair_ids — should be accepted without error
         let args = serde_json::json!({
             "repo": "test",
             "deep_check": true,
@@ -341,8 +340,9 @@ mod tests {
         let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
             .await
             .unwrap();
-        // Should complete without error
         assert!(result.get("documents_scanned").is_some());
+        // Server-side cursor: no checked_pair_ids in response
+        assert!(result.get("checked_pair_ids").is_none());
     }
 
     #[tokio::test]
@@ -362,7 +362,6 @@ mod tests {
         let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
-        // Pass old-style checked_doc_ids — should still work
         let args = serde_json::json!({
             "repo": "test",
             "deep_check": true,
@@ -378,65 +377,38 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_continuation_skips_entity_discovery_and_vocab() {
+    async fn test_server_side_cursor_persists_across_calls() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
         let mut doc = crate::models::Document::test_default();
-        doc.id = "cn1111".to_string();
+        doc.id = "sv1111".to_string();
         doc.title = "Test Doc".to_string();
-        doc.content = "<!-- factbase:cn1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.content = "<!-- factbase:sv1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
+
+        // Simulate server-side state from a previous call
+        let scope_key = cv_scope_key(Some("test"));
+        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        db.set_cross_validation_state(&scope_key, 42, fact_count).unwrap();
 
         let embedding = MockEmbedding::new(4);
         let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
-        // Continuation call with checked_pair_ids — should skip entity discovery and vocab
+        // Call without any cursor args — should pick up from DB
         let args = serde_json::json!({
             "repo": "test",
             "deep_check": true,
             "dry_run": true,
-            "checked_pair_ids": ["cn1111_3:cn2222_5"],
         });
 
         let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
             .await
             .unwrap();
-        // Continuation should not produce suggested_entities or vocabulary_candidates
-        assert!(result.get("suggested_entities").is_none());
-        assert!(result.get("vocabulary_candidates").is_none());
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_continuation_via_checked_doc_ids_skips_bonus_phases() {
-        let (db, _tmp) = test_db();
-        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
-
-        let mut doc = crate::models::Document::test_default();
-        doc.id = "cd1111".to_string();
-        doc.title = "Test Doc".to_string();
-        doc.content = "<!-- factbase:cd1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
-        doc.repo_id = "test".to_string();
-        db.upsert_document(&doc).unwrap();
-
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        let progress = ProgressReporter::Silent;
-
-        // Continuation via legacy checked_doc_ids
-        let args = serde_json::json!({
-            "repo": "test",
-            "deep_check": true,
-            "dry_run": true,
-            "checked_doc_ids": ["cd1111"],
-        });
-
-        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
-            .await
-            .unwrap();
+        assert!(result.get("documents_scanned").is_some());
+        // Continuation should skip entity discovery and vocab
         assert!(result.get("suggested_entities").is_none());
         assert!(result.get("vocabulary_candidates").is_none());
     }
@@ -444,7 +416,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_continuation_no_remaining_pairs_does_not_loop() {
-        // Regression: continuation call with no remaining pairs should NOT return continue:true
+        // Regression: server-side cursor at completion should NOT return continue:true
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
@@ -459,25 +431,54 @@ mod tests {
         let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
-        // Continuation call with time_budget active and checked_pair_ids.
-        // With only 1 doc and no fact embeddings, cross-validation has nothing to do.
-        // Previously this caused continue:true at 0/1 → infinite loop.
+        // First call without time_budget — should complete fully
         let args = serde_json::json!({
             "repo": "test",
             "deep_check": true,
             "dry_run": true,
-            "time_budget_secs": 30,
-            "checked_pair_ids": ["nl1111_1:nl1111_2"],
         });
 
         let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
             .await
             .unwrap();
-        // Must NOT return continue:true when there's nothing left to do
+        // With no fact embeddings and no time budget, should complete without continue
         assert_ne!(
             result.get("continue").and_then(Value::as_bool),
             Some(true),
-            "continuation with no remaining pairs should not loop: {result}"
+            "no-budget call with no fact pairs should not loop: {result}"
+        );
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_response_has_no_checked_pair_ids_field() {
+        // The whole point: responses should never contain checked_pair_ids
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "nc1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:nc1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert!(
+            result.get("checked_pair_ids").is_none(),
+            "response must not contain checked_pair_ids (server-side cursor): {result}"
         );
     }
 }

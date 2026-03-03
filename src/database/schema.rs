@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 10;
+pub(super) const SCHEMA_VERSION: i32 = 11;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -96,6 +96,17 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
             FOREIGN KEY (document_id) REFERENCES documents(id)
         );
         CREATE INDEX IF NOT EXISTS idx_fact_meta_doc ON fact_metadata(document_id);",
+    ),
+    // Version 11: Server-side cross-validation cursor
+    (
+        11,
+        "Add cross_validation_state table",
+        "CREATE TABLE IF NOT EXISTS cross_validation_state (
+            scope_key TEXT PRIMARY KEY,
+            pair_offset INTEGER NOT NULL DEFAULT 0,
+            fact_count INTEGER NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP NOT NULL
+        );",
     ),
 ];
 
@@ -222,6 +233,16 @@ impl Database {
                 PRIMARY KEY (text_hash, model)
             );
             CREATE INDEX IF NOT EXISTS idx_query_cache_last_used ON query_embedding_cache(last_used_at);",
+        )?;
+
+        // Server-side cross-validation cursor
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cross_validation_state (
+                scope_key TEXT PRIMARY KEY,
+                pair_offset INTEGER NOT NULL DEFAULT 0,
+                fact_count INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP NOT NULL
+            );",
         )?;
 
         // Run any pending migrations
