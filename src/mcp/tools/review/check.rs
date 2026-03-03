@@ -176,9 +176,23 @@ pub async fn check_repository(
         "details": details,
     });
 
+    // On continuation calls, cross-validation completion is the real progress signal.
+    // If pair_progress is None (no pairs to check) or shows complete, the operation is done
+    // regardless of docs_processed (which is 0 when question gen was skipped).
+    let cross_validation_complete = is_continuation
+        && match output.pair_progress {
+            None => true,
+            Some((processed, total)) => processed >= total,
+        };
+
     // Add progress/continue fields when deadline was hit
+    let effective_docs_processed = if cross_validation_complete {
+        output.docs_total
+    } else {
+        output.docs_processed
+    };
     crate::mcp::tools::helpers::apply_time_budget_progress(
-        &mut result, output.docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
+        &mut result, effective_docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
     );
 
     // Return checked doc IDs so the caller can resume cross-validation (backward compat)
@@ -425,5 +439,45 @@ mod tests {
             .unwrap();
         assert!(result.get("suggested_entities").is_none());
         assert!(result.get("vocabulary_candidates").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_continuation_no_remaining_pairs_does_not_loop() {
+        // Regression: continuation call with no remaining pairs should NOT return continue:true
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "nl1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:nl1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // Continuation call with time_budget active and checked_pair_ids.
+        // With only 1 doc and no fact embeddings, cross-validation has nothing to do.
+        // Previously this caused continue:true at 0/1 → infinite loop.
+        let args = serde_json::json!({
+            "repo": "test",
+            "deep_check": true,
+            "dry_run": true,
+            "time_budget_secs": 30,
+            "checked_pair_ids": ["nl1111_1:nl1111_2"],
+        });
+
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        // Must NOT return continue:true when there's nothing left to do
+        assert_ne!(
+            result.get("continue").and_then(Value::as_bool),
+            Some(true),
+            "continuation with no remaining pairs should not loop: {result}"
+        );
     }
 }
