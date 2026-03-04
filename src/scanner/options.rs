@@ -37,6 +37,8 @@ pub struct ScanOptions {
     pub force_relink: bool,
     /// Optional deadline for time-boxed operations
     pub deadline: Option<Instant>,
+    /// Number of files to skip (for resume after interruption)
+    pub file_offset: usize,
 }
 
 impl Default for ScanOptions {
@@ -58,6 +60,7 @@ impl Default for ScanOptions {
             skip_embeddings: false,
             force_relink: false,
             deadline: None,
+            file_offset: 0,
         }
     }
 }

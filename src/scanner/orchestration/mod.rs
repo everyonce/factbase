@@ -164,7 +164,7 @@ pub async fn full_scan(
     let scan_start = Instant::now();
     let file_discovery_start = Instant::now();
 
-    let files = ctx.scanner.find_markdown_files(&repo.path);
+    let mut files = ctx.scanner.find_markdown_files(&repo.path);
     let known = db.get_documents_for_repo(&repo.id)?;
     let mut seen = HashSet::new();
     let mut changed_ids = HashSet::new();
@@ -181,6 +181,16 @@ pub async fn full_scan(
 
     info!("Scanning {} files in {}", total_files, repo.path.display());
     ctx.progress.phase("Indexing documents");
+
+    // Apply file_offset for resume — skip already-processed files
+    let (files, total_files) = if ctx.opts.file_offset > 0 && ctx.opts.file_offset < files.len() {
+        let remaining = files.split_off(ctx.opts.file_offset);
+        let total = ctx.opts.file_offset + remaining.len();
+        (remaining, total)
+    } else {
+        let total = files.len();
+        (files, total)
+    };
 
     // Create progress bar if enabled and enough files
     let pb = if ctx.opts.show_progress && !ctx.opts.verbose && !ctx.opts.dry_run {
@@ -210,6 +220,7 @@ pub async fn full_scan(
         if let Some(deadline) = ctx.opts.deadline {
             if Instant::now() > deadline {
                 result.total = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+                result.file_offset = ctx.opts.file_offset + global_idx;
                 result.interrupted = true;
                 return Ok(result);
             }

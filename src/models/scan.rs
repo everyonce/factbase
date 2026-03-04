@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+fn is_zero(v: &usize) -> bool { *v == 0 }
+
 /// Results from a scan operation, tracking document changes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ScanResult {
@@ -35,6 +37,9 @@ pub struct ScanResult {
     /// True if embedding generation was skipped (--no-embed)
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub embeddings_skipped: bool,
+    /// File offset for resume (total files processed including from previous calls)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub file_offset: usize,
 }
 
 impl std::fmt::Display for ScanResult {

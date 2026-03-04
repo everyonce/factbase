@@ -40,16 +40,16 @@ pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\
 
 pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
 
-pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings, fact embeddings, and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for any non-trivial repository.\n   When it does, you MUST call it again until `continue` is no longer in the response. Do NOT stop early.\n2. Call check_repository with mode='questions' and time_budget_secs=120 to see initial quality.\n   ⚠️ PAGING: Same as above — it WILL return `continue: true`. Progress is saved server-side.\n   You MUST call it again with the same arguments until `continue` is no longer in the response. Do NOT stop early.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
+pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings, fact embeddings, and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n2. Call check_repository with mode='questions' and time_budget_secs=120 to see initial quality.\n   ⚠️ PAGING: Same as above — it WILL return `continue: true` with a resume token.\n   You MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
 
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes, detect cross-entity links, and generate fact-level embeddings for cross-validation.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for any non-trivial repository.\n   When it does, you MUST call it again until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation\n\nHow links work: scan_repository finds entity title mentions in document text. Each doc should link to at least 1 other. Low link density means entities are isolated — they discuss related topics but don't reference each other by name.{ctx}";
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes, detect cross-entity links, and generate fact-level embeddings for cross-validation.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation\n\nHow links work: scan_repository finds entity title mentions in document text. Each doc should link to at least 1 other. Low link density means entities are isolated — they discuss related topics but don't reference each other by name.{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_QUESTIONS_INSTRUCTION: &str = "Run per-document quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository with mode='questions' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` for non-trivial repositories.\n   You MUST call it again with the same arguments until `continue` is no longer in the response.\n   Do NOT stop early, do NOT skip ahead, and do NOT report partial results.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
+pub(crate) const DEFAULT_UPDATE_QUESTIONS_INSTRUCTION: &str = "Run per-document quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository with mode='questions' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for non-trivial repositories.\n   You MUST call it again passing the resume token until `continue` is no longer in the response.\n   Do NOT stop early, do NOT skip ahead, and do NOT report partial results.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
 
-pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Run cross-document fact comparison to find contradictions between documents.\n\n1. Call check_repository with mode='cross_validate' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` when there are more pairs to check.\n   Progress is saved server-side — you MUST call check_repository again with the same arguments.\n   Keep calling until `continue` is no longer in the response. This typically takes 10-30 iterations\n   for medium repositories — that is normal and expected. Do NOT stop early, do NOT reason about\n   whether to continue, do NOT skip ahead, and do NOT report partial results.\n   The response includes `estimated_iterations_remaining` — just call again mechanically until done.\n\n2. Record: new conflict questions found";
+pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Run cross-document fact comparison to find contradictions between documents.\n\n1. Call check_repository with mode='cross_validate' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token when there are more pairs to check.\n   You MUST call check_repository again passing the resume token.\n   Keep calling until `continue` is no longer in the response. This typically takes 10-30 iterations\n   for medium repositories — that is normal and expected. Do NOT stop early, do NOT reason about\n   whether to continue, do NOT skip ahead, and do NOT report partial results.\n   The response includes `estimated_iterations_remaining` — just call again mechanically until done.\n\n2. Record: new conflict questions found";
 
 pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing entities and extract domain vocabulary.\n\n1. Call check_repository with mode='discover'.\n2. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  3. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  4. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete.\n     - New entities = new titles for the link detector to find\n  5. Record links_detected as LINKS_AFTER\n  6. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  3. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
 
@@ -2106,30 +2106,30 @@ mod tests {
     }
 
     #[test]
-    fn test_check_repository_workflow_texts_mention_server_side_cursor() {
+    fn test_check_repository_workflow_texts_mention_resume_token() {
         // Workflow instructions that tell agents to loop on check_repository
-        // should mention that progress is saved server-side.
+        // should mention resume tokens.
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_cv = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
         for (name, step) in [("setup.scan", setup), ("update.cross_validate", update_cv)] {
             let instruction = step["instruction"].as_str().unwrap();
             assert!(
-                instruction.contains("server-side"),
-                "{name} workflow should mention server-side progress saving"
+                instruction.contains("resume"),
+                "{name} workflow should mention resume token"
             );
         }
     }
 
     #[test]
-    fn test_check_repository_schema_mentions_server_side() {
+    fn test_check_repository_schema_mentions_resume() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
         let check = tools_arr.iter().find(|t| t["name"] == "check_repository").unwrap();
         let desc = check["description"].as_str().unwrap();
         assert!(
-            desc.contains("server-side"),
-            "check_repository schema description should mention server-side progress"
+            desc.contains("resume"),
+            "check_repository schema description should mention resume token"
         );
         assert!(
             desc.contains("embeddings"),
@@ -2237,7 +2237,7 @@ mod tests {
     #[test]
     fn test_time_budget_progress_message_warns_incomplete() {
         let mut resp = serde_json::json!({"ok": true});
-        crate::mcp::tools::helpers::apply_time_budget_progress(&mut resp, 3, 10, "check_repository", true);
+        crate::mcp::tools::helpers::apply_time_budget_progress(&mut resp, 3, 10, "check_repository", true, None);
         let msg = resp["message"].as_str().unwrap();
         assert!(msg.contains("MANDATORY"));
         assert!(msg.contains("MUST"));

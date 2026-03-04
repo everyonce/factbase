@@ -153,7 +153,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
         });
         // Duplicates focus runs to completion (embedding-heavy, not easily interruptible)
         crate::mcp::tools::helpers::apply_time_budget_progress(
-            &mut result, total_docs, total_docs, "organize_analyze", time_budget.is_some(),
+            &mut result, total_docs, total_docs, "organize_analyze", time_budget.is_some(), None,
         );
         return Ok(result);
     }
@@ -181,7 +181,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
             "progress": { "processed": total_docs, "total": total_docs },
         });
         crate::mcp::tools::helpers::apply_time_budget_progress(
-            &mut result, total_docs, total_docs, "organize_analyze", time_budget.is_some(),
+            &mut result, total_docs, total_docs, "organize_analyze", time_budget.is_some(), None,
         );
         return Ok(result);
     }
@@ -298,7 +298,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
 
     let all_done = phases_completed_now >= total_phases;
     crate::mcp::tools::helpers::apply_time_budget_progress(
-        &mut result, processed, total_docs, "organize_analyze", time_budget.is_some() && !all_done,
+        &mut result, processed, total_docs, "organize_analyze", time_budget.is_some() && !all_done, None,
     );
 
     // Include cursor for resumption when not all phases completed

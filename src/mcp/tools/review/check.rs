@@ -1,6 +1,6 @@
 //! Repository-wide check MCP tool.
 
-use crate::database::{CvLockResult, Database, DEFAULT_LOCK_TIMEOUT_SECS};
+use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
 use crate::llm::LlmProvider;
@@ -12,21 +12,6 @@ use std::collections::HashSet;
 
 /// Default concurrency for parallel check (LLM calls).
 const LINT_CONCURRENCY: usize = 5;
-
-/// Scope key for server-side cross-validation state.
-fn cv_scope_key(repo_id: Option<&str>) -> String {
-    repo_id.unwrap_or("__all__").to_string()
-}
-
-/// Generate a random lock token for this session.
-fn generate_lock_token() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    format!("{:x}-{:x}", std::process::id(), nanos)
-}
 
 /// Load active (non-deleted) documents for the given repo scope.
 fn load_docs(db: &Database, repo_id: Option<&str>) -> Result<Vec<crate::models::Document>, FactbaseError> {
@@ -113,7 +98,16 @@ async fn check_questions(
     let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
     let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
 
-    let docs = load_docs(db, repo_id)?;
+    let all_docs = load_docs(db, repo_id)?;
+
+    // Resume: skip already-processed docs
+    let doc_offset = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token)
+        .and_then(|v| v.get("doc_offset").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+    let docs: Vec<_> = all_docs.into_iter().skip(doc_offset).collect();
+    let total_all = doc_offset + docs.len();
+
     progress.phase("Generating review questions");
 
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
@@ -152,6 +146,8 @@ async fn check_questions(
         }))
         .collect();
 
+    let processed_total = doc_offset + output.docs_processed;
+
     let mut result = serde_json::json!({
         "mode": "questions",
         "documents_scanned": output.docs_processed,
@@ -167,8 +163,17 @@ async fn check_questions(
         "details": details,
     });
 
+    let resume_token = if processed_total < total_all {
+        Some(crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"doc_offset": processed_total}),
+        ))
+    } else {
+        None
+    };
+
     crate::mcp::tools::helpers::apply_time_budget_progress(
-        &mut result, output.docs_processed, output.docs_total, "check_repository", time_budget.is_some(),
+        &mut result, processed_total, total_all, "check_repository", time_budget.is_some(),
+        resume_token.as_deref(),
     );
 
     Ok(result)
@@ -200,44 +205,32 @@ async fn check_cross_validate(
     let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
     let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
 
-    // Lock/lease for concurrency control
-    let scope_key = cv_scope_key(repo_id);
-    let lock_token = generate_lock_token();
-    match db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)? {
-        CvLockResult::Acquired => {}
-        CvLockResult::AlreadyLocked { locked_by, pair_offset, fact_count } => {
-            let pct = if fact_count > 0 { pair_offset } else { 0 };
-            return Ok(serde_json::json!({
-                "mode": "cross_validate",
-                "status": "in_progress",
-                "locked_by": locked_by,
-                "progress": { "pairs_checked": pair_offset, "percent_estimate": pct },
-                "message": format!(
-                    "Cross-validation is already in progress (held by {locked_by}, {pair_offset} pairs checked). \
-                     Call again later or wait for completion."
-                ),
-            }));
-        }
-    }
-
     let docs = load_docs(db, repo_id)?;
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     // Resolve repo-local DB for fact embeddings (may differ from central DB)
     let fact_db = repo_id.and_then(|id| db.resolve_repo_fact_db(id));
-    let fdb = fact_db.as_ref().unwrap_or(db);
 
-    // Server-side cursor
+    // Resume: get pair_offset from client-side token
+    let resume_data = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token);
+    let pair_offset = resume_data
+        .as_ref()
+        .and_then(|v| v.get("pair_offset").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+
+    // If the fact count changed since the token was issued, reset to 0
+    let fdb = fact_db.as_ref().unwrap_or(db);
     let current_fact_count = fdb.get_fact_embedding_count().unwrap_or(0);
-    let pair_offset = match db.get_cross_validation_state(&scope_key)? {
-        Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => offset,
-        Some(_) => {
-            db.clear_cross_validation_state(Some(&scope_key))?;
-            let _ = db.try_acquire_cv_lock(&scope_key, &lock_token, DEFAULT_LOCK_TIMEOUT_SECS)?;
-            0
-        }
-        None => 0,
+    let token_fact_count = resume_data
+        .as_ref()
+        .and_then(|v| v.get("fact_count").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+    let pair_offset = if token_fact_count > 0 && token_fact_count != current_fact_count {
+        0 // fact index changed, restart
+    } else {
+        pair_offset
     };
 
     let config = CheckConfig {
@@ -257,11 +250,6 @@ async fn check_cross_validate(
 
     progress.phase("Cross-document validation");
     let output = check_all_documents(&docs, db, embedding, llm, &config, progress).await?;
-
-    // Persist cursor
-    if output.pair_progress.is_some() {
-        db.set_cross_validation_state(&scope_key, output.pair_offset, current_fact_count)?;
-    }
 
     let results = &output.results;
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
@@ -294,25 +282,23 @@ async fn check_cross_validate(
                 progress_obj["pairs_per_second"] = serde_json::json!((rate * 100.0).round() / 100.0);
             }
 
+            let resume_token = crate::mcp::tools::helpers::encode_resume_token(
+                &serde_json::json!({"pair_offset": processed, "fact_count": current_fact_count}),
+            );
+
             result["progress"] = progress_obj;
             result["continue"] = serde_json::json!(true);
+            result["resume"] = serde_json::json!(resume_token);
             result["message"] = serde_json::json!(format!(
                 "⚠️ MANDATORY CONTINUATION — {processed}/{total} fact pairs checked ({pct}%, ~{estimated_iterations} calls remaining). \
-                 You MUST call check_repository again with the same arguments (progress is saved server-side). \
+                 You MUST call check_repository again with the resume token to continue. \
                  Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
                  Just call check_repository again until this message no longer appears."
             ));
             result["when_done"] = serde_json::json!(
-                "MANDATORY: Call check_repository again with the same arguments. Progress is saved automatically. Do NOT use the think tool to decide whether to continue. Just call it."
+                "MANDATORY: Call check_repository again passing the resume token. Do NOT use the think tool to decide whether to continue. Just call it."
             );
         }
-        if processed >= total {
-            let _ = db.release_cv_lock(&scope_key, &lock_token);
-            let _ = db.clear_cross_validation_state(Some(&scope_key));
-        }
-    } else {
-        // No pairs at all — release lock
-        let _ = db.release_cv_lock(&scope_key, &lock_token);
     }
 
     Ok(result)
@@ -483,7 +469,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_server_side_cursor_persists_across_calls() {
+    async fn test_resume_token_continues_from_offset() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
@@ -494,31 +480,20 @@ mod tests {
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
-        // Simulate server-side state from a previous call
-        let scope_key = cv_scope_key(Some("test"));
-        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
-        db.set_cross_validation_state(&scope_key, 42, fact_count).unwrap();
-        // Also set a lock so the check can proceed (it will re-acquire)
-        db.try_acquire_cv_lock(&scope_key, "prior-token", DEFAULT_LOCK_TIMEOUT_SECS).unwrap();
-
         let embedding = MockEmbedding::new(4);
         let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
-        // Call without any cursor args — should pick up from DB
+        // Call with a resume token that skips past all docs
+        let token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"pair_offset": 0, "fact_count": 0}),
+        );
         let args = serde_json::json!({
             "repo": "test",
-            "deep_check": true,
+            "mode": "cross_validate",
             "dry_run": true,
+            "resume": token,
         });
-
-        // The prior lock is from a different token, but since we're in a test
-        // and the lock timeout is 600s, we need to expire it first
-        let conn = db.get_conn().unwrap();
-        conn.execute(
-            "UPDATE cross_validation_state SET locked_at = datetime('now', '-700 seconds') WHERE scope_key = ?1",
-            [&scope_key],
-        ).unwrap();
 
         let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
             .await
@@ -568,7 +543,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_response_has_no_checked_pair_ids_field() {
-        // The whole point: responses should never contain checked_pair_ids
+        // Responses should never contain checked_pair_ids (uses resume tokens now)
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
@@ -600,7 +575,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_lock_contention_returns_in_progress() {
+    async fn test_resume_token_in_questions_mode() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
@@ -611,34 +586,30 @@ mod tests {
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
-        // Simulate another session holding the lock
-        let scope_key = cv_scope_key(Some("test"));
-        db.try_acquire_cv_lock(&scope_key, "other-session", DEFAULT_LOCK_TIMEOUT_SECS).unwrap();
-        db.set_cross_validation_state(&scope_key, 50, 100).unwrap();
-
         let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
         let progress = ProgressReporter::Silent;
 
+        // Resume token that skips past all docs — should complete immediately
+        let token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"doc_offset": 100}),
+        );
         let args = serde_json::json!({
             "repo": "test",
-            "deep_check": true,
+            "mode": "questions",
             "dry_run": true,
+            "resume": token,
         });
 
-        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+        let result = check_repository(&db, &embedding, None, &args, &progress)
             .await
             .unwrap();
-
-        assert_eq!(result["status"], "in_progress");
-        assert_eq!(result["locked_by"], "other-session");
-        assert!(result["progress"]["pairs_checked"].as_u64().unwrap() >= 50);
-        assert!(result["message"].as_str().unwrap().contains("already in progress"));
+        assert_eq!(result["documents_scanned"], 0);
+        assert!(result.get("continue").is_none());
     }
 
     #[tokio::test]
     #[serial]
-    async fn test_no_lock_without_deep_check() {
+    async fn test_questions_mode_no_resume_starts_from_beginning() {
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
 
@@ -698,7 +669,7 @@ mod tests {
         assert!(result.get("documents_scanned").is_some());
     }
 
-    /// When CV state exists at pair_offset=0 (question gen completed but CV hasn't started),
+    /// When a resume token with pair_offset=0 is provided,
     /// the handler should treat it as a continuation, skip question gen, and run CV.
     #[tokio::test]
     #[serial]
@@ -742,24 +713,15 @@ mod tests {
         let llm = MockLlm::new(r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#);
         let progress = ProgressReporter::Silent;
 
-        // Simulate: first call completed question gen but exhausted budget before CV.
-        // The fix persists CV state with pair_offset=0 so the next call skips question gen.
-        let scope_key = cv_scope_key(Some("test"));
-        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
-        db.set_cross_validation_state(&scope_key, 0, fact_count).unwrap();
-        // Set an expired lock so the handler can re-acquire
-        db.try_acquire_cv_lock(&scope_key, "prior-call", DEFAULT_LOCK_TIMEOUT_SECS).unwrap();
-        let conn = db.get_conn().unwrap();
-        conn.execute(
-            "UPDATE cross_validation_state SET locked_at = datetime('now', '-700 seconds') WHERE scope_key = ?1",
-            [&scope_key],
-        ).unwrap();
-
-        // Second call: should detect CV state, skip question gen, run CV
+        // Second call with resume token: should skip question gen, run CV
+        let token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"pair_offset": 0, "fact_count": db.get_fact_embedding_count().unwrap_or(0)}),
+        );
         let args = serde_json::json!({
             "repo": "test",
-            "deep_check": true,
+            "mode": "cross_validate",
             "dry_run": true,
+            "resume": token,
         });
 
         let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)

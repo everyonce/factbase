@@ -39,6 +39,12 @@ pub async fn scan_repository(
     opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
     opts.skip_embeddings = crate::mcp::tools::helpers::get_bool_arg(args, "skip_embeddings", false);
 
+    // Resume: skip already-processed files
+    opts.file_offset = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token)
+        .and_then(|v| v.get("file_offset").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+
     // Set deadline for time-boxed operation.
     // force_reindex always bypasses the time budget — there's no cursor for reindex progress,
     // so a budget would cause an infinite restart-from-beginning loop.
@@ -92,7 +98,10 @@ pub async fn scan_repository(
 
     // If interrupted by deadline, return progress response
     if result.interrupted && time_budget.is_some() {
-        let remaining = result.total.saturating_sub(processed);
+        let total_all = result.file_offset.max(processed);
+        let resume_token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"file_offset": result.file_offset}),
+        );
         let mut response = serde_json::json!({
             "added": result.added,
             "updated": result.updated,
@@ -100,7 +109,8 @@ pub async fn scan_repository(
             "reindexed": result.reindexed,
         });
         crate::mcp::tools::helpers::apply_time_budget_progress(
-            &mut response, processed, result.total + remaining, "scan_repository", true,
+            &mut response, processed, total_all, "scan_repository", true,
+            Some(&resume_token),
         );
         return Ok(response);
     }
