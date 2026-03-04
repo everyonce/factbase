@@ -266,7 +266,7 @@ src/
     ├── stdio.rs         # Stdio transport (stdin/stdout JSON-RPC)
     ├── server.rs        # HTTP server (axum)
     └── tools/
-        ├── mod.rs       # Tool routing (21 tools)
+        ├── mod.rs       # Tool routing (25 tools)
         ├── schema.rs    # Tool schemas
         ├── helpers.rs   # Tool helpers
         ├── search.rs    # search_knowledge, search_content, search_temporal
@@ -280,7 +280,7 @@ src/
     ├── mod.rs           # Module entry point, re-exports
     ├── server.rs        # Axum server on configurable port (default 3001)
     ├── assets.rs        # Static asset serving via rust-embed
-    └── api/             # JSON API endpoints (17 endpoints total)
+    └── api/             # JSON API endpoints (20 endpoints total)
         ├── mod.rs       # API router, re-exports
         ├── errors.rs    # ApiError, handle_error shared error types
         ├── review.rs    # Review queue endpoints (5 endpoints)
@@ -299,7 +299,7 @@ web/
     ├── main.ts          # App shell, routing, lifecycle
     ├── style.css        # Tailwind imports, animations, a11y
     ├── router.ts        # Hash-based navigation
-    ├── api.ts           # Typed API client (17 endpoints)
+    ├── api.ts           # Typed API client (20 endpoints)
     ├── keyboard.ts      # Keyboard navigation (j/k, Enter, Escape, ?)
     ├── pages/
     │   ├── Dashboard.ts # Stats cards, auto-refresh

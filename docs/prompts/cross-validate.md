@@ -54,7 +54,7 @@ Respond ONLY with a JSON array. Each element must have: pair (number), status (S
 
 ### Resumption
 
-For large repositories, cross-validation may not complete in a single call. The `checked_pair_ids` cursor (format: `fact_a_id:fact_b_id`) tracks which pairs have been validated. Pass it back on subsequent calls to resume where the previous call left off.
+For large repositories, cross-validation may not complete in a single call. The MCP tool returns an opaque `resume` token in the response. Pass it back on subsequent calls to continue where the previous call left off. The `checked_pair_ids` parameter is deprecated and ignored.
 
 ## Prompt Customization
 

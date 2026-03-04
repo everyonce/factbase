@@ -2,7 +2,7 @@
 
 ## Project Status
 
-**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v50.44.0.
+**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v50.85.1.
 
 ### Active Work
 - No active phases. All work through Phase 50 is complete.
@@ -60,7 +60,7 @@
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (21)
+## MCP Tools (25)
 
 ### Search Operations
 | Tool | Description |
@@ -89,7 +89,8 @@
 |------|-------------|
 | `get_review_queue` | Get pending review questions |
 | `answer_questions` | Answer one or more review questions |
-| `check_repository` | Run quality checks and generate review questions |
+| `generate_questions` | Generate review questions for a document |
+| `check_repository` | Run quality checks (modes: questions, cross_validate, discover) |
 | `apply_review_answers` | Process answered review questions |
 | `get_deferred_items` | Get deferred questions needing human attention |
 
@@ -102,6 +103,13 @@
 | `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
 | `organize` | Execute reorganization actions (merge, split, move, retype, apply) |
 | `get_authoring_guide` | Get document authoring guide |
+
+### Embedding Operations
+| Tool | Description |
+|------|-------------|
+| `embeddings_export` | Export pre-computed embeddings as JSONL |
+| `embeddings_import` | Import pre-computed embeddings |
+| `embeddings_status` | Check embedding index coverage and stats |
 
 ## Web API Endpoints (20 total, feature-gated)
 
@@ -142,12 +150,12 @@ Requires `web` feature and `web.enabled = true` in config.
 ### Unit Tests
 - Run with: `cargo test --lib`
 - No external dependencies required
-- Currently: ~1541 lib tests (default features); ~1606 lib tests (with all features including web)
+- Currently: ~1731 lib tests (default features); ~1796 lib tests (with all features including web)
 
 ### Binary Tests
 - Run with: `cargo test --bin factbase`
 - No external dependencies required
-- Currently: ~380 bin tests (default features); ~387 bin tests (with all features including web)
+- Currently: ~386 bin tests (default features); ~393 bin tests (with all features including web)
 
 ### Integration Tests (Require inference backend)
 - Run with: `cargo test -- --ignored`
@@ -165,7 +173,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - Uses Playwright with Chromium
 - Currently: 12 tests
 
-### Total: ~1921 unit/binary tests (default features), ~1993 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
+### Total: ~2117 unit/binary tests (default features), ~2189 (with all features) + 73+ integration tests + 56 frontend tests + 12 E2E tests
 
 ## Codebase Structure
 

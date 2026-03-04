@@ -257,6 +257,15 @@ This command reads only from the local database and works offline.
 
 Start MCP server on localhost:3000 and watch for file changes.
 
+## `factbase mcp`
+
+Run MCP stdio transport for agent integration. This is the recommended way to connect factbase to AI agents — add it to your agent's MCP server config.
+
+```bash
+# Typical usage in MCP config (not run directly)
+factbase mcp
+```
+
 ## `factbase export <repo> <output> [--with-metadata] [--format <md|json>] [--compress] [--stdout]`
 
 Export documents from a repository.

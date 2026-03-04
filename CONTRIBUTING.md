@@ -12,10 +12,10 @@
 # Clone and build
 git clone https://gitea.home.everyonce.com/daniel/factbase.git
 cd factbase
-cargo build --features bedrock
+cargo build
 
 # Verify setup
-cargo run --features bedrock -- doctor
+cargo run -- doctor
 ```
 
 ## Code Quality Rules
@@ -72,10 +72,10 @@ if let Some(ref c) = config {
 cargo test --lib
 
 # All tests including integration (requires Bedrock or Ollama)
-cargo test --features bedrock
+cargo test
 
 # Binary/CLI tests
-cargo test --bin factbase --features bedrock
+cargo test --bin factbase
 
 # Specific test file
 cargo test --test ollama_integration
@@ -201,17 +201,17 @@ pub async fn my_new_tool(
 pub use entity::my_new_tool;
 ```
 
-### 3. Register in server
+### 3. Register in tool router
 
 ```rust
-// In src/mcp/server.rs, add to handle_tool_call match
-"my_new_tool" => my_new_tool(&state.db, &params.arguments).await,
+// In src/mcp/tools/mod.rs, add to handle_tool_call match
+"my_new_tool" => blocking_tool!(db, args, my_new_tool),
 ```
 
-### 4. Add tool definition
+### 4. Add tool schema
 
 ```rust
-// In src/mcp/server.rs, add to TOOLS array
+// In src/mcp/tools/schema.rs, add to tools_list()
 json!({
     "name": "my_new_tool",
     "description": "Brief description of what it does",
@@ -228,7 +228,7 @@ json!({
 
 ### Helper Functions
 
-Available in `src/mcp/tools/mod.rs`:
+Available in `src/mcp/tools/mod.rs` and `src/mcp/tools/helpers.rs`:
 
 ```rust
 get_str_arg(args, "key")           // Option<&str>
@@ -250,14 +250,16 @@ use crate::error::{doc_not_found, repo_not_found};
 
 ## Feature Flags
 
-- `full` (default) - All features
+- `full` (default) - All features (includes Bedrock, MCP, progress, compression)
+- `bedrock` - Amazon Bedrock inference backend
 - `progress` - Progress bars during scan
-- `compression` - zstd compression for export/import
-- `mcp` - MCP server for AI agents
+- `compression` - zstd compression for export/import and database storage
+- `mcp` - MCP server for AI agent integration
+- `web` - Web UI for human-in-the-loop review
 - `minimal` - CLI-only, no MCP/compression/progress
 
 ```bash
-# Minimal build
+# Minimal build (CLI-only with Ollama backend)
 cargo build --release --no-default-features
 
 # Without MCP server
