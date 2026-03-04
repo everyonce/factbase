@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1921_passing-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-2117_passing-brightgreen.svg)]()
 
 Filesystem-based knowledge management with semantic search for AI agents.
 
@@ -197,7 +197,7 @@ Factbase exposes 25 MCP tools:
 | `get_review_queue` | Get pending review questions |
 | `answer_questions` | Answer or defer one or more review questions |
 | `generate_questions` | Generate review questions for a specific document |
-| `check_repository` | Run quality checks and generate review questions |
+| `check_repository` | Run quality checks on a repository (modes: questions, cross_validate, discover) |
 | `apply_review_answers` | Apply answered review questions to document content |
 | `get_deferred_items` | Get deferred review items needing human attention |
 | `workflow` | Run a guided workflow (update, resolve, ingest, enrich, improve) |

@@ -8,26 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- Fact-level cross-document validation via pre-computed fact embeddings (`check --deep-check`)
+- Fact-level cross-document validation via pre-computed fact embeddings (`check --deep-check` / `check_repository` mode='cross_validate')
 - Fact-level embeddings generated during scan, powering cross-document conflict detection
 - Auto-populate fact embeddings on first scan after migration
 - MCP stdio orphan detection — exit when parent process dies
 - Folder placement checks via link graph analysis (moved from organize to check as review questions)
 - Time-boxing support for `organize_analyze` MCP tool
 - `embeddings_export`, `embeddings_import`, `embeddings_status` MCP tools
-- `checked_pair_ids` cursor for resumable deep-check cross-validation
 - `force_reindex` parameter for `scan_repository` MCP tool
 - Reference entity support via `<!-- factbase:reference -->` marker
 - Write concurrency guard for all destructive MCP operations
+- Split `check_repository` into explicit modes: `questions`, `cross_validate`, `discover`
+- Universal opaque `resume` token for all time-budgeted MCP operations (replaces `checked_pair_ids` / `checked_doc_ids` cursors)
+- Repo parameter resolution by both ID and name in MCP tools
+- Ghost file detection (duplicate ID/title in same directory) in `organize_analyze`
+- Auto-resolve glossary-defined acronym questions in resolve workflow
+- Domain vocabulary extraction in deep-check / discover mode
+- Temporal consistency audit in organize merge/split planning
 
 ### Changed
 - Cross-document validation now operates on fact pairs instead of whole documents
 - MCP tool count increased from 21 to 25
 - Stability tests gated behind `#[ignore]` (require Ollama)
+- `checked_pair_ids` and `checked_doc_ids` parameters deprecated (kept for backward compatibility, ignored)
+- Server-side pagination state replaces client-side cursor tracking
 
 ### Fixed
 - WriteGuard serialization for flaky MCP tool tests
 - Deep-check summary line after cross-validate completes
+- Repo-local DB resolution for fact embeddings in cross_validate mode
+- Questions mode `docs_processed` count uses question generation count, not cross-validation count
+- LLM passed through to `check_all_documents` in check questions mode
+- Cache cross-doc fact pairs to avoid O(n²) recomputation on continuation calls
+- Deep-check cross-validation no longer skipped when question generation exhausts time budget
+- Prevent infinite loop on continuation calls with no remaining pairs
+- Skip question generation and vocab/entity discovery on continuation calls
 
 ## [0.4.3] - 2026-02-09
 

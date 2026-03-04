@@ -229,7 +229,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in deep_check. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
+                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in check_repository's cross_validate mode. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

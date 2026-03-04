@@ -69,7 +69,7 @@ rate_limit:
 server:
   host: 127.0.0.1   # MCP server host
   port: 3000        # MCP server port
-  time_budget_secs: 30  # Time budget for document-scaling MCP operations (5-600)
+  time_budget_secs: 180  # Time budget for document-scaling MCP operations (5-600)
 
 web:
   enabled: false    # Enable web UI (requires 'web' feature)
@@ -78,6 +78,31 @@ web:
 cross_validate:
   fact_similarity_threshold: 0.5  # Minimum cosine similarity for fact pairs (0.0-1.0)
   batch_size: 10                  # Fact pairs per LLM batch call (1-50)
+
+temporal:
+  min_coverage: 0.8               # Minimum temporal tag coverage threshold (0.0-1.0)
+  recency_window_days: 180        # Window for recency boost (days)
+  recency_boost_factor: 0.2       # Max boost for recent @t[~...] facts (0.0-1.0)
+
+review:
+  model: null                     # Override LLM model for review operations (optional)
+
+# --- Workflow Text Overrides ---
+# Override any workflow step instruction text via flat keys.
+# Use {placeholder} for dynamic parts; unknown placeholders are left as-is.
+#
+# workflows:
+#   # Override the update scan instruction (vars: ctx)
+#   update.scan: |
+#     Custom scan instructions...
+#     {ctx}
+#
+#   # Override the improve cleanup instruction (vars: doc_hint, ctx)
+#   improve.cleanup: |
+#     Custom cleanup for {doc_hint}...
+#     {ctx}
+#
+#   # See src/config/workflows.rs for all available keys and their placeholders.
 
 # --- Prompt Templates ---
 # Override any LLM prompt template. Use {placeholder} for variables.
