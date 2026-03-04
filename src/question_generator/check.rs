@@ -475,7 +475,7 @@ pub async fn check_all_documents(
         }
     }
 
-    let docs_processed = if llm.is_some() {
+    let docs_processed = if config.is_continuation {
         cross_validated_ids.len()
     } else {
         all_results.len()
@@ -1050,7 +1050,7 @@ mod tests {
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
             .await
             .unwrap();
-        assert_eq!(output.docs_processed, 0, "past deadline means no cross-validation");
+        assert_eq!(output.docs_processed, 0, "past deadline means no docs processed");
         assert_eq!(output.docs_total, 2);
     }
 
@@ -2019,5 +2019,74 @@ mod tests {
         let (processed, total) = output.pair_progress.unwrap();
         assert_eq!(processed, 0, "no pairs should be processed yet");
         assert!(total > 0, "total pairs should be > 0");
+    }
+
+    /// Regression test: questions mode (is_continuation=false) with LLM should
+    /// report docs_processed based on question generation, not cross-validation.
+    /// Before the fix, llm.is_some() caused docs_processed to use
+    /// cross_validated_ids.len() which could be 0 in questions mode.
+    #[tokio::test]
+    async fn test_questions_mode_docs_processed_uses_question_gen_count() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nSome content.\n"),
+            make_doc("bbb", "Doc B", "# Doc B\n\nMore content.\n"),
+        ];
+        // Questions mode: is_continuation=false, LLM present
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            pair_offset: 0,
+            acquire_write_guard: false,
+            batch_size: 10,
+            repo_id: None,
+            is_continuation: false,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        assert_eq!(output.docs_processed, 2, "questions mode should count question-gen docs, not CV docs");
+        assert_eq!(output.docs_total, 2);
+    }
+
+    /// Cross-validate mode (is_continuation=true) with past deadline should
+    /// report docs_processed=0 since no docs get cross-validated.
+    #[tokio::test]
+    async fn test_cross_validate_mode_past_deadline_docs_processed_zero() {
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let docs = vec![
+            make_doc("aaa", "Doc A", "# Doc A\n\nContent.\n"),
+            make_doc("bbb", "Doc B", "# Doc B\n\nContent.\n"),
+        ];
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+            checked_doc_ids: HashSet::new(),
+            pair_offset: 0,
+            acquire_write_guard: false,
+            batch_size: 10,
+            repo_id: None,
+            is_continuation: true,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        assert_eq!(output.docs_processed, 0, "CV mode with past deadline should process 0 docs");
+        assert_eq!(output.docs_total, 2);
     }
 }
