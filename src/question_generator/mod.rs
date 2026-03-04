@@ -115,10 +115,27 @@ pub(crate) fn extract_fact_text(line: &str) -> String {
         trimmed
     };
 
-    // Truncate long facts for readability
+    // Truncate long facts for readability, preserving tag boundaries
     let text = text.trim();
-    if text.len() > 80 {
-        format!("{}...", &text[..text.floor_char_boundary(77)])
+    if text.len() > 120 {
+        let mut cut = text.floor_char_boundary(117);
+        // If cut falls inside a bracket (unmatched '[' with no ']' before cut),
+        // back up to before the tag start
+        let before = &text[..cut];
+        if let Some(open) = before.rfind('[') {
+            if !text[open..cut].contains(']') {
+                // Back up past @X[ prefix if present (@t[, @q[, @s[)
+                cut = if open >= 2
+                    && text.as_bytes()[open - 2] == b'@'
+                    && matches!(text.as_bytes()[open - 1], b't' | b'q' | b's')
+                {
+                    open - 2
+                } else {
+                    open
+                };
+            }
+        }
+        format!("{}...", text[..cut].trim_end())
     } else {
         text.to_string()
     }
@@ -155,10 +172,59 @@ mod tests {
 
     #[test]
     fn test_extract_fact_text_truncates_long() {
-        let long_fact = "- ".to_string() + &"x".repeat(100);
+        let long_fact = "- ".to_string() + &"x".repeat(150);
         let result = extract_fact_text(&long_fact);
-        assert!(result.len() <= 80);
+        assert!(result.len() <= 120);
         assert!(result.ends_with("..."));
+    }
+
+    #[test]
+    fn test_extract_fact_text_preserves_tag_at_boundary() {
+        // @t tag straddles the 117-char cut point — should truncate before the tag
+        let prefix = "x".repeat(110);
+        let fact = format!("- {} @t[~2026-02]", prefix);
+        let result = extract_fact_text(&fact);
+        assert!(result.ends_with("..."));
+        assert!(
+            !result.contains("@t[~2026"),
+            "should not contain partial tag: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extract_fact_text_includes_tag_before_limit() {
+        // @t tag ends well before the limit — should be included
+        let fact = "- Some fact about something @t[2026-01] and more text here";
+        let result = extract_fact_text(fact);
+        assert!(result.contains("@t[2026-01]"));
+    }
+
+    #[test]
+    fn test_extract_fact_text_preserves_citation_at_boundary() {
+        // [^2] citation straddles the cut point
+        let prefix = "x".repeat(116);
+        let fact = format!("- {} [^2]", prefix);
+        let result = extract_fact_text(&fact);
+        assert!(result.ends_with("..."));
+        assert!(
+            !result.contains("[^2"),
+            "should not contain partial citation: {result}"
+        );
+    }
+
+    #[test]
+    fn test_extract_fact_text_no_truncation_under_limit() {
+        let fact = "- Short fact @t[2024..2025] [^1]";
+        let result = extract_fact_text(fact);
+        assert_eq!(result, "Short fact @t[2024..2025] [^1]");
+    }
+
+    #[test]
+    fn test_extract_fact_text_no_tags_truncates_normally() {
+        let long_fact = "- ".to_string() + &"a".repeat(150);
+        let result = extract_fact_text(&long_fact);
+        assert!(result.ends_with("..."));
+        assert!(result.len() <= 120);
     }
 
     #[test]
@@ -192,8 +258,9 @@ mod tests {
         // The en-dash '–' is 3 bytes; ensure truncation doesn't panic
         let long_fact = "- Participant in GenAI EBA - Physician Advisor weekly sync (every Wednesday, 3–4 PM CT) @t[2026-01..] [^1]";
         let result = extract_fact_text(long_fact);
-        assert!(result.ends_with("..."));
-        assert!(result.len() <= 83); // 80 chars + "..."
+        // Under 120-char limit now, so no truncation
+        assert!(!result.ends_with("..."));
+        assert!(result.contains("@t[2026-01..]"));
     }
 
     #[test]
