@@ -310,6 +310,24 @@ impl Database {
         conn.query_row("SELECT 1", [], |_| Ok(()))?;
         Ok(())
     }
+
+    /// Resolve a repo-local database for fact embeddings.
+    ///
+    /// When the MCP server runs from a different directory than the target repo,
+    /// fact embeddings may live in the repo's own `.factbase/factbase.db`.
+    /// This method checks for that local DB and returns it if it has fact embeddings.
+    ///
+    /// Returns `None` if the repo has no local DB or the local DB has no fact embeddings.
+    pub fn resolve_repo_fact_db(&self, repo_id: &str) -> Option<Database> {
+        let repo = self.get_repository(repo_id).ok()??;
+        let local_db_path = repo.path.join(".factbase/factbase.db");
+        if !local_db_path.exists() {
+            return None;
+        }
+        let local_db = Database::new(&local_db_path).ok()?;
+        let count = local_db.get_fact_embedding_count().unwrap_or(0);
+        if count > 0 { Some(local_db) } else { None }
+    }
 }
 
 #[cfg(test)]
@@ -490,5 +508,54 @@ pub(crate) mod tests {
         assert!(result.is_err());
         // Document should NOT exist after rollback
         assert!(db.get_document("bbb222").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_resolve_repo_fact_db_returns_none_for_unknown_repo() {
+        let (db, _tmp) = test_db();
+        assert!(db.resolve_repo_fact_db("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_resolve_repo_fact_db_returns_none_when_no_local_db() {
+        let (db, _tmp) = test_db();
+        let tmp_repo = TempDir::new().unwrap();
+        test_repo_in_db(&db, "my-repo", tmp_repo.path());
+        // No .factbase/ dir at repo path
+        assert!(db.resolve_repo_fact_db("my-repo").is_none());
+    }
+
+    #[test]
+    fn test_resolve_repo_fact_db_returns_none_when_no_fact_embeddings() {
+        let (db, _tmp) = test_db();
+        let tmp_repo = TempDir::new().unwrap();
+        // Create a local DB with no fact embeddings
+        let factbase_dir = tmp_repo.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        let _local_db = Database::new(&factbase_dir.join("factbase.db")).unwrap();
+        test_repo_in_db(&db, "my-repo", tmp_repo.path());
+        assert!(db.resolve_repo_fact_db("my-repo").is_none());
+    }
+
+    #[test]
+    fn test_resolve_repo_fact_db_returns_db_when_fact_embeddings_exist() {
+        let (db, _tmp) = test_db();
+        let tmp_repo = TempDir::new().unwrap();
+        // Create a local DB with fact embeddings
+        let factbase_dir = tmp_repo.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        let local_db = Database::new(&factbase_dir.join("factbase.db")).unwrap();
+        // Need a document for the FK constraint
+        let repo = test_repo();
+        local_db.upsert_repository(&repo).unwrap();
+        local_db.upsert_document(&test_doc("doc1", "Doc")).unwrap();
+        let embedding = vec![0.1_f32; 1024];
+        local_db
+            .upsert_fact_embedding("f1", "doc1", 1, "some fact", "hash1", &embedding)
+            .unwrap();
+        test_repo_in_db(&db, "my-repo", tmp_repo.path());
+        let resolved = db.resolve_repo_fact_db("my-repo");
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap().get_fact_embedding_count().unwrap(), 1);
     }
 }
