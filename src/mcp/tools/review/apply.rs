@@ -119,8 +119,16 @@ pub async fn apply_review_answers(
 
     // Add progress/continue fields when deadline was hit
     let processed = result.documents.len();
+    let resume_token = if processed < result.total_work {
+        Some(crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"doc_offset": processed}),
+        ))
+    } else {
+        None
+    };
     crate::mcp::tools::helpers::apply_time_budget_progress(
         &mut response, processed, result.total_work, "apply_review_answers", time_budget.is_some(),
+        resume_token.as_deref(),
     );
 
     Ok(response)

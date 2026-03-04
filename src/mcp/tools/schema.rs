@@ -196,7 +196,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` for non-trivial repositories — you MUST call again with the same arguments until done (progress is saved server-side).\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via time budget.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via server-side cursor.\n- 'discover': Entity suggestions + vocabulary extraction. Usually completes in one call.\n\nIf doc_id is provided, checks just that document (ignores mode).",
+                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Usually completes in one call.\n\nIf doc_id is provided, checks just that document (ignores mode).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -206,6 +206,7 @@ pub fn tools_list() -> Value {
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
                         "deep_check": { "type": "boolean", "description": "Deprecated: accepted but ignored. Use mode='cross_validate' instead." },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
+                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." },
                         "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." },
                         "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." }
                     },
@@ -214,27 +215,29 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "generate_questions",
-                "description": "Generate review questions for a single document or all documents. Lighter than check_repository (no entity discovery or deep cross-validation). For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
+                "description": "Generate review questions for a single document or all documents. Lighter than check_repository (no entity discovery or deep cross-validation). For large repositories, may return partial results with `continue: true` — call again with the resume token to process remaining documents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "doc_id": { "type": "string", "description": "Document ID (optional, generates for all documents if omitted)" },
                         "repo": { "type": "string", "description": "Filter by repository ID (optional, used when doc_id is omitted)" },
                         "dry_run": { "type": "boolean", "description": "Preview questions without modifying files (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
+                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
                     }
                 }
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in deep_check. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` for non-trivial repositories — you MUST call again to complete.",
+                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in deep_check. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" },
                         "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings even if content is unchanged (default: false). When true, time_budget_secs is ignored to prevent infinite restart loops." },
                         "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation — index documents into DB without calling embedding provider (default: false). Useful when importing pre-computed embeddings." },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Ignored when force_reindex is true. Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Ignored when force_reindex is true. Operation returns progress and asks to be called again if budget is exceeded." },
+                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
                     }
                 }
             },
@@ -253,14 +256,15 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "apply_review_answers",
-                "description": "Apply answered review questions to document content via LLM rewrite. For large repositories, may return partial results with `continue: true` — call again to process remaining documents.",
+                "description": "Apply answered review questions to document content via LLM rewrite. For large repositories, may return partial results with `continue: true` — call again with the resume token to process remaining documents.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "doc_id": { "type": "string", "description": "Apply only for this document (optional, applies all if omitted)" },
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
                         "dry_run": { "type": "boolean", "description": "Preview changes without modifying files (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
+                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
                     }
                 }
             },

@@ -72,6 +72,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
         }),
         interrupted: true,
         embeddings_skipped: false,
+        file_offset: 0,
     }
 }
 

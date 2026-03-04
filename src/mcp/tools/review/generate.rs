@@ -221,7 +221,7 @@ async fn generate_questions_all(
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     // Get all active documents
-    let docs: Vec<_> = match repo_id {
+    let all_docs: Vec<_> = match repo_id {
         Some(rid) => db
             .get_documents_for_repo(rid)?
             .into_values()
@@ -240,7 +240,14 @@ async fn generate_questions_all(
         }
     };
 
-    let total = docs.len();
+    // Resume: skip already-processed docs
+    let doc_offset = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token)
+        .and_then(|v| v.get("doc_offset").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+    let docs: Vec<_> = all_docs.into_iter().skip(doc_offset).collect();
+    let total = doc_offset + docs.len();
+
     let mut docs_processed = 0;
     let mut total_generated = 0;
     let mut details = Vec::new();
@@ -271,6 +278,8 @@ async fn generate_questions_all(
         docs_processed += 1;
     }
 
+    let processed_total = doc_offset + docs_processed;
+
     let mut result = serde_json::json!({
         "documents_processed": docs_processed,
         "total_questions_generated": total_generated,
@@ -278,12 +287,21 @@ async fn generate_questions_all(
         "details": details,
     });
 
+    let resume_token = if processed_total < total {
+        Some(crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"doc_offset": processed_total}),
+        ))
+    } else {
+        None
+    };
+
     crate::mcp::tools::helpers::apply_time_budget_progress(
         &mut result,
-        docs_processed,
+        processed_total,
         total,
         "generate_questions",
         time_budget.is_some(),
+        resume_token.as_deref(),
     );
 
     Ok(result)

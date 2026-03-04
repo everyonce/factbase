@@ -277,14 +277,29 @@ pub(crate) fn make_deadline(budget: Option<u64>) -> Option<std::time::Instant> {
     budget.map(|secs| std::time::Instant::now() + std::time::Duration::from_secs(secs))
 }
 
-/// Inject progress/continue/message fields into a response when a time budget
-/// was active and work remains.  No-op when `remaining == 0` or budget inactive.
+/// Encode a resume token from a JSON value (base64-encoded JSON).
+pub(crate) fn encode_resume_token(data: &Value) -> String {
+    use base64::Engine;
+    let json = serde_json::to_string(data).unwrap_or_default();
+    base64::engine::general_purpose::STANDARD.encode(json.as_bytes())
+}
+
+/// Decode a resume token back to a JSON value.
+pub(crate) fn decode_resume_token(token: &str) -> Option<Value> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(token).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Inject progress/continue/resume/message fields into a response when a time
+/// budget was active and work remains.  No-op when `remaining == 0` or budget inactive.
 pub(crate) fn apply_time_budget_progress(
     response: &mut Value,
     processed: usize,
     total: usize,
     tool_name: &str,
     budget_active: bool,
+    resume_token: Option<&str>,
 ) {
     let remaining = total.saturating_sub(processed);
     if remaining == 0 || !budget_active {
@@ -298,14 +313,17 @@ pub(crate) fn apply_time_budget_progress(
         "percent_complete": pct,
     });
     response["continue"] = serde_json::json!(true);
+    if let Some(token) = resume_token {
+        response["resume"] = serde_json::json!(token);
+    }
     response["message"] = serde_json::json!(format!(
         "⚠️ MANDATORY CONTINUATION — {processed}/{total} processed ({pct}%). \
-         You MUST call {tool_name} again with identical arguments to continue. \
+         You MUST call {tool_name} again with the resume token to continue. \
          Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
          Just call {tool_name} again until this message no longer appears."
     ));
     response["when_done"] = serde_json::json!(format!(
-        "MANDATORY: Call {tool_name} again with the same arguments. Do NOT use the think tool to decide whether to continue. Just call it."
+        "MANDATORY: Call {tool_name} again passing the resume token. Do NOT use the think tool to decide whether to continue. Just call it."
     ));
 }
 
@@ -571,7 +589,7 @@ mod tests {
     #[test]
     fn test_apply_time_budget_progress_injects_fields() {
         let mut resp = serde_json::json!({"total_applied": 3});
-        apply_time_budget_progress(&mut resp, 5, 10, "my_tool", true);
+        apply_time_budget_progress(&mut resp, 5, 10, "my_tool", true, None);
         assert_eq!(resp["progress"]["processed"], 5);
         assert_eq!(resp["progress"]["remaining"], 5);
         assert_eq!(resp["progress"]["total"], 10);
@@ -590,15 +608,45 @@ mod tests {
     #[test]
     fn test_apply_time_budget_progress_noop_when_no_remaining() {
         let mut resp = serde_json::json!({"ok": true});
-        apply_time_budget_progress(&mut resp, 10, 10, "t", true);
+        apply_time_budget_progress(&mut resp, 10, 10, "t", true, None);
         assert!(resp.get("continue").is_none());
     }
 
     #[test]
     fn test_apply_time_budget_progress_noop_when_budget_inactive() {
         let mut resp = serde_json::json!({"ok": true});
-        apply_time_budget_progress(&mut resp, 5, 10, "t", false);
+        apply_time_budget_progress(&mut resp, 5, 10, "t", false, None);
         assert!(resp.get("continue").is_none());
+    }
+
+    #[test]
+    fn test_encode_decode_resume_token_roundtrip() {
+        let data = serde_json::json!({"doc_offset": 42});
+        let token = encode_resume_token(&data);
+        let decoded = decode_resume_token(&token).unwrap();
+        assert_eq!(decoded["doc_offset"], 42);
+    }
+
+    #[test]
+    fn test_decode_resume_token_invalid() {
+        assert!(decode_resume_token("not-valid-base64!!!").is_none());
+        assert!(decode_resume_token("").is_none());
+    }
+
+    #[test]
+    fn test_apply_time_budget_progress_includes_resume_token() {
+        let mut resp = serde_json::json!({"ok": true});
+        apply_time_budget_progress(&mut resp, 5, 10, "my_tool", true, Some("abc123"));
+        assert_eq!(resp["resume"], "abc123");
+        let msg = resp["message"].as_str().unwrap();
+        assert!(msg.contains("resume token"));
+    }
+
+    #[test]
+    fn test_apply_time_budget_progress_no_resume_when_none() {
+        let mut resp = serde_json::json!({"ok": true});
+        apply_time_budget_progress(&mut resp, 5, 10, "my_tool", true, None);
+        assert!(resp.get("resume").is_none());
     }
 
     #[test]
