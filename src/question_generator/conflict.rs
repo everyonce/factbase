@@ -5,9 +5,10 @@
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
-    extract_reviewed_date, normalize_date_for_comparison, date_cmp, FACT_LINE_REGEX, MANUAL_LINK_REGEX,
+    date_cmp, extract_reviewed_date, normalize_date_for_comparison, FACT_LINE_REGEX,
+    MANUAL_LINK_REGEX,
 };
-use crate::processor::parse_temporal_tags;
+use crate::processor::{parse_temporal_tags, ranges_overlap};
 
 use super::extract_fact_text;
 
@@ -375,17 +376,6 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
         Some(fact1.line_number),
         description,
     ))
-}
-
-/// Check if two date ranges overlap.
-fn ranges_overlap(start1: &str, end1: &str, start2: &str, end2: &str) -> bool {
-    let s1 = normalize_date_for_comparison(start1);
-    let e1 = normalize_date_for_comparison(end1);
-    let s2 = normalize_date_for_comparison(start2);
-    let e2 = normalize_date_for_comparison(end2);
-
-    // Ranges overlap if: start1 <= end2 AND start2 <= end1
-    date_cmp(&s1, &e2) != std::cmp::Ordering::Greater && date_cmp(&s2, &e1) != std::cmp::Ordering::Greater
 }
 
 /// Check if two facts could potentially conflict.
@@ -830,14 +820,6 @@ mod tests {
         // One reviewed, one not — still suppresses
         let c5 = "# Person\n\n- CTO at Acme @t[2020..2023] <!-- reviewed:2020-01-01 -->\n- CEO at BigCo @t[2022..2024]";
         assert!(generate_conflict_questions(c5).is_empty());
-    }
-
-    #[test]
-    fn test_ranges_overlap() {
-        assert!(ranges_overlap("2020", "2023", "2022", "2024"));
-        assert!(!ranges_overlap("2018", "2020", "2022", "2024"));
-        assert!(!ranges_overlap("2020", "2021", "2022", "2023")); // adjacent
-        assert!(ranges_overlap("2020", "2025", "2022", "2023")); // contained
     }
 
     #[test]

@@ -41,6 +41,7 @@ pub use date::validate_date;
 
 // Re-export range functions
 pub use range::{calculate_recency_boost, overlaps_point, overlaps_range};
+pub(crate) use range::ranges_overlap;
 
 // Re-export validation types and functions
 pub use validation::{

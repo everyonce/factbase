@@ -97,8 +97,8 @@ pub fn validate_document(original: &str, new_content: &str) -> Vec<ValidationErr
     }
 
     // Title must be preserved (first # heading)
-    let orig_title = extract_title(original);
-    let new_title = extract_title(new_content);
+    let orig_title = crate::patterns::extract_heading_title(original);
+    let new_title = crate::patterns::extract_heading_title(new_content);
     if let Some(ot) = &orig_title {
         match &new_title {
             None => {
@@ -140,10 +140,6 @@ fn extract_header_id(content: &str) -> Option<String> {
         .next()
         .and_then(|line| ID_REGEX.captures(line))
         .map(|cap| cap[1].to_string())
-}
-
-fn extract_title(content: &str) -> Option<String> {
-    crate::patterns::extract_heading_title(content)
 }
 
 fn content_line_count(text: &str) -> usize {

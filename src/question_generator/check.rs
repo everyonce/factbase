@@ -464,7 +464,7 @@ pub async fn check_all_documents(
                 match cross_validate_document(&doc.content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, config.deadline).await {
                     Ok(cross) => {
                         questions.extend(cross);
-                        if !config.deadline.is_some_and(|d| Instant::now() > d) {
+                        if config.deadline.is_none_or(|d| Instant::now() <= d) {
                             cross_validated_ids.push(doc.id.clone());
                         }
                     }
@@ -489,7 +489,7 @@ pub async fn check_all_documents(
 
     // Folder placement check (no LLM needed — pure link graph analysis).
     // Runs after cross-validation, respects deadline.
-    if !deadline_hit && !config.deadline.is_some_and(|d| Instant::now() > d) {
+    if !deadline_hit && config.deadline.is_none_or(|d| Instant::now() <= d) {
         run_placement_check(docs, db, &mut all_results);
     }
 
@@ -497,7 +497,7 @@ pub async fn check_all_documents(
     let vocabulary_candidates = if llm.is_some()
         && !config.is_continuation
         && !deadline_hit
-        && !config.deadline.is_some_and(|d| Instant::now() > d)
+        && config.deadline.is_none_or(|d| Instant::now() <= d)
     {
         progress.phase("Extracting domain vocabulary");
         let active_doc_refs: Vec<&Document> = all_results.iter().map(|(d, ..)| **d).collect();
@@ -696,7 +696,7 @@ fn is_archived(file_path: &str) -> bool {
 mod tests {
     use super::*;
     use crate::database::tests::test_db;
-    use crate::embedding::test_helpers::MockEmbedding;
+    use crate::embedding::test_helpers::{near_spike, spike_embedding, MockEmbedding};
     use crate::models::Document;
     use crate::progress::ProgressReporter;
 
@@ -1253,21 +1253,6 @@ mod tests {
             let r = self.response.clone();
             Box::pin(async move { Ok(r) })
         }
-    }
-
-    /// Helper: create a 1024-dim embedding with a spike at `index`.
-    fn spike_embedding(index: usize) -> Vec<f32> {
-        let mut v = vec![0.0f32; 1024];
-        v[index] = 1.0;
-        v
-    }
-
-    /// Helper: create a 1024-dim embedding similar to spike at `index` with slight offset.
-    fn near_spike(index: usize, offset: f32) -> Vec<f32> {
-        let mut v = vec![0.0f32; 1024];
-        v[index] = 1.0;
-        v[(index + 1) % 1024] = offset;
-        v
     }
 
     fn default_check_config() -> CheckConfig {

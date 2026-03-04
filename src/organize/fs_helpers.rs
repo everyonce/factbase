@@ -62,7 +62,7 @@ pub(crate) fn remove_dir(path: &Path) -> Result<(), FactbaseError> {
 }
 
 /// Canonicalize a path, stripping the Windows `\\?\` prefix if present.
-pub(crate) fn clean_canonicalize(path: &Path) -> PathBuf {
+pub fn clean_canonicalize(path: &Path) -> PathBuf {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     #[cfg(target_os = "windows")]
     {

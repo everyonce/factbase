@@ -435,14 +435,14 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "instruction": resolve(wf, "update.discover", DEFAULT_UPDATE_DISCOVER_INSTRUCTION, &[]),
             "next_tool": "check_repository",
             "suggested_args": {"mode": "discover"},
-            "when_done": format!("Call workflow with workflow='update', step={}", if do_cv { 5 } else { 5 })
+            "when_done": format!("Call workflow with workflow='update', step=5")
         }),
         5 => serde_json::json!({
             "workflow": "update",
             "step": 5, "total_steps": total,
             "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
             "next_tool": "organize_analyze",
-            "when_done": format!("Call workflow with workflow='update', step={}", if do_cv { 6 } else { 6 })
+            "when_done": format!("Call workflow with workflow='update', step=6")
         }),
         6 => serde_json::json!({
             "workflow": "update",
@@ -716,7 +716,7 @@ fn resolve_step2_batch(
     let batch_size = RESOLVE_BATCH_SIZE;
     let total_questions = resolved_so_far + remaining;
     let batch_number = (resolved_so_far / batch_size) + 1;
-    let total_batches_estimate = (total_questions + batch_size - 1) / batch_size;
+    let total_batches_estimate = total_questions.div_ceil(batch_size);
     let batch: Vec<Value> = unanswered.into_iter().take(batch_size).collect();
 
     // Select instruction based on variant

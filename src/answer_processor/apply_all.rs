@@ -424,7 +424,7 @@ async fn apply_one_document(
     let dismissed_line_refs: Vec<usize> = interpreted
         .iter()
         .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-        .flat_map(|ia| conflict_line_refs(ia))
+        .flat_map(conflict_line_refs)
         .collect();
     let conflict_dismissed_refs: Vec<usize> = interpreted
         .iter()
@@ -432,7 +432,7 @@ async fn apply_one_document(
             matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
                 && ia.question.question_type == QuestionType::Conflict
         })
-        .flat_map(|ia| conflict_line_refs(ia))
+        .flat_map(conflict_line_refs)
         .collect();
     new_content = stamp_sequential_lines(&new_content, &conflict_dismissed_refs);
     let conflict_texts: Vec<String> = interpreted
@@ -441,7 +441,7 @@ async fn apply_one_document(
             matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
                 && ia.question.question_type == QuestionType::Conflict
         })
-        .flat_map(|ia| conflict_fact_texts(ia))
+        .flat_map(conflict_fact_texts)
         .collect();
     let text_refs: Vec<&str> = conflict_texts.iter().map(|s| s.as_str()).collect();
     new_content = stamp_sequential_by_text(&new_content, &text_refs);
@@ -449,7 +449,7 @@ async fn apply_one_document(
     let dismissed_texts: Vec<String> = interpreted
         .iter()
         .filter(|ia| matches!(ia.instruction, crate::ChangeInstruction::Dismiss))
-        .flat_map(|ia| conflict_fact_texts(ia))
+        .flat_map(conflict_fact_texts)
         .collect();
     let dismissed_text_refs: Vec<&str> = dismissed_texts.iter().map(|s| s.as_str()).collect();
     new_content = stamp_reviewed_by_text(&new_content, &dismissed_text_refs, &today);

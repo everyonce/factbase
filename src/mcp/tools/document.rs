@@ -49,36 +49,6 @@ fn content_coverage_warning(content: &str) -> Option<String> {
     }
 }
 
-/// Extract the `# Title` from content, skipping any factbase header first.
-/// Returns `None` if no title line is found.
-fn extract_title_from_content(content: &str) -> Option<String> {
-    let mut lines = content.lines().peekable();
-
-    // Skip factbase header if present
-    if let Some(first) = lines.peek() {
-        if ID_REGEX.is_match(first) {
-            lines.next();
-        }
-    }
-
-    // Skip blank lines between header and title
-    while let Some(line) = lines.peek() {
-        if !line.trim().is_empty() {
-            break;
-        }
-        lines.next();
-    }
-
-    // Extract title if present
-    if let Some(line) = lines.peek() {
-        if line.starts_with("# ") {
-            return Some(crate::patterns::clean_title(&line[2..]));
-        }
-    }
-
-    None
-}
-
 /// Strip the `<!-- factbase:ID -->` header and first `# Title` line from content,
 /// returning only the body. Handles content with or without the header.
 fn strip_factbase_header(content: &str) -> String {
@@ -297,7 +267,7 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // When content includes a # Title line and no explicit title param was given,
     // extract the title from the content so it isn't silently reverted to the stale DB value.
     let extracted_title = if new_title.is_none() && new_content.is_some() {
-        extract_title_from_content(new_content.unwrap())
+        crate::patterns::extract_heading_title(new_content.unwrap())
     } else {
         None
     };
@@ -664,39 +634,6 @@ mod tests {
         assert_eq!(
             strip_factbase_header(content),
             "<!-- not a factbase header -->\n# Title\n\n- fact 1"
-        );
-    }
-
-    #[test]
-    fn test_extract_title_from_content_with_header() {
-        let content = "<!-- factbase:a1cb2b -->\n# My Title\n\n- fact";
-        assert_eq!(
-            extract_title_from_content(content),
-            Some("My Title".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_title_from_content_without_header() {
-        let content = "# My Title\n\n- fact";
-        assert_eq!(
-            extract_title_from_content(content),
-            Some("My Title".to_string())
-        );
-    }
-
-    #[test]
-    fn test_extract_title_from_content_no_title() {
-        let content = "- fact 1\n- fact 2";
-        assert_eq!(extract_title_from_content(content), None);
-    }
-
-    #[test]
-    fn test_extract_title_from_content_strips_footnote_refs() {
-        let content = "<!-- factbase:a1cb2b -->\n# Joan Butters [^7]\n\n- fact";
-        assert_eq!(
-            extract_title_from_content(content),
-            Some("Joan Butters".to_string())
         );
     }
 

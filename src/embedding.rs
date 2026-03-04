@@ -374,6 +374,20 @@ pub(crate) mod test_helpers {
             16
         }
     }
+    /// Create a 1024-dim embedding with a spike at `index`.
+    pub fn spike_embedding(index: usize) -> Vec<f32> {
+        let mut v = vec![0.0f32; 1024];
+        v[index] = 1.0;
+        v
+    }
+
+    /// Create a 1024-dim embedding similar to spike at `index` with slight offset.
+    pub fn near_spike(index: usize, offset: f32) -> Vec<f32> {
+        let mut v = vec![0.0f32; 1024];
+        v[index] = 1.0;
+        v[(index + 1) % 1024] = offset;
+        v
+    }
 }
 
 #[cfg(test)]

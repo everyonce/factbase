@@ -147,7 +147,8 @@ fn load_doc_context(
     }
     let doc = db.get_document(doc_id).ok()??;
     let source_map = build_source_map(&doc.content);
-    let title = extract_title(&doc.content, doc_id);
+    let title = crate::patterns::extract_heading_title(&doc.content)
+        .unwrap_or_else(|| doc_id.to_string());
     cache.insert(
         doc_id.to_string(),
         DocContext {
@@ -497,11 +498,6 @@ pub async fn cross_validate_facts(
     })
 }
 
-/// Extract document title from content (first `# ` heading) or fall back to doc_id.
-fn extract_title(content: &str, doc_id: &str) -> String {
-    crate::patterns::extract_heading_title(content).unwrap_or_else(|| doc_id.to_string())
-}
-
 /// Default template for the cross-validate prompt.
 const DEFAULT_CROSS_VALIDATE_PROMPT: &str = "Validate these facts against evidence from other knowledge base documents.\n\n\
 For each fact, trace the evidence chain:\n\
@@ -689,7 +685,8 @@ pub async fn cross_validate_document(
     let temporal_tags = crate::processor::parse_temporal_tags(body);
     let heading_temporal_map = super::stale::build_heading_temporal_map(body, &temporal_tags);
 
-    let doc_title = extract_title(content, doc_id);
+    let doc_title = crate::patterns::extract_heading_title(content)
+        .unwrap_or_else(|| doc_id.to_string());
     let mut questions = Vec::new();
 
     for chunk in facts_with_context.chunks(BATCH_SIZE) {
@@ -797,16 +794,6 @@ mod tests {
         .await
         .unwrap();
         assert!(questions.is_empty());
-    }
-
-    #[test]
-    fn test_extract_title_from_heading() {
-        assert_eq!(extract_title("# My Doc\n\nContent", "abc"), "My Doc");
-    }
-
-    #[test]
-    fn test_extract_title_fallback_to_id() {
-        assert_eq!(extract_title("No heading here", "abc123"), "abc123");
     }
 
     #[test]

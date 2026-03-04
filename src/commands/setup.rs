@@ -120,15 +120,7 @@ pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database
 
 /// Canonicalize a path, stripping the Windows `\\?\` prefix if present.
 pub fn clean_canonicalize(path: &std::path::Path) -> std::path::PathBuf {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    #[cfg(target_os = "windows")]
-    {
-        let s = canonical.to_string_lossy();
-        if let Some(stripped) = s.strip_prefix(r"\\?\") {
-            return std::path::PathBuf::from(stripped);
-        }
-    }
-    canonical
+    factbase::organize::clean_canonicalize(path)
 }
 
 /// Find repository by ID or from current directory, returning config for callers that need it.

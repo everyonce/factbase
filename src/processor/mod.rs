@@ -58,6 +58,7 @@ pub use temporal::{
     find_malformed_tags, overlaps_point, overlaps_range, parse_temporal_tags, validate_date,
     validate_temporal_tags, TemporalConflict, TemporalSequenceError, TemporalValidationError,
 };
+pub(crate) use temporal::ranges_overlap;
 pub(crate) use temporal::{line_has_temporal_tag, normalize_temporal_tags};
 
 // Re-export source types and functions
