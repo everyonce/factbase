@@ -131,6 +131,7 @@ async fn check_questions(
         batch_size: 10,
         repo_id: repo_id.map(String::from),
         is_continuation: false,
+        fact_db: None,
     };
 
     let output = check_all_documents(&docs, db, embedding, llm, &config, progress).await?;
@@ -223,8 +224,12 @@ async fn check_cross_validate(
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
+    // Resolve repo-local DB for fact embeddings (may differ from central DB)
+    let fact_db = repo_id.and_then(|id| db.resolve_repo_fact_db(id));
+    let fdb = fact_db.as_ref().unwrap_or(db);
+
     // Server-side cursor
-    let current_fact_count = db.get_fact_embedding_count().unwrap_or(0);
+    let current_fact_count = fdb.get_fact_embedding_count().unwrap_or(0);
     let pair_offset = match db.get_cross_validation_state(&scope_key)? {
         Some((offset, stored_fact_count)) if stored_fact_count == current_fact_count => offset,
         Some(_) => {
@@ -247,6 +252,7 @@ async fn check_cross_validate(
         batch_size,
         repo_id: repo_id.map(String::from),
         is_continuation: true, // skip question gen, only run CV
+        fact_db,
     };
 
     progress.phase("Cross-document validation");

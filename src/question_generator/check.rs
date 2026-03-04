@@ -80,6 +80,10 @@ pub struct CheckConfig {
     /// Whether this is a continuation call (pair_offset > 0 or checked_doc_ids non-empty).
     /// When true, skip vocabulary extraction and entity discovery (already done on first call).
     pub is_continuation: bool,
+    /// Optional repo-local database for fact embeddings.
+    /// When the MCP server runs from a different directory than the target repo,
+    /// fact embeddings may live in the repo's own `.factbase/factbase.db`.
+    pub fact_db: Option<crate::database::Database>,
 }
 
 /// Result of linting a single document.
@@ -393,9 +397,10 @@ pub async fn check_all_documents(
     if llm.is_some() && deadline_hit {
         // Question gen exhausted the budget before cross-validation could start.
         // Peek at the pair count so the caller knows CV is still pending.
-        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        let fdb = config.fact_db.as_ref().unwrap_or(db);
+        let fact_count = fdb.get_fact_embedding_count().unwrap_or(0);
         if fact_count > 0 {
-            let total = db
+            let total = fdb
                 .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
                 .map(|p| p.len())
                 .unwrap_or(0);
@@ -410,9 +415,10 @@ pub async fn check_all_documents(
         let cv_start = Instant::now();
 
         // Try fact-pair mode first (uses pre-computed embeddings from scan)
-        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
+        let fdb = config.fact_db.as_ref().unwrap_or(db);
+        let fact_count = fdb.get_fact_embedding_count().unwrap_or(0);
         if fact_count > 0 {
-            let pairs = db
+            let pairs = fdb
                 .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
                 .unwrap_or_default();
             if !pairs.is_empty() {
@@ -723,6 +729,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -755,6 +762,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -783,6 +791,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -812,6 +821,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -847,6 +857,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -877,6 +888,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -917,6 +929,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -948,6 +961,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -978,6 +992,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -1013,6 +1028,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1045,6 +1061,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1079,6 +1096,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1109,6 +1127,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
@@ -1138,6 +1157,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1172,6 +1192,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -1262,6 +1283,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         }
     }
 
@@ -1714,6 +1736,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, None, &config, &progress)
@@ -1867,6 +1890,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
                     is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
@@ -1901,6 +1925,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: false,
+                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -1921,6 +1946,7 @@ mod tests {
                     batch_size: 10,
                     repo_id: None,
                     is_continuation: true,
+                    fact_db: None,
                 };
         let output_cont = check_all_documents(&docs, &db, &embedding, None, &config_cont, &progress)
             .await
@@ -1949,6 +1975,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
             is_continuation: false,
+        fact_db: None,
         };
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await
@@ -2048,6 +2075,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
             is_continuation: false,
+        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -2081,6 +2109,7 @@ mod tests {
             batch_size: 10,
             repo_id: None,
             is_continuation: true,
+            fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -2088,5 +2117,70 @@ mod tests {
             .unwrap();
         assert_eq!(output.docs_processed, 0, "CV mode with past deadline should process 0 docs");
         assert_eq!(output.docs_total, 2);
+    }
+
+    #[tokio::test]
+    async fn test_fact_db_override_used_for_cross_validation() {
+        // Verify that check_all_documents uses fact_db when provided,
+        // even if the main db has no fact embeddings.
+        use crate::llm::test_helpers::MockLlm;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+
+        // Main DB has zero fact embeddings
+        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
+
+        // Create a separate "repo-local" DB with fact embeddings
+        let tmp_local = tempfile::TempDir::new().unwrap();
+        let local_db = Database::new(&tmp_local.path().join("local.db")).unwrap();
+
+        // Set up docs in the local DB (need repo for FK)
+        let repo = crate::database::tests::test_repo();
+        local_db.upsert_repository(&repo).unwrap();
+        let doc_a = Document {
+            id: "aaa".to_string(),
+            file_path: "aaa.md".to_string(),
+            ..make_doc("aaa", "Doc A", "# Doc A\n\n- Fact alpha\n")
+        };
+        let doc_b = Document {
+            id: "bbb".to_string(),
+            file_path: "bbb.md".to_string(),
+            ..make_doc("bbb", "Doc B", "# Doc B\n\n- Fact beta\n")
+        };
+        local_db.upsert_document(&doc_a).unwrap();
+        local_db.upsert_document(&doc_b).unwrap();
+        let emb_a = vec![0.5_f32; 1024];
+        let mut emb_b = vec![0.5_f32; 1024];
+        emb_b[0] = 0.51; // slightly different to avoid exact match filtering
+        local_db.upsert_fact_embedding("f1", "aaa", 3, "Fact alpha", "h1", &emb_a).unwrap();
+        local_db.upsert_fact_embedding("f2", "bbb", 3, "Fact beta", "h2", &emb_b).unwrap();
+        assert_eq!(local_db.get_fact_embedding_count().unwrap(), 2);
+        // Verify pairs are found in the local DB
+        let pairs = local_db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap();
+        assert!(!pairs.is_empty(), "Local DB should have cross-doc fact pairs");
+
+        let docs = vec![doc_a, doc_b];
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            checked_doc_ids: HashSet::new(),
+            pair_offset: 0,
+            acquire_write_guard: false,
+            batch_size: 10,
+            repo_id: None,
+            is_continuation: true,
+            fact_db: Some(local_db),
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+            .await
+            .unwrap();
+        // With fact_db set, it should find fact pairs and use pair-based CV
+        // (pair_progress should be Some, not None which would indicate fallback)
+        assert!(output.pair_progress.is_some(), "Should use fact-pair mode via fact_db");
     }
 }
