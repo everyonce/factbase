@@ -3,3 +3,6 @@ auto-dev.log
 web/node_modules
 logs/
 temp/
+.factbase/
+.kiro/settings/
+run_cross_validate.py
