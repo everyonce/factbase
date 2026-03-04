@@ -230,14 +230,9 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::tests::test_db;
     use serde_json::json;
     use tempfile::TempDir;
-
-    fn test_db() -> (Database, TempDir) {
-        let tmp = TempDir::new().unwrap();
-        let db = Database::new(&tmp.path().join("test.db")).unwrap();
-        (db, tmp)
-    }
 
     #[test]
     fn test_init_repository_tolerates_preexisting_config() {

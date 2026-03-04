@@ -269,7 +269,7 @@ async fn check_cross_validate(
             let remaining = total.saturating_sub(processed);
             let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
             let pairs_this_call = processed.saturating_sub(pair_offset).max(1);
-            let estimated_iterations = (remaining + pairs_this_call - 1) / pairs_this_call;
+            let estimated_iterations = remaining.div_ceil(pairs_this_call);
 
             let mut progress_obj = serde_json::json!({
                 "pairs_checked": processed, "pairs_total": total,
@@ -336,7 +336,7 @@ async fn check_discover(
         }
 
         // Vocabulary extraction
-        if !deadline.is_some_and(|d| std::time::Instant::now() > d) {
+        if deadline.is_none_or(|d| std::time::Instant::now() <= d) {
             progress.phase("Extracting domain vocabulary");
             let defined_terms = crate::question_generator::collect_defined_terms(&docs);
             let doc_refs: Vec<&crate::models::Document> = docs.iter().collect();
@@ -674,17 +674,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_deep_check_continues_when_question_gen_exhausts_budget() {
-        fn spike_embedding(index: usize) -> Vec<f32> {
-            let mut v = vec![0.0f32; 1024];
-            v[index] = 1.0;
-            v
-        }
-        fn near_spike(index: usize, offset: f32) -> Vec<f32> {
-            let mut v = vec![0.0f32; 1024];
-            v[index] = 1.0;
-            v[(index + 1) % 1024] = offset;
-            v
-        }
+        use crate::embedding::test_helpers::{near_spike, spike_embedding};
 
         let (db, _tmp) = test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));

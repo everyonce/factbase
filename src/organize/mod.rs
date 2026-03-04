@@ -34,6 +34,7 @@ pub use execute::{
     MoveResult, RetypeResult, SplitResult,
 };
 pub use extract::extract_facts;
+pub use fs_helpers::clean_canonicalize;
 pub use links::{redirect_database_links, redirect_file_links, redirect_links};
 pub use orphans::{write_orphans, OrphanOperation};
 pub use plan::{plan_merge, plan_split, MergePlan, ProposedDocument, SplitPlan};
