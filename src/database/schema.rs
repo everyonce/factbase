@@ -109,11 +109,11 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         );",
     ),
     // Version 12: Lock/lease columns for cross-validation concurrency
+    // SQL is empty — handled in post-migration hook to be idempotent
     (
         12,
         "Add lock columns to cross_validation_state",
-        "ALTER TABLE cross_validation_state ADD COLUMN locked_by TEXT;
-         ALTER TABLE cross_validation_state ADD COLUMN locked_at TEXT;",
+        "",
     ),
     // Version 13: Cached fact pairs to avoid O(n²) recomputation
     (
@@ -354,6 +354,9 @@ impl Database {
                 if *version == 7 {
                     Self::backfill_fts5(conn)?;
                 }
+                if *version == 12 {
+                    Self::add_cv_lock_columns(conn)?;
+                }
 
                 Self::set_schema_version(conn, *version)?;
                 tracing::info!("Migration {} complete", version);
@@ -390,6 +393,20 @@ impl Database {
                     [id],
                 )?;
             }
+        }
+        Ok(())
+    }
+
+    /// Idempotently add lock columns to cross_validation_state (migration 12)
+    fn add_cv_lock_columns(conn: &DbConn) -> Result<(), FactbaseError> {
+        let has_locked_by: bool = conn
+            .prepare("SELECT locked_by FROM cross_validation_state LIMIT 0")
+            .is_ok();
+        if !has_locked_by {
+            conn.execute_batch(
+                "ALTER TABLE cross_validation_state ADD COLUMN locked_by TEXT;
+                 ALTER TABLE cross_validation_state ADD COLUMN locked_at TEXT;",
+            )?;
         }
         Ok(())
     }
