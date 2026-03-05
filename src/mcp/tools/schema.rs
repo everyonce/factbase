@@ -196,7 +196,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Usually completes in one call.\n- 'embeddings': Generate fact-level embeddings for cross-validation. Pages via resume token.\n\nIf doc_id is provided, checks just that document (ignores mode).",
+                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Pages via resume token.\n- 'embeddings': Generate fact-level embeddings for cross-validation. Pages via resume token.\n\nIf doc_id is provided, checks just that document (ignores mode).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -299,7 +299,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "organize_analyze",
-                "description": "Analyze repository for reorganization opportunities: ghost files (duplicate files sharing an ID/title in the same directory), merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only. Supports time-boxing via time_budget_secs; pass completed_phases to resume.",
+                "description": "Analyze repository for reorganization opportunities: ghost files (duplicate files sharing an ID/title in the same directory), merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only. Supports time-boxing via time_budget_secs; pass resume token to continue.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -307,9 +307,10 @@ pub fn tools_list() -> Value {
                         "focus": { "type": "string", "enum": ["duplicates", "structure"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info. 'structure' returns misplaced document candidates." },
                         "merge_threshold": { "type": "number", "description": "Minimum similarity for merge candidates (default: 0.95)" },
                         "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600). Falls back to server.time_budget_secs config." },
-                        "completed_phases": { "type": "array", "items": { "type": "string" }, "description": "Cursor: phases already completed in a previous call (returned when deadline fires)." },
-                        "analyzed_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Cursor: document IDs already analyzed (for future within-phase resumption)." }
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
+                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." },
+                        "completed_phases": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." },
+                        "analyzed_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." }
                     }
                 }
             },

@@ -316,36 +316,84 @@ async fn check_discover(
     let repo_id = repo_id.as_deref();
     let perspective = load_perspective(db, repo_id);
     let docs = load_docs(db, repo_id)?;
+    let total_docs = docs.len();
 
     let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
+    // Decode resume token: {phase: "entities"|"vocabulary", doc_offset: N}
+    let resume_data = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token);
+    let start_phase = resume_data.as_ref()
+        .and_then(|v| v.get("phase").and_then(Value::as_str))
+        .unwrap_or("entities");
+    let doc_offset = resume_data.as_ref()
+        .and_then(|v| v.get("doc_offset").and_then(Value::as_u64))
+        .unwrap_or(0) as usize;
+
     let mut result = serde_json::json!({ "mode": "discover" });
 
     if let Some(llm_ref) = llm {
-        // Entity discovery
-        progress.phase("Discovering entities");
-        let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
-        let suggested_entities = crate::organize::discover_entities(
-            &docs, &existing_titles, llm_ref, perspective.as_ref(), progress,
-        )
-        .await
-        .unwrap_or_default();
+        let mut entities_done = start_phase != "entities";
+        let mut entity_offset = if !entities_done { doc_offset } else { 0 };
+        let mut vocab_offset = if start_phase == "vocabulary" { doc_offset } else { 0 };
 
-        if !suggested_entities.is_empty() {
-            result["suggested_entities"] = serde_json::to_value(&suggested_entities).unwrap_or_default();
+        // Entity discovery phase
+        if !entities_done {
+            progress.phase("Discovering entities");
+            let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
+            let (suggested_entities, processed) = crate::organize::discover_entities(
+                &docs, &existing_titles, llm_ref, perspective.as_ref(), progress,
+                entity_offset, deadline,
+            )
+            .await
+            .unwrap_or_default();
+
+            entity_offset += processed;
+
+            if entity_offset < total_docs {
+                // Deadline hit during entity discovery
+                let token = crate::mcp::tools::helpers::encode_resume_token(
+                    &serde_json::json!({"phase": "entities", "doc_offset": entity_offset}),
+                );
+                crate::mcp::tools::helpers::apply_time_budget_progress(
+                    &mut result, entity_offset, total_docs * 2, "check_repository",
+                    true, Some(&token),
+                );
+                return Ok(result);
+            }
+
+            if !suggested_entities.is_empty() {
+                result["suggested_entities"] = serde_json::to_value(&suggested_entities).unwrap_or_default();
+            }
+            entities_done = true;
         }
 
-        // Vocabulary extraction
-        if deadline.is_none_or(|d| std::time::Instant::now() <= d) {
+        // Vocabulary extraction phase
+        if entities_done && deadline.is_none_or(|d| std::time::Instant::now() <= d) {
             progress.phase("Extracting domain vocabulary");
             let defined_terms = crate::question_generator::collect_defined_terms(&docs);
             let doc_refs: Vec<&crate::models::Document> = docs.iter().collect();
-            let vocab = crate::question_generator::check::extract_vocabulary(
-                &doc_refs, &defined_terms, llm_ref, deadline, progress,
+            let (vocab, vocab_processed) = crate::question_generator::check::extract_vocabulary(
+                &doc_refs, &defined_terms, llm_ref, deadline, progress, vocab_offset,
             ).await;
+
+            vocab_offset += vocab_processed;
+
             if !vocab.is_empty() {
                 result["vocabulary_candidates"] = serde_json::to_value(&vocab).unwrap_or_default();
+            }
+
+            if vocab_offset < total_docs {
+                // Deadline hit during vocabulary extraction
+                let token = crate::mcp::tools::helpers::encode_resume_token(
+                    &serde_json::json!({"phase": "vocabulary", "doc_offset": vocab_offset}),
+                );
+                crate::mcp::tools::helpers::apply_time_budget_progress(
+                    &mut result, total_docs + vocab_offset, total_docs * 2, "check_repository",
+                    true, Some(&token),
+                );
+                return Ok(result);
             }
         }
     } else {
@@ -924,6 +972,62 @@ mod tests {
             .unwrap();
         assert_eq!(result["mode"], "discover");
         assert!(result.get("warning").is_some(), "discover without LLM should warn");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_discover_resume_token_skips_entities_phase() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "dr1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:dr1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        // Resume from vocabulary phase — entities phase should be skipped
+        let token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"phase": "vocabulary", "doc_offset": 0}),
+        );
+        let args = serde_json::json!({"mode": "discover", "repo": "test", "resume": token});
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "discover");
+        // Should not have suggested_entities since we skipped entity phase
+        assert!(result.get("suggested_entities").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_discover_completes_without_continue_for_small_repo() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "dc1111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:dc1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let llm = MockLlm::new("[]");
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "discover", "repo": "test", "time_budget_secs": 30});
+        let result = check_repository(&db, &embedding, Some(&llm), &args, &progress)
+            .await
+            .unwrap();
+        assert_eq!(result["mode"], "discover");
+        // Small repo should complete without continuation
+        assert!(result.get("continue").is_none(), "small repo should not need continuation: {result}");
     }
 
     #[tokio::test]

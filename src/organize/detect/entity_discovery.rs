@@ -10,6 +10,7 @@ use crate::models::{Document, Perspective};
 use crate::progress::ProgressReporter;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 use tracing::warn;
 
 /// A suggested entity discovered across multiple documents.
@@ -48,13 +49,16 @@ const BATCH_SIZE: usize = 5;
 /// Discover entities mentioned across documents that lack their own document.
 ///
 /// Requires an LLM provider. Only returns candidates mentioned in >= 2 documents.
+/// Returns `(suggestions, docs_processed)` so callers can track progress for resumption.
 pub async fn discover_entities(
     docs: &[Document],
     existing_titles: &[String],
     llm: &dyn LlmProvider,
     perspective: Option<&Perspective>,
     progress: &ProgressReporter,
-) -> Result<Vec<SuggestedEntity>, FactbaseError> {
+    doc_offset: usize,
+    deadline: Option<Instant>,
+) -> Result<(Vec<SuggestedEntity>, usize), FactbaseError> {
     let existing_lower: HashSet<String> = existing_titles.iter().map(|t| t.to_lowercase()).collect();
 
     let prompts = crate::Config::load(None).unwrap_or_default().prompts;
@@ -62,10 +66,19 @@ pub async fn discover_entities(
     // Phase 1: Extract candidate names from each document via LLM
     progress.phase("Discovering entity candidates");
     let mut name_to_docs: HashMap<String, Vec<String>> = HashMap::new();
+    let remaining_docs = if doc_offset < docs.len() { &docs[doc_offset..] } else { &[] };
+    let mut docs_processed: usize = 0;
+    let mut deadline_hit = false;
 
-    for (i, batch) in docs.chunks(BATCH_SIZE).enumerate() {
+    for (i, batch) in remaining_docs.chunks(BATCH_SIZE).enumerate() {
+        if let Some(d) = deadline {
+            if Instant::now() > d {
+                deadline_hit = true;
+                break;
+            }
+        }
         progress.report(
-            i * BATCH_SIZE,
+            doc_offset + i * BATCH_SIZE,
             docs.len(),
             "Extracting entity candidates",
         );
@@ -73,6 +86,7 @@ pub async fn discover_entities(
         for doc in batch {
             let content = &doc.content;
             if content.len() < 50 {
+                docs_processed += 1;
                 continue;
             }
             let truncated = if content.len() > MAX_CONTENT_LEN {
@@ -92,6 +106,7 @@ pub async fn discover_entities(
                 Ok(r) => r,
                 Err(e) => {
                     warn!("Entity discovery LLM call failed for {}: {e}", doc.id);
+                    docs_processed += 1;
                     continue;
                 }
             };
@@ -109,7 +124,13 @@ pub async fn discover_entities(
                     .or_default()
                     .push(doc.id.clone());
             }
+            docs_processed += 1;
         }
+    }
+
+    // If deadline hit before processing all docs, return partial results
+    if deadline_hit {
+        return Ok((Vec::new(), docs_processed));
     }
 
     // Phase 2: Filter to candidates mentioned in >= 2 documents
@@ -119,7 +140,7 @@ pub async fn discover_entities(
         .collect();
 
     if frequent.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), docs_processed));
     }
 
     // Phase 3: Classify candidates if perspective has allowed_types
@@ -140,7 +161,7 @@ pub async fn discover_entities(
             .collect()
     };
 
-    Ok(results)
+    Ok((results, docs_processed))
 }
 
 /// Classify candidates against allowed_types via LLM, filtering out low confidence.
@@ -294,12 +315,13 @@ mod tests {
         let existing = vec!["Doc One".to_string(), "Doc Two".to_string()];
         let progress = ProgressReporter::Silent;
 
-        let results = discover_entities(&docs, &existing, &llm, None, &progress)
+        let (results, processed) = discover_entities(&docs, &existing, &llm, None, &progress, 0, None)
             .await
             .unwrap();
 
         // Both candidates appear in both docs
         assert_eq!(results.len(), 2);
+        assert_eq!(processed, 2);
         let names: Vec<&str> = results.iter().map(|r| r.name.as_str()).collect();
         assert!(names.contains(&"Acme corp"));
         assert!(names.contains(&"Springfield"));
@@ -324,7 +346,7 @@ mod tests {
         ];
         let progress = ProgressReporter::Silent;
 
-        let results = discover_entities(&docs, &existing, &llm, None, &progress)
+        let (results, _) = discover_entities(&docs, &existing, &llm, None, &progress, 0, None)
             .await
             .unwrap();
 
@@ -340,7 +362,7 @@ mod tests {
         let existing = vec!["Doc One".to_string()];
         let progress = ProgressReporter::Silent;
 
-        let results = discover_entities(&docs, &existing, &llm, None, &progress)
+        let (results, _) = discover_entities(&docs, &existing, &llm, None, &progress, 0, None)
             .await
             .unwrap();
 
@@ -357,7 +379,7 @@ mod tests {
         let existing = vec![];
         let progress = ProgressReporter::Silent;
 
-        let results = discover_entities(&docs, &existing, &llm, None, &progress)
+        let (results, _) = discover_entities(&docs, &existing, &llm, None, &progress, 0, None)
             .await
             .unwrap();
 
@@ -374,7 +396,7 @@ mod tests {
         let existing = vec![];
         let progress = ProgressReporter::Silent;
 
-        let results = discover_entities(&docs, &existing, &llm, None, &progress)
+        let (results, _) = discover_entities(&docs, &existing, &llm, None, &progress, 0, None)
             .await
             .unwrap();
 
@@ -466,5 +488,44 @@ mod tests {
             dedup_vec(vec!["b".into(), "a".into(), "b".into()]),
             vec!["a", "b"]
         );
+    }
+
+    #[tokio::test]
+    async fn test_discover_entities_respects_deadline() {
+        let llm = MockLlm::new(r#"["Acme Corp"]"#);
+        let docs = vec![
+            make_doc("d1", "Doc One", "Acme Corp is mentioned in this longer document content."),
+            make_doc("d2", "Doc Two", "Acme Corp is also mentioned in this other document content."),
+        ];
+        let existing = vec![];
+        let progress = ProgressReporter::Silent;
+        // Deadline already passed
+        let deadline = Some(Instant::now() - std::time::Duration::from_secs(1));
+
+        let (results, processed) = discover_entities(&docs, &existing, &llm, None, &progress, 0, deadline)
+            .await
+            .unwrap();
+
+        assert!(results.is_empty());
+        assert_eq!(processed, 0);
+    }
+
+    #[tokio::test]
+    async fn test_discover_entities_respects_doc_offset() {
+        let llm = MockLlm::new(r#"["Acme Corp"]"#);
+        let docs = vec![
+            make_doc("d1", "Doc One", "Acme Corp is mentioned in this longer document content."),
+            make_doc("d2", "Doc Two", "Acme Corp is also mentioned in this other document content."),
+        ];
+        let existing = vec![];
+        let progress = ProgressReporter::Silent;
+
+        // Offset past all docs
+        let (results, processed) = discover_entities(&docs, &existing, &llm, None, &progress, 100, None)
+            .await
+            .unwrap();
+
+        assert!(results.is_empty());
+        assert_eq!(processed, 0);
     }
 }
