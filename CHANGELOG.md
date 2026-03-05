@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [50.86.2] - 2026-03-05
+
+### Fixed
+- Removed redundant `last_activity` assignment that caused `unused_assignments` warning on Windows builds
+
+### Added
+- MCP idle timeout integration test (`tests/test-mcp-idle-timeout.sh`)
+
+## [50.86.1] - 2026-03-05
+
 ### Added
 - Fact-level cross-document validation via pre-computed fact embeddings (`check --deep-check` / `check_repository` mode='cross_validate')
 - Fact-level embeddings generated during scan, powering cross-document conflict detection
