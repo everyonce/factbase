@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 // Re-export public items
 pub use options::ScanOptions;
+pub use orchestration::facts::{run_fact_embedding_phase, FactEmbeddingInput, FactEmbeddingOutput};
 pub use orchestration::{full_scan, scan_all_repositories, ScanContext};
 
 /// Scanner for finding markdown files in a directory

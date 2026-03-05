@@ -21,6 +21,9 @@ pub struct ScanResult {
     pub links_detected: usize,
     /// Number of fact-level embeddings generated
     pub fact_embeddings_generated: usize,
+    /// Number of documents needing fact embeddings (deferred to check_repository mode=embeddings)
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub fact_embeddings_needed: usize,
     /// Total documents processed
     pub total: usize,
     /// Detected duplicate document pairs

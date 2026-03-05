@@ -121,7 +121,7 @@ pub use question_generator::{
     generate_source_quality_questions,
     generate_stale_questions, generate_temporal_questions,
 };
-pub use scanner::{full_scan, scan_all_repositories, ScanContext, ScanOptions, Scanner};
+pub use scanner::{full_scan, run_fact_embedding_phase, scan_all_repositories, FactEmbeddingInput, FactEmbeddingOutput, ScanContext, ScanOptions, Scanner};
 pub use shutdown::init_shutdown_handler;
 pub use watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
 #[cfg(feature = "web")]

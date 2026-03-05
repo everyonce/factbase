@@ -56,8 +56,9 @@ pub async fn check_repository(
         Some("questions") => check_questions(db, embedding, llm, args, progress).await,
         Some("cross_validate") => check_cross_validate(db, embedding, llm, args, progress).await,
         Some("discover") => check_discover(db, llm, args, progress).await,
+        Some("embeddings") => check_embeddings(db, embedding, args, progress).await,
         Some(other) => Ok(serde_json::json!({
-            "error": format!("Unknown mode '{}'. Must be one of: questions, cross_validate, discover", other)
+            "error": format!("Unknown mode '{}'. Must be one of: questions, cross_validate, discover, embeddings", other)
         })),
         None => {
             // Backward compat: if deep_check is set, treat as old-style call
@@ -68,8 +69,8 @@ pub async fn check_repository(
                 check_cross_validate(db, embedding, llm, args, progress).await
             } else {
                 Ok(serde_json::json!({
-                    "error": "Missing required parameter 'mode'. Must be one of: questions, cross_validate, discover",
-                    "hint": "check_repository now requires an explicit mode. Use mode='questions' for per-doc quality checks, mode='cross_validate' for cross-doc fact comparison, or mode='discover' for entity suggestions."
+                    "error": "Missing required parameter 'mode'. Must be one of: questions, cross_validate, discover, embeddings",
+                    "hint": "check_repository now requires an explicit mode. Use mode='questions' for per-doc quality checks, mode='cross_validate' for cross-doc fact comparison, mode='discover' for entity suggestions, or mode='embeddings' for fact embedding generation."
                 }))
             }
         }
@@ -350,6 +351,83 @@ async fn check_discover(
     } else {
         result["warning"] = serde_json::json!("No LLM provider configured — entity discovery and vocabulary extraction require an LLM.");
     }
+
+    Ok(result)
+}
+
+/// Mode: embeddings — generate fact-level embeddings for cross-validation.
+async fn check_embeddings(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+    let repo_id = repo_id.as_deref();
+
+    let all_needing = db.get_doc_ids_without_fact_embeddings(repo_id)?;
+
+    // Resume: skip already-processed docs
+    let doc_offset = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token)
+        .and_then(|v| v.get("doc_offset").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+    let doc_ids: Vec<String> = all_needing.into_iter().skip(doc_offset).collect();
+    let total_all = doc_offset + doc_ids.len();
+
+    if doc_ids.is_empty() {
+        return Ok(serde_json::json!({
+            "mode": "embeddings",
+            "fact_embeddings_generated": 0,
+            "documents_processed": 0,
+            "message": "All documents already have fact embeddings."
+        }));
+    }
+
+    progress.phase("Generating fact embeddings");
+
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
+
+    let config = crate::Config::load(None).unwrap_or_default();
+    let batch_size = config.processor.embedding_batch_size;
+
+    let changed_set: std::collections::HashSet<String> = doc_ids.into_iter().collect();
+    let output = crate::run_fact_embedding_phase(&crate::FactEmbeddingInput {
+        changed_ids: &changed_set,
+        embedding,
+        db,
+        embedding_batch_size: batch_size,
+        progress,
+        deadline,
+    })
+    .await
+    .map_err(|e| FactbaseError::Internal(e.to_string()))?;
+
+    if output.generated > 0 {
+        let _ = db.invalidate_fact_pair_cache();
+    }
+
+    let processed_total = doc_offset + output.docs_processed;
+
+    let mut result = serde_json::json!({
+        "mode": "embeddings",
+        "fact_embeddings_generated": output.generated,
+        "documents_processed": output.docs_processed,
+    });
+
+    let resume_token = if processed_total < total_all {
+        Some(crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"doc_offset": processed_total}),
+        ))
+    } else {
+        None
+    };
+
+    crate::mcp::tools::helpers::apply_time_budget_progress(
+        &mut result, processed_total, total_all, "check_repository", time_budget.is_some(),
+        resume_token.as_deref(),
+    );
 
     Ok(result)
 }
@@ -903,5 +981,94 @@ mod tests {
             .unwrap();
         // Should not have an error
         assert!(result.get("error").is_none(), "doc_id should bypass mode requirement: {result}");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_check_embeddings_generates_fact_embeddings() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "emb111".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:emb111 -->\n# Test Doc\n\n- Fact alpha\n- Fact beta\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        // No fact embeddings yet
+        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
+
+        let args = serde_json::json!({"mode": "embeddings", "repo": "test"});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(result["mode"], "embeddings");
+        assert!(result["fact_embeddings_generated"].as_u64().unwrap() > 0);
+        assert!(db.get_fact_embedding_count().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_check_embeddings_skips_when_all_present() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "emb222".to_string();
+        doc.title = "Test Doc".to_string();
+        doc.content = "<!-- factbase:emb222 -->\n# Test Doc\n\n- Fact one\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        // Pre-populate fact embeddings
+        db.upsert_fact_embedding("emb222_4", "emb222", 4, "Fact one", "hash1", &vec![0.1; 1024]).unwrap();
+
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"mode": "embeddings", "repo": "test"});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(result["mode"], "embeddings");
+        assert_eq!(result["fact_embeddings_generated"], 0);
+        assert!(result["message"].as_str().unwrap().contains("already have"));
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_check_embeddings_returns_continue_on_deadline() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        // Create multiple docs
+        for i in 0..3u8 {
+            let id = format!("dl{i:04x}1");
+            let mut doc = crate::models::Document::test_default();
+            doc.id = id.clone();
+            doc.title = format!("Doc {i}");
+            doc.content = format!("<!-- factbase:{id} -->\n# Doc {i}\n\n- Fact {i}\n");
+            doc.repo_id = "test".to_string();
+            db.upsert_document(&doc).unwrap();
+        }
+
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        // Use a very short time budget
+        let args = serde_json::json!({"mode": "embeddings", "repo": "test", "time_budget_secs": 5});
+        let result = check_repository(&db, &embedding, None, &args, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(result["mode"], "embeddings");
+        // With 3 small docs and 5s budget, it should complete
+        assert!(result["documents_processed"].as_u64().unwrap() > 0);
     }
 }

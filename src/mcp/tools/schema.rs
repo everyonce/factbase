@@ -196,11 +196,11 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Usually completes in one call.\n\nIf doc_id is provided, checks just that document (ignores mode).",
+                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Usually completes in one call.\n- 'embeddings': Generate fact-level embeddings for cross-validation. Pages via resume token.\n\nIf doc_id is provided, checks just that document (ignores mode).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "mode": { "type": "string", "enum": ["questions", "cross_validate", "discover"], "description": "Required. 'questions' for per-doc quality checks, 'cross_validate' for cross-doc fact comparison, 'discover' for entity suggestions + vocabulary." },
+                        "mode": { "type": "string", "enum": ["questions", "cross_validate", "discover", "embeddings"], "description": "Required. 'questions' for per-doc quality checks, 'cross_validate' for cross-doc fact comparison, 'discover' for entity suggestions + vocabulary, 'embeddings' for fact embedding generation." },
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
                         "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted). Ignores mode when set." },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
@@ -229,7 +229,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate document and fact-level embeddings, and detect entity links. Fact embeddings power cross-document validation in check_repository's cross_validate mode. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
+                "description": "Re-index documents, generate document embeddings, and detect entity links. Fact-level embeddings for cross-validation are generated separately via check_repository with mode='embeddings'. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {

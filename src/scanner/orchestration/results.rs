@@ -49,6 +49,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
         reindexed: params.reindexed,
         links_detected: params.links_detected,
         fact_embeddings_generated: params.fact_embeddings_generated,
+        fact_embeddings_needed: 0,
         total: params.added + params.updated + params.unchanged + params.moved + params.reindexed,
         duplicates: vec![],
         stats: Some(ScanStats {

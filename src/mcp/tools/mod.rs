@@ -901,16 +901,15 @@ mod tests {
             link_detector: &link_detector, opts: &opts, progress: &progress,
         };
 
-        // First scan: indexes docs and generates fact embeddings
+        // First scan: indexes docs, reports fact embeddings needed (deferred to check_repository)
         let r1 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert!(r1.fact_embeddings_generated > 0);
-        let count_after_first = db.get_fact_embedding_count().unwrap();
-        assert!(count_after_first > 0);
+        assert!(r1.fact_embeddings_needed > 0);
+        assert_eq!(r1.fact_embeddings_generated, 0);
 
-        // Second scan with no changes: should skip fact embedding (already populated)
+        // Second scan with no changes: fact embeddings still needed (not yet generated)
         let r2 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert_eq!(r2.fact_embeddings_generated, 0);
-        assert_eq!(db.get_fact_embedding_count().unwrap(), count_after_first);
+        // No changed docs, but fact_embeddings table is empty so all docs need embeddings
+        assert!(r2.fact_embeddings_needed > 0);
     }
 
     #[tokio::test]
@@ -948,18 +947,13 @@ mod tests {
             link_detector: &link_detector, opts: &opts, progress: &progress,
         };
 
-        // First scan indexes docs normally
-        crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert!(db.get_fact_embedding_count().unwrap() > 0);
+        // First scan indexes docs — fact embeddings deferred
+        let r1 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
+        assert!(r1.fact_embeddings_needed > 0);
 
-        // Simulate migration: clear fact embeddings but leave docs unchanged
-        db.delete_fact_embeddings_for_doc("bbb222").unwrap();
-        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
-
-        // Rescan with no file changes: should auto-populate fact embeddings
-        let r = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert!(r.fact_embeddings_generated > 0);
-        assert!(db.get_fact_embedding_count().unwrap() > 0);
+        // Rescan with no file changes: still reports fact embeddings needed
+        let r2 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
+        assert!(r2.fact_embeddings_needed > 0);
     }
 
     #[tokio::test]

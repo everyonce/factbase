@@ -1,7 +1,7 @@
 //! Scan orchestration - full_scan and scan_all_repositories
 
 mod embedding;
-mod facts;
+pub mod facts;
 mod links;
 mod results;
 
@@ -26,7 +26,7 @@ use crate::models::{normalize_pair, DuplicatePair};
 use super::options::ScanOptions;
 use super::progress::OptionalProgress;
 use embedding::{run_embedding_phase, EmbeddingPhaseInput};
-use facts::{run_fact_embedding_phase, FactEmbeddingInput};
+// facts module used by check_repository mode=embeddings
 use links::{run_link_detection_phase, LinkPhaseInput};
 use results::{build_interrupted_result, InterruptedResultParams};
 
@@ -587,33 +587,22 @@ pub async fn full_scan(
     let link_detection_ms = link_output.link_detection_ms;
     let docs_link_detected = link_output.docs_link_detected;
 
-    // Pass 3: Generate fact-level embeddings for cross-validation (skip if --no-embed)
+    // Pass 3: Count documents needing fact embeddings (deferred to check_repository mode=embeddings)
     if !ctx.opts.skip_embeddings {
-    // Auto-populate when fact_embeddings table is empty (e.g., after migration)
     let fact_ids = if !changed_ids.is_empty() {
         changed_ids.clone()
     } else {
         let total_docs = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
         if total_docs > 0 && db.get_fact_embedding_count()? == 0 {
-            info!("No fact embeddings found — auto-populating for all documents");
             seen.clone()
         } else {
             HashSet::new()
         }
     };
+    result.fact_embeddings_needed = fact_ids.len();
+    // Invalidate fact pair cache when docs changed (embeddings will be regenerated later)
     if !fact_ids.is_empty() {
-        ctx.progress.phase("Generating fact embeddings");
-        result.fact_embeddings_generated = run_fact_embedding_phase(&FactEmbeddingInput {
-            changed_ids: &fact_ids,
-            embedding: ctx.embedding,
-            db,
-            embedding_batch_size: ctx.opts.embedding_batch_size,
-            progress: ctx.progress,
-        })
-        .await?;
-        if result.fact_embeddings_generated > 0 {
-            let _ = db.invalidate_fact_pair_cache();
-        }
+        let _ = db.invalidate_fact_pair_cache();
     }
     } // end skip_embeddings check
 
@@ -685,6 +674,7 @@ pub async fn scan_all_repositories(
                 total.deleted += result.deleted;
                 total.links_detected += result.links_detected;
                 total.fact_embeddings_generated += result.fact_embeddings_generated;
+                total.fact_embeddings_needed += result.fact_embeddings_needed;
             }
             Err(e) => {
                 warn!("Failed to scan repo {}: {}", repo.id, e);

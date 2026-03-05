@@ -127,6 +127,15 @@ pub async fn scan_repository(
         )
     };
 
+    let fact_hint = if result.fact_embeddings_needed > 0 {
+        Some(format!(
+            "Run check_repository with mode='embeddings' to generate fact embeddings for {} document(s).",
+            result.fact_embeddings_needed
+        ))
+    } else {
+        None
+    };
+
     Ok(serde_json::json!({
         "added": result.added,
         "updated": result.updated,
@@ -135,6 +144,7 @@ pub async fn scan_repository(
         "deleted": result.deleted,
         "links_detected": result.links_detected,
         "fact_embeddings_generated": result.fact_embeddings_generated,
+        "fact_embeddings_needed": result.fact_embeddings_needed,
         "total": result.total,
         "embeddings_skipped": result.embeddings_skipped,
         "temporal_coverage_percent": temporal_coverage,
@@ -145,6 +155,7 @@ pub async fn scan_repository(
         } else {
             None
         },
+        "fact_embeddings_hint": fact_hint,
     }))
 }
 
