@@ -534,8 +534,10 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                 llm.as_ref(),
                 None,
                 &progress,
+                0,
             )
-            .await;
+            .await
+            .0;
             if is_table_format && !args.quiet {
                 if candidates.is_empty() {
                     println!("  No new vocabulary candidates found.");

@@ -501,7 +501,7 @@ pub async fn check_all_documents(
     {
         progress.phase("Extracting domain vocabulary");
         let active_doc_refs: Vec<&Document> = all_results.iter().map(|(d, ..)| **d).collect();
-        extract_vocabulary(&active_doc_refs, &defined_terms, llm.unwrap(), config.deadline, progress).await
+        extract_vocabulary(&active_doc_refs, &defined_terms, llm.unwrap(), config.deadline, progress, 0).await.0
     } else {
         Vec::new()
     };
@@ -593,14 +593,16 @@ const VOCAB_MAX_CONTENT_LEN: usize = 8_000;
 /// Maximum documents per vocab extraction LLM call.
 const VOCAB_BATCH_SIZE: usize = 5;
 
-/// Extract domain vocabulary from documents using LLM.
+/// Extract domain vocabulary candidates from documents via LLM.
+/// Returns `(candidates, docs_processed)` for resumption tracking.
 pub async fn extract_vocabulary(
     docs: &[&Document],
     defined_terms: &HashSet<String>,
     llm: &dyn LlmProvider,
     deadline: Option<Instant>,
     progress: &ProgressReporter,
-) -> Vec<VocabCandidate> {
+    doc_offset: usize,
+) -> (Vec<VocabCandidate>, usize) {
     let prompts = crate::Config::load(None).unwrap_or_default().prompts;
     let existing = if defined_terms.is_empty() {
         "(none)".to_string()
@@ -610,15 +612,17 @@ pub async fn extract_vocabulary(
 
     let mut all_candidates: Vec<VocabCandidate> = Vec::new();
     let mut seen_terms: HashSet<String> = defined_terms.iter().map(|t| t.to_lowercase()).collect();
+    let remaining = if doc_offset < docs.len() { &docs[doc_offset..] } else { &[] };
+    let mut docs_processed: usize = 0;
 
-    for (i, batch) in docs.chunks(VOCAB_BATCH_SIZE).enumerate() {
+    for (i, batch) in remaining.chunks(VOCAB_BATCH_SIZE).enumerate() {
         if let Some(d) = deadline {
             if Instant::now() > d {
                 break;
             }
         }
         if i % 2 == 0 {
-            progress.report(i * VOCAB_BATCH_SIZE, docs.len(), "Extracting vocabulary");
+            progress.report(doc_offset + i * VOCAB_BATCH_SIZE, docs.len(), "Extracting vocabulary");
         }
 
         let mut excerpts = String::new();
@@ -654,9 +658,10 @@ pub async fn extract_vocabulary(
                 all_candidates.push(c);
             }
         }
+        docs_processed += batch.len();
     }
 
-    all_candidates
+    (all_candidates, docs_processed)
 }
 
 /// Check if a document path is in an archive folder.
@@ -1762,10 +1767,11 @@ mod tests {
         let docs: Vec<&Document> = vec![&doc];
         let defined = HashSet::new();
         let progress = ProgressReporter::Silent;
-        let result = extract_vocabulary(&docs, &defined, &llm, None, &progress).await;
+        let (result, processed) = extract_vocabulary(&docs, &defined, &llm, None, &progress, 0).await;
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].term, "HCLS");
         assert_eq!(result[0].doc_id, "aaa");
+        assert_eq!(processed, 1);
     }
 
     #[tokio::test]
@@ -1779,7 +1785,7 @@ mod tests {
         let mut defined = HashSet::new();
         defined.insert("HCLS".to_string());
         let progress = ProgressReporter::Silent;
-        let result = extract_vocabulary(&docs, &defined, &llm, None, &progress).await;
+        let (result, _) = extract_vocabulary(&docs, &defined, &llm, None, &progress, 0).await;
         assert_eq!(result.len(), 1, "HCLS should be deduplicated");
         assert_eq!(result[0].term, "API");
     }

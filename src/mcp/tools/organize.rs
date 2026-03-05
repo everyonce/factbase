@@ -130,10 +130,18 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
         .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
         .unwrap_or_default();
 
-    let completed_phases: std::collections::HashSet<String> = args
-        .get("completed_phases")
-        .and_then(Value::as_array)
+    // Decode resume token OR fall back to legacy completed_phases arg
+    let resume_data = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token);
+    let completed_phases: std::collections::HashSet<String> = resume_data.as_ref()
+        .and_then(|v| v.get("completed_phases").and_then(Value::as_array))
         .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+        .or_else(|| {
+            // Legacy: read completed_phases directly from args
+            args.get("completed_phases")
+                .and_then(Value::as_array)
+                .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
+        })
         .unwrap_or_default();
 
     // Count total docs for progress reporting
@@ -297,11 +305,19 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     });
 
     let all_done = phases_completed_now >= total_phases;
+    let resume_token = if !all_done && time_budget.is_some() {
+        Some(crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"completed_phases": phases_done}),
+        ))
+    } else {
+        None
+    };
     crate::mcp::tools::helpers::apply_time_budget_progress(
-        &mut result, processed, total_docs, "organize_analyze", time_budget.is_some() && !all_done, None,
+        &mut result, processed, total_docs, "organize_analyze",
+        time_budget.is_some() && !all_done, resume_token.as_deref(),
     );
 
-    // Include cursor for resumption when not all phases completed
+    // Legacy: also include completed_phases for backward compat
     if !all_done && time_budget.is_some() {
         result["completed_phases"] = serde_json::to_value(&phases_done).unwrap_or_default();
     }
@@ -679,7 +695,7 @@ mod tests {
         let embedding = crate::embedding::test_helpers::MockEmbedding::new(4);
         let progress = ProgressReporter::Silent;
 
-        // Simulate resumption: merge and split already done
+        // Simulate resumption via legacy completed_phases arg
         let args = serde_json::json!({
             "repo": "test",
             "completed_phases": ["merge", "split"],
@@ -695,6 +711,34 @@ mod tests {
         // merge_candidates should be empty since we skipped that phase
         assert_eq!(result["merge_candidates"].as_array().unwrap().len(), 0);
         assert_eq!(result["split_candidates"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_organize_analyze_resume_token_resumes_from_completed_phases() {
+        let (db, _tmp) = setup_test_db_with_doc("eee555", "Resume Token Doc");
+        let embedding = crate::embedding::test_helpers::MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        // Simulate resumption via resume token
+        let token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"completed_phases": ["ghost_files", "merge", "split"]}),
+        );
+        let args = serde_json::json!({
+            "repo": "test",
+            "resume": token,
+            "time_budget_secs": 30,
+        });
+
+        let result = organize_analyze(&db, &embedding, &args, &progress)
+            .await
+            .unwrap();
+
+        // Should still produce results (misplaced + duplicates ran)
+        assert!(result.get("misplaced_candidates").is_some());
+        // Skipped phases should be empty
+        assert_eq!(result["merge_candidates"].as_array().unwrap().len(), 0);
+        assert_eq!(result["split_candidates"].as_array().unwrap().len(), 0);
+        assert_eq!(result["ghost_files"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
@@ -746,6 +790,8 @@ mod tests {
         let analyze = tools.iter().find(|s| s["name"] == "organize_analyze").unwrap();
         let props = &analyze["inputSchema"]["properties"];
         assert!(props.get("time_budget_secs").is_some());
+        assert!(props.get("resume").is_some());
+        // Legacy fields still present for backward compat
         assert!(props.get("completed_phases").is_some());
         assert!(props.get("analyzed_doc_ids").is_some());
     }
