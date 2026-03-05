@@ -137,6 +137,36 @@ impl Database {
         Ok(count as usize)
     }
 
+    /// Get IDs of non-deleted documents that have no fact embeddings.
+    /// Optionally scoped to a single repository.
+    pub fn get_doc_ids_without_fact_embeddings(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<Vec<String>, FactbaseError> {
+        let conn = self.get_conn()?;
+        if let Some(rid) = repo_id {
+            let mut stmt = conn.prepare(
+                "SELECT d.id FROM documents d
+                 WHERE d.repo_id = ?1 AND d.is_deleted = 0
+                   AND d.id NOT IN (SELECT DISTINCT document_id FROM fact_metadata)
+                 ORDER BY d.id",
+            )?;
+            let ids = stmt.query_map([rid], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(ids)
+        } else {
+            let mut stmt = conn.prepare(
+                "SELECT d.id FROM documents d
+                 WHERE d.is_deleted = 0
+                   AND d.id NOT IN (SELECT DISTINCT document_id FROM fact_metadata)
+                 ORDER BY d.id",
+            )?;
+            let ids = stmt.query_map([], |row| row.get(0))?
+                .collect::<Result<Vec<String>, _>>()?;
+            Ok(ids)
+        }
+    }
+
     /// Count fact embeddings for a specific document.
     pub fn get_fact_embedding_count_for_doc(&self, doc_id: &str) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
@@ -927,5 +957,31 @@ mod tests {
         // Different threshold should miss cache and recompute
         let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
         assert_eq!(pairs.len(), 1); // still 1 pair, but cache was recomputed
+    }
+
+    #[test]
+    fn test_get_doc_ids_without_fact_embeddings() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+        db.upsert_document(&test_doc("doc3", "Doc 3")).unwrap();
+
+        // No fact embeddings yet — all docs should be returned
+        let ids = db.get_doc_ids_without_fact_embeddings(None).unwrap();
+        assert_eq!(ids.len(), 3);
+
+        // Add fact embedding for doc1
+        let emb = vec![0.5f32; 1024];
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
+
+        let ids = db.get_doc_ids_without_fact_embeddings(None).unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(!ids.contains(&"doc1".to_string()));
+
+        // Scoped to repo
+        let ids = db.get_doc_ids_without_fact_embeddings(Some("test-repo")).unwrap();
+        assert_eq!(ids.len(), 2);
     }
 }

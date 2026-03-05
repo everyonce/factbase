@@ -19,20 +19,37 @@ pub struct FactEmbeddingInput<'a> {
     pub db: &'a Database,
     pub embedding_batch_size: usize,
     pub progress: &'a ProgressReporter,
+    pub deadline: Option<std::time::Instant>,
+}
+
+/// Output from the fact embedding phase.
+#[derive(Debug, PartialEq)]
+pub struct FactEmbeddingOutput {
+    pub generated: usize,
+    pub docs_processed: usize,
 }
 
 /// Run fact embedding generation for changed documents.
 ///
 /// For each changed document, extracts facts, skips those with unchanged
 /// hashes, and generates embeddings for new/modified facts.
-pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow::Result<usize> {
+/// Respects an optional deadline — returns early if time runs out.
+pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow::Result<FactEmbeddingOutput> {
     if input.changed_ids.is_empty() {
-        return Ok(0);
+        return Ok(FactEmbeddingOutput { generated: 0, docs_processed: 0 });
     }
 
     let mut total_generated = 0usize;
+    let mut docs_processed = 0usize;
 
     for doc_id in input.changed_ids {
+        // Check deadline before processing each document
+        if let Some(dl) = input.deadline {
+            if std::time::Instant::now() > dl {
+                break;
+            }
+        }
+
         let doc = match input.db.get_document(doc_id)? {
             Some(d) => d,
             None => continue,
@@ -63,7 +80,7 @@ pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow:
             .zip(meta.chunks(input.embedding_batch_size))
         {
             if crate::shutdown::is_shutdown_requested() {
-                return Ok(total_generated);
+                return Ok(FactEmbeddingOutput { generated: total_generated, docs_processed });
             }
 
             let embeddings = input.embedding.generate_batch(batch_texts).await?;
@@ -88,6 +105,8 @@ pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow:
             facts = facts.len(),
             "Generated fact embeddings for document"
         );
+
+        docs_processed += 1;
     }
 
     if total_generated > 0 {
@@ -96,7 +115,7 @@ pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow:
             .log(&format!("{total_generated} fact embeddings generated"));
     }
 
-    Ok(total_generated)
+    Ok(FactEmbeddingOutput { generated: total_generated, docs_processed })
 }
 
 #[cfg(test)]
@@ -135,17 +154,18 @@ mod tests {
         let changed: HashSet<String> = ["abc123".to_string()].into();
         let progress = ProgressReporter::Silent;
 
-        let count = run_fact_embedding_phase(&FactEmbeddingInput {
+        let result = run_fact_embedding_phase(&FactEmbeddingInput {
             changed_ids: &changed,
             embedding: &embedding,
             db: &db,
             embedding_batch_size: 10,
             progress: &progress,
+            deadline: None,
         })
         .await
         .unwrap();
 
-        assert_eq!(count, 3);
+        assert_eq!(result.generated, 3);
         assert_eq!(db.get_fact_embedding_count_for_doc("abc123").unwrap(), 3);
     }
 
@@ -162,17 +182,18 @@ mod tests {
         let changed: HashSet<String> = ["abc123".to_string()].into();
         let progress = ProgressReporter::Silent;
 
-        let count = run_fact_embedding_phase(&FactEmbeddingInput {
+        let result = run_fact_embedding_phase(&FactEmbeddingInput {
             changed_ids: &changed,
             embedding: &embedding,
             db: &db,
             embedding_batch_size: 10,
             progress: &progress,
+            deadline: None,
         })
         .await
         .unwrap();
 
-        assert_eq!(count, 0);
+        assert_eq!(result.generated, 0);
         assert_eq!(db.get_fact_embedding_count_for_doc("abc123").unwrap(), 0);
     }
 
@@ -196,6 +217,7 @@ mod tests {
             db: &db,
             embedding_batch_size: 10,
             progress: &progress,
+            deadline: None,
         })
         .await
         .unwrap();
@@ -206,17 +228,18 @@ mod tests {
         let content2 = "<!-- factbase:abc123 -->\n# Test\n\n- New fact A\n- New fact B\n";
         db.upsert_document(&make_doc("abc123", content2)).unwrap();
 
-        let count = run_fact_embedding_phase(&FactEmbeddingInput {
+        let result = run_fact_embedding_phase(&FactEmbeddingInput {
             changed_ids: &changed,
             embedding: &embedding,
             db: &db,
             embedding_batch_size: 10,
             progress: &progress,
+            deadline: None,
         })
         .await
         .unwrap();
 
-        assert_eq!(count, 2);
+        assert_eq!(result.generated, 2);
         assert_eq!(db.get_fact_embedding_count_for_doc("abc123").unwrap(), 2);
     }
 
@@ -233,17 +256,18 @@ mod tests {
         let changed: HashSet<String> = ["abc123".to_string()].into();
         let progress = ProgressReporter::Silent;
 
-        let count = run_fact_embedding_phase(&FactEmbeddingInput {
+        let result = run_fact_embedding_phase(&FactEmbeddingInput {
             changed_ids: &changed,
             embedding: &embedding,
             db: &db,
             embedding_batch_size: 10,
             progress: &progress,
+            deadline: None,
         })
         .await
         .unwrap();
 
-        assert_eq!(count, 1);
+        assert_eq!(result.generated, 1);
     }
 
     #[tokio::test]
@@ -253,16 +277,17 @@ mod tests {
         let changed: HashSet<String> = HashSet::new();
         let progress = ProgressReporter::Silent;
 
-        let count = run_fact_embedding_phase(&FactEmbeddingInput {
+        let result = run_fact_embedding_phase(&FactEmbeddingInput {
             changed_ids: &changed,
             embedding: &embedding,
             db: &db,
             embedding_batch_size: 10,
             progress: &progress,
+            deadline: None,
         })
         .await
         .unwrap();
 
-        assert_eq!(count, 0);
+        assert_eq!(result, FactEmbeddingOutput { generated: 0, docs_processed: 0 });
     }
 }
