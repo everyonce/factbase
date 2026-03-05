@@ -86,9 +86,8 @@ pub async fn run_stdio<E: EmbeddingProvider>(
                     }
                     None => break, // stdin closed (EOF)
                 };
-                // Reset keepalive timer and idle tracker on any client activity
+                // Reset keepalive timer on any client activity
                 keepalive.reset();
-                last_activity = std::time::Instant::now();
                 if let Err(e) = handle_message(db, embedding, llm, &line, &mut writer, &ping_id).await {
                     if is_broken_pipe(&e) {
                         debug!("stdout broken pipe, exiting");
