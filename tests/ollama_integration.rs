@@ -153,16 +153,12 @@ async fn test_llm_link_detection() {
         ("def456".to_string(), "Widget Project".to_string()),
     ];
 
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let detector = LinkDetector::new(Box::new(llm));
+    let detector = LinkDetector::new();
 
     let content = "# Meeting Notes\nDiscussed the Widget Project with Alice Smith.";
     let links = detector
-        .detect_links(content, "source1", &known_entities)
-        .await;
+        .detect_links(content, "source1", &known_entities);
 
-    assert!(links.is_ok(), "Link detection failed");
-    let links = links.expect("link detection should succeed");
     println!("Detected links: {:?}", links);
 
     assert!(!links.is_empty(), "Should detect entity mentions");
@@ -737,20 +733,16 @@ async fn test_link_detection_scale() {
         .map(|i| (format!("id{:02}", i), format!("Entity Number {}", i)))
         .collect();
 
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let detector = LinkDetector::new(Box::new(llm));
+    let detector = LinkDetector::new();
 
     let content = "# Test Document\n\nThis document mentions Entity Number 5 and Entity Number 15. It also references Entity Number 25.";
 
     let start = std::time::Instant::now();
     let links = detector
-        .detect_links(content, "source", &known_entities)
-        .await;
+        .detect_links(content, "source", &known_entities);
     let elapsed = start.elapsed();
 
     println!("Link detection with 30 entities: {:?}", elapsed);
-    assert!(links.is_ok());
-    let links = links.expect("link detection should succeed");
     println!("Detected {} links: {:?}", links.len(), links);
 
     // Should complete in reasonable time

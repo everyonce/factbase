@@ -8,7 +8,7 @@ use factbase::{
     config::Config,
     database::Database,
     embedding::OllamaEmbedding,
-    llm::{LinkDetector, OllamaLlm},
+    llm::LinkDetector,
     mcp::McpServer,
     models::{Document, Perspective, Repository},
     processor::DocumentProcessor,
@@ -87,8 +87,7 @@ impl TestScanSetup {
             &config.embedding.model,
             config.embedding.dimension,
         );
-        let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-        let link_detector = LinkDetector::new(Box::new(llm));
+        let link_detector = LinkDetector::new();
         Self {
             config,
             scanner,

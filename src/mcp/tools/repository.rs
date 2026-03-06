@@ -55,10 +55,9 @@ pub async fn scan_repository(
     };
     opts.deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
-    // Link detection uses LLM which requires 'static ownership.
-    // MCP scan uses NoOpLlm — manual [[id]] links are still detected.
-    // For LLM-powered entity detection, run check_repository after scanning.
-    let link_detector = LinkDetector::new(Box::new(NoOpLlm));
+    // Link detection uses string matching only (no LLM required).
+    // Manual [[id]] links and fuzzy title matches are detected.
+    let link_detector = LinkDetector::new();
 
     // Acquire write guard right before full_scan — setup above is read-only
     let _guard = WriteGuard::try_acquire()?;
@@ -157,18 +156,6 @@ pub async fn scan_repository(
         },
         "fact_embeddings_hint": fact_hint,
     }))
-}
-
-/// No-op LLM for when no LLM is available (skips link detection).
-struct NoOpLlm;
-
-impl LlmProvider for NoOpLlm {
-    fn complete<'a>(
-        &'a self,
-        _prompt: &'a str,
-    ) -> crate::BoxFuture<'a, Result<String, FactbaseError>> {
-        Box::pin(async { Ok("[]".to_string()) })
-    }
 }
 
 /// Initialize a new repository at the given path.

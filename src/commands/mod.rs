@@ -82,10 +82,10 @@ pub use version::cmd_version;
 pub use setup::{
     auto_init_repo, clean_canonicalize, find_repo, find_repo_with_config, setup_cached_embedding,
     setup_database, setup_database_checked, setup_database_only, setup_embedding_with_timeout,
-    setup_llm_with_timeout, setup_review_llm_with_timeout, setup_services_with_timeout,
+    setup_llm_with_timeout, setup_review_llm_with_timeout,
 };
 #[cfg(feature = "mcp")]
-pub use setup::{setup_embedding, setup_link_detector};
+pub use setup::setup_embedding;
 pub use utils::{
     confirm_prompt, create_repository, filter_by_excluded_types,
     parse_since, parse_since_filter, print_output, repo_path_not_found_error, resolve_repos,

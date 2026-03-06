@@ -152,8 +152,7 @@ pub async fn run_link_detection_phase(
         // Batch detect links
         let batch_results = input
             .link_detector
-            .detect_links_batch(&batch_docs, &known_entities)
-            .await?;
+            .detect_links_batch(&batch_docs, &known_entities);
 
         // Store results
         for (id, _) in chunk {

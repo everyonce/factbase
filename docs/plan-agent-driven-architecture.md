@@ -70,16 +70,16 @@ Remove the LLM from link detection during scan. The fuzzy string pre-filter alre
 
 ### Tasks
 
-- [ ] Remove LLM call from `LinkDetector::detect_links` — keep regex + `string_match_links` only
-- [ ] Remove LLM call from `LinkDetector::detect_links_batch` — same
-- [ ] Make `LinkDetector` not require `Box<dyn LlmProvider>` (or replace with standalone functions)
-- [ ] Update scanner orchestration (`orchestration/links.rs`) to not require LlmProvider
-- [ ] Update `ScanContext` to make LlmProvider optional
-- [ ] Update `factbase scan` CLI to not construct LlmProvider for link detection
-- [ ] Update `scan_repository` MCP tool to not require LlmProvider for link detection
-- [ ] Update tests in `link_detector.rs` (remove MockLlm from string-match-only tests)
-- [ ] Update integration tests that expect LLM link detection
-- [ ] Verify: `cargo test --lib` passes, `factbase scan` works without LLM config
+- [x] Remove LLM call from `LinkDetector::detect_links` — keep regex + `string_match_links` only
+- [x] Remove LLM call from `LinkDetector::detect_links_batch` — same
+- [x] Make `LinkDetector` not require `Box<dyn LlmProvider>` (or replace with standalone functions)
+- [x] Update scanner orchestration (`orchestration/links.rs`) to not require LlmProvider
+- [x] Update `ScanContext` to make LlmProvider optional
+- [x] Update `factbase scan` CLI to not construct LlmProvider for link detection
+- [x] Update `scan_repository` MCP tool to not require LlmProvider for link detection
+- [x] Update tests in `link_detector.rs` (remove MockLlm from string-match-only tests)
+- [x] Update integration tests that expect LLM link detection
+- [x] Verify: `cargo test --lib` passes, `factbase scan` works without LLM config
 
 ### What still works after this phase
 - All existing links detected by string matching continue to work

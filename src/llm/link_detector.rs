@@ -1,11 +1,12 @@
 //! Link detection service for entity mentions.
+//!
+//! Detects links via regex (`[[id]]`) and fuzzy string matching (full title,
+//! unique words, abbreviations). No LLM required.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use super::ollama::LlmProvider;
-use crate::error::FactbaseError;
 use crate::patterns::MANUAL_LINK_REGEX;
 
 /// A detected link between documents.
@@ -176,63 +177,20 @@ fn string_match_links(
     (links, matched_ids)
 }
 
-/// Service for detecting entity mentions in documents.
-
-/// Default template for single-document link detection.
-const DEFAULT_LINK_DETECT_PROMPT: &str = r#"Analyze this document and find mentions of these known entities. Return ONLY a JSON array.
-
-Known entities:
-{entities_list}
-
-Document:
-{content}
-
-Return a JSON array of objects with "entity" (exact title from list) and "context" (surrounding text). 
-Only include entities that are clearly mentioned. Return [] if none found.
-Example: [{"entity": "John Doe", "context": "met with John Doe yesterday"}]"#;
-
-/// Default template for batch link detection.
-const DEFAULT_LINK_DETECT_BATCH_PROMPT: &str = r#"Analyze these documents and find mentions of known entities. Return ONLY a JSON object.
-
-Known entities:
-{entities_list}
-
-Documents:
-{docs_section}
-
-Return a JSON object where keys are DOC_IDs and values are arrays of {"entity": "exact title", "context": "surrounding text"}.
-Only include entities clearly mentioned. Use empty array [] for docs with no matches.
-Example: {"abc123": [{"entity": "John Doe", "context": "met John"}], "def456": []}"#;
-
+/// Service for detecting entity mentions in documents using regex and string matching.
 pub struct LinkDetector {
-    llm: Box<dyn LlmProvider>,
-    max_content_length: usize,
     batch_size: usize,
 }
 
-#[derive(Deserialize)]
-struct LlmLinkResult {
-    entity: String,
-    context: String,
-}
-
 impl LinkDetector {
-    /// Create a new LinkDetector with the given LLM provider.
-    pub fn new(llm: Box<dyn LlmProvider>) -> Self {
-        Self::with_config(llm, 8_000, 5)
+    /// Create a new LinkDetector with default batch size.
+    pub fn new() -> Self {
+        Self { batch_size: 5 }
     }
 
-    /// Create a new LinkDetector with custom content length and batch size.
-    pub fn with_config(
-        llm: Box<dyn LlmProvider>,
-        max_content_length: usize,
-        batch_size: usize,
-    ) -> Self {
-        Self {
-            llm,
-            max_content_length,
-            batch_size,
-        }
+    /// Create a new LinkDetector with custom batch size.
+    pub fn with_batch_size(batch_size: usize) -> Self {
+        Self { batch_size }
     }
 
     /// Returns the configured batch size for link detection
@@ -241,23 +199,19 @@ impl LinkDetector {
     }
 
     /// Detect links in a single document.
-    pub async fn detect_links(
+    pub fn detect_links(
         &self,
         content: &str,
         source_id: &str,
         known_entities: &[(String, String)], // (id, title)
-    ) -> Result<Vec<DetectedLink>, FactbaseError> {
+    ) -> Vec<DetectedLink> {
         // Most documents have few links; 4 is a reasonable default
         let mut links = Vec::with_capacity(4);
 
-        // Build lookup maps for O(1) access
+        // Build lookup map for O(1) access
         let id_to_title: HashMap<&str, &str> = known_entities
             .iter()
             .map(|(id, title)| (id.as_str(), title.as_str()))
-            .collect();
-        let title_to_id: HashMap<&str, &str> = known_entities
-            .iter()
-            .map(|(id, title)| (title.as_str(), id.as_str()))
             .collect();
 
         // Extract manual [[id]] links
@@ -276,77 +230,29 @@ impl LinkDetector {
             }
         }
 
-        // Skip LLM if no known entities
         if known_entities.is_empty() {
-            return Ok(links);
+            return links;
         }
 
-        // Fuzzy string pre-filter: catch obvious matches before LLM
+        // Fuzzy string matching
         let candidates = build_match_candidates(known_entities);
-        let (string_links, matched_ids) = string_match_links(content, source_id, &candidates);
+        let (string_links, _matched_ids) = string_match_links(content, source_id, &candidates);
         for sl in string_links {
             if !links.iter().any(|l| l.target_id == sl.target_id) {
                 links.push(sl);
             }
         }
 
-        // Build prompt for LLM — exclude already-matched entities
-        let entities_list: String = known_entities
-            .iter()
-            .filter(|(id, _)| id != source_id && !matched_ids.contains(id))
-            .map(|(id, title)| format!("- {title} (id: {id})"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        if entities_list.is_empty() {
-            return Ok(links);
-        }
-
-        let prompts = crate::Config::load(None).unwrap_or_default().prompts;
-        let prompt = crate::config::prompts::resolve_prompt(
-            &prompts,
-            "link_detect",
-            DEFAULT_LINK_DETECT_PROMPT,
-            &[("entities_list", &entities_list), ("content", content)],
-        );
-
-        let response = self.llm.complete(&prompt).await?;
-
-        // Parse JSON response - try direct parse first, then extract from text
-        let results: Option<Vec<LlmLinkResult>> =
-            serde_json::from_str(&response).ok().or_else(|| {
-                response.find('[').and_then(|start| {
-                    response
-                        .rfind(']')
-                        .and_then(|end| serde_json::from_str(&response[start..=end]).ok())
-                })
-            });
-
-        if let Some(results) = results {
-            for result in results {
-                if let Some(&id) = title_to_id.get(result.entity.as_str()) {
-                    if id != source_id && !links.iter().any(|l| l.target_id == id) {
-                        links.push(DetectedLink {
-                            target_id: id.to_string(),
-                            target_title: result.entity.clone(),
-                            mention_text: result.entity,
-                            context: result.context,
-                        });
-                    }
-                }
-            }
-        }
-
-        Ok(links)
+        links
     }
 
-    /// Batch detect links for multiple documents in a single LLM call.
+    /// Batch detect links for multiple documents.
     /// Returns a HashMap of source_id -> `Vec<DetectedLink>`.
-    pub async fn detect_links_batch(
+    pub fn detect_links_batch(
         &self,
         documents: &[(&str, &str, &str)], // (id, title, content)
         known_entities: &[(String, String)],
-    ) -> Result<HashMap<String, Vec<DetectedLink>>, FactbaseError> {
+    ) -> HashMap<String, Vec<DetectedLink>> {
         let mut results: HashMap<String, Vec<DetectedLink>> = HashMap::new();
 
         // Build lookup map for O(1) access
@@ -357,7 +263,6 @@ impl LinkDetector {
 
         // Initialize results and extract manual links
         for (id, _, content) in documents {
-            // Most documents have few links; 4 is a reasonable default
             let mut links = Vec::with_capacity(4);
             for cap in MANUAL_LINK_REGEX.captures_iter(content) {
                 let target_id = cap[1].to_string();
@@ -377,14 +282,13 @@ impl LinkDetector {
         }
 
         if known_entities.is_empty() || documents.is_empty() {
-            return Ok(results);
+            return results;
         }
 
-        // Fuzzy string pre-filter: catch obvious matches before LLM
+        // Fuzzy string matching
         let candidates = build_match_candidates(known_entities);
-        let mut all_matched_ids: HashSet<String> = HashSet::new();
         for (id, _, content) in documents {
-            let (string_links, matched_ids) = string_match_links(content, id, &candidates);
+            let (string_links, _matched_ids) = string_match_links(content, id, &candidates);
             if let Some(links) = results.get_mut(*id) {
                 for sl in string_links {
                     if !links.iter().any(|l| l.target_id == sl.target_id) {
@@ -392,217 +296,82 @@ impl LinkDetector {
                     }
                 }
             }
-            all_matched_ids.extend(matched_ids);
         }
 
-        // Build entities list (excluding docs being processed and pre-matched entities)
-        let doc_ids: HashSet<&str> = documents.iter().map(|(id, _, _)| *id).collect();
-        let entities_list: String = known_entities
-            .iter()
-            .filter(|(id, _)| !doc_ids.contains(id.as_str()) && !all_matched_ids.contains(id))
-            .map(|(id, title)| format!("- {title} (id: {id})"))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        if entities_list.is_empty() {
-            return Ok(results);
-        }
-
-        // Build batch prompt
-        // Use configured max_content_length per doc
-        let max_content_len = self.max_content_length;
-        let docs_section: String = documents
-            .iter()
-            .map(|(id, title, content)| {
-                let truncated = if content.len() > max_content_len {
-                    &content[..max_content_len]
-                } else {
-                    content
-                };
-                format!("=== DOC_ID: {id} ===\nTitle: {title}\n{truncated}")
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
-
-        let prompts = crate::Config::load(None).unwrap_or_default().prompts;
-        let prompt = crate::config::prompts::resolve_prompt(
-            &prompts,
-            "link_detect_batch",
-            DEFAULT_LINK_DETECT_BATCH_PROMPT,
-            &[("entities_list", &entities_list), ("docs_section", &docs_section)],
-        );
-
-        let response = self.llm.complete(&prompt).await?;
-
-        // Build title->id lookup for merge
-        let title_to_id: HashMap<&str, &str> = known_entities
-            .iter()
-            .map(|(id, title)| (title.as_str(), id.as_str()))
-            .collect();
-
-        // Parse batch response - try direct parse first, then extract from text
-        let batch: Option<HashMap<String, Vec<LlmLinkResult>>> =
-            serde_json::from_str(&response).ok().or_else(|| {
-                response.find('{').and_then(|start| {
-                    response
-                        .rfind('}')
-                        .and_then(|end| serde_json::from_str(&response[start..=end]).ok())
-                })
-            });
-
-        if let Some(batch) = batch {
-            Self::merge_batch_results(&mut results, batch, &title_to_id);
-        }
-
-        Ok(results)
+        results
     }
+}
 
-    fn merge_batch_results(
-        results: &mut HashMap<String, Vec<DetectedLink>>,
-        batch: HashMap<String, Vec<LlmLinkResult>>,
-        title_to_id: &HashMap<&str, &str>,
-    ) {
-        for (doc_id, llm_links) in batch {
-            if let Some(links) = results.get_mut(&doc_id) {
-                for result in llm_links {
-                    if let Some(&id) = title_to_id.get(result.entity.as_str()) {
-                        if id != doc_id && !links.iter().any(|l| l.target_id == id) {
-                            links.push(DetectedLink {
-                                target_id: id.to_string(),
-                                target_title: result.entity.clone(),
-                                mention_text: result.entity,
-                                context: result.context,
-                            });
-                        }
-                    }
-                }
-            }
-        }
+impl Default for LinkDetector {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::test_helpers::MockLlm;
 
-    #[tokio::test]
-    async fn test_link_detector_manual_links() {
-        let mock = MockLlm::new("[]");
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_link_detector_manual_links() {
+        let detector = LinkDetector::new();
 
         let content = "See [[abc123]] for details.";
         let known = vec![("abc123".to_string(), "Test Doc".to_string())];
 
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed");
+        let links = detector.detect_links(content, "source1", &known);
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "abc123");
         assert_eq!(links[0].target_title, "Test Doc");
     }
 
-    #[tokio::test]
-    async fn test_link_detector_filters_self_references() {
-        let mock = MockLlm::new("[]");
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_link_detector_filters_self_references() {
+        let detector = LinkDetector::new();
 
         let content = "See [[abc123]] for details.";
         let known = vec![("abc123".to_string(), "Test Doc".to_string())];
 
         // source_id matches the link - should be filtered
-        let links = detector
-            .detect_links(content, "abc123", &known)
-            .await
-            .expect("detect_links should succeed");
+        let links = detector.detect_links(content, "abc123", &known);
         assert!(links.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_link_detector_llm_json_response() {
-        let mock = MockLlm::new(r#"[{"entity": "John Doe", "context": "met with John Doe"}]"#);
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_link_detector_string_match() {
+        let detector = LinkDetector::new();
 
         let content = "I met with John Doe yesterday.";
         let known = vec![("def456".to_string(), "John Doe".to_string())];
 
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed");
+        let links = detector.detect_links(content, "source1", &known);
 
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "def456");
         assert_eq!(links[0].target_title, "John Doe");
-        // Pre-filter catches this match; context is the surrounding sentence
         assert!(links[0].context.contains("John Doe"));
     }
 
-    #[tokio::test]
-    async fn test_link_detector_extracts_json_from_text() {
-        let mock = MockLlm::new(
-            r#"Here are the results: [{"entity": "Project X", "context": "working on Project X"}]"#,
-        );
-        let detector = LinkDetector::new(Box::new(mock));
-
-        let content = "Currently working on Project X.";
-        let known = vec![("proj01".to_string(), "Project X".to_string())];
-
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed");
-
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].target_id, "proj01");
-    }
-
-    #[tokio::test]
-    async fn test_link_detector_handles_malformed_json() {
-        let mock = MockLlm::new("This is not valid JSON at all");
-        let detector = LinkDetector::new(Box::new(mock));
-
-        let content = "Some content.";
-        let known = vec![("abc123".to_string(), "Test".to_string())];
-
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed even with malformed JSON");
-        assert!(links.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_link_detector_empty_entities() {
-        let mock = MockLlm::new("[]");
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_link_detector_empty_entities() {
+        let detector = LinkDetector::new();
 
         let content = "Some content.";
         let known: Vec<(String, String)> = vec![];
 
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed with empty entities");
+        let links = detector.detect_links(content, "source1", &known);
         assert!(links.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_link_detector_deduplicates() {
-        let mock = MockLlm::new(
-            r#"[{"entity": "Test Doc", "context": "first mention"}, {"entity": "Test Doc", "context": "second mention"}]"#,
-        );
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_link_detector_deduplicates() {
+        let detector = LinkDetector::new();
 
-        let content = "Test Doc mentioned twice.";
+        let content = "Test Doc mentioned twice. Test Doc again.";
         let known = vec![("abc123".to_string(), "Test Doc".to_string())];
 
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed");
+        let links = detector.detect_links(content, "source1", &known);
 
         // Should only have one link despite two mentions
         assert_eq!(links.len(), 1);
@@ -621,12 +390,9 @@ mod tests {
         assert!(!MANUAL_LINK_REGEX.is_match("[[ghijkl]]")); // invalid hex
     }
 
-    #[tokio::test]
-    async fn test_detect_links_batch() {
-        let mock = MockLlm::new(
-            r#"{"doc1": [{"entity": "John Doe", "context": "met John"}], "doc2": []}"#,
-        );
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_detect_links_batch() {
+        let detector = LinkDetector::new();
 
         let docs = vec![
             ("doc1", "Doc One", "I met John Doe."),
@@ -634,10 +400,7 @@ mod tests {
         ];
         let known = vec![("person1".to_string(), "John Doe".to_string())];
 
-        let results = detector
-            .detect_links_batch(&docs, &known)
-            .await
-            .expect("detect_links_batch should succeed");
+        let results = detector.detect_links_batch(&docs, &known);
 
         assert_eq!(results.len(), 2);
         assert_eq!(
@@ -657,18 +420,14 @@ mod tests {
             .is_empty());
     }
 
-    #[tokio::test]
-    async fn test_detect_links_batch_with_manual_links() {
-        let mock = MockLlm::new(r#"{}"#);
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_detect_links_batch_with_manual_links() {
+        let detector = LinkDetector::new();
 
         let docs = vec![("doc1", "Doc One", "See [[abc123]] for details.")];
         let known = vec![("abc123".to_string(), "Test Doc".to_string())];
 
-        let results = detector
-            .detect_links_batch(&docs, &known)
-            .await
-            .expect("detect_links_batch should succeed");
+        let results = detector.detect_links_batch(&docs, &known);
 
         assert_eq!(
             results
@@ -683,28 +442,22 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_manual_link_unknown_id_ignored() {
-        // Manual link [[xyz123]] where xyz123 is NOT in known_entities
-        let mock = MockLlm::new("[]");
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_manual_link_unknown_id_ignored() {
+        let detector = LinkDetector::new();
 
         let content = "See [[xyz123]] for details.";
         let known = vec![("abc123".to_string(), "Test Doc".to_string())];
 
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed");
+        let links = detector.detect_links(content, "source1", &known);
 
         // xyz123 not in known_entities, so no links detected
         assert!(links.is_empty());
     }
 
-    #[tokio::test]
-    async fn test_multiple_manual_links() {
-        let mock = MockLlm::new("[]");
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_multiple_manual_links() {
+        let detector = LinkDetector::new();
 
         let content = "See [[abc123]] and [[def456]] for details.";
         let known = vec![
@@ -712,10 +465,7 @@ mod tests {
             ("def456".to_string(), "Doc B".to_string()),
         ];
 
-        let links = detector
-            .detect_links(content, "source1", &known)
-            .await
-            .expect("detect_links should succeed");
+        let links = detector.detect_links(content, "source1", &known);
 
         assert_eq!(links.len(), 2);
         let ids: Vec<&str> = links.iter().map(|l| l.target_id.as_str()).collect();
@@ -723,19 +473,15 @@ mod tests {
         assert!(ids.contains(&"def456"));
     }
 
-    #[tokio::test]
-    async fn test_batch_filters_self_references() {
-        let mock = MockLlm::new(r#"{}"#);
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_batch_filters_self_references() {
+        let detector = LinkDetector::new();
 
         // doc1 links to itself via [[doc001]]
         let docs = vec![("doc001", "Doc One", "See [[doc001]] for self-ref.")];
         let known = vec![("doc001".to_string(), "Doc One".to_string())];
 
-        let results = detector
-            .detect_links_batch(&docs, &known)
-            .await
-            .expect("detect_links_batch should succeed");
+        let results = detector.detect_links_batch(&docs, &known);
 
         // Self-reference should be filtered out
         assert!(results
@@ -889,11 +635,9 @@ mod tests {
         assert!(links[0].context.contains("Acme Corporation"));
     }
 
-    #[tokio::test]
-    async fn test_prefilter_reduces_llm_entities() {
-        // The mock LLM returns empty — all matches should come from pre-filter
-        let mock = MockLlm::new("[]");
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_prefilter_finds_title_match() {
+        let detector = LinkDetector::new();
 
         let content = "We met with Delta Air Lines representatives.";
         let known = vec![
@@ -901,44 +645,17 @@ mod tests {
             ("e2".to_string(), "Unrelated Corp".to_string()),
         ];
 
-        let links = detector
-            .detect_links(content, "src", &known)
-            .await
-            .expect("should succeed");
+        let links = detector.detect_links(content, "src", &known);
 
-        // Delta Air Lines found by pre-filter
+        // Delta Air Lines found by string matching
         assert!(links.iter().any(|l| l.target_id == "e1"));
         // Unrelated Corp not in content
         assert!(!links.iter().any(|l| l.target_id == "e2"));
     }
 
-    #[tokio::test]
-    async fn test_prefilter_merges_with_llm() {
-        // LLM finds an indirect reference the pre-filter can't
-        let mock = MockLlm::new(
-            r#"[{"entity": "Unrelated Corp", "context": "the parent company"}]"#,
-        );
-        let detector = LinkDetector::new(Box::new(mock));
-
-        let content = "Delta Air Lines is owned by the parent company.";
-        let known = vec![
-            ("e1".to_string(), "Delta Air Lines".to_string()),
-            ("e2".to_string(), "Unrelated Corp".to_string()),
-        ];
-
-        let links = detector
-            .detect_links(content, "src", &known)
-            .await
-            .expect("should succeed");
-
-        // Both should be found: e1 by pre-filter, e2 by LLM
-        assert_eq!(links.len(), 2);
-    }
-
-    #[tokio::test]
-    async fn test_batch_prefilter() {
-        let mock = MockLlm::new(r#"{}"#);
-        let detector = LinkDetector::new(Box::new(mock));
+    #[test]
+    fn test_batch_string_match() {
+        let detector = LinkDetector::new();
 
         let docs = vec![
             ("doc1", "Doc One", "We visited Mount Vesuvius."),
@@ -946,10 +663,7 @@ mod tests {
         ];
         let known = vec![("e1".to_string(), "Mount Vesuvius".to_string())];
 
-        let results = detector
-            .detect_links_batch(&docs, &known)
-            .await
-            .expect("should succeed");
+        let results = detector.detect_links_batch(&docs, &known);
 
         assert_eq!(results.get("doc1").unwrap().len(), 1);
         assert_eq!(results.get("doc1").unwrap()[0].target_id, "e1");

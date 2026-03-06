@@ -26,7 +26,7 @@
 
 use super::utils::db_not_found_error;
 use factbase::{
-    CachedEmbedding, Config, Database, EmbeddingProvider, LinkDetector, LlmProvider,
+    CachedEmbedding, Config, Database, EmbeddingProvider, LlmProvider,
     OllamaEmbedding, OllamaLlm, PersistentCachedEmbedding, Repository, ReviewLlm,
 };
 use std::path::PathBuf;
@@ -308,31 +308,6 @@ pub async fn setup_llm_with_timeout(
     create_llm(config, &config.llm.model, timeout_override).await
 }
 
-/// Create LinkDetector from config with optional timeout override
-pub async fn setup_link_detector_with_timeout(
-    config: &Config,
-    timeout_override: Option<u64>,
-) -> LinkDetector {
-    let llm = setup_llm_with_timeout(config, timeout_override).await;
-    LinkDetector::new(llm)
-}
-
-/// Create LinkDetector from config
-#[cfg(feature = "mcp")]
-pub async fn setup_link_detector(config: &Config) -> LinkDetector {
-    setup_link_detector_with_timeout(config, None).await
-}
-
-/// Create embedding provider and LinkDetector from config with optional timeout override
-pub async fn setup_services_with_timeout(
-    config: &Config,
-    timeout_override: Option<u64>,
-) -> (Box<dyn EmbeddingProvider>, LinkDetector) {
-    let embedding = setup_embedding_with_timeout(config, timeout_override).await;
-    let link_detector = setup_link_detector_with_timeout(config, timeout_override).await;
-    (embedding, link_detector)
-}
-
 /// Create ReviewLlm service from config with optional timeout override
 pub async fn setup_review_llm_with_timeout(
     config: &Config,
@@ -400,16 +375,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_setup_link_detector_with_timeout() {
-        let config = test_config();
-        let _detector = setup_link_detector_with_timeout(&config, Some(90)).await;
-    }
-
-    #[tokio::test]
-    async fn test_setup_services_with_timeout() {
-        let config = test_config();
-        let (embedding, _detector) = setup_services_with_timeout(&config, Some(45)).await;
-        assert_eq!(embedding.dimension(), 1024);
+    async fn test_setup_link_detector_no_llm_needed() {
+        let _detector = factbase::LinkDetector::new();
     }
 
     #[tokio::test]
