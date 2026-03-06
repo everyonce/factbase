@@ -649,7 +649,7 @@ mod tests {
             .await
             .unwrap();
 
-        // With NoOpLlm, links_detected should be 0 and total > 1
+        // String-only link detection: no title matches in these docs, so links_detected should be 0
         assert_eq!(result["links_detected"], 0);
         assert!(result["total"].as_u64().unwrap() > 1);
         let hint = result["hint"].as_str().unwrap();
@@ -870,16 +870,8 @@ mod tests {
     async fn test_scan_auto_populates_fact_embeddings_on_empty_table() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
-        use crate::llm::LlmProvider;
-        use crate::{BoxFuture, DocumentProcessor, FactbaseError, LinkDetector, Scanner, ScanContext, ScanOptions};
+        use crate::{DocumentProcessor, LinkDetector, Scanner, ScanContext, ScanOptions};
         use tempfile::TempDir;
-
-        struct NoOpLlm;
-        impl LlmProvider for NoOpLlm {
-            fn complete<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
-                Box::pin(async { Ok("[]".to_string()) })
-            }
-        }
 
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
@@ -891,7 +883,7 @@ mod tests {
         let embedding = MockEmbedding::new(1024);
         let scanner = Scanner::new(&[]);
         let processor = DocumentProcessor::new();
-        let link_detector = LinkDetector::new(Box::new(NoOpLlm));
+        let link_detector = LinkDetector::new();
         let opts = ScanOptions::default();
         let progress = crate::ProgressReporter::Silent;
         let repo = db.list_repositories().unwrap().into_iter().next().unwrap();
@@ -916,16 +908,8 @@ mod tests {
     async fn test_scan_auto_populates_fact_embeddings_after_migration() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
-        use crate::llm::LlmProvider;
-        use crate::{BoxFuture, DocumentProcessor, FactbaseError, LinkDetector, Scanner, ScanContext, ScanOptions};
+        use crate::{DocumentProcessor, LinkDetector, Scanner, ScanContext, ScanOptions};
         use tempfile::TempDir;
-
-        struct NoOpLlm;
-        impl LlmProvider for NoOpLlm {
-            fn complete<'a>(&'a self, _: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
-                Box::pin(async { Ok("[]".to_string()) })
-            }
-        }
 
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
@@ -937,7 +921,7 @@ mod tests {
         let embedding = MockEmbedding::new(1024);
         let scanner = Scanner::new(&[]);
         let processor = DocumentProcessor::new();
-        let link_detector = LinkDetector::new(Box::new(NoOpLlm));
+        let link_detector = LinkDetector::new();
         let opts = ScanOptions::default();
         let progress = crate::ProgressReporter::Silent;
         let repo = db.list_repositories().unwrap().into_iter().next().unwrap();

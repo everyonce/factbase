@@ -22,7 +22,7 @@ mod verify;
 
 pub use args::ScanArgs;
 
-use super::{parse_since, resolve_repos, setup_database, setup_services_with_timeout};
+use super::{parse_since, resolve_repos, setup_database, setup_embedding_with_timeout};
 use factbase::{
     config::validate_timeout, find_repo_for_path, format_json, full_scan, scan_all_repositories,
     DocumentProcessor, FileWatcher, ProgressReporter, ScanContext, ScanCoordinator, ScanOptions,
@@ -122,7 +122,8 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         validate_timeout(timeout)?;
     }
 
-    let (embedding, link_detector) = setup_services_with_timeout(&config, args.timeout).await;
+    let embedding = setup_embedding_with_timeout(&config, args.timeout).await;
+    let link_detector = factbase::LinkDetector::new();
 
     let batch_size = args
         .batch_size

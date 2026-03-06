@@ -1,6 +1,6 @@
 use super::{
     auto_init_repo, find_repo_with_config, setup_cached_embedding, setup_embedding,
-    setup_link_detector, setup_llm_with_timeout,
+    setup_llm_with_timeout,
 };
 use crate::commands::utils::resolve_repos;
 use anyhow::Context;
@@ -58,7 +58,7 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     let cached_embedding = setup_cached_embedding(&config, None, &db).await;
     let scan_embedding = setup_embedding(&config).await;
-    let link_detector = setup_link_detector(&config).await;
+    let link_detector = factbase::LinkDetector::new();
     let llm = setup_llm_with_timeout(&config, None).await;
 
     let mut watcher =

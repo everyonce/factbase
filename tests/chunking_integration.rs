@@ -7,7 +7,7 @@ mod common;
 
 use factbase::{
     chunk_document, full_scan, Config, Database, DocumentProcessor, EmbeddingProvider,
-    LinkDetector, OllamaEmbedding, OllamaLlm, Repository, ScanContext, ScanOptions, Scanner,
+    LinkDetector, OllamaEmbedding, Repository, ScanContext, ScanOptions, Scanner,
 };
 use std::fs;
 use tempfile::TempDir;
@@ -131,8 +131,7 @@ async fn test_scan_with_chunking() {
         &config.embedding.model,
         config.embedding.dimension,
     );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
+    let link_detector = LinkDetector::new();
 
     let opts = ScanOptions {
         verbose: true,
@@ -195,8 +194,7 @@ async fn test_search_deduplicates_chunks() {
         &config.embedding.model,
         config.embedding.dimension,
     );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
+    let link_detector = LinkDetector::new();
 
     let opts = ScanOptions {
         chunk_size: 50_000,
@@ -263,8 +261,7 @@ async fn test_search_returns_best_chunk() {
         &config.embedding.model,
         config.embedding.dimension,
     );
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let link_detector = LinkDetector::new(Box::new(llm));
+    let link_detector = LinkDetector::new();
 
     let opts = ScanOptions {
         chunk_size: 50_000,
