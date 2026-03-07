@@ -60,7 +60,7 @@
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (25)
+## MCP Tools (27)
 
 ### Search Operations
 | Tool | Description |
@@ -110,6 +110,12 @@
 | `embeddings_export` | Export pre-computed embeddings as JSONL |
 | `embeddings_import` | Import pre-computed embeddings |
 | `embeddings_status` | Check embedding index coverage and stats |
+
+### Link Operations
+| Tool | Description |
+|------|-------------|
+| `get_link_suggestions` | Find documents with few links and suggest similar unlinked candidates |
+| `store_links` | Write `[[id]]` references into document files' Links: blocks |
 
 ## Web API Endpoints (20 total, feature-gated)
 

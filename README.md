@@ -178,7 +178,7 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 25 MCP tools:
+Factbase exposes 27 MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -207,6 +207,8 @@ Factbase exposes 25 MCP tools:
 | `embeddings_export` | Export embeddings for backup or transfer |
 | `embeddings_import` | Import embeddings from a previous export |
 | `embeddings_status` | Check embedding coverage and statistics |
+| `get_link_suggestions` | Find documents with few links and suggest similar unlinked candidates |
+| `store_links` | Write `[[id]]` references into document files' Links: blocks |
 
 ## Document Format
 

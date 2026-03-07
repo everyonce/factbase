@@ -122,6 +122,7 @@ src/
 │   ├── mod.rs           # Re-exports
 │   ├── core.rs          # DocumentProcessor, ID/title/type
 │   ├── chunks.rs        # Document chunking
+│   ├── links.rs         # Links: block parsing and manipulation
 │   ├── stats.rs         # Fact statistics
 │   ├── sources.rs       # Source footnote parsing
 │   ├── review.rs        # Review queue parsing
@@ -266,9 +267,10 @@ src/
     ├── stdio.rs         # Stdio transport (stdin/stdout JSON-RPC)
     ├── server.rs        # HTTP server (axum)
     └── tools/
-        ├── mod.rs       # Tool routing (25 tools)
+        ├── mod.rs       # Tool routing (27 tools)
         ├── schema.rs    # Tool schemas
         ├── helpers.rs   # Tool helpers
+        ├── links.rs     # get_link_suggestions, store_links
         ├── search.rs    # search_knowledge, search_content, search_temporal
         ├── entity.rs    # get_entity, list_entities, etc.
         ├── document.rs  # CRUD operations

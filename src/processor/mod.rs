@@ -39,6 +39,7 @@
 mod acronyms;
 mod chunks;
 mod core;
+mod links;
 pub mod repair;
 mod review;
 mod sources;
@@ -78,6 +79,9 @@ pub use chunks::{chunk_document, DocumentChunk};
 
 // Re-export stats types and functions
 pub use stats::{calculate_fact_stats, count_facts, count_facts_with_temporal_tags};
+
+// Re-export links types and functions
+pub use links::{append_links_to_content, parse_links_block};
 
 // Note: Unit tests are distributed to their respective submodules:
 // - core.rs: 16 tests (ID, title, type, hash)

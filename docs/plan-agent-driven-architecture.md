@@ -98,21 +98,21 @@ Add the agent-driven link discovery pipeline and the `Links:` file format.
 
 ### Tasks
 
-- [ ] Add `Links:` block parsing to document processor — recognize `Links: [[id1]] [[id2]]` at document bottom
-- [ ] Update scan to read existing `Links:` blocks and store them as links in DB
-- [ ] New MCP tool: `get_link_suggestions`
+- [x] Add `Links:` block parsing to document processor — recognize `Links: [[id1]] [[id2]]` at document bottom
+- [x] Update scan to read existing `Links:` blocks and store them as links in DB
+- [x] New MCP tool: `get_link_suggestions`
   - Input: `repo` (optional), `min_similarity` (default 0.6), `max_existing_links` (default 2), `limit` (default 50)
   - Process: for documents with few links, find embedding-similar documents not yet linked
   - Output: `{suggestions: [{doc_id, doc_title, link_count, candidates: [{id, title, similarity}]}]}`
-- [ ] New MCP tool: `store_links`
+- [x] New MCP tool: `store_links`
   - Input: `links: [{source_id, target_id}]`
   - Process: group by source, read each file, append new `[[id]]` to `Links:` block (create if missing), write file, update DB
   - Output: `{added, skipped_existing, documents_modified}`
-- [ ] Add tool schemas to `schema.rs`
-- [ ] Update authoring guide and agent authoring guide with `Links:` format
-- [ ] Update example documents (`person.md`, `company.md`) with `Links:` blocks
-- [ ] Add unit tests for `Links:` parsing and `store_links` file modification
-- [ ] Update workflow prompts: add link review step to `update` workflow
+- [x] Add tool schemas to `schema.rs`
+- [x] Update authoring guide and agent authoring guide with `Links:` format
+- [x] Update example documents (`person.md`, `company.md`) with `Links:` blocks
+- [x] Add unit tests for `Links:` parsing and `store_links` file modification
+- [x] Update workflow prompts: add link review step to `update` workflow
 
 ---
 

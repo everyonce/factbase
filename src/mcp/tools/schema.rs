@@ -1,6 +1,6 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 25 MCP tools exposed by factbase.
+//! Contains the JSON schema for all 27 MCP tools exposed by factbase.
 
 use serde_json::Value;
 
@@ -385,6 +385,41 @@ pub fn tools_list() -> Value {
                     "type": "object",
                     "properties": {}
                 }
+            },
+            {
+                "name": "get_link_suggestions",
+                "description": "Get link suggestions: documents with few links paired with embedding-similar candidates not yet linked. Use this after scanning to discover missing cross-references.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
+                        "min_similarity": { "type": "number", "description": "Minimum embedding similarity for candidates (default: 0.6)" },
+                        "max_existing_links": { "type": "integer", "description": "Only suggest for documents with at most this many links (default: 2)" },
+                        "limit": { "type": "integer", "description": "Max suggestions to return (default: 50)" }
+                    }
+                }
+            },
+            {
+                "name": "store_links",
+                "description": "Store links by writing [[id]] references into document files. Appends to the Links: block at the bottom of each file (creates it if missing). Also updates the database.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "links": {
+                            "type": "array",
+                            "description": "Array of links to store",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "source_id": { "type": "string", "description": "Source document ID" },
+                                    "target_id": { "type": "string", "description": "Target document ID" }
+                                },
+                                "required": ["source_id", "target_id"]
+                            }
+                        }
+                    },
+                    "required": ["links"]
+                }
             }
         ]
     })
@@ -398,7 +433,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 25, "should have 25 tools");
+        assert_eq!(tools.len(), 27, "should have 27 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -426,6 +461,8 @@ mod tests {
         assert!(names.contains(&"embeddings_import"));
         assert!(names.contains(&"embeddings_status"));
         assert!(names.contains(&"generate_questions"));
+        assert!(names.contains(&"get_link_suggestions"));
+        assert!(names.contains(&"store_links"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {
