@@ -24,11 +24,15 @@ impl Database {
 
         // Get the embedding for the source document (first chunk)
         let chunk_id = format!("{doc_id}_0");
-        let embedding: Vec<u8> = conn.query_row(
+        let embedding: Vec<u8> = match conn.query_row(
             "SELECT embedding FROM document_embeddings WHERE id = ?1",
             [&chunk_id],
             |r| r.get(0),
-        )?;
+        ) {
+            Ok(e) => e,
+            Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(Vec::new()),
+            Err(e) => return Err(e.into()),
+        };
 
         // Find similar documents using KNN search
         // sqlite-vec requires k parameter in the MATCH clause
@@ -377,6 +381,22 @@ mod tests {
         assert!(!similar.is_empty(), "should find similar document");
         assert_eq!(similar[0].0, "doc2");
         assert!(similar[0].2 > 0.95, "similarity should be > 0.95");
+    }
+
+    #[test]
+    fn test_find_similar_documents_missing_embedding() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo)
+            .expect("upsert_repository should succeed");
+        db.upsert_document(&test_doc("doc1", "Doc 1"))
+            .expect("upsert doc1 should succeed");
+
+        // Don't insert any embedding for doc1
+        let similar = db
+            .find_similar_documents("doc1", 0.95)
+            .expect("should return empty vec, not error");
+        assert!(similar.is_empty());
     }
 
     #[test]
