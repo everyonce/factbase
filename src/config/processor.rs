@@ -30,7 +30,6 @@ fn default_ignore_patterns() -> Vec<String> {
         "*.swp".into(),
         "*.tmp".into(),
         "*~".into(),
-        ".*/**".into(),
         ".DS_Store".into(),
     ]
 }

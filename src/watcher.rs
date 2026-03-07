@@ -80,6 +80,16 @@ impl FileWatcher {
             return false;
         }
 
+        // Skip files inside dot directories (hidden/tooling)
+        for component in path.components() {
+            if let std::path::Component::Normal(name) = component {
+                if name.as_encoded_bytes().starts_with(b".") {
+                    debug!("Ignoring file in dot directory: {}", path.display());
+                    return false;
+                }
+            }
+        }
+
         let path_str = path.to_string_lossy();
         for pattern in &self.ignore_patterns {
             if pattern.matches(&path_str) {
@@ -198,6 +208,15 @@ mod tests {
         assert!(!watcher.should_process(Path::new("/test/.git/config.md")));
         assert!(!watcher.should_process(Path::new("/test/doc.swp")));
         assert!(watcher.should_process(Path::new("/test/doc.md")));
+    }
+
+    #[test]
+    fn test_should_process_skips_dot_directories() {
+        let watcher = FileWatcher::new(500, &[]).unwrap();
+        assert!(!watcher.should_process(Path::new("/repo/.automate/task.md")));
+        assert!(!watcher.should_process(Path::new("/repo/.git/refs/heads.md")));
+        assert!(!watcher.should_process(Path::new("/repo/.hidden.md")));
+        assert!(watcher.should_process(Path::new("/repo/notes/doc.md")));
     }
 
     #[test]
