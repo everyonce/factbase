@@ -569,9 +569,27 @@ pub fn ensure_review_section(content: &str) -> (String, bool) {
 /// Recover the review section from DB content into disk content.
 /// If disk content lacks the marker but db_content has it, extracts the
 /// review section (marker + everything after) from db_content and appends
-/// it to disk content. Returns the merged content and whether it changed.
+/// it to disk content. Also handles the case where disk has the marker but
+/// no questions while DB has questions (e.g. marker was inserted without
+/// syncing questions). Returns the merged content and whether it changed.
 pub fn recover_review_section(disk_content: &str, db_content: &str) -> (String, bool) {
     if disk_content.contains(REVIEW_QUEUE_MARKER) {
+        // Disk has marker — check if it's missing questions that the DB has
+        let disk_qs = parse_review_queue(disk_content).unwrap_or_default();
+        let db_qs = parse_review_queue(db_content).unwrap_or_default();
+        let db_unanswered = db_qs.iter().filter(|q| !q.answered).count();
+        if disk_qs.is_empty() && db_unanswered > 0 {
+            // Strip disk's empty review section, replace with DB's
+            let body = crate::patterns::content_body(disk_content);
+            let mut result = body.to_string();
+            if let Some(review) = crate::patterns::extract_review_queue_section(db_content) {
+                if !result.ends_with('\n') {
+                    result.push('\n');
+                }
+                result.push_str(review);
+                return (result, true);
+            }
+        }
         return (disk_content.to_string(), false);
     }
     // Try to recover from DB content
@@ -1180,5 +1198,35 @@ Line 3
         assert!(changed);
         assert!(result.contains(REVIEW_QUEUE_MARKER));
         assert!(result.contains("## Review Queue"));
+    }
+
+    #[test]
+    fn test_recover_review_section_disk_has_marker_but_empty() {
+        let disk = "# Doc\n\nContent\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n";
+        let db = "# Doc\n\nContent\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n  > \n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(changed);
+        assert!(result.contains("When did this happen?"));
+        assert!(result.starts_with("# Doc\n\nContent\n"));
+    }
+
+    #[test]
+    fn test_recover_review_section_disk_has_marker_and_questions() {
+        // When disk already has questions, don't replace them
+        let disk = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Existing q\n  > \n";
+        let db = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Existing q\n  > \n- [ ] `@q[missing]` Another q\n  > \n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(!changed);
+        assert_eq!(result, disk);
+    }
+
+    #[test]
+    fn test_recover_review_section_disk_empty_db_all_answered() {
+        // When DB only has answered questions, don't sync
+        let disk = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n";
+        let db = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered q\n  > done\n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(!changed);
+        assert_eq!(result, disk);
     }
 }
