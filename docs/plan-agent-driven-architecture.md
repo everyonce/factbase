@@ -254,6 +254,59 @@ Remove the LLM module and update all documentation.
 
 ---
 
+## Phase 7: Local CPU Embeddings Fallback
+
+Remove the hard dependency on Bedrock/cloud embedding providers. Factbase works out of the box with zero cloud config.
+
+### Design
+
+- Use `fastembed-rs` with `BGE-small-en-v1.5` (33MB, 384-dim) as default local embedding model
+- Model auto-downloads on first use (cached locally)
+- Auto-detect: no `embedding:` config → use local; config present → use Bedrock
+- All embeddings in a DB must be the same dimension (384 local or 1024 Bedrock)
+- Store embedding model name + dimension in DB metadata
+- On startup, check if current provider dimension matches DB — if mismatch, warn and offer re-embed
+
+### Tasks
+
+- [ ] Add `fastembed-rs` dependency (with `ort` ONNX runtime)
+- [ ] New `LocalEmbeddingProvider` implementing existing embedding trait
+  - Model: `BGE-small-en-v1.5` (384-dim, ~33MB download)
+  - Cache model in `~/.factbase/models/` or platform data dir
+  - Auto-download on first use with progress indicator
+- [ ] Add `embedding_model` and `embedding_dim` fields to DB metadata table
+  - Populate on first scan, check on subsequent scans
+- [ ] Update provider selection logic:
+  - If `embedding:` config present → use configured provider (Bedrock/Ollama)
+  - If no config → use local `fastembed-rs` provider
+  - If config present but fails → optionally fall back to local (configurable)
+- [ ] Dimension mismatch handling:
+  - On startup: compare current provider dim vs DB metadata dim
+  - If mismatch: warn user, offer `factbase embeddings rebuild` to re-embed all docs
+  - Block scan if dimensions don't match (prevent mixed embeddings)
+- [ ] Update `factbase doctor` to check embedding provider health (local or cloud)
+- [ ] Update `factbase scan` — works with zero config on fresh repo
+- [ ] Update `examples/config.yaml` — show embedding as optional with local default
+- [ ] Update `docs/quickstart.md` — "just run factbase scan, no config needed"
+- [ ] Update `docs/inference-providers.md` — document local vs cloud tradeoffs
+- [ ] Add tests for LocalEmbeddingProvider
+- [ ] Add test for dimension mismatch detection and re-embed flow
+- [ ] Verify: `factbase scan` works with NO config file at all
+
+### What this enables
+- Zero-config onboarding: `factbase init && factbase scan` just works
+- Offline usage: no cloud credentials needed
+- CI/CD: embedding tests don't need AWS credentials
+- Cost: $0 for small/medium KBs, upgrade to Bedrock for production quality
+
+### Tradeoffs
+- Local 384-dim embeddings are lower quality than Bedrock 1024-dim Titan
+- First run downloads ~33MB model (one-time)
+- Binary size increase from ONNX runtime (~5-10MB)
+- CPU inference slower than Bedrock API for large KBs (but fine for <5000 docs)
+
+---
+
 ## Summary
 
 | Metric | Before | After |
@@ -262,6 +315,7 @@ Remove the LLM module and update all documentation.
 | LLM call sites | 9 across 7 files | 0 |
 | MCP tools | 25 | ~23 |
 | Paged/resumable operations | ~6 | 1 (scan only) |
-| Config sections | database, embedding, llm, server, web | database, embedding, server, web |
+| Config sections | database, embedding, llm, server, web | database, server, web (embedding optional) |
 | Workflow paging warnings | ~12 blocks | ~1 block |
 | `llm.complete()` calls in codebase | 14 | 0 |
+| Cloud dependency | Required (LLM + Embedding) | Optional (Embedding only, local fallback) |
