@@ -57,8 +57,9 @@ Optional power features (plain markdown works without these):
 ## Prerequisites
 
 - Rust 1.70+
-- AWS credentials configured (for Amazon Bedrock embedding — the default inference backend)
-- Or [Ollama](https://ollama.ai) for self-hosted embedding (see [docs/inference-providers.md](docs/inference-providers.md))
+- No other dependencies needed — local CPU embeddings work out of the box
+- Optional: AWS credentials for [Amazon Bedrock](docs/inference-providers.md) (higher quality embeddings)
+- Optional: [Ollama](https://ollama.ai) for self-hosted inference (see [docs/inference-providers.md](docs/inference-providers.md))
 
 ## Installation
 
@@ -87,8 +88,9 @@ cargo install --path .
 
 | Feature | Description | Binary Size |
 |---------|-------------|-------------|
-| `full` (default) | All features enabled (includes Bedrock) | 16 MB |
+| `full` (default) | All features enabled (includes Bedrock + local embeddings) | ~25 MB |
 | `bedrock` | Amazon Bedrock inference backend | +7 MB |
+| `local-embedding` | Local CPU embeddings via fastembed (BGE-small-en-v1.5) | +8 MB |
 | `progress` | Progress bars during scan | +0.1 MB |
 | `compression` | zstd compression for export/import and database storage | +0.6 MB |
 | `mcp` | MCP server for AI agent integration | +1 MB |
@@ -150,10 +152,11 @@ database:
   pool_size: 4
 
 embedding:
-  provider: bedrock
-  model: amazon.nova-2-multimodal-embeddings-v1:0
-  dimension: 1024
-  region: us-east-1    # AWS region (for bedrock) or base_url for ollama
+  provider: local              # default; or 'bedrock', 'ollama'
+  # For bedrock/ollama, also set:
+  # model: amazon.nova-2-multimodal-embeddings-v1:0
+  # dimension: 1024
+  # region: us-east-1    # AWS region (for bedrock) or base_url for ollama
 
 server:
   host: 127.0.0.1
@@ -226,7 +229,7 @@ See [docs/fact-document-format.md](docs/fact-document-format.md) for the complet
 
 **Bedrock Access Denied** — Enable model access in the [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess), or check IAM permissions for `bedrock:InvokeModel`.
 
-**Embedding Dimension Mismatch** — Occurs after switching models. Fix with `factbase scan --reindex`.
+**Embedding Dimension Mismatch** — Occurs after switching providers (e.g., local → Bedrock). Fix with `factbase scan --reindex`.
 
 **Database Locked** — Another process is using the database. Check with `pgrep -a factbase`.
 

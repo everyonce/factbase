@@ -94,8 +94,43 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
     qprintln!();
 
     let is_bedrock = config.embedding.provider == "bedrock";
+    let is_local = config.embedding.provider == "local";
 
-    let (embed_ok, embed_status, server_ok, server_status) = if is_bedrock {
+    let (embed_ok, embed_status, server_ok, server_status) = if is_local {
+        // Local provider: check that fastembed can initialize
+        qprintln!("Checking local embedding provider...");
+        qprintln!();
+
+        #[cfg(feature = "local-embedding")]
+        {
+            match factbase::LocalEmbeddingProvider::new(false) {
+                Ok(_) => {
+                    qprintln!("✓ Local embedding: BGE-small-en-v1.5 (384-dim, CPU)");
+                    (true, CheckStatus::ok(), true, CheckStatus::ok())
+                }
+                Err(e) => {
+                    qprintln!("✗ Local embedding: {}", e);
+                    qprintln!("  Fix: Check disk space and network (model downloads on first use)");
+                    (
+                        false,
+                        CheckStatus::err(format!("{e}")),
+                        true,
+                        CheckStatus::ok(),
+                    )
+                }
+            }
+        }
+        #[cfg(not(feature = "local-embedding"))]
+        {
+            qprintln!("✗ Local embedding: not available (binary built without local-embedding feature)");
+            (
+                false,
+                CheckStatus::err("local-embedding feature not enabled"),
+                true,
+                CheckStatus::ok(),
+            )
+        }
+    } else if is_bedrock {
         // Bedrock provider: check model configuration, not Ollama server
         qprintln!("Checking Bedrock configuration...\n");
 

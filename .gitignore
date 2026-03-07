@@ -6,3 +6,4 @@ temp/
 .factbase/
 .kiro/settings/
 run_cross_validate.py
+.fastembed_cache/

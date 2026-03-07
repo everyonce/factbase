@@ -253,6 +253,125 @@ impl Database {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// Get embedding metadata value by key.
+    pub fn get_embedding_meta(&self, key: &str) -> Result<Option<String>, FactbaseError> {
+        let conn = self.get_conn()?;
+        // Table may not exist yet (pre-migration-14 databases)
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='embedding_metadata'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !exists {
+            return Ok(None);
+        }
+        match conn.query_row(
+            "SELECT value FROM embedding_metadata WHERE key = ?1",
+            [key],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(v) => Ok(Some(v)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Set embedding metadata value.
+    pub fn set_embedding_meta(&self, key: &str, value: &str) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "INSERT OR REPLACE INTO embedding_metadata (key, value) VALUES (?1, ?2)",
+            [key, value],
+        )?;
+        Ok(())
+    }
+
+    /// Get the stored embedding dimension from metadata, falling back to probing actual embeddings.
+    pub fn get_stored_embedding_dim(&self) -> Result<Option<usize>, FactbaseError> {
+        if let Some(dim_str) = self.get_embedding_meta("embedding_dim")? {
+            if let Ok(dim) = dim_str.parse::<usize>() {
+                return Ok(Some(dim));
+            }
+        }
+        // Fallback: probe actual embeddings
+        self.get_embedding_dimension()
+    }
+
+    /// Get the stored embedding model name from metadata.
+    pub fn get_stored_embedding_model(&self) -> Result<Option<String>, FactbaseError> {
+        self.get_embedding_meta("embedding_model")
+    }
+
+    /// Record the embedding model and dimension in metadata.
+    pub fn set_embedding_info(&self, model: &str, dim: usize) -> Result<(), FactbaseError> {
+        self.set_embedding_meta("embedding_model", model)?;
+        self.set_embedding_meta("embedding_dim", &dim.to_string())?;
+        Ok(())
+    }
+
+    /// Recreate embedding virtual tables with a new dimension.
+    /// Drops all existing embeddings — caller must re-index after this.
+    pub fn rebuild_embedding_tables(&self, dimension: usize) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        tracing::warn!(
+            "Rebuilding embedding tables for {dimension}-dim vectors. All embeddings will be regenerated."
+        );
+        conn.execute("DROP TABLE IF EXISTS document_embeddings", [])?;
+        conn.execute("DROP TABLE IF EXISTS embedding_chunks", [])?;
+        conn.execute("DROP TABLE IF EXISTS fact_embeddings", [])?;
+        conn.execute("DROP TABLE IF EXISTS fact_metadata", [])?;
+        // Clear cached fact pairs since they reference old embeddings
+        conn.execute("DELETE FROM cached_fact_pairs", []).ok();
+        conn.execute("DELETE FROM cached_fact_pairs_meta", []).ok();
+        conn.execute("DELETE FROM cross_validation_state", []).ok();
+
+        conn.execute(
+            &format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS document_embeddings USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding FLOAT[{dimension}]
+                )"
+            ),
+            [],
+        )?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS embedding_chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                chunk_start INTEGER NOT NULL,
+                chunk_end INTEGER NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_chunks_doc ON embedding_chunks(document_id);",
+        )?;
+        conn.execute(
+            &format!(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS fact_embeddings USING vec0(
+                    id TEXT PRIMARY KEY,
+                    embedding FLOAT[{dimension}]
+                )"
+            ),
+            [],
+        )?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS fact_metadata (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                line_number INTEGER NOT NULL,
+                fact_text TEXT NOT NULL,
+                fact_hash TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_fact_meta_doc ON fact_metadata(document_id);",
+        )?;
+        // Clear query cache since dimensions changed
+        conn.execute("DELETE FROM query_embedding_cache", []).ok();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -383,5 +502,56 @@ mod tests {
             .get_embedding_dimension()
             .expect("get_embedding_dimension should succeed");
         assert_eq!(dim, Some(1024));
+    }
+
+    #[test]
+    fn test_embedding_metadata() {
+        let (db, _tmp) = test_db();
+
+        // No metadata initially
+        assert_eq!(db.get_embedding_meta("embedding_model").unwrap(), None);
+        assert_eq!(db.get_embedding_meta("embedding_dim").unwrap(), None);
+        assert_eq!(db.get_stored_embedding_dim().unwrap(), None);
+        assert_eq!(db.get_stored_embedding_model().unwrap(), None);
+
+        // Set metadata
+        db.set_embedding_info("BAAI/bge-small-en-v1.5", 384).unwrap();
+        assert_eq!(db.get_stored_embedding_dim().unwrap(), Some(384));
+        assert_eq!(
+            db.get_stored_embedding_model().unwrap(),
+            Some("BAAI/bge-small-en-v1.5".to_string())
+        );
+
+        // Update metadata
+        db.set_embedding_info("amazon.titan-embed-text-v2:0", 1024).unwrap();
+        assert_eq!(db.get_stored_embedding_dim().unwrap(), Some(1024));
+        assert_eq!(
+            db.get_stored_embedding_model().unwrap(),
+            Some("amazon.titan-embed-text-v2:0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_rebuild_embedding_tables() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+
+        // Add 1024-dim embedding
+        let embedding: Vec<f32> = vec![0.1; 1024];
+        db.upsert_embedding("doc1", &embedding).unwrap();
+        assert_eq!(db.get_embedding_dimension().unwrap(), Some(1024));
+
+        // Rebuild for 384-dim
+        db.rebuild_embedding_tables(384).unwrap();
+
+        // Old embeddings should be gone
+        assert_eq!(db.get_embedding_dimension().unwrap(), None);
+
+        // Can now insert 384-dim embeddings
+        let small_embedding: Vec<f32> = vec![0.2; 384];
+        db.upsert_embedding("doc1", &small_embedding).unwrap();
+        assert_eq!(db.get_embedding_dimension().unwrap(), Some(384));
     }
 }

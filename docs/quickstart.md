@@ -10,11 +10,7 @@ cd factbase
 cargo install --path .
 ```
 
-This installs `factbase` to `~/.cargo/bin/`. For a minimal build without AWS Bedrock (Ollama only):
-
-```bash
-cargo install --path . --no-default-features
-```
+This installs `factbase` to `~/.cargo/bin/`.
 
 ## 2. Set up your knowledge base
 
@@ -39,9 +35,9 @@ echo "# Project Alpha\n\n- Started Q1 2025\n- Lead: Alice" > projects/alpha.md
 factbase scan
 ```
 
-Factbase reads every `.md` file, generates embeddings for semantic search and cross-document validation, and detects cross-references between documents using an LLM.
+Factbase reads every `.md` file, generates embeddings for semantic search and cross-document validation, and detects cross-references between documents.
 
-First scan takes a few seconds per document. Subsequent scans only process changed files.
+By default, factbase uses local CPU embeddings (BGE-small-en-v1.5, 384-dim) — no cloud credentials or external services needed. First scan downloads the model (~33MB, one-time) and takes a few seconds per document. Subsequent scans only process changed files.
 
 ## 4. Search
 
@@ -83,17 +79,9 @@ Your documents are stored in a SQLite database at `~/.local/share/factbase/factb
 
 ## Inference backend
 
-Factbase uses Amazon Bedrock by default — no local model management needed. It assumes your AWS CLI environment is already working (credentials configured, default region set).
+Factbase uses local CPU embeddings by default — no cloud credentials needed. The BGE-small-en-v1.5 model (384 dimensions, ~33MB) downloads automatically on first use.
 
-Verify with:
-
-```bash
-aws sts get-caller-identity
-```
-
-That's it. Factbase uses the standard AWS credential chain (instance profile, SSO, environment variables, or `~/.aws/credentials`).
-
-To customize models or region, create a config file:
+For higher quality embeddings on large knowledge bases, configure Amazon Bedrock:
 
 ```yaml
 # ~/.config/factbase/config.yaml
@@ -102,12 +90,15 @@ embedding:
   model: amazon.titan-embed-text-v2:0
   dimension: 1024
   region: us-east-1
-
-llm:
-  provider: bedrock
-  model: us.anthropic.claude-3-5-haiku-20241022-v1:0
-  region: us-east-1
 ```
+
+Bedrock requires AWS credentials. Verify with:
+
+```bash
+aws sts get-caller-identity
+```
+
+If you switch providers after scanning, run `factbase scan --reindex` to rebuild embeddings with the new dimension.
 
 For self-hosted inference with Ollama, see [inference-providers.md](inference-providers.md).
 

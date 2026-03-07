@@ -202,6 +202,25 @@ pub async fn setup_embedding_with_timeout(
     timeout_override: Option<u64>,
 ) -> Box<dyn EmbeddingProvider> {
     match config.embedding.provider.as_str() {
+        #[cfg(feature = "local-embedding")]
+        "local" => {
+            eprintln!("Using local CPU embeddings (BGE-small-en-v1.5, 384-dim)");
+            match factbase::LocalEmbeddingProvider::new(true) {
+                Ok(provider) => Box::new(provider),
+                Err(e) => {
+                    eprintln!("error: Failed to initialize local embedding provider: {e}");
+                    eprintln!("hint: Check disk space and network connectivity (model downloads on first use).");
+                    std::process::exit(1);
+                }
+            }
+        }
+        #[cfg(not(feature = "local-embedding"))]
+        "local" => {
+            eprintln!("error: Config specifies provider 'local' but this binary was built without local-embedding support.");
+            eprintln!("hint: Install with local embedding support: cargo install --path . --features local-embedding");
+            eprintln!("      Or switch to Ollama: set embedding.provider = 'ollama' in config.");
+            std::process::exit(1);
+        }
         #[cfg(feature = "bedrock")]
         "bedrock" => {
             let region = resolve_bedrock_region(config.embedding.effective_base_url());
@@ -269,35 +288,30 @@ mod tests {
     use factbase::EmbeddingProvider;
 
     fn test_config() -> Config {
+        let config = Config::default();
         Config {
             embedding: EmbeddingConfig {
-                base_url: "http://localhost:11434".to_string(),
-                model: "test-embed".to_string(),
-                dimension: 1024,
-                timeout_secs: 30,
-                cache_size: 100,
-                ..Default::default()
+                // Use whatever the default provider is for this build
+                ..config.embedding
             },
-            ollama: OllamaConfig {
-                max_retries: 3,
-                retry_delay_ms: 1000,
-            },
-            ..Default::default()
+            ..config
         }
     }
 
     #[tokio::test]
     async fn test_setup_embedding_with_timeout_uses_config_default() {
         let config = test_config();
+        let expected_dim = config.embedding.dimension;
         let embedding = setup_embedding_with_timeout(&config, None).await;
-        assert_eq!(embedding.dimension(), 1024);
+        assert_eq!(embedding.dimension(), expected_dim);
     }
 
     #[tokio::test]
     async fn test_setup_embedding_with_timeout_override() {
         let config = test_config();
+        let expected_dim = config.embedding.dimension;
         let embedding = setup_embedding_with_timeout(&config, Some(120)).await;
-        assert_eq!(embedding.dimension(), 1024);
+        assert_eq!(embedding.dimension(), expected_dim);
     }
 
     #[tokio::test]

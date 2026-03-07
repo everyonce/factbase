@@ -15,12 +15,13 @@ authors = ["Factbase Contributors"]
 
 [features]
 default = ["full"]
-full = ["progress", "compression", "mcp", "bedrock"]
+full = ["progress", "compression", "mcp", "bedrock", "local-embedding"]
 progress = ["dep:indicatif"]
 compression = ["dep:zstd", "dep:tar"]
 mcp = ["dep:axum", "dep:tower-http"]
 web = ["dep:axum", "dep:rust-embed", "dep:mime_guess"]
 bedrock = ["dep:aws-sdk-bedrockruntime", "dep:aws-config"]
+local-embedding = ["dep:fastembed"]
 minimal = []  # CLI-only, no MCP server, no compression, no progress bars
 
 [dependencies]
@@ -64,6 +65,7 @@ rust-embed = { version = "8", optional = true }
 mime_guess = { version = "2", optional = true }
 aws-sdk-bedrockruntime = { version = "1", optional = true }
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
+fastembed = { version = "5", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

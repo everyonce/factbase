@@ -10,8 +10,9 @@
 ## Current Configuration
 
 ### Embedding Model
-- **Model**: amazon.titan-embed-text-v2:0 (1024 dimensions) via Bedrock
-- **Alternative**: amazon.nova-2-multimodal-embeddings-v1:0
+- **Default**: BAAI/bge-small-en-v1.5 (384 dimensions) via local CPU (fastembed)
+- **Alternative**: amazon.titan-embed-text-v2:0 (1024 dimensions) via Bedrock
+- **Alternative**: amazon.nova-2-multimodal-embeddings-v1:0 via Bedrock
 
 ### LLM Model
 - **Status**: Removed (Phase 6 complete). All reasoning is now agent-driven via MCP.

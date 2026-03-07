@@ -269,29 +269,29 @@ Remove the hard dependency on Bedrock/cloud embedding providers. Factbase works 
 
 ### Tasks
 
-- [ ] Add `fastembed-rs` dependency (with `ort` ONNX runtime)
-- [ ] New `LocalEmbeddingProvider` implementing existing embedding trait
+- [x] Add `fastembed-rs` dependency (with `ort` ONNX runtime)
+- [x] New `LocalEmbeddingProvider` implementing existing embedding trait
   - Model: `BGE-small-en-v1.5` (384-dim, ~33MB download)
-  - Cache model in `~/.factbase/models/` or platform data dir
+  - Cache model in fastembed default cache dir
   - Auto-download on first use with progress indicator
-- [ ] Add `embedding_model` and `embedding_dim` fields to DB metadata table
+- [x] Add `embedding_model` and `embedding_dim` fields to DB metadata table
   - Populate on first scan, check on subsequent scans
-- [ ] Update provider selection logic:
+- [x] Update provider selection logic:
   - If `embedding:` config present → use configured provider (Bedrock/Ollama)
   - If no config → use local `fastembed-rs` provider
   - If config present but fails → optionally fall back to local (configurable)
-- [ ] Dimension mismatch handling:
+- [x] Dimension mismatch handling:
   - On startup: compare current provider dim vs DB metadata dim
-  - If mismatch: warn user, offer `factbase embeddings rebuild` to re-embed all docs
+  - If mismatch: warn user, offer `factbase scan --reindex` to re-embed all docs
   - Block scan if dimensions don't match (prevent mixed embeddings)
-- [ ] Update `factbase doctor` to check embedding provider health (local or cloud)
-- [ ] Update `factbase scan` — works with zero config on fresh repo
-- [ ] Update `examples/config.yaml` — show embedding as optional with local default
-- [ ] Update `docs/quickstart.md` — "just run factbase scan, no config needed"
-- [ ] Update `docs/inference-providers.md` — document local vs cloud tradeoffs
-- [ ] Add tests for LocalEmbeddingProvider
-- [ ] Add test for dimension mismatch detection and re-embed flow
-- [ ] Verify: `factbase scan` works with NO config file at all
+- [x] Update `factbase doctor` to check embedding provider health (local or cloud)
+- [x] Update `factbase scan` — works with zero config on fresh repo
+- [x] Update `examples/config.yaml` — show embedding as optional with local default
+- [x] Update `docs/quickstart.md` — "just run factbase scan, no config needed"
+- [x] Update `docs/inference-providers.md` — document local vs cloud tradeoffs
+- [x] Add tests for LocalEmbeddingProvider
+- [x] Add test for dimension mismatch detection and re-embed flow
+- [x] Verify: `factbase scan` works with NO config file at all
 
 ### Paging retention
 - `scan_repository` keeps time-budgeted paging with resume tokens for embedding generation
