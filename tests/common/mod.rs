@@ -8,7 +8,7 @@ use factbase::{
     config::Config,
     database::Database,
     embedding::OllamaEmbedding,
-    llm::LinkDetector,
+    LinkDetector,
     mcp::McpServer,
     models::{Document, Perspective, Repository},
     processor::DocumentProcessor,
@@ -355,7 +355,6 @@ impl TestServer {
             port,
             config.rate_limit.clone(),
             &config.embedding.base_url,
-            None,
         );
         let base_url = format!("http://127.0.0.1:{}", port);
 

@@ -134,15 +134,15 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
             .get_document(source_id)?
             .ok_or_else(|| FactbaseError::NotFound(format!("Document {source_id} not found")))?;
 
-        let file_path = std::path::Path::new(&doc.file_path);
+        let file_path = super::helpers::resolve_doc_path(db, &doc)?;
         if !file_path.exists() {
             return Err(FactbaseError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("File not found: {}", doc.file_path),
+                format!("File not found: {}", file_path.display()),
             )));
         }
 
-        let content = std::fs::read_to_string(file_path)?;
+        let content = std::fs::read_to_string(&file_path)?;
         let existing_ids: HashSet<String> = parse_links_block(&content).into_iter().collect();
 
         let new_ids: Vec<&str> = target_ids

@@ -323,7 +323,7 @@ impl<E: EmbeddingProvider> EmbeddingProvider for PersistentCachedEmbedding<E> {
 }
 
 #[cfg(test)]
-pub(crate) mod test_helpers {
+pub mod test_helpers {
     use super::*;
 
     /// Mock embedding provider that returns a constant vector of configurable dimension.
