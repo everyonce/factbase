@@ -4,7 +4,6 @@
 //! and uses LLM to integrate inbox content into the document.
 
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 
 /// A parsed inbox block with its location in the document.
 #[derive(Debug, Clone)]
@@ -125,34 +124,21 @@ pub fn build_inbox_prompt(
     )
 }
 
-/// Apply inbox integration using LLM. Returns the updated document content.
+/// Apply inbox integration by stripping inbox blocks. Returns the clean content.
+/// The agent handles merging via update_document.
 pub async fn apply_inbox_integration(
-    llm: &dyn LlmProvider,
     content: &str,
     blocks: &[InboxBlock],
 ) -> Result<String, FactbaseError> {
-    // Combine all inbox blocks
-    let combined_inbox: String = blocks
-        .iter()
-        .map(|b| b.content.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n");
-
-    // Strip inbox blocks from content before sending to LLM
     let clean_content = strip_inbox_blocks(content, blocks);
 
-    let prompts_config = crate::Config::load(None).unwrap_or_default().prompts;
-    let prompt = build_inbox_prompt(&clean_content, &combined_inbox, &prompts_config);
-    let response = llm.complete(&prompt).await?;
-    let result = response.trim().to_string();
-
-    if result.is_empty() {
-        return Err(FactbaseError::ollama(
-            "LLM returned empty response for inbox integration".to_string(),
+    if clean_content.is_empty() {
+        return Err(FactbaseError::internal(
+            "Stripping inbox blocks resulted in empty content".to_string(),
         ));
     }
 
-    Ok(result)
+    Ok(clean_content)
 }
 
 #[cfg(test)]

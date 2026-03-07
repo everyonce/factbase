@@ -1,7 +1,7 @@
 //! Review answer application logic.
 
 use super::super::{
-    parse_since_filter, setup_database, setup_db_and_resolve_repos, setup_review_llm_with_timeout,
+    parse_since_filter, setup_db_and_resolve_repos,
 };
 use super::args::ReviewArgs;
 use factbase::{
@@ -10,7 +10,7 @@ use factbase::{
 };
 use std::fs;
 use std::path::Path;
-use tracing::{error, info};
+use tracing::error;
 
 #[tracing::instrument(
     name = "cmd_review_apply",
@@ -26,11 +26,6 @@ pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
     if let Some(timeout) = args.timeout {
         validate_timeout(timeout)?;
     }
-
-    // Initialize ReviewLlm
-    let (config, _) = setup_database()?;
-    let review_llm = setup_review_llm_with_timeout(&config, args.timeout).await;
-    info!("Review LLM initialized with model: {}", review_llm.model());
 
     let progress = ProgressReporter::Cli { quiet: args.quiet };
 
@@ -54,7 +49,7 @@ pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
         println!("\n--dry-run: showing proposed changes without modifying files\n");
     }
 
-    let result = apply_all_review_answers(&db, &review_llm, &apply_config, &progress).await?;
+    let result = apply_all_review_answers(&db, &apply_config, &progress).await?;
 
     if result.filtered_count > 0 && !args.quiet {
         println!(
@@ -169,7 +164,7 @@ pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
                 }
             }
 
-            match factbase::apply_inbox_integration(&review_llm, &content, &blocks).await {
+            match factbase::apply_inbox_integration(&content, &blocks).await {
                 Ok(new_content) => {
                     if let Err(e) = write_file_safely(&abs_path, &new_content) {
                         inbox_errors += 1;

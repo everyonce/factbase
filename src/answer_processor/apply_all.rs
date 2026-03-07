@@ -4,7 +4,6 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::models::QuestionType;
 use crate::organize::fs_helpers::write_file;
 use crate::processor::{content_hash, normalize_review_section, parse_review_queue};
@@ -68,7 +67,6 @@ pub struct ApplyConfig<'a> {
 /// filters by optional doc_id/repo/since, and applies answered questions.
 pub async fn apply_all_review_answers(
     db: &Database,
-    llm: &dyn LlmProvider,
     config: &ApplyConfig<'_>,
     progress: &ProgressReporter,
 ) -> Result<ApplyResult, FactbaseError> {
@@ -227,7 +225,7 @@ pub async fn apply_all_review_answers(
 
         let apply_result = tokio::time::timeout(
             std::time::Duration::from_secs(120),
-            apply_one_document(llm, abs_path, answered, config.dry_run),
+            apply_one_document(abs_path, answered, config.dry_run),
         )
         .await;
 
@@ -301,7 +299,6 @@ pub async fn apply_all_review_answers(
 }
 
 async fn apply_one_document(
-    llm: &dyn LlmProvider,
     file_path: &Path,
     answered: &[(usize, crate::models::ReviewQuestion)],
     dry_run: bool,
@@ -414,7 +411,7 @@ async fn apply_one_document(
             };
             let llm_interpreted: Vec<InterpretedAnswer> =
                 needs_llm.into_iter().cloned().collect();
-            let new_section = apply_changes_to_section(llm, &section, &llm_interpreted).await?;
+            let new_section = apply_changes_to_section(&section, &llm_interpreted).await?;
             let new_section = stamp_reviewed_markers(&new_section, &today);
             new_content = replace_section(&new_content, start, end, &new_section);
         }
@@ -622,7 +619,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_finds_answered_on_disk_when_db_stale() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -689,7 +686,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("abc123"),
                     repo_filter: None,
@@ -700,7 +697,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -714,7 +711,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_falls_back_to_db_content_when_disk_diverges() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -782,7 +779,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("abc123"),
                     repo_filter: None,
@@ -793,7 +790,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -817,7 +814,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_finds_answered_from_db_when_disk_in_sync() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -870,7 +867,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("abc123"),
                     repo_filter: None,
@@ -881,7 +878,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -892,7 +889,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_returns_zero_when_no_answered_anywhere() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -944,7 +941,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("abc123"),
                     repo_filter: None,
@@ -955,7 +952,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -971,7 +968,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_finds_doc_when_has_review_queue_flag_is_false() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -1031,7 +1028,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("abc123"),
                     repo_filter: None,
@@ -1042,7 +1039,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -1061,7 +1058,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_processes_answers_written_directly_to_file() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -1121,7 +1118,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("543601"),
                     repo_filter: None,
@@ -1132,7 +1129,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -1148,7 +1145,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_reports_error_when_disk_sync_fails() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::progress::ProgressReporter;
 
@@ -1202,7 +1199,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
                     doc_id_filter: Some("abc123"),
                     repo_filter: None,
@@ -1213,7 +1210,7 @@ mod tests {
                 };
         let progress = ProgressReporter::Silent;
 
-        let result = apply_all_review_answers(&db, &llm, &config, &progress)
+        let result = apply_all_review_answers(&db, &config, &progress)
             .await
             .unwrap();
 
@@ -1232,7 +1229,7 @@ mod tests {
     #[tokio::test]
     async fn test_apply_disk_and_db_in_sync_no_stale_review_queue() {
         use crate::database::Database;
-        use crate::llm::test_helpers::MockLlm;
+
         use crate::models::{Document, Repository};
         use crate::processor::content_hash;
         use crate::progress::ProgressReporter;
@@ -1289,7 +1286,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let llm = MockLlm::new("no changes needed");
+
         let config = ApplyConfig {
             doc_id_filter: Some("aaa111"),
             repo_filter: None,
@@ -1299,7 +1296,7 @@ mod tests {
             acquire_write_guard: false,
         };
 
-        let result = apply_all_review_answers(&db, &llm, &config, &ProgressReporter::Silent)
+        let result = apply_all_review_answers(&db, &config, &ProgressReporter::Silent)
             .await
             .unwrap();
         assert_eq!(result.documents.len(), 1);
