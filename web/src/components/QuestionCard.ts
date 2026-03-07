@@ -16,6 +16,7 @@ const QUESTION_TYPE_COLORS: Record<string, { bg: string; text: string }> = {
   duplicate: { bg: 'bg-green-100 dark:bg-green-900', text: 'text-green-700 dark:text-green-200' },
   corruption: { bg: 'bg-orange-100 dark:bg-orange-900', text: 'text-orange-700 dark:text-orange-200' },
   precision: { bg: 'bg-teal-100 dark:bg-teal-900', text: 'text-teal-700 dark:text-teal-200' },
+  'weak-source': { bg: 'bg-yellow-100 dark:bg-yellow-900', text: 'text-yellow-700 dark:text-yellow-200' },
 };
 
 function escapeHtml(text: string): string {

@@ -38,6 +38,7 @@
 // Submodules
 mod acronyms;
 mod chunks;
+mod citations;
 mod core;
 mod links;
 pub mod repair;
@@ -74,6 +75,9 @@ pub use review::{
     normalize_conflict_desc, normalize_review_section, parse_review_queue, prune_stale_questions,
     recover_review_section,
 };
+
+// Re-export citation quality scoring
+pub use citations::is_citation_specific;
 
 // Re-export chunking types and functions
 pub use chunks::{chunk_document, DocumentChunk};

@@ -160,7 +160,7 @@ pub fn tools_list() -> Value {
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
                         "doc_id": { "type": "string", "description": "Filter by document ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision)" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, weak-source)" },
                         "status": { "type": "string", "description": "Filter by status: 'unanswered' (default), 'answered', 'deferred', 'all'" },
                         "limit": { "type": "integer", "description": "Max questions to return (default: 10)" },
                         "offset": { "type": "integer", "description": "Skip this many questions for pagination (default: 0)" }
@@ -248,7 +248,7 @@ pub fn tools_list() -> Value {
                         "topic": { "type": "string", "description": "For ingest: what to research" },
                         "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
                         "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
-                        "question_type": { "type": "string", "enum": ["stale", "temporal", "ambiguous", "conflict", "precision", "duplicate", "missing"], "description": "For resolve step 2: filter questions by type. Omit to get all types." },
+                        "question_type": { "type": "string", "enum": ["stale", "temporal", "ambiguous", "conflict", "precision", "duplicate", "missing", "weak-source"], "description": "For resolve step 2: filter questions by type. Omit to get all types." },
                         "variant": { "type": "string", "enum": ["baseline", "type_evidence", "research_batch"], "description": "For resolve: prompt variant to use. 'baseline' (default) uses standard prompts. 'type_evidence' uses type-specific evidence standards per question type. 'research_batch' restructures workflow to research per-document first, then answer all questions for that document." },
                         "cross_validate": { "type": "boolean", "description": "For update: include cross-document fact validation step (default: false). If true, workflow includes a cross_validate mode step after questions." },
                         "skip": {
@@ -300,7 +300,7 @@ pub fn tools_list() -> Value {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision)" },
+                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, weak-source)" },
                         "limit": { "type": "integer", "description": "Max items to return (default: 10)" },
                         "offset": { "type": "integer", "description": "Skip items for pagination (default: 0)" }
                     }

@@ -64,7 +64,7 @@ pub struct ReviewArgs {
     #[arg(long)]
     pub clear: bool,
 
-    /// Filter --clear to a specific question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision)
+    /// Filter --clear to a specific question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, weak-source)
     #[arg(long, value_name = "TYPE")]
     pub r#type: Option<String>,
 }

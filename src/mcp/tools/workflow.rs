@@ -448,6 +448,7 @@ fn question_type_priority(qt: &QuestionType) -> u8 {
         QuestionType::Precision => 5,
         QuestionType::Duplicate => 6,
         QuestionType::Corruption => 7,
+        QuestionType::WeakSource => 8,
     }
 }
 
@@ -462,6 +463,7 @@ fn type_evidence_guidance(qt: &QuestionType) -> &'static str {
         QuestionType::Missing => "Find a source citation for this unsourced fact. Search for the specific claim and cite a URL.",
         QuestionType::Duplicate => "Identify the canonical entry by reading both documents. Cite which one should be kept.",
         QuestionType::Corruption => "Read the document to identify the corruption. Describe what needs to be fixed.",
+        QuestionType::WeakSource => "Find the specific source. Add a URL, document path, page number, ISBN, RFC, channel/thread ID, or other identifier that would let someone else find this exact source.",
     }
 }
 

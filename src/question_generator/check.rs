@@ -13,7 +13,7 @@ use crate::question_generator::{
     generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
     generate_missing_questions, generate_precision_questions,
     generate_required_field_questions, generate_source_quality_questions,
-    generate_stale_questions, generate_temporal_questions,
+    generate_stale_questions, generate_temporal_questions, generate_weak_source_questions,
 };
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -44,6 +44,7 @@ pub fn run_generators(
     questions.extend(generate_missing_questions(body));
     if full {
         questions.extend(generate_source_quality_questions(body));
+        questions.extend(generate_weak_source_questions(body));
     }
     questions.extend(generate_ambiguous_questions_with_type(body, doc_type, defined_terms));
     questions.extend(generate_stale_questions(body, stale_days));
@@ -1083,7 +1084,7 @@ mod tests {
 
         // Disk file: has review marker but NO questions.
         // All facts have temporal tags + sources so generators produce nothing new.
-        let disk_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: Source A, 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n";
+        let disk_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: https://example.com/source-a, accessed 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n";
         std::fs::write(&md_path, disk_content).unwrap();
 
         let repo = crate::models::Repository {
@@ -1098,7 +1099,7 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         // DB content: has review marker WITH unanswered questions
-        let db_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: Source A, 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Source [^1] was scraped over 180 days ago\n  > \n";
+        let db_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: https://example.com/source-a, accessed 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Source [^1] was scraped over 180 days ago\n  > \n";
         let doc = Document {
             id: "fff".to_string(),
             title: "Test".to_string(),
