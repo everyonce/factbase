@@ -51,7 +51,7 @@ pub(crate) const DEFAULT_UPDATE_EMBEDDINGS_INSTRUCTION: &str = "Generate fact-le
 
 pub(crate) const DEFAULT_UPDATE_QUESTIONS_INSTRUCTION: &str = "Run per-document quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository with mode='questions' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for non-trivial repositories.\n   You MUST call it again passing the resume token until `continue` is no longer in the response.\n   Do NOT stop early, do NOT skip ahead, and do NOT report partial results.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
 
-pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Run cross-document fact comparison to find contradictions between documents.\n\n1. Call check_repository with mode='cross_validate' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token when there are more pairs to check.\n   You MUST call check_repository again passing the resume token.\n   Keep calling until `continue` is no longer in the response. This typically takes 10-30 iterations\n   for medium repositories — that is normal and expected. Do NOT stop early, do NOT reason about\n   whether to continue, do NOT skip ahead, and do NOT report partial results.\n   The response includes `estimated_iterations_remaining` — just call again mechanically until done.\n\n2. Record: new conflict questions found";
+pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call get_fact_pairs to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call answer_questions with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
 pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing entities and extract domain vocabulary.\n\n1. Call check_repository with mode='discover'. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  3. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  4. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete.\n     - New entities = new titles for the link detector to find\n  5. Record links_detected as LINKS_AFTER\n  6. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  3. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
 
@@ -426,8 +426,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                     "workflow": "update",
                     "step": 4, "total_steps": total,
                     "instruction": resolve(wf, "update.cross_validate", DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION, &[]),
-                    "next_tool": "check_repository",
-                    "suggested_args": {"mode": "cross_validate"},
+                    "next_tool": "get_fact_pairs",
                     "when_done": "Call workflow with workflow='update', step=5"
                 })
             } else {
@@ -2209,7 +2208,6 @@ mod tests {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
         let update_questions = update_step(3, &serde_json::json!({}), &None, &wf());
-        let update_cv = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
         let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(setup_instr.contains("time_budget_secs=120"), "setup.scan should specify time_budget_secs");
@@ -2222,10 +2220,6 @@ mod tests {
         let q_instr = update_questions["instruction"].as_str().unwrap();
         assert!(q_instr.contains("time_budget_secs=120"), "update.questions should specify time_budget_secs");
         assert!(q_instr.contains("Do NOT stop early"), "update.questions should warn against stopping early");
-
-        let cv_instr = update_cv["instruction"].as_str().unwrap();
-        assert!(cv_instr.contains("time_budget_secs=120"), "update.cross_validate should specify time_budget_secs");
-        assert!(cv_instr.contains("10-30 iterations"), "update.cross_validate should set expectations about iteration count");
     }
 
     #[test]
@@ -2233,24 +2227,16 @@ mod tests {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
         let update_questions = update_step(3, &serde_json::json!({}), &None, &wf());
-        let update_cv = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
 
         // All should use "WILL return" (not "may return" or "If")
         for (name, instr) in [
             ("setup.scan", setup["instruction"].as_str().unwrap()),
             ("update.scan", update_scan["instruction"].as_str().unwrap()),
             ("update.questions", update_questions["instruction"].as_str().unwrap()),
-            ("update.cross_validate", update_cv["instruction"].as_str().unwrap()),
         ] {
             assert!(instr.contains("WILL return"), "{name} should say paging WILL happen, not 'may' or 'if'");
             assert!(instr.contains("MUST"), "{name} should use MUST language for continuation");
         }
-
-        // Cross-validate instruction should warn against reasoning about stopping
-        let cv_instr = update_cv["instruction"].as_str().unwrap();
-        assert!(cv_instr.contains("do NOT reason about"), "update.cross_validate should discourage reasoning about stopping");
-        assert!(cv_instr.contains("skip ahead"), "update.cross_validate should prohibit skipping ahead");
-        assert!(cv_instr.contains("mechanically"), "update.cross_validate should tell agent to loop mechanically");
     }
 
     #[test]
@@ -2278,7 +2264,7 @@ mod tests {
     fn test_update_cross_validate_step_when_enabled() {
         let step = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("mode='cross_validate'"), "step 4 with cross_validate=true must instruct mode='cross_validate'");
+        assert!(instr.contains("get_fact_pairs"), "step 4 with cross_validate=true must instruct get_fact_pairs");
         assert!(step.get("skip").is_none(), "should not skip when cross_validate=true");
     }
 

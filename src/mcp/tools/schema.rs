@@ -196,11 +196,11 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'cross_validate': Cross-document fact comparison via pre-computed embeddings. Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Pages via resume token.\n- 'embeddings': Generate fact-level embeddings for cross-validation. Pages via resume token.\n\nIf doc_id is provided, checks just that document (ignores mode).",
+                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Pages via resume token.\n- 'embeddings': Generate fact-level embeddings for cross-validation. Pages via resume token.\n\nFor cross-document fact comparison, use the get_fact_pairs tool instead.\n\nIf doc_id is provided, checks just that document (ignores mode).",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "mode": { "type": "string", "enum": ["questions", "cross_validate", "discover", "embeddings"], "description": "Required. 'questions' for per-doc quality checks, 'cross_validate' for cross-doc fact comparison, 'discover' for entity suggestions + vocabulary, 'embeddings' for fact embedding generation." },
+                        "mode": { "type": "string", "enum": ["questions", "discover", "embeddings"], "description": "Required. 'questions' for per-doc quality checks, 'discover' for entity suggestions + vocabulary, 'embeddings' for fact embedding generation." },
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
                         "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted). Ignores mode when set." },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
@@ -420,6 +420,18 @@ pub fn tools_list() -> Value {
                     },
                     "required": ["links"]
                 }
+            },
+            {
+                "name": "get_fact_pairs",
+                "description": "Get embedding-similar fact pairs across documents for cross-validation. Returns pairs of facts from different documents that are semantically similar, excluding pairs that already have cross-check review questions. The agent classifies each pair (contradicting/superseding/consistent) and flags conflicts via answer_questions.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": { "type": "string", "description": "Repository ID (optional)" },
+                        "min_similarity": { "type": "number", "description": "Minimum cosine similarity threshold (default: from config, typically 0.5)" },
+                        "limit": { "type": "integer", "description": "Maximum pairs to return (default: 50)" }
+                    }
+                }
             }
         ]
     })
@@ -433,7 +445,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 27, "should have 27 tools");
+        assert_eq!(tools.len(), 28, "should have 28 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -463,6 +475,7 @@ mod tests {
         assert!(names.contains(&"generate_questions"));
         assert!(names.contains(&"get_link_suggestions"));
         assert!(names.contains(&"store_links"));
+        assert!(names.contains(&"get_fact_pairs"));
 
         // Verify tools with required params have inputSchema
         for tool in tools {

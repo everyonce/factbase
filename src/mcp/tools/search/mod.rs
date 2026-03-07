@@ -1,9 +1,11 @@
-//! Search-related MCP tools: search_knowledge, search_content, search_temporal
+//! Search-related MCP tools: search_knowledge, search_content, search_temporal, get_fact_pairs
 
+mod get_fact_pairs;
 mod search_content;
 mod search_knowledge;
 mod search_temporal;
 
+pub use get_fact_pairs::get_fact_pairs;
 pub use search_content::search_content;
 pub use search_knowledge::search_knowledge;
 

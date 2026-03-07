@@ -9,7 +9,6 @@ use crate::processor::{
     append_review_questions, content_hash, parse_review_queue, prune_stale_questions,
 };
 use crate::progress::ProgressReporter;
-use crate::question_generator::cross_validate::{cross_validate_document, cross_validate_facts};
 use crate::question_generator::{
     collect_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
     generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
@@ -66,24 +65,11 @@ pub struct CheckConfig {
     pub concurrency: usize,
     /// Optional deadline for time-boxed operations.
     pub deadline: Option<Instant>,
-    /// Doc IDs already cross-validated in a previous call (backward compat, fallback path only).
-    pub checked_doc_ids: HashSet<String>,
-    /// Server-side pair offset for resumption (replaces checked_pair_ids).
-    pub pair_offset: usize,
     /// Whether to acquire the global write guard before writing results.
     /// Set to `true` in MCP context (concurrent requests), `false` in CLI/tests.
     pub acquire_write_guard: bool,
-    /// Maximum fact pairs per LLM batch call.
-    pub batch_size: usize,
-    /// Optional repo ID to scope cross-validation to a single repository.
+    /// Optional repo ID to scope operations to a single repository.
     pub repo_id: Option<String>,
-    /// Whether this is a continuation call (pair_offset > 0 or checked_doc_ids non-empty).
-    /// When true, skip vocabulary extraction and entity discovery (already done on first call).
-    pub is_continuation: bool,
-    /// Optional repo-local database for fact embeddings.
-    /// When the MCP server runs from a different directory than the target repo,
-    /// fact embeddings may live in the repo's own `.factbase/factbase.db`.
-    pub fact_db: Option<crate::database::Database>,
 }
 
 /// Result of linting a single document.
@@ -106,18 +92,8 @@ pub struct CheckOutput {
     pub docs_processed: usize,
     /// Total number of active (non-archived, non-corrupted) documents.
     pub docs_total: usize,
-    /// Doc IDs that completed cross-validation (backward compat, fallback path).
-    pub checked_doc_ids: Vec<String>,
-    /// Offset into the sorted pair list after processing.
-    pub pair_offset: usize,
-    /// Progress for fact-pair cross-validation: (offset, total).
-    pub pair_progress: Option<(usize, usize)>,
     /// Domain vocabulary candidates extracted during deep_check.
     pub vocabulary_candidates: Vec<VocabCandidate>,
-    /// Wall-clock seconds spent in cross-validation (if any).
-    pub cv_elapsed_secs: Option<f64>,
-    /// Pairs processed per second during cross-validation.
-    pub cv_pairs_per_second: Option<f64>,
 }
 
 /// A domain vocabulary term extracted by LLM during deep_check.
@@ -135,7 +111,7 @@ pub struct VocabCandidate {
 pub async fn check_all_documents(
     docs: &[Document],
     db: &Database,
-    embedding: &dyn EmbeddingProvider,
+    _embedding: &dyn EmbeddingProvider,
     llm: Option<&dyn LlmProvider>,
     config: &CheckConfig,
     progress: &ProgressReporter,
@@ -222,19 +198,6 @@ pub async fn check_all_documents(
     let mut all_results = Vec::new();
     let mut deadline_hit = false;
 
-    if config.is_continuation {
-        // Skip question generation — already done on first call.
-        // Build minimal entries so cross-validation can distribute questions.
-        for doc in &active_docs {
-            all_results.push((
-                doc,
-                Vec::new(),
-                doc.content.clone(),
-                0usize, 0usize, 0usize, 0usize, 0usize,
-            ));
-        }
-    } else {
-
     for chunk_start in (0..total_active).step_by(config.concurrency) {
         // Check deadline before starting a new chunk
         if let Some(deadline) = config.deadline {
@@ -295,9 +258,6 @@ pub async fn check_all_documents(
                         ));
                     }
 
-                    // Cross-validation is done in a separate sequential pass below
-                    // to avoid overwhelming the Bedrock API with concurrent calls
-
                     let existing_questions = parse_review_queue(content).unwrap_or_default();
                     let existing_unanswered =
                         existing_questions.iter().filter(|q| !q.answered).count();
@@ -311,11 +271,10 @@ pub async fn check_all_documents(
                         questions.iter().map(|q| q.description.clone()).collect();
 
                     // Prune stale unanswered questions from the document
-                    let had_deep_check = llm.is_some();
                     let pruned_content = prune_stale_questions(
                         content,
                         &valid_descriptions,
-                        had_deep_check,
+                        false,
                     );
                     let pruned_count = existing_unanswered
                         - parse_review_queue(&pruned_content)
@@ -386,116 +345,16 @@ pub async fn check_all_documents(
         all_results.extend(batch);
     }
 
-    } // end if !is_continuation
-
-    // Sequential cross-validation pass
-    let mut cross_validated_ids: Vec<String> = config.checked_doc_ids.iter().cloned().collect();
-    let mut pair_offset: usize = config.pair_offset;
-    let mut pair_progress: Option<(usize, usize)> = None;
-    let mut cv_elapsed_secs: Option<f64> = None;
-    let mut cv_pairs_per_second: Option<f64> = None;
-    if llm.is_some() && deadline_hit {
-        // Question gen exhausted the budget before cross-validation could start.
-        // Peek at the pair count so the caller knows CV is still pending.
-        let fdb = config.fact_db.as_ref().unwrap_or(db);
-        let fact_count = fdb.get_fact_embedding_count().unwrap_or(0);
-        if fact_count > 0 {
-            let total = fdb
-                .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
-                .map(|p| p.len())
-                .unwrap_or(0);
-            if total > 0 {
-                pair_progress = Some((pair_offset, total));
-            }
-        }
-    }
-    if llm.is_some() && !deadline_hit {
-        progress.phase("Cross-document validation");
-        let llm = llm.unwrap();
-        let cv_start = Instant::now();
-
-        // Try fact-pair mode first (uses pre-computed embeddings from scan)
-        let fdb = config.fact_db.as_ref().unwrap_or(db);
-        let fact_count = fdb.get_fact_embedding_count().unwrap_or(0);
-        if fact_count > 0 {
-            let pairs = fdb
-                .find_all_cross_doc_fact_pairs(0.3, 5, config.repo_id.as_deref())
-                .unwrap_or_default();
-            if !pairs.is_empty() {
-                progress.report(0, pairs.len(), "Cross-validating fact pairs");
-                match cross_validate_facts(&pairs, db, llm, config.deadline, config.batch_size, pair_offset).await {
-                    Ok(cv_output) => {
-                        // Distribute questions to the correct documents
-                        for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
-                            if let Some(qs) = cv_output.questions.get(&doc.id) {
-                                questions.extend(qs.iter().cloned());
-                            }
-                        }
-                        pair_offset = cv_output.pair_offset;
-                        pair_progress = Some((cv_output.pair_offset, cv_output.total));
-
-                        // Derive docs_processed from pairs processed so far
-                        // (count unique doc IDs from the first pair_offset pairs)
-                        let mut docs_with_pairs: HashSet<String> = HashSet::new();
-                        for p in pairs.iter().take(pair_offset) {
-                            docs_with_pairs.insert(p.fact_a.document_id.clone());
-                            docs_with_pairs.insert(p.fact_b.document_id.clone());
-                        }
-                        cross_validated_ids = docs_with_pairs.into_iter().collect();
-                    }
-                    Err(e) => warn!("Fact-pair cross-validation failed: {e}"),
-                }
-            }
-        } else {
-            // Fallback: per-document cross-validation (no fact embeddings yet)
-            warn!("No fact embeddings found — falling back to per-document cross-validation. Run `factbase scan` to populate fact embeddings.");
-            for (i, (doc, questions, _, _, _, _, _, _)) in all_results.iter_mut().enumerate() {
-                if let Some(deadline) = config.deadline {
-                    if Instant::now() > deadline {
-                        break;
-                    }
-                }
-                if config.checked_doc_ids.contains(&doc.id) {
-                    continue;
-                }
-                if i % 5 == 0 {
-                    progress.report(i + 1, total_active, "Cross-validating");
-                }
-                match cross_validate_document(&doc.content, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, config.deadline).await {
-                    Ok(cross) => {
-                        questions.extend(cross);
-                        if config.deadline.is_none_or(|d| Instant::now() <= d) {
-                            cross_validated_ids.push(doc.id.clone());
-                        }
-                    }
-                    Err(e) => warn!("Cross-validation failed for {}: {e}", doc.id),
-                }
-            }
-        }
-        // Record cross-validation timing
-        let cv_elapsed = cv_start.elapsed().as_secs_f64();
-        cv_elapsed_secs = Some(cv_elapsed);
-        let pairs_this_call = pair_offset.saturating_sub(config.pair_offset);
-        if pairs_this_call > 0 && cv_elapsed > 0.0 {
-            cv_pairs_per_second = Some(pairs_this_call as f64 / cv_elapsed);
-        }
-    }
-
-    let docs_processed = if config.is_continuation {
-        cross_validated_ids.len()
-    } else {
-        all_results.len()
-    };
+    let docs_processed = all_results.len();
 
     // Folder placement check (no LLM needed — pure link graph analysis).
-    // Runs after cross-validation, respects deadline.
+    // Respects deadline.
     if !deadline_hit && config.deadline.is_none_or(|d| Instant::now() <= d) {
         run_placement_check(docs, db, &mut all_results);
     }
 
-    // Vocabulary extraction (deep_check only, requires LLM). Skip on continuation calls.
+    // Vocabulary extraction (requires LLM).
     let vocabulary_candidates = if llm.is_some()
-        && !config.is_continuation
         && !deadline_hit
         && config.deadline.is_none_or(|d| Instant::now() <= d)
     {
@@ -519,7 +378,6 @@ pub async fn check_all_documents(
     let mut results = Vec::new();
     for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review) in all_results {
         // Post-filter: remove conflict questions for boundary-month sequential entries.
-        // This catches conflicts from any generator (rule-based or LLM cross-validation).
         let abs_path = repo_paths
             .get(&doc.repo_id)
             .map(|rp| rp.join(&doc.file_path));
@@ -565,12 +423,7 @@ pub async fn check_all_documents(
         results,
         docs_processed,
         docs_total: total_active,
-        checked_doc_ids: cross_validated_ids,
-        pair_offset,
-        pair_progress,
         vocabulary_candidates,
-        cv_elapsed_secs,
-        cv_pairs_per_second,
     })
 }
 
@@ -728,13 +581,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 1,
                     deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -761,13 +609,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 1,
                     deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -790,13 +633,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 1,
                     deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -820,13 +658,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 1,
                     deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -856,13 +689,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 1,
                     deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -887,13 +715,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 1,
                     deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -914,70 +737,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lint_deadline_returns_checked_doc_ids() {
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let docs = vec![
-            make_doc("aaa", "Doc A", "- Fact A\n"),
-            make_doc("bbb", "Doc B", "- Fact B\n"),
-        ];
-        // No deadline, no LLM → checked_doc_ids should be empty (no cross-validation)
-        let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
-                    acquire_write_guard: false,
-                    batch_size: 10,
-                    repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
-                };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
-            .await
-            .unwrap();
-        assert!(output.checked_doc_ids.is_empty(), "no LLM means no cross-validation tracking");
-    }
-
-    #[tokio::test]
-    async fn test_lint_checked_doc_ids_skip_cross_validation() {
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let docs = vec![
-            make_doc("aaa", "Doc A", "- Fact A\n"),
-            make_doc("bbb", "Doc B", "- Fact B\n"),
-        ];
-        // Pass aaa as already checked — it should be skipped in cross-validation
-        let mut checked = HashSet::new();
-        checked.insert("aaa".to_string());
-        let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 2,
-                    deadline: None,
-                    checked_doc_ids: checked.clone(),
-                    pair_offset: 0,
-                    acquire_write_guard: false,
-                    batch_size: 10,
-                    repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
-                };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
-            .await
-            .unwrap();
-        // Without LLM, cross-validation is skipped entirely, so checked_doc_ids
-        // just carries forward the input set
-        assert!(output.checked_doc_ids.contains(&"aaa".to_string()));
-    }
-
-    #[tokio::test]
     async fn test_check_skips_reference_docs() {
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
@@ -991,13 +750,8 @@ mod tests {
                     dry_run: true,
                     concurrency: 2,
                     deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
                     acquire_write_guard: false,
-                    batch_size: 10,
                     repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
@@ -1006,110 +760,6 @@ mod tests {
         // Reference doc should be skipped — only 1 doc processed
         assert_eq!(output.docs_total, 1);
         assert_eq!(output.docs_processed, 1);
-    }
-
-    #[tokio::test]
-    async fn test_deep_check_docs_processed_reflects_cross_validate_progress() {
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        // Use fact-free content so cross_validate_document returns Ok immediately
-        // (avoids needing sqlite-vec in the test DB)
-        let docs = vec![
-            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts here.\n"),
-            make_doc("bbb", "Doc B", "# Doc B\n\nJust prose.\n"),
-            make_doc("ccc", "Doc C", "# Doc C\n\nMore prose.\n"),
-        ];
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 3,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        assert_eq!(output.docs_processed, 3, "all docs should be cross-validated");
-        assert_eq!(output.docs_total, 3);
-    }
-
-    #[tokio::test]
-    async fn test_deep_check_past_deadline_docs_processed_zero() {
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        let docs = vec![
-            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
-            make_doc("bbb", "Doc B", "# Doc B\n\nNo facts.\n"),
-        ];
-        // Past deadline + LLM → Phase 1 runs 0 docs, Phase 2 skipped
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-            checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        assert_eq!(output.docs_processed, 0, "past deadline means no docs processed");
-        assert_eq!(output.docs_total, 2);
-    }
-
-    #[tokio::test]
-    async fn test_deep_check_with_prior_checked_ids_counts_correctly() {
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        let docs = vec![
-            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
-            make_doc("bbb", "Doc B", "# Doc B\n\nNo facts.\n"),
-        ];
-        // aaa already checked from prior call; no deadline → bbb gets cross-validated
-        let mut checked = HashSet::new();
-        checked.insert("aaa".to_string());
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 2,
-            deadline: None,
-            checked_doc_ids: checked,
-            pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        // aaa carried forward + bbb newly validated = 2
-        assert_eq!(output.docs_processed, 2, "prior + new cross-validated");
-        assert_eq!(output.docs_total, 2);
     }
 
     /// Dry-run check succeeds even when the write guard is already held,
@@ -1126,85 +776,14 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
-            checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
             acquire_write_guard: true,
-            batch_size: 10,
             repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
         let result = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
             .await;
         assert!(result.is_ok(), "dry-run should never be blocked by write guard");
-    }
-
-    #[tokio::test]
-    async fn test_check_output_pair_offset() {
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        let docs = vec![
-            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
-        ];
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        // No fact embeddings → fallback path, pair_offset stays 0
-        assert_eq!(output.pair_offset, 0);
-    }
-
-    #[tokio::test]
-    async fn test_backward_compat_checked_doc_ids_accepted() {
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        let docs = vec![
-            make_doc("aaa", "Doc A", "# Doc A\n\nNo facts.\n"),
-            make_doc("bbb", "Doc B", "# Doc B\n\nNo facts.\n"),
-        ];
-        // Pass checked_doc_ids (old-style) — should still work
-        let mut checked = HashSet::new();
-        checked.insert("aaa".to_string());
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 2,
-            deadline: None,
-            checked_doc_ids: checked,
-            pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        // Should complete without error; checked_doc_ids carried forward
-        assert!(output.checked_doc_ids.contains(&"aaa".to_string()));
     }
 
     // -----------------------------------------------------------------------
@@ -1267,13 +846,8 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
             acquire_write_guard: false,
-            batch_size: 10,
             repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
         }
     }
 
@@ -1289,411 +863,19 @@ mod tests {
 
     /// Integration test 1: Full pipeline — documents with overlapping facts,
     /// fact embeddings pre-computed, check detects conflicts.
-    #[tokio::test]
-    async fn test_fact_pair_full_pipeline() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        // 5 documents with known facts
-        let docs_data = [
-            ("d01", "Entity A", "# Entity A\n\n- Revenue: $10M\n- Founded in 1990\n"),
-            ("d02", "Entity B", "# Entity B\n\n- Revenue: $50M\n- Founded in 1985\n"),
-            ("d03", "Entity C", "# Entity C\n\n- Revenue: $10M\n"),
-            ("d04", "Entity D", "# Entity D\n\n- Based in Seattle\n"),
-            ("d05", "Entity E", "# Entity E\n\n- Revenue: $30M @t[2020..2022]\n"),
-        ];
-
-        let mut docs = Vec::new();
-        for (id, title, content) in &docs_data {
-            let doc = make_test_doc(id, title, content);
-            db.upsert_document(&doc).unwrap();
-            docs.push(doc);
-        }
-
-        // Insert fact embeddings — revenue facts similar, founding facts similar, location different
-        let rev_emb = spike_embedding(0);
-        let rev_emb2 = near_spike(0, 0.1);
-        let rev_emb3 = near_spike(0, 0.2);
-        let found_emb = spike_embedding(1);
-        let found_emb2 = near_spike(1, 0.1);
-        let loc_emb = spike_embedding(2);
-
-        db.upsert_fact_embedding("d01_3", "d01", 3, "Revenue: $10M", "h1", &rev_emb).unwrap();
-        db.upsert_fact_embedding("d01_4", "d01", 4, "Founded in 1990", "h2", &found_emb).unwrap();
-        db.upsert_fact_embedding("d02_3", "d02", 3, "Revenue: $50M", "h3", &rev_emb2).unwrap();
-        db.upsert_fact_embedding("d02_4", "d02", 4, "Founded in 1985", "h4", &found_emb2).unwrap();
-        db.upsert_fact_embedding("d03_3", "d03", 3, "Revenue: $10M", "h5", &rev_emb3).unwrap();
-        db.upsert_fact_embedding("d04_3", "d04", 3, "Based in Seattle", "h6", &loc_emb).unwrap();
-        db.upsert_fact_embedding("d05_3", "d05", 3, "Revenue: $30M", "h7", &near_spike(0, 0.15)).unwrap();
-
-        assert!(db.get_fact_embedding_count().unwrap() >= 7);
-
-        // Verify pairs are found
-        let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap();
-        assert!(!pairs.is_empty(), "should find cross-doc fact pairs");
-
-        // LLM returns CONTRADICTS for all pairs (pair index 1 in each batch)
-        let llm = MockLlm::new(
-            r#"[{"pair":1,"status":"CONTRADICTS","reason":"different values"}]"#,
-        );
-        let embedding = CountingEmbedding::new();
-
-        let config = default_check_config();
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-
-        // Should have processed some pairs
-        assert!(output.pair_progress.is_some());
-        let (processed, total) = output.pair_progress.unwrap();
-        assert!(processed > 0, "should process at least one pair");
-        assert!(total > 0, "should have at least one pair total");
-
-        // Should have generated conflict questions
-        let total_new: usize = output.results.iter().map(|r| r.new_questions).sum();
-        assert!(total_new > 0, "should generate conflict questions from cross-validation");
-
-        // pair_offset should be populated
-        assert!(output.pair_offset > 0);
-    }
-
     /// Integration test 2: Time-boxed continuation — run with expired deadline,
     /// then resume with cursor.
-    #[tokio::test]
-    async fn test_fact_pair_time_boxed_continuation() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let docs_data = [
-            ("tb1", "Entity A", "# Entity A\n\n- Revenue: $10M\n"),
-            ("tb2", "Entity B", "# Entity B\n\n- Revenue: $50M\n"),
-        ];
-        let mut docs = Vec::new();
-        for (id, title, content) in &docs_data {
-            let doc = make_test_doc(id, title, content);
-            db.upsert_document(&doc).unwrap();
-            docs.push(doc);
-        }
-
-        // Similar embeddings → will form a pair
-        db.upsert_fact_embedding("tb1_3", "tb1", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("tb2_3", "tb2", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        let llm = MockLlm::new(
-            r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#,
-        );
-        let embedding = MockEmbedding::new(1024);
-
-        // Run 1: expired deadline — should process 0 pairs
-        let config1 = CheckConfig {
-            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-            ..default_check_config()
-        };
-        let progress = ProgressReporter::Silent;
-        let out1 = check_all_documents(&docs, &db, &embedding, Some(&llm), &config1, &progress)
-            .await
-            .unwrap();
-        assert_eq!(out1.pair_offset, 0, "expired deadline should process 0 pairs");
-
-        // Run 2: no deadline, pass back cursor — should process all
-        let config2 = CheckConfig {
-            pair_offset: out1.pair_offset,
-            ..default_check_config()
-        };
-        let out2 = check_all_documents(&docs, &db, &embedding, Some(&llm), &config2, &progress)
-            .await
-            .unwrap();
-        assert!(out2.pair_offset > 0, "should process pairs on resume");
-        if let Some((processed, total)) = out2.pair_progress {
-            assert_eq!(processed, total, "all pairs should be processed");
-        }
-    }
-
     /// Integration test 3: Incremental update — modify one doc's facts,
     /// re-insert embeddings, re-check processes new pairs.
-    #[tokio::test]
-    async fn test_fact_pair_incremental_update() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let doc_a = make_test_doc("inc_a", "Entity A", "# Entity A\n\n- Revenue: $10M\n");
-        let doc_b = make_test_doc("inc_b", "Entity B", "# Entity B\n\n- Revenue: $50M\n");
-        db.upsert_document(&doc_a).unwrap();
-        db.upsert_document(&doc_b).unwrap();
-
-        db.upsert_fact_embedding("inc_a_3", "inc_a", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("inc_b_3", "inc_b", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        let llm = MockLlm::new(
-            r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#,
-        );
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        // Baseline check
-        let out1 = check_all_documents(
-            &[doc_a.clone(), doc_b.clone()], &db, &embedding, Some(&llm), &default_check_config(), &progress,
-        ).await.unwrap();
-        let baseline_offset = out1.pair_offset;
-        assert!(baseline_offset > 0);
-
-        // "Modify" doc_a — update its fact embedding with new content
-        let doc_a_updated = make_test_doc("inc_a", "Entity A", "# Entity A\n\n- Revenue: \n");
-        db.upsert_document(&doc_a_updated).unwrap();
-        db.delete_fact_embeddings_for_doc("inc_a").unwrap();
-        db.upsert_fact_embedding("inc_a_3", "inc_a", 3, "Revenue: $20M", "h1_new", &spike_embedding(0)).unwrap();
-
-        // Re-check with prior offset — since the pair set changed (new embeddings),
-        // in production the server-side cursor would detect the fact_count change
-        // and reset. Here we pass the old offset directly.
-        let config2 = CheckConfig {
-            pair_offset: baseline_offset,
-            ..default_check_config()
-        };
-        let out2 = check_all_documents(
-            &[doc_a_updated, doc_b], &db, &embedding, Some(&llm), &config2, &progress,
-        ).await.unwrap();
-        // With offset-based cursor, the offset may be past the end if pair set changed.
-        // The important thing is it doesn't crash.
-        assert!(out2.pair_offset >= baseline_offset);
-    }
-
     /// Integration test 4a: Backward compatibility — checked_doc_ids still accepted.
-    #[tokio::test]
-    async fn test_fact_pair_backward_compat_checked_doc_ids() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let doc_a = make_test_doc("bc_a", "Entity A", "# Entity A\n\n- Revenue: $10M\n");
-        let doc_b = make_test_doc("bc_b", "Entity B", "# Entity B\n\n- Revenue: $50M\n");
-        db.upsert_document(&doc_a).unwrap();
-        db.upsert_document(&doc_b).unwrap();
-
-        db.upsert_fact_embedding("bc_a_3", "bc_a", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("bc_b_3", "bc_b", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        let llm = MockLlm::new(
-            r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#,
-        );
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        // Pass checked_doc_ids (old-style) with both docs — still accepted for fallback path
-        let mut checked_docs = HashSet::new();
-        checked_docs.insert("bc_a".to_string());
-        checked_docs.insert("bc_b".to_string());
-        let config = CheckConfig {
-            checked_doc_ids: checked_docs,
-            pair_offset: 0,
-            ..default_check_config()
-        };
-        let output = check_all_documents(
-            &[doc_a, doc_b], &db, &embedding, Some(&llm), &config, &progress,
-        ).await.unwrap();
-        // Should complete without error; pair_offset should advance
-        assert!(output.pair_offset >= 1);
-    }
-
     /// Integration test 4b: Fallback to per-document cross-validation when
     /// fact_embeddings table is empty.
-    #[tokio::test]
-    async fn test_fact_pair_fallback_when_no_embeddings() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        // No fact embeddings inserted
-        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
-
-        // Documents with no facts (to avoid needing real embeddings in fallback)
-        let docs = vec![
-            make_test_doc("fb_a", "Doc A", "# Doc A\n\nJust prose.\n"),
-            make_test_doc("fb_b", "Doc B", "# Doc B\n\nMore prose.\n"),
-        ];
-        for d in &docs {
-            db.upsert_document(d).unwrap();
-        }
-
-        let llm = MockLlm::new("[]");
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &default_check_config(), &progress)
-            .await
-            .unwrap();
-        // Fallback path: pair_offset stays 0 (per-doc mode doesn't produce pair offsets)
-        assert_eq!(output.pair_offset, 0);
-        // But docs are still processed via fallback
-        assert_eq!(output.docs_processed, 2);
-    }
-
     /// Integration test 5a: Single document — no cross-doc pairs possible.
-    #[tokio::test]
-    async fn test_fact_pair_single_document() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let doc = make_test_doc("solo", "Solo Entity", "# Solo Entity\n\n- Revenue: $10M\n- Founded 2000\n");
-        db.upsert_document(&doc).unwrap();
-
-        // Two facts in same doc — no cross-doc pairs
-        db.upsert_fact_embedding("solo_3", "solo", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("solo_4", "solo", 4, "Founded 2000", "h2", &spike_embedding(0)).unwrap();
-
-        let llm = MockLlm::new("[]");
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        let output = check_all_documents(&[doc], &db, &embedding, Some(&llm), &default_check_config(), &progress)
-            .await
-            .unwrap();
-        // No cross-doc pairs → no pair-based cross-validation
-        assert!(output.pair_offset == 0 || output.pair_progress == Some((0, 0)));
-    }
-
     /// Integration test 5b: No facts above similarity threshold.
-    #[tokio::test]
-    async fn test_fact_pair_no_similar_facts() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let doc_a = make_test_doc("ns_a", "Entity A", "# Entity A\n\n- Revenue: $10M\n");
-        let doc_b = make_test_doc("ns_b", "Entity B", "# Entity B\n\n- Based in Seattle\n");
-        db.upsert_document(&doc_a).unwrap();
-        db.upsert_document(&doc_b).unwrap();
-
-        // Orthogonal embeddings — similarity ≈ 0, below 0.3 threshold
-        db.upsert_fact_embedding("ns_a_3", "ns_a", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("ns_b_3", "ns_b", 3, "Based in Seattle", "h2", &spike_embedding(500)).unwrap();
-
-        let llm = MockLlm::new("[]");
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        let output = check_all_documents(
-            &[doc_a, doc_b], &db, &embedding, Some(&llm), &default_check_config(), &progress,
-        ).await.unwrap();
-        // No pairs above threshold → no cross-validation questions
-        let _cross_questions: usize = output.results.iter()
-            .map(|r| r.new_questions)
-            .sum();
-        // Only rule-based questions (temporal, etc.), no conflict from cross-validation
-        // The key assertion: no pair_progress or 0 pairs
-        if let Some((_, total)) = output.pair_progress {
-            assert_eq!(total, 0, "no pairs should exist above threshold");
-        }
-    }
-
     /// Integration test 5c: Review queue lines excluded from fact extraction.
-    #[tokio::test]
-    async fn test_fact_pair_review_queue_excluded() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        // Doc with a real fact AND a review queue entry
-        let content_a = "# Entity A\n\n- Revenue: $10M\n\n<!-- factbase:review -->\n## Review Queue\n\n- [ ] `@q[temporal]` Not a real fact\n  > \n";
-        let doc_a = make_test_doc("rq_a", "Entity A", content_a);
-        let doc_b = make_test_doc("rq_b", "Entity B", "# Entity B\n\n- Revenue: $50M\n");
-        db.upsert_document(&doc_a).unwrap();
-        db.upsert_document(&doc_b).unwrap();
-
-        // Only embed the real facts (line 3), not review queue lines
-        db.upsert_fact_embedding("rq_a_3", "rq_a", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("rq_b_3", "rq_b", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        let llm = MockLlm::new(
-            r#"[{"pair":1,"status":"CONTRADICTS","reason":"different revenue"}]"#,
-        );
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        let output = check_all_documents(
-            &[doc_a, doc_b], &db, &embedding, Some(&llm), &default_check_config(), &progress,
-        ).await.unwrap();
-        // Should have exactly 1 pair (the revenue facts), not 2
-        if let Some((_, total)) = output.pair_progress {
-            assert_eq!(total, 1, "review queue lines should not create fact pairs");
-        }
-    }
-
     /// Integration test 5d: Closed temporal range suppresses SUPERSEDES.
-    #[tokio::test]
-    async fn test_fact_pair_closed_temporal_suppresses_supersedes() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        // Doc A has a fact with a closed temporal range
-        let doc_a = make_test_doc("ct_a", "Entity A", "# Entity A\n\n- Revenue: $10M @t[2020..2022]\n");
-        let doc_b = make_test_doc("ct_b", "Entity B", "# Entity B\n\n- Revenue: $50M\n");
-        db.upsert_document(&doc_a).unwrap();
-        db.upsert_document(&doc_b).unwrap();
-
-        db.upsert_fact_embedding("ct_a_3", "ct_a", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("ct_b_3", "ct_b", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        // LLM says SUPERSEDES — should be suppressed for the closed-range fact
-        let llm = MockLlm::new(
-            r#"[{"pair":1,"status":"SUPERSEDES","reason":"newer data"}]"#,
-        );
-        let embedding = MockEmbedding::new(1024);
-        let progress = ProgressReporter::Silent;
-
-        let output = check_all_documents(
-            &[doc_a, doc_b], &db, &embedding, Some(&llm), &default_check_config(), &progress,
-        ).await.unwrap();
-        // SUPERSEDES should be suppressed for the fact with closed temporal range
-        let _cross_questions: usize = output.results.iter().map(|r| r.new_questions).sum();
-        // May still have rule-based questions (temporal, etc.) but no SUPERSEDES/stale from cross-validation
-        // The suppression means fewer questions than without it
-        // We verify the pipeline completed without error
-        assert!(output.pair_progress.is_some());
-    }
-
     /// Integration test 6: Performance — zero embedding calls during check
     /// when fact embeddings are pre-computed.
-    #[tokio::test]
-    async fn test_fact_pair_zero_embedding_calls() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let doc_a = make_test_doc("perf_a", "Entity A", "# Entity A\n\n- Revenue: $10M\n");
-        let doc_b = make_test_doc("perf_b", "Entity B", "# Entity B\n\n- Revenue: $50M\n");
-        db.upsert_document(&doc_a).unwrap();
-        db.upsert_document(&doc_b).unwrap();
-
-        db.upsert_fact_embedding("perf_a_3", "perf_a", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("perf_b_3", "perf_b", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        let embedding = CountingEmbedding::new();
-        let llm = CountingLlm::new(
-            r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#,
-        );
-        let progress = ProgressReporter::Silent;
-
-        let output = check_all_documents(
-            &[doc_a, doc_b], &db, &embedding, Some(&llm), &default_check_config(), &progress,
-        ).await.unwrap();
-
-        // Key assertion: ZERO embedding calls during check (all pre-computed)
-        assert_eq!(embedding.call_count(), 0, "embedding.generate() should not be called when fact embeddings exist");
-
-        // LLM should be called (for cross-validation)
-        assert!(llm.call_count() > 0, "LLM should be called for fact-pair validation");
-
-        // Verify pairs were actually processed
-        assert!(output.pair_offset > 0);
-    }
-
     #[tokio::test]
     async fn test_glossary_terms_suppress_ambiguous_questions() {
         let (db, _tmp) = test_db();
@@ -1720,13 +902,8 @@ mod tests {
             dry_run: true,
             concurrency: 1,
             deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
             acquire_write_guard: false,
-            batch_size: 10,
             repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, None, &config, &progress)
@@ -1875,13 +1052,8 @@ mod tests {
             dry_run: false,
             concurrency: 1,
             deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
             acquire_write_guard: false,
-            batch_size: 10,
             repo_id: None,
-                    is_continuation: false,
-        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
@@ -1897,148 +1069,8 @@ mod tests {
         assert!(on_disk.contains("@q["), "questions should be written to file at resolved path");
     }
 
-    #[tokio::test]
-    async fn test_continuation_skips_vocab_extraction() {
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let content = "- Some domain fact about widgets\n- Another fact about gadgets\n";
-        let docs = vec![make_doc("voc", "Vocab Test", content)];
-
-        let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 0,
-                    acquire_write_guard: false,
-                    batch_size: 10,
-                    repo_id: None,
-                    is_continuation: false,
-                fact_db: None,
-                };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
-            .await
-            .unwrap();
-        assert!(output.vocabulary_candidates.is_empty());
-
-        // Continuation call — is_continuation=true should skip vocab
-        let config_cont = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    checked_doc_ids: HashSet::new(),
-                    pair_offset: 42,
-                    acquire_write_guard: false,
-                    batch_size: 10,
-                    repo_id: None,
-                    is_continuation: true,
-                    fact_db: None,
-                };
-        let output_cont = check_all_documents(&docs, &db, &embedding, None, &config_cont, &progress)
-            .await
-            .unwrap();
-        assert!(output_cont.vocabulary_candidates.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_continuation_skips_question_generation() {
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        // Document with a fact that would normally trigger temporal questions
-        let docs = vec![make_doc("cont1", "Test Entity", "- Some fact without a date\n")];
-        let progress = ProgressReporter::Silent;
-
-        // First call: should generate questions
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-            is_continuation: false,
-        fact_db: None,
-        };
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
-            .await
-            .unwrap();
-        assert!(!output.results.is_empty(), "first call should generate questions");
-        let first_new = output.results[0].new_questions;
-        assert!(first_new > 0, "first call should have new questions");
-
-        // Continuation call: should skip question generation entirely
-        let config_cont = CheckConfig {
-            is_continuation: true,
-            pair_offset: 42,
-            ..config
-        };
-        let output_cont = check_all_documents(&docs, &db, &embedding, None, &config_cont, &progress)
-            .await
-            .unwrap();
-        // No question gen results — all entries have 0 new questions
-        let total_new: usize = output_cont.results.iter().map(|r| r.new_questions).sum();
-        assert_eq!(total_new, 0, "continuation should produce 0 new questions from question gen");
-    }
-
     /// When question gen exhausts the deadline but fact pairs exist,
     /// pair_progress should signal pending cross-validation work.
-    #[tokio::test]
-    async fn test_deadline_during_question_gen_signals_pending_cv() {
-        let (db, _tmp) = test_db();
-        let repo = test_repo();
-        db.upsert_repository(&repo).unwrap();
-
-        let docs_data = [
-            ("dq1", "Entity A", "# Entity A\n\n- Revenue: $10M\n"),
-            ("dq2", "Entity B", "# Entity B\n\n- Revenue: $50M\n"),
-        ];
-        let mut docs = Vec::new();
-        for (id, title, content) in &docs_data {
-            let doc = make_test_doc(id, title, content);
-            db.upsert_document(&doc).unwrap();
-            docs.push(doc);
-        }
-
-        // Insert fact embeddings so pairs exist
-        db.upsert_fact_embedding("dq1_3", "dq1", 3, "Revenue: $10M", "h1", &spike_embedding(0)).unwrap();
-        db.upsert_fact_embedding("dq2_3", "dq2", 3, "Revenue: $50M", "h2", &near_spike(0, 0.1)).unwrap();
-
-        let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap();
-        assert!(!pairs.is_empty(), "should have cross-doc pairs");
-
-        let llm = MockLlm::new(r#"[{"pair":1,"status":"CONTRADICTS","reason":"mismatch"}]"#);
-        let embedding = MockEmbedding::new(1024);
-
-        // Use a deadline that allows question gen to run but then expires
-        // (already-expired deadline simulates question gen exhausting the budget)
-        let config = CheckConfig {
-            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-            ..default_check_config()
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-
-        // pair_progress should be set to (0, N) signaling CV is pending
-        assert!(
-            output.pair_progress.is_some(),
-            "pair_progress must be set when deadline hit during question gen but pairs exist"
-        );
-        let (processed, total) = output.pair_progress.unwrap();
-        assert_eq!(processed, 0, "no pairs should be processed yet");
-        assert!(total > 0, "total pairs should be > 0");
-    }
-
     /// Regression test: questions mode (is_continuation=false) with LLM should
     /// report docs_processed based on question generation, not cross-validation.
     /// Before the fix, llm.is_some() caused docs_processed to use
@@ -2060,13 +1092,8 @@ mod tests {
             dry_run: true,
             concurrency: 2,
             deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
             acquire_write_guard: false,
-            batch_size: 10,
             repo_id: None,
-            is_continuation: false,
-        fact_db: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
@@ -2074,104 +1101,5 @@ mod tests {
             .unwrap();
         assert_eq!(output.docs_processed, 2, "questions mode should count question-gen docs, not CV docs");
         assert_eq!(output.docs_total, 2);
-    }
-
-    /// Cross-validate mode (is_continuation=true) with past deadline should
-    /// report docs_processed=0 since no docs get cross-validated.
-    #[tokio::test]
-    async fn test_cross_validate_mode_past_deadline_docs_processed_zero() {
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-        let docs = vec![
-            make_doc("aaa", "Doc A", "# Doc A\n\nContent.\n"),
-            make_doc("bbb", "Doc B", "# Doc B\n\nContent.\n"),
-        ];
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 2,
-            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-            is_continuation: true,
-            fact_db: None,
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        assert_eq!(output.docs_processed, 0, "CV mode with past deadline should process 0 docs");
-        assert_eq!(output.docs_total, 2);
-    }
-
-    #[tokio::test]
-    async fn test_fact_db_override_used_for_cross_validation() {
-        // Verify that check_all_documents uses fact_db when provided,
-        // even if the main db has no fact embeddings.
-        use crate::llm::test_helpers::MockLlm;
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
-
-        // Main DB has zero fact embeddings
-        assert_eq!(db.get_fact_embedding_count().unwrap(), 0);
-
-        // Create a separate "repo-local" DB with fact embeddings
-        let tmp_local = tempfile::TempDir::new().unwrap();
-        let local_db = Database::new(&tmp_local.path().join("local.db")).unwrap();
-
-        // Set up docs in the local DB (need repo for FK)
-        let repo = crate::database::tests::test_repo();
-        local_db.upsert_repository(&repo).unwrap();
-        let doc_a = Document {
-            id: "aaa".to_string(),
-            file_path: "aaa.md".to_string(),
-            ..make_doc("aaa", "Doc A", "# Doc A\n\n- Fact alpha\n")
-        };
-        let doc_b = Document {
-            id: "bbb".to_string(),
-            file_path: "bbb.md".to_string(),
-            ..make_doc("bbb", "Doc B", "# Doc B\n\n- Fact beta\n")
-        };
-        local_db.upsert_document(&doc_a).unwrap();
-        local_db.upsert_document(&doc_b).unwrap();
-        let emb_a = vec![0.5_f32; 1024];
-        let mut emb_b = vec![0.5_f32; 1024];
-        emb_b[0] = 0.51; // slightly different to avoid exact match filtering
-        local_db.upsert_fact_embedding("f1", "aaa", 3, "Fact alpha", "h1", &emb_a).unwrap();
-        local_db.upsert_fact_embedding("f2", "bbb", 3, "Fact beta", "h2", &emb_b).unwrap();
-        assert_eq!(local_db.get_fact_embedding_count().unwrap(), 2);
-        // Verify pairs are found in the local DB
-        let pairs = local_db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap();
-        assert!(!pairs.is_empty(), "Local DB should have cross-doc fact pairs");
-
-        let docs = vec![doc_a, doc_b];
-        let config = CheckConfig {
-            stale_days: 365,
-            required_fields: None,
-            dry_run: true,
-            concurrency: 1,
-            deadline: None,
-            checked_doc_ids: HashSet::new(),
-            pair_offset: 0,
-            acquire_write_guard: false,
-            batch_size: 10,
-            repo_id: None,
-            is_continuation: true,
-            fact_db: Some(local_db),
-        };
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        // With fact_db set, it should find fact pairs and use pair-based CV
-        // (pair_progress should be Some, not None which would indicate fallback)
-        assert!(output.pair_progress.is_some(), "Should use fact-pair mode via fact_db");
     }
 }

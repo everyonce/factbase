@@ -8,7 +8,6 @@ use crate::mcp::tools::helpers::resolve_doc_path;
 use crate::mcp::tools::{get_bool_arg, get_str_arg, resolve_repo_filter};
 use crate::patterns::has_corruption_artifacts;
 use crate::processor::{append_review_questions, content_hash, parse_review_queue};
-use crate::question_generator::cross_validate::cross_validate_document;
 use crate::question_generator::{
     collect_defined_terms, filter_sequential_conflicts,
     generate_ambiguous_questions_with_type, generate_conflict_questions,
@@ -60,8 +59,8 @@ pub async fn generate_questions(
 /// Single-doc mode: generate questions for one document.
 async fn generate_questions_single(
     db: &Database,
-    embedding: &dyn EmbeddingProvider,
-    llm: Option<&dyn LlmProvider>,
+    _embedding: &dyn EmbeddingProvider,
+    _llm: Option<&dyn LlmProvider>,
     doc_id: &str,
     dry_run: bool,
 ) -> Result<Value, FactbaseError> {
@@ -124,38 +123,7 @@ async fn generate_questions_single(
         new_questions.extend(generate_duplicate_questions(&similar_docs));
     }
 
-    // Cross-document fact validation (when LLM is available)
-    if let Some(llm) = llm {
-        // Prefer fact-pair mode if fact embeddings exist
-        let fact_count = db.get_fact_embedding_count().unwrap_or(0);
-        if fact_count > 0 {
-            let pairs = db.find_all_cross_doc_fact_pairs(0.3, 5, None).unwrap_or_default();
-            // Filter to pairs involving this document
-            let doc_pairs: Vec<_> = pairs
-                .into_iter()
-                .filter(|p| p.fact_a.document_id == doc_id || p.fact_b.document_id == doc_id)
-                .collect();
-            if !doc_pairs.is_empty() {
-                let batch_size = crate::Config::load(None)
-                    .map(|c| c.cross_validate.batch_size)
-                    .unwrap_or_else(|_| crate::config::cross_validate::default_batch_size());
-                match crate::question_generator::cross_validate::cross_validate_facts(&doc_pairs, db, llm, None, batch_size, 0).await {
-                    Ok(cv_output) => {
-                        if let Some(qs) = cv_output.questions.get(doc_id) {
-                            new_questions.extend(qs.iter().cloned());
-                        }
-                    }
-                    Err(e) => warn!("Fact-pair cross-validation failed for {}: {e}", doc_id),
-                }
-            }
-        } else {
-            // Fallback: per-document cross-validation
-            match cross_validate_document(body, &doc.id, doc.doc_type.as_deref(), db, embedding, llm, None).await {
-                Ok(cross_questions) => new_questions.extend(cross_questions),
-                Err(e) => warn!("Cross-validation failed for {}: {e}", doc_id),
-            }
-        }
-    }
+    // Cross-document fact validation is now handled by the agent via get_fact_pairs tool.
 
     // Post-filter: remove conflict questions for boundary-month sequential entries
     filter_sequential_conflicts(body, &mut new_questions);

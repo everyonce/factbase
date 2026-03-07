@@ -122,15 +122,15 @@ Replace server-side LLM classification of fact pairs with a data-retrieval tool.
 
 ### Tasks
 
-- [ ] New MCP tool: `get_fact_pairs`
+- [x] New MCP tool: `get_fact_pairs`
   - Input: `repo` (optional), `min_similarity` (default from config), `limit` (default 50)
   - Process: query pre-computed fact embeddings for similar pairs across documents, exclude already-reviewed pairs
   - Output: `{pairs: [{fact_a: {doc_id, doc_title, text, line}, fact_b: {doc_id, doc_title, text, line}, similarity}]}`
-- [ ] Remove LLM classification from `cross_validate.rs` (both call sites)
-- [ ] Remove `cross_validate` mode from `check_repository` (or make it just call `get_fact_pairs` internally)
-- [ ] Update `update` workflow: replace cross-validate paging loop with "call get_fact_pairs, classify each pair, flag conflicts via answer_questions"
-- [ ] Add tool schema
-- [ ] Update tests
+- [x] Remove LLM classification from `cross_validate.rs` (both call sites)
+- [x] Remove `cross_validate` mode from `check_repository` (or make it just call `get_fact_pairs` internally)
+- [x] Update `update` workflow: replace cross-validate paging loop with "call get_fact_pairs, classify each pair, flag conflicts via answer_questions"
+- [x] Add tool schema
+- [x] Update tests
 
 ---
 
