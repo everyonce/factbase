@@ -53,6 +53,29 @@ pub async fn scan_repository(
     };
     opts.deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
+    // Dimension mismatch detection
+    let provider_dim = embedding.dimension();
+    let stored_dim = db.get_stored_embedding_dim()?;
+    if let Some(db_dim) = stored_dim {
+        if db_dim != provider_dim {
+            if opts.force_reindex {
+                db.rebuild_embedding_tables(provider_dim)?;
+                db.set_embedding_info(&config.embedding.model, provider_dim)?;
+            } else {
+                return Err(FactbaseError::config(format!(
+                    "Embedding dimension mismatch: database has {db_dim}-dim vectors but current provider uses {provider_dim}-dim. \
+                     Use force_reindex=true to rebuild all embeddings."
+                )));
+            }
+        }
+    } else {
+        let actual_table_dim = db.get_embedding_dimension()?;
+        if actual_table_dim.is_some() && actual_table_dim != Some(provider_dim) {
+            db.rebuild_embedding_tables(provider_dim)?;
+        }
+        db.set_embedding_info(&config.embedding.model, provider_dim)?;
+    }
+
     // Link detection uses string matching only (no LLM required).
     // Manual [[id]] links and fuzzy title matches are detected.
     let link_detector = LinkDetector::new();

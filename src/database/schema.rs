@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 13;
+pub(super) const SCHEMA_VERSION: i32 = 14;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -138,6 +138,15 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
             threshold REAL NOT NULL,
             limit_per_fact INTEGER NOT NULL,
             created_at TEXT NOT NULL
+        );",
+    ),
+    // Version 14: Embedding metadata for dimension/model tracking
+    (
+        14,
+        "Add embedding_metadata table",
+        "CREATE TABLE IF NOT EXISTS embedding_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );",
     ),
 ];
@@ -265,6 +274,14 @@ impl Database {
                 PRIMARY KEY (text_hash, model)
             );
             CREATE INDEX IF NOT EXISTS idx_query_cache_last_used ON query_embedding_cache(last_used_at);",
+        )?;
+
+        // Embedding metadata (model name, dimension) for mismatch detection
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS embedding_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );",
         )?;
 
         // Server-side cross-validation cursor

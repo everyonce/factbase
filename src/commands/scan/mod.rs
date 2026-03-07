@@ -123,6 +123,42 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
     }
 
     let embedding = setup_embedding_with_timeout(&config, args.timeout).await;
+
+    // Dimension mismatch detection: compare provider dim vs DB metadata
+    let provider_dim = embedding.dimension();
+    let stored_dim = db.get_stored_embedding_dim()?;
+    if let Some(db_dim) = stored_dim {
+        if db_dim != provider_dim {
+            if args.reindex {
+                if !quiet {
+                    eprintln!(
+                        "Dimension change detected ({db_dim} → {provider_dim}). Rebuilding embedding tables."
+                    );
+                }
+                db.rebuild_embedding_tables(provider_dim)?;
+                db.set_embedding_info(&config.embedding.model, provider_dim)?;
+            } else {
+                anyhow::bail!(
+                    "Embedding dimension mismatch: database has {db_dim}-dim vectors but current provider uses {provider_dim}-dim.\n\
+                     Run `factbase scan --reindex` to rebuild all embeddings with the new provider."
+                );
+            }
+        }
+    } else {
+        // First scan or empty DB — record metadata and ensure tables match
+        let actual_table_dim = db.get_embedding_dimension()?;
+        if actual_table_dim.is_some() && actual_table_dim != Some(provider_dim) {
+            // Table exists with different dimension (e.g., default 1024 but provider is 384)
+            if !quiet {
+                eprintln!(
+                    "Adjusting embedding tables for {provider_dim}-dim vectors."
+                );
+            }
+            db.rebuild_embedding_tables(provider_dim)?;
+        }
+        db.set_embedding_info(&config.embedding.model, provider_dim)?;
+    }
+
     let link_detector = factbase::LinkDetector::new();
 
     let batch_size = args

@@ -41,7 +41,11 @@ pub(crate) fn default_timeout_secs() -> u64 {
 }
 
 fn default_provider() -> String {
-    if cfg!(feature = "bedrock") {
+    // Local CPU embeddings are the zero-config default.
+    // Users who want cloud providers set embedding.provider explicitly.
+    if cfg!(feature = "local-embedding") {
+        "local".into()
+    } else if cfg!(feature = "bedrock") {
         "bedrock".into()
     } else {
         "ollama".into()
@@ -57,7 +61,9 @@ fn default_base_url() -> String {
 }
 
 fn default_embedding_model() -> String {
-    if cfg!(feature = "bedrock") {
+    if cfg!(feature = "local-embedding") {
+        "BAAI/bge-small-en-v1.5".into()
+    } else if cfg!(feature = "bedrock") {
         "amazon.nova-2-multimodal-embeddings-v1:0".into()
     } else {
         "qwen3-embedding:0.6b".into()
@@ -65,7 +71,19 @@ fn default_embedding_model() -> String {
 }
 
 fn default_dimension() -> usize {
-    1024
+    if cfg!(feature = "local-embedding") {
+        384
+    } else {
+        1024
+    }
+}
+
+fn default_llm_provider() -> String {
+    if cfg!(feature = "bedrock") {
+        "bedrock".into()
+    } else {
+        "ollama".into()
+    }
 }
 
 fn default_llm_model() -> String {
@@ -84,7 +102,7 @@ impl Default for EmbeddingConfig {
             profile: None,
             base_url: default_base_url(),
             model: default_embedding_model(),
-            dimension: 1024,
+            dimension: default_dimension(),
             cache_size: default_cache_size(),
             persistent_cache_size: default_persistent_cache_size(),
             timeout_secs: default_timeout_secs(),
@@ -103,7 +121,7 @@ impl EmbeddingConfig {
 /// LLM provider configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
-    #[serde(default = "default_provider")]
+    #[serde(default = "default_llm_provider")]
     pub provider: String,
     /// Preferred field for Bedrock: AWS region (e.g. "us-east-1").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,7 +141,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: default_provider(),
+            provider: default_llm_provider(),
             region: None,
             profile: None,
             base_url: default_base_url(),
@@ -175,18 +193,23 @@ mod tests {
     fn test_embedding_config_defaults() {
         let config = EmbeddingConfig::default();
         assert!(config.region.is_none());
-        if cfg!(feature = "bedrock") {
+        if cfg!(feature = "local-embedding") {
+            assert_eq!(config.provider, "local");
+            assert_eq!(config.model, "BAAI/bge-small-en-v1.5");
+            assert_eq!(config.dimension, 384);
+        } else if cfg!(feature = "bedrock") {
             assert_eq!(config.provider, "bedrock");
             assert_eq!(config.base_url, "us-east-1");
             assert_eq!(config.effective_base_url(), "us-east-1");
             assert_eq!(config.model, "amazon.nova-2-multimodal-embeddings-v1:0");
+            assert_eq!(config.dimension, 1024);
         } else {
             assert_eq!(config.provider, "ollama");
             assert_eq!(config.base_url, "http://localhost:11434");
             assert_eq!(config.effective_base_url(), "http://localhost:11434");
             assert_eq!(config.model, "qwen3-embedding:0.6b");
+            assert_eq!(config.dimension, 1024);
         }
-        assert_eq!(config.dimension, 1024);
         assert_eq!(config.cache_size, 100);
         assert_eq!(config.persistent_cache_size, 1000);
         assert_eq!(config.timeout_secs, 60);

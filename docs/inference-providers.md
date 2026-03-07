@@ -1,10 +1,48 @@
 # Inference Providers
 
-Factbase uses an embedding model for semantic search and link detection. It supports two backends: Amazon Bedrock (default) and Ollama (self-hosted).
+Factbase uses an embedding model for semantic search and link detection. It supports three backends: local CPU (default), Amazon Bedrock, and Ollama (self-hosted).
 
 > **Note:** As of Phase 6, factbase no longer uses a server-side LLM. All reasoning (link review, cross-validation, review application) is handled by the client agent via MCP. Only an embedding model is required.
 
-## Amazon Bedrock (default)
+## Local CPU (default)
+
+The default provider uses [fastembed](https://github.com/Anush008/fastembed-rs) with BGE-small-en-v1.5 to generate embeddings locally on your CPU. No cloud credentials, no external services, no configuration needed.
+
+- **Model**: BAAI/bge-small-en-v1.5 (384 dimensions, ~33MB)
+- **First use**: Model downloads automatically and is cached locally
+- **Performance**: Fine for knowledge bases under ~5000 documents
+- **Cost**: $0
+
+### Configuration
+
+No configuration needed — this is the default. To be explicit:
+
+```yaml
+# ~/.config/factbase/config.yaml
+embedding:
+  provider: local
+```
+
+### Tradeoffs vs cloud providers
+
+- Lower quality embeddings (384-dim vs 1024-dim Bedrock)
+- Slower than API calls for large knowledge bases
+- No network dependency — works offline after first model download
+- Binary size increase (~5-10MB from ONNX runtime)
+
+### Switching providers
+
+If you switch from local to Bedrock (or vice versa), the embedding dimensions change. Run:
+
+```bash
+factbase scan --reindex
+```
+
+This rebuilds all embeddings with the new provider. Factbase will block scans if it detects a dimension mismatch.
+
+---
+
+## Amazon Bedrock
 
 Bedrock requires no local model management — models are hosted by AWS. You need:
 

@@ -30,6 +30,8 @@ pub mod embedding;
 pub mod embeddings_io;
 pub mod error;
 pub mod link_detection;
+#[cfg(feature = "local-embedding")]
+pub mod local_embedding;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod models;
@@ -69,6 +71,8 @@ pub use config::prompts::{resolve_prompt, PromptsConfig};
 pub use config::workflows::{resolve_workflow_text, WorkflowsConfig};
 pub use database::{ContentSearchParams, Database};
 pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding};
+#[cfg(feature = "local-embedding")]
+pub use local_embedding::LocalEmbeddingProvider;
 pub use embeddings_io::{
     embeddings_status, export_embeddings, export_embeddings_to_file, import_embeddings,
     import_embeddings_from_file, EmbeddingExportHeader, EmbeddingRecord, EmbeddingsStatusInfo,

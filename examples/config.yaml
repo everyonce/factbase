@@ -25,6 +25,17 @@ processor:
   link_batch_size: 5           # Docs per link detection batch (1-50)
   check_concurrency: 5          # Parallel lint/cross-validation (1-20)
 
+# --- Embedding Configuration ---
+# By default, factbase uses local CPU embeddings (no config needed).
+# Uncomment one of the sections below to use a cloud provider instead.
+
+# --- Default: Local CPU embeddings (zero config) ---
+# embedding:
+#   provider: local
+# Uses BGE-small-en-v1.5 (384-dim, ~33MB download on first use)
+# Good for knowledge bases under ~5000 documents
+
+# --- Option 1: Amazon Bedrock (higher quality, requires AWS credentials) ---
 embedding:
   provider: bedrock
   profile: default             # AWS profile name (optional, uses default credentials if omitted)
@@ -34,7 +45,7 @@ embedding:
   cache_size: 100              # Query embedding cache (1-10000)
   timeout_secs: 30             # HTTP timeout (1-300)
 
-# --- Alternative: Ollama (self-hosted) ---
+# --- Option 2: Ollama (self-hosted) ---
 # See docs/inference-providers.md for setup instructions.
 #
 # embedding:
@@ -48,6 +59,9 @@ embedding:
 # ollama:
 #   max_retries: 3         # Retry count for failed requests
 #   retry_delay_ms: 1000   # Delay between retries
+
+# NOTE: If you switch providers after scanning, run `factbase scan --reindex`
+# to rebuild all embeddings with the new dimension.
 
 rate_limit:
   per_second: 10    # MCP server rate limit
