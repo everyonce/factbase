@@ -293,6 +293,12 @@ Remove the hard dependency on Bedrock/cloud embedding providers. Factbase works 
 - [ ] Add test for dimension mismatch detection and re-embed flow
 - [ ] Verify: `factbase scan` works with NO config file at all
 
+### Paging retention
+- `scan_repository` keeps time-budgeted paging with resume tokens for embedding generation
+- Local CPU embeddings are slower than Bedrock API — paging is even MORE important here
+- `check_repository mode=embeddings` keeps paging for re-embed operations
+- Agent stays in the loop: no 10-minute black holes waiting for CPU inference
+
 ### What this enables
 - Zero-config onboarding: `factbase init && factbase scan` just works
 - Offline usage: no cloud credentials needed
