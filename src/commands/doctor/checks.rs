@@ -35,7 +35,6 @@ pub struct DoctorOutput {
     pub database: CheckStatus,
     pub ollama_server: CheckStatus,
     pub embedding_model: CheckStatus,
-    pub llm_model: CheckStatus,
     pub overall_healthy: bool,
 }
 
@@ -134,7 +133,6 @@ mod tests {
             database: CheckStatus::ok(),
             ollama_server: CheckStatus::ok(),
             embedding_model: CheckStatus::ok(),
-            llm_model: CheckStatus::ok(),
             overall_healthy: true,
         };
         let json = serde_json::to_string(&output).unwrap();
@@ -142,7 +140,6 @@ mod tests {
         assert!(json.contains("\"database\""));
         assert!(json.contains("\"ollama_server\""));
         assert!(json.contains("\"embedding_model\""));
-        assert!(json.contains("\"llm_model\""));
         // error field should be omitted when None
         assert!(!json.contains("\"error\""));
     }
@@ -153,7 +150,6 @@ mod tests {
             database: CheckStatus::err("cannot open"),
             ollama_server: CheckStatus::err("not reachable"),
             embedding_model: CheckStatus::err("not found"),
-            llm_model: CheckStatus::err("not found"),
             overall_healthy: false,
         };
         let json = serde_json::to_string(&output).unwrap();

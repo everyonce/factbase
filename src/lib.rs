@@ -29,7 +29,7 @@ pub mod database;
 pub mod embedding;
 pub mod embeddings_io;
 pub mod error;
-pub mod llm;
+pub mod link_detection;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod models;
@@ -75,7 +75,7 @@ pub use embeddings_io::{
     FactEmbeddingRecord, ImportResult, FORMAT_VERSION as EMBEDDING_FORMAT_VERSION,
 };
 pub use error::{format_user_error, format_warning, repo_not_found, FactbaseError};
-pub use llm::{DetectedLink, LinkDetector, LlmProvider, OllamaLlm, ReviewLlm};
+pub use link_detection::{DetectedLink, LinkDetector};
 #[cfg(feature = "mcp")]
 pub use mcp::McpServer;
 pub use models::{

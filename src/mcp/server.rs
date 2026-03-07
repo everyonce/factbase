@@ -1,7 +1,6 @@
 use crate::config::RateLimitConfig;
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
-use crate::llm::LlmProvider;
 use crate::mcp::initialize_result;
 use crate::mcp::tools::{handle_tool_call, McpRequest, McpResponse};
 use axum::extract::State;
@@ -22,7 +21,6 @@ use tracing::{info, Level};
 pub struct AppState<E: EmbeddingProvider> {
     pub db: Database,
     pub embedding: E,
-    pub llm: Option<Box<dyn LlmProvider>>,
     pub start_time: Instant,
     pub ollama_base_url: String,
     pub session_id: Mutex<Option<String>>,
@@ -43,13 +41,11 @@ impl<E: EmbeddingProvider + 'static> McpServer<E> {
         port: u16,
         rate_limit: RateLimitConfig,
         ollama_base_url: &str,
-        llm: Option<Box<dyn LlmProvider>>,
     ) -> Self {
         Self {
             state: Arc::new(AppState {
                 db,
                 embedding,
-                llm,
                 start_time: Instant::now(),
                 ollama_base_url: ollama_base_url.to_string(),
                 session_id: Mutex::new(None),
@@ -213,8 +209,7 @@ async fn mcp_handler<E: EmbeddingProvider>(
     let tool_name = request.params.name.clone().unwrap_or_default();
     let start = Instant::now();
 
-    let llm = state.llm.as_deref();
-    let result = handle_tool_call(&state.db, &state.embedding, llm, request, None).await;
+    let result = handle_tool_call(&state.db, &state.embedding, request, None).await;
     let duration = start.elapsed();
 
     match &result {
@@ -315,7 +310,6 @@ mod tests {
             port,
             RateLimitConfig::default(),
             "http://localhost:11434",
-            None,
         );
         let base_url = format!("http://127.0.0.1:{}", port);
         let (tx, rx) = oneshot::channel();

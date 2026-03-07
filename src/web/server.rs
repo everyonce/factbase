@@ -15,7 +15,6 @@ use super::api::stats::{get_organize_stats, get_review_stats, get_stats};
 use super::assets::{index_handler, static_handler};
 use crate::config::Config;
 use crate::database::Database;
-use crate::llm::LlmProvider;
 use axum::{http::StatusCode, routing::get, routing::post, Json, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -27,7 +26,6 @@ use tracing::info;
 /// Shared state for web server handlers.
 pub struct WebAppState {
     pub db: Database,
-    pub llm: Option<Arc<dyn LlmProvider>>,
     pub start_time: Instant,
 }
 
@@ -43,19 +41,6 @@ impl WebServer {
         Self {
             state: Arc::new(WebAppState {
                 db,
-                llm: None,
-                start_time: Instant::now(),
-            }),
-            port,
-        }
-    }
-
-    /// Create a new web server instance with an LLM provider.
-    pub fn with_llm(db: Database, port: u16, llm: Arc<dyn LlmProvider>) -> Self {
-        Self {
-            state: Arc::new(WebAppState {
-                db,
-                llm: Some(llm),
                 start_time: Instant::now(),
             }),
             port,
@@ -136,13 +121,9 @@ impl WebServer {
 pub async fn start_web_server(
     config: &Config,
     db: Database,
-    llm: Option<Arc<dyn LlmProvider>>,
     shutdown_rx: oneshot::Receiver<()>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let server = match llm {
-        Some(llm) => WebServer::with_llm(db, config.web.port, llm),
-        None => WebServer::new(db, config.web.port),
-    };
+    let server = WebServer::new(db, config.web.port);
     server.start(shutdown_rx).await
 }
 

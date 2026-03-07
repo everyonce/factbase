@@ -36,7 +36,6 @@ mod workflow;
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::progress::ProgressSender;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -165,7 +164,6 @@ macro_rules! blocking_tool {
 pub async fn handle_tool_call<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
-    llm: Option<&dyn LlmProvider>,
     request: McpRequest,
     progress: Option<ProgressSender>,
 ) -> Result<Option<McpResponse>, FactbaseError> {
@@ -202,7 +200,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                     blocking_tool!(db, args, reporter, answer_questions)
                 }
                 "check_repository" => check_repository(db, embedding, &args, &reporter).await?,
-                "scan_repository" => scan_repository(db, embedding, llm, &args, &reporter).await?,
+                "scan_repository" => scan_repository(db, embedding, &args, &reporter).await?,
                 "init_repository" => blocking_tool!(db, args, init_repository),
                 "get_duplicate_entries" => {
                     organize_analyze(db, embedding, &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}), &reporter).await?
@@ -211,22 +209,22 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                     organize_analyze(db, embedding, &args, &reporter).await?
                 }
                 "organize" => {
-                    organize(db, embedding, llm, &args, &reporter).await?
+                    organize(db, embedding, &args, &reporter).await?
                 }
                 "organize_move" => {
                     let mut a = args.clone();
                     a.as_object_mut().map(|m| m.insert("action".into(), "move".into()));
-                    organize(db, embedding, llm, &a, &reporter).await?
+                    organize(db, embedding, &a, &reporter).await?
                 }
                 "organize_retype" => {
                     let mut a = args.clone();
                     a.as_object_mut().map(|m| m.insert("action".into(), "retype".into()));
-                    organize(db, embedding, llm, &a, &reporter).await?
+                    organize(db, embedding, &a, &reporter).await?
                 }
                 "organize_apply" => {
                     let mut a = args.clone();
                     a.as_object_mut().map(|m| m.insert("action".into(), "apply".into()));
-                    organize(db, embedding, llm, &a, &reporter).await?
+                    organize(db, embedding, &a, &reporter).await?
                 }
                 "workflow" => {
                     // Bootstrap is now sync (no LLM); other workflows are also sync
@@ -482,7 +480,7 @@ mod tests {
         let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
 
         let args = serde_json::json!({});
-        let result = scan_repository(&db, &embedding, None, &args, &reporter).await;
+        let result = scan_repository(&db, &embedding, &args, &reporter).await;
         assert!(result.is_ok());
 
         // Collect all progress messages
@@ -535,7 +533,7 @@ mod tests {
         let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
 
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, None, &args, &reporter)
+        scan_repository(&db, &embedding, &args, &reporter)
             .await
             .unwrap();
 
@@ -594,7 +592,7 @@ mod tests {
         let embedding = MockEmbedding::new(1024);
         let reporter = crate::ProgressReporter::Silent;
         let args = serde_json::json!({});
-        let result = scan_repository(&db, &embedding, None, &args, &reporter)
+        let result = scan_repository(&db, &embedding, &args, &reporter)
             .await
             .unwrap();
 
@@ -635,7 +633,7 @@ mod tests {
 
         let embedding = MockEmbedding::new(1024);
         let reporter = crate::ProgressReporter::Silent;
-        let result = scan_repository(&db, &embedding, None, &serde_json::json!({}), &reporter)
+        let result = scan_repository(&db, &embedding, &serde_json::json!({}), &reporter)
             .await
             .unwrap();
 
@@ -664,7 +662,7 @@ mod tests {
 
         let embedding = MockEmbedding::new(1024);
         let reporter = crate::ProgressReporter::Silent;
-        let result = scan_repository(&db, &embedding, None, &serde_json::json!({}), &reporter)
+        let result = scan_repository(&db, &embedding, &serde_json::json!({}), &reporter)
             .await
             .unwrap();
 
@@ -696,7 +694,7 @@ mod tests {
         // Scan first so documents exist in DB
         let embedding = MockEmbedding::new(1024);
         let silent = crate::ProgressReporter::Silent;
-        scan_repository(&db, &embedding, None, &serde_json::json!({}), &silent)
+        scan_repository(&db, &embedding, &serde_json::json!({}), &silent)
             .await
             .unwrap();
 
@@ -770,7 +768,7 @@ mod tests {
         let reporter = crate::ProgressReporter::Silent;
         // Use time_budget_secs=5 (minimum) — with MockEmbedding this should complete
         let args = serde_json::json!({"time_budget_secs": 5});
-        let result = scan_repository(&db, &embedding, None, &args, &reporter)
+        let result = scan_repository(&db, &embedding, &args, &reporter)
             .await
             .unwrap();
 
@@ -804,7 +802,7 @@ mod tests {
 
         let embedding = MockEmbedding::new(1024);
         let silent = crate::ProgressReporter::Silent;
-        scan_repository(&db, &embedding, None, &serde_json::json!({}), &silent)
+        scan_repository(&db, &embedding, &serde_json::json!({}), &silent)
             .await
             .unwrap();
 
@@ -842,13 +840,13 @@ mod tests {
 
         let embedding = MockEmbedding::new(1024);
         let silent = crate::ProgressReporter::Silent;
-        scan_repository(&db, &embedding, None, &serde_json::json!({}), &silent)
+        scan_repository(&db, &embedding, &serde_json::json!({}), &silent)
             .await
             .unwrap();
 
         // Generate questions for all docs with generous budget
         let args = serde_json::json!({"dry_run": true, "time_budget_secs": 30});
-        let result = generate_questions(&db, &embedding, None, &args)
+        let result = generate_questions(&db, &embedding, &args)
             .await
             .unwrap();
 
@@ -950,11 +948,11 @@ mod tests {
 
         // First scan
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
 
         // Second scan with force_reindex: should re-process all docs
         let args = serde_json::json!({"force_reindex": true});
-        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
         // force_reindex causes docs to be reindexed even though unchanged
         let total = r["total"].as_u64().unwrap();
         assert!(total > 0, "force_reindex should process docs");
@@ -987,11 +985,11 @@ mod tests {
 
         // Initial scan to populate DB
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
 
         // force_reindex without explicit time_budget_secs: should NOT be interrupted
         let args = serde_json::json!({"force_reindex": true});
-        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
 
         assert!(
             r.get("continue").is_none() || r["continue"] == false,
@@ -1020,11 +1018,11 @@ mod tests {
 
         // Initial scan
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
 
         // force_reindex WITH explicit time_budget_secs: budget should be ignored
         let args = serde_json::json!({"force_reindex": true, "time_budget_secs": 10});
-        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
 
         // Should complete with reindexed count (budget was ignored, not enforced)
         assert_eq!(r["reindexed"].as_u64().unwrap(), 1);
@@ -1051,7 +1049,7 @@ mod tests {
 
         // Normal scan (no force_reindex) with explicit budget: should still use budget
         let args = serde_json::json!({"time_budget_secs": 30});
-        let r = scan_repository(&db, &embedding, None, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
 
         // MockEmbedding is instant, so it completes within budget
         assert!(r.get("total").is_some());

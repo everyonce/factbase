@@ -2,7 +2,6 @@
 
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
-use crate::llm::LlmProvider;
 use crate::models::{Document, QuestionType, ReviewQuestion};
 use crate::patterns::{extract_reviewed_date, has_corruption_artifacts, FACT_LINE_REGEX};
 use crate::processor::{
@@ -112,7 +111,6 @@ pub async fn check_all_documents(
     docs: &[Document],
     db: &Database,
     _embedding: &dyn EmbeddingProvider,
-    _llm: Option<&dyn LlmProvider>,
     config: &CheckConfig,
     progress: &ProgressReporter,
 ) -> Result<CheckOutput, crate::error::FactbaseError> {
@@ -500,7 +498,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap().results;
         assert!(!results.is_empty());
@@ -528,7 +526,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap().results;
         assert!(!results.is_empty());
@@ -552,7 +550,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap().results;
         let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
@@ -577,7 +575,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let results = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap().results;
         assert!(!results.is_empty());
@@ -608,7 +606,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap();
         assert_eq!(output.docs_processed, 0);
@@ -634,7 +632,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap();
         assert_eq!(output.docs_processed, 2);
@@ -669,7 +667,7 @@ mod tests {
                     repo_id: None,
                 };
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap();
         // Reference doc should be skipped — only 1 doc processed
@@ -696,7 +694,7 @@ mod tests {
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
-        let result = check_all_documents(&docs, &db, &embedding, None, &config, &progress)
+        let result = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await;
         assert!(result.is_ok(), "dry-run should never be blocked by write guard");
     }
@@ -762,7 +760,7 @@ mod tests {
             repo_id: None,
         };
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&[glossary, regular], &db, &embedding, None, &config, &progress)
+        let output = check_all_documents(&[glossary, regular], &db, &embedding, &config, &progress)
             .await
             .unwrap();
         // No ambiguous question about HCLS should be generated
@@ -808,7 +806,7 @@ mod tests {
         let doc = make_doc("vvv", "History", "# History\n\n- Battle of Marathon 490 BCE\n");
         let config = default_check_config();
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
+        let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
             .await
             .unwrap();
         assert!(output.vocabulary_candidates.is_empty(),
@@ -859,7 +857,7 @@ mod tests {
             repo_id: None,
         };
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
+        let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
             .await
             .unwrap();
 
@@ -874,21 +872,15 @@ mod tests {
 
     /// When question gen exhausts the deadline but fact pairs exist,
     /// pair_progress should signal pending cross-validation work.
-    /// Regression test: questions mode (is_continuation=false) with LLM should
-    /// report docs_processed based on question generation, not cross-validation.
-    /// Before the fix, llm.is_some() caused docs_processed to use
-    /// cross_validated_ids.len() which could be 0 in questions mode.
+    /// Regression test: questions mode reports docs_processed based on question generation.
     #[tokio::test]
     async fn test_questions_mode_docs_processed_uses_question_gen_count() {
-        use crate::llm::test_helpers::MockLlm;
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
-        let llm = MockLlm::new("[]");
         let docs = vec![
             make_doc("aaa", "Doc A", "# Doc A\n\nSome content.\n"),
             make_doc("bbb", "Doc B", "# Doc B\n\nMore content.\n"),
         ];
-        // Questions mode: is_continuation=false, LLM present
         let config = CheckConfig {
             stale_days: 365,
             required_fields: None,
@@ -899,10 +891,10 @@ mod tests {
             repo_id: None,
         };
         let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&docs, &db, &embedding, Some(&llm), &config, &progress)
+        let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap();
-        assert_eq!(output.docs_processed, 2, "questions mode should count question-gen docs, not CV docs");
+        assert_eq!(output.docs_processed, 2, "questions mode should count question-gen docs");
         assert_eq!(output.docs_total, 2);
     }
 }

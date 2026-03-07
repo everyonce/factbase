@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_get_document_link_counts_with_links() {
-        use crate::llm::DetectedLink;
+        use crate::link_detection::DetectedLink;
 
         let (db, _tmp) = test_db();
         let repo = test_repo();
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn test_add_links_skips_existing() {
-        use crate::llm::DetectedLink;
+        use crate::link_detection::DetectedLink;
 
         let (db, _tmp) = test_db();
         let repo = test_repo();

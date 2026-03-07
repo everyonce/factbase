@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use crate::error::FactbaseError;
-use crate::llm::DetectedLink;
+use crate::link_detection::DetectedLink;
 use crate::models::Link;
 use chrono::Utc;
 

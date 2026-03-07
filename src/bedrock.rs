@@ -1,16 +1,13 @@
-//! Amazon Bedrock provider implementations for embedding and LLM.
+//! Amazon Bedrock embedding provider.
 
 use crate::error::FactbaseError;
 use crate::BoxFuture;
 use crate::EmbeddingProvider;
-use crate::LlmProvider;
 use aws_sdk_bedrockruntime::error::SdkError;
 use aws_sdk_bedrockruntime::primitives::Blob;
-use aws_sdk_bedrockruntime::types::{ContentBlock, ConversationRole, Message};
 use aws_sdk_bedrockruntime::Client;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
-use tracing::debug;
 
 /// Build a Bedrock runtime client with optional region and profile override.
 async fn build_client(region: Option<&str>, profile: Option<&str>, timeout_secs: u64) -> Client {
@@ -37,10 +34,6 @@ async fn build_client(region: Option<&str>, profile: Option<&str>, timeout_secs:
 
 fn embed_err(ctx: &str, e: impl Display) -> FactbaseError {
     FactbaseError::embedding(format!("{ctx}: {e}"))
-}
-
-fn llm_err(ctx: &str, e: impl Display) -> FactbaseError {
-    FactbaseError::llm(format!("{ctx}: {e}"))
 }
 
 /// Returns true if the error message indicates a transient connection-level failure.
@@ -278,64 +271,6 @@ impl EmbeddingProvider for BedrockEmbedding {
 
     fn dimension(&self) -> usize {
         self.dim
-    }
-}
-
-/// Bedrock LLM provider using the Converse API (model-agnostic).
-pub struct BedrockLlm {
-    client: Client,
-    model_id: String,
-}
-
-impl BedrockLlm {
-    pub async fn new(model_id: &str, region: Option<&str>, profile: Option<&str>, timeout_secs: u64) -> Self {
-        Self {
-            client: build_client(region, profile, timeout_secs).await,
-            model_id: model_id.to_string(),
-        }
-    }
-
-    pub fn model(&self) -> &str {
-        &self.model_id
-    }
-
-    async fn invoke_converse(&self, prompt: &str) -> Result<String, FactbaseError> {
-        debug!("Bedrock converse: model={}", self.model_id);
-
-        let msg = Message::builder()
-            .role(ConversationRole::User)
-            .content(ContentBlock::Text(prompt.to_string()))
-            .build()
-            .map_err(|e| llm_err("Build message", e))?;
-
-        let resp = self
-            .client
-            .converse()
-            .model_id(&self.model_id)
-            .messages(msg)
-            .send()
-            .await
-            .map_err(|e| llm_err("Bedrock converse", sdk_error_message(&e)))?;
-
-        let text = resp
-            .output()
-            .ok_or_else(|| FactbaseError::llm("No output in response"))?
-            .as_message()
-            .map_err(|_| FactbaseError::llm("Output not a message"))?
-            .content()
-            .first()
-            .ok_or_else(|| FactbaseError::llm("No content in message"))?
-            .as_text()
-            .map_err(|_| FactbaseError::llm("Content is not text"))?
-            .to_string();
-
-        Ok(text)
-    }
-}
-
-impl LlmProvider for BedrockLlm {
-    fn complete<'a>(&'a self, prompt: &'a str) -> BoxFuture<'a, Result<String, FactbaseError>> {
-        Box::pin(async move { retry_with_backoff(|| self.invoke_converse(prompt)).await })
     }
 }
 

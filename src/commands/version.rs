@@ -26,9 +26,6 @@ pub fn cmd_version(args: VersionArgs) -> anyhow::Result<()> {
     let embedding_model = config
         .as_ref()
         .map_or("not configured", |c| c.embedding.model.as_str());
-    let llm_model = config
-        .as_ref()
-        .map_or("not configured", |c| c.llm.model.as_str());
 
     if args.json {
         let json = serde_json::json!({
@@ -36,7 +33,6 @@ pub fn cmd_version(args: VersionArgs) -> anyhow::Result<()> {
             "build_date": build_date,
             "rustc_version": rustc_version,
             "embedding_model": embedding_model,
-            "llm_model": llm_model,
         });
         println!("{}", format_json(&json)?);
     } else {
@@ -44,7 +40,6 @@ pub fn cmd_version(args: VersionArgs) -> anyhow::Result<()> {
         println!("  Built:     {build_date}");
         println!("  Rustc:     {rustc_version}");
         println!("  Embedding: {embedding_model}");
-        println!("  LLM:       {llm_model}");
     }
 
     Ok(())

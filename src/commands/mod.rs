@@ -82,7 +82,6 @@ pub use version::cmd_version;
 pub use setup::{
     auto_init_repo, clean_canonicalize, find_repo, find_repo_with_config, setup_cached_embedding,
     setup_database, setup_database_checked, setup_database_only, setup_embedding_with_timeout,
-    setup_llm_with_timeout, setup_review_llm_with_timeout,
 };
 #[cfg(feature = "mcp")]
 pub use setup::setup_embedding;

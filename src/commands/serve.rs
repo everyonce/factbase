@@ -1,6 +1,5 @@
 use super::{
     auto_init_repo, find_repo_with_config, setup_cached_embedding, setup_embedding,
-    setup_llm_with_timeout,
 };
 use crate::commands::utils::resolve_repos;
 use anyhow::Context;
@@ -59,7 +58,6 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
     let cached_embedding = setup_cached_embedding(&config, None, &db).await;
     let scan_embedding = setup_embedding(&config).await;
     let link_detector = factbase::LinkDetector::new();
-    let llm = setup_llm_with_timeout(&config, None).await;
 
     let mut watcher =
         FileWatcher::new(config.watcher.debounce_ms, &config.watcher.ignore_patterns)?;
@@ -76,7 +74,6 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
         port,
         config.rate_limit.clone(),
         config.embedding.effective_base_url(),
-        Some(llm),
     );
 
     // Web server setup (feature-gated)
@@ -85,12 +82,8 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
         let (tx, rx) = oneshot::channel();
         let web_db = db.clone();
         let web_config = config.clone();
-        let web_llm: Option<std::sync::Arc<dyn factbase::LlmProvider>> = {
-            let llm = setup_llm_with_timeout(&config, None).await;
-            Some(std::sync::Arc::from(llm))
-        };
         let handle = tokio::spawn(async move {
-            if let Err(e) = start_web_server(&web_config, web_db, web_llm, rx).await {
+            if let Err(e) = start_web_server(&web_config, web_db, rx).await {
                 error!("Web server error: {}", e);
             }
         });

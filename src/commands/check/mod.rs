@@ -44,7 +44,7 @@ use output::{
 
 use super::{
     parse_since_filter, resolve_repos, setup_database, setup_embedding_with_timeout,
-    setup_llm_with_timeout, setup_review_llm_with_timeout, OutputFormat,
+    OutputFormat,
 };
 use chrono::Utc;
 use factbase::{config::validate_timeout, format_json, format_yaml, ProgressReporter};
@@ -87,22 +87,11 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         validate_timeout(timeout)?;
     }
 
-    // Initialize ReviewLlm for question generation
-    let _review_llm = {
-        let review_llm = setup_review_llm_with_timeout(&config, args.timeout).await;
-        info!("Review LLM initialized with model: {}", review_llm.model());
-        Some(review_llm)
-    };
-
-    // Initialize embedding + LLM providers when --cross-check is used
-    let deep_check_providers = if args.deep_check {
-        let embedding = setup_embedding_with_timeout(&config, args.timeout).await;
-        let llm = setup_llm_with_timeout(&config, args.timeout).await;
-        info!("Cross-check providers initialized");
-        Some((embedding, llm))
-    } else {
-        None
-    };
+    // Embedding provider for cross-check (if requested)
+    if args.deep_check {
+        let _embedding = setup_embedding_with_timeout(&config, args.timeout).await;
+        info!("Cross-check embedding provider initialized");
+    }
 
     let repos_to_check = resolve_repos(repos, args.repo.as_deref())?;
 
@@ -380,7 +369,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         // Cross-document fact validation has been moved to the agent via get_fact_pairs tool.
         // Vocabulary extraction has been moved to the agent via the discover workflow step.
         if !args.no_questions {
-        if deep_check_providers.is_some() {
+        if args.deep_check {
             if is_table_format && !args.quiet {
                 println!("  Cross-document validation is now agent-driven via get_fact_pairs tool.");
                 println!("  Vocabulary extraction is now agent-driven via the discover workflow step.");
