@@ -196,12 +196,13 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks on a repository. Generates review questions for stale facts, missing sources, temporal gaps, conflicts, and other issues. A single call checks all documents — no paging needed.\n\nIf doc_id is provided, checks just that document (replaces the old generate_questions tool).\n\nFor cross-document fact comparison, use the get_fact_pairs tool instead.",
+                "description": "Run quality checks on a repository. Generates review questions for stale facts, missing sources, temporal gaps, conflicts, and other issues. A single call checks all documents — no paging needed.\n\nIf doc_id is provided, checks just that document (replaces the old generate_questions tool).\nIf doc_ids (array) is provided, checks only those documents — useful after creating multiple documents.\n\nFor cross-document fact comparison, use the get_fact_pairs tool instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
                         "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
+                        "doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Check multiple specific documents by ID (optional). More efficient than calling once per document." },
                         "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" }
                     }
                 }

@@ -3,7 +3,7 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::mcp::tools::{get_str_arg, load_perspective, resolve_repo_filter};
+use crate::mcp::tools::{get_str_arg, get_str_array_arg, load_perspective, resolve_repo_filter};
 use crate::progress::ProgressReporter;
 use crate::question_generator::check::{check_all_documents, CheckConfig};
 use serde_json::Value;
@@ -48,10 +48,21 @@ pub async fn check_repository(
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let doc_id = get_str_arg(args, "doc_id");
+    let doc_ids = get_str_array_arg(args, "doc_ids");
 
-    // If doc_id is provided, check just that one document
+    // If doc_id (singular) is provided, check just that one document
     if doc_id.is_some() {
         return super::generate_questions(db, embedding, args).await;
+    }
+
+    // If doc_ids (plural) is provided, batch-check those specific documents
+    if let Some(ids) = doc_ids {
+        if ids.is_empty() {
+            return Ok(serde_json::json!({
+                "error": "doc_ids array is empty — provide at least one document ID"
+            }));
+        }
+        return check_batch(db, embedding, args, &ids, progress).await;
     }
 
     // Handle deprecated mode parameter gracefully
@@ -161,6 +172,89 @@ async fn check_questions(
         "dry_run": dry_run,
         "details": details,
     }))
+}
+
+/// Batch-check specific documents by their IDs.
+/// Uses the same check_all_documents pipeline as the full repo check,
+/// but scoped to only the requested documents.
+async fn check_batch(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+    args: &Value,
+    ids: &[String],
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+
+    let config_file = crate::Config::load(None);
+    let check_concurrency = config_file
+        .as_ref()
+        .map(|c| c.processor.check_concurrency)
+        .unwrap_or(LINT_CONCURRENCY);
+
+    // Load the requested documents
+    let mut docs = Vec::new();
+    let mut not_found = Vec::new();
+    for id in ids {
+        match db.get_document(id)? {
+            Some(d) if !d.is_deleted => docs.push(d),
+            Some(_) => not_found.push(id.as_str()), // deleted
+            None => not_found.push(id.as_str()),
+        }
+    }
+
+    // Determine repo for perspective (use first doc's repo)
+    let repo_id = docs.first().map(|d| d.repo_id.as_str());
+    let perspective = load_perspective(db, repo_id);
+    let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
+    let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
+
+    progress.phase("Checking selected documents");
+
+    let config = CheckConfig {
+        stale_days,
+        required_fields,
+        dry_run,
+        concurrency: check_concurrency,
+        deadline: None,
+        acquire_write_guard: true,
+        repo_id: repo_id.map(String::from),
+    };
+
+    let output = check_all_documents(&docs, db, embedding, &config, progress).await?;
+    let results = &output.results;
+
+    let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
+    let docs_clean = results.iter().filter(|r| r.new_questions == 0 && r.existing_unanswered == 0).count();
+    let total_new: usize = results.iter().map(|r| r.new_questions).sum();
+    let total_pruned: usize = results.iter().map(|r| r.pruned_questions).sum();
+    let total_existing: usize = results.iter().map(|r| r.existing_unanswered + r.existing_answered).sum();
+
+    let details: Vec<Value> = results.iter()
+        .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)
+        .map(|r| serde_json::json!({
+            "doc_id": r.doc_id, "doc_title": r.doc_title,
+            "new_questions": r.new_questions, "pruned_questions": r.pruned_questions,
+        }))
+        .collect();
+
+    let mut result = serde_json::json!({
+        "documents_checked": output.docs_processed,
+        "documents_requested": ids.len(),
+        "documents_with_new_questions": docs_with_questions,
+        "documents_clean": docs_clean,
+        "new_unanswered": total_new,
+        "already_in_queue": total_existing,
+        "pruned_stale": total_pruned,
+        "dry_run": dry_run,
+        "details": details,
+    });
+
+    if !not_found.is_empty() {
+        result["not_found"] = serde_json::json!(not_found);
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -295,5 +389,92 @@ mod tests {
             .await
             .unwrap();
         assert!(result.get("documents_scanned").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_doc_ids_batch_checks_specific_documents() {
+        let (db, _tmp) = test_db();
+        let repo_dir = tempfile::TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+        crate::database::tests::test_repo_in_db(&db, "test", repo_path);
+
+        // Create two docs on disk and in DB
+        for (id, title) in &[("bat001", "Doc One"), ("bat002", "Doc Two")] {
+            let path = repo_path.join(format!("{id}.md"));
+            std::fs::write(&path, format!("<!-- factbase:{id} -->\n# {title}\n\n- A fact\n")).unwrap();
+            let mut doc = crate::models::Document::test_default();
+            doc.id = id.to_string();
+            doc.title = title.to_string();
+            doc.content = format!("<!-- factbase:{id} -->\n# {title}\n\n- A fact\n");
+            doc.repo_id = "test".to_string();
+            doc.file_path = format!("{id}.md");
+            db.upsert_document(&doc).unwrap();
+        }
+
+        // Also create a third doc that should NOT be checked
+        let path3 = repo_path.join("bat003.md");
+        std::fs::write(&path3, "<!-- factbase:bat003 -->\n# Doc Three\n\n- Another fact\n").unwrap();
+        let mut doc3 = crate::models::Document::test_default();
+        doc3.id = "bat003".to_string();
+        doc3.title = "Doc Three".to_string();
+        doc3.content = "<!-- factbase:bat003 -->\n# Doc Three\n\n- Another fact\n".to_string();
+        doc3.repo_id = "test".to_string();
+        doc3.file_path = "bat003.md".to_string();
+        db.upsert_document(&doc3).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"doc_ids": ["bat001", "bat002"]});
+        let result = check_repository(&db, &embedding, &args, &progress)
+            .await
+            .unwrap();
+
+        // Should check exactly 2 documents, not all 3
+        assert_eq!(result["documents_requested"].as_u64().unwrap(), 2);
+        assert_eq!(result["documents_checked"].as_u64().unwrap(), 2);
+        assert!(result.get("not_found").is_none());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_doc_ids_reports_not_found() {
+        let (db, _tmp) = test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "nf0001".to_string();
+        doc.title = "Exists".to_string();
+        doc.content = "<!-- factbase:nf0001 -->\n# Exists\n\n- Fact\n".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"doc_ids": ["nf0001", "nonexistent"]});
+        let result = check_repository(&db, &embedding, &args, &progress)
+            .await
+            .unwrap();
+
+        assert_eq!(result["documents_requested"].as_u64().unwrap(), 2);
+        let not_found = result["not_found"].as_array().unwrap();
+        assert_eq!(not_found.len(), 1);
+        assert_eq!(not_found[0].as_str().unwrap(), "nonexistent");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_doc_ids_empty_array_returns_error() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+        let progress = ProgressReporter::Silent;
+
+        let args = serde_json::json!({"doc_ids": []});
+        let result = check_repository(&db, &embedding, &args, &progress)
+            .await
+            .unwrap();
+        assert!(result.get("error").is_some());
     }
 }
