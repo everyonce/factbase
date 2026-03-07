@@ -26,7 +26,7 @@ use crate::models::{normalize_pair, DuplicatePair};
 use super::options::ScanOptions;
 use super::progress::OptionalProgress;
 use embedding::{run_embedding_phase, EmbeddingPhaseInput};
-// facts module used by check_repository mode=embeddings
+// facts module used by scan pass 3 (fact embedding generation)
 use links::{run_link_detection_phase, LinkPhaseInput};
 use results::{build_interrupted_result, InterruptedResultParams};
 
@@ -587,7 +587,7 @@ pub async fn full_scan(
     let link_detection_ms = link_output.link_detection_ms;
     let docs_link_detected = link_output.docs_link_detected;
 
-    // Pass 3: Count documents needing fact embeddings (deferred to check_repository mode=embeddings)
+    // Pass 3: Generate fact embeddings for changed documents
     if !ctx.opts.skip_embeddings {
     let fact_ids = if !changed_ids.is_empty() {
         changed_ids.clone()
@@ -599,11 +599,20 @@ pub async fn full_scan(
             HashSet::new()
         }
     };
-    result.fact_embeddings_needed = fact_ids.len();
-    // Invalidate fact pair cache when docs changed (embeddings will be regenerated later)
     if !fact_ids.is_empty() {
         let _ = db.invalidate_fact_pair_cache();
+        ctx.progress.phase("Generating fact embeddings");
+        let fact_output = facts::run_fact_embedding_phase(&facts::FactEmbeddingInput {
+            changed_ids: &fact_ids,
+            embedding: ctx.embedding,
+            db,
+            embedding_batch_size: ctx.opts.embedding_batch_size,
+            progress: ctx.progress,
+            deadline: ctx.opts.deadline,
+        }).await?;
+        result.fact_embeddings_generated = fact_output.generated;
     }
+    result.fact_embeddings_needed = 0;
     } // end skip_embeddings check
 
     // Set total document count

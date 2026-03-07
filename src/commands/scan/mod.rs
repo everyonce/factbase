@@ -249,9 +249,6 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         if result.fact_embeddings_generated > 0 {
             println!("{} fact embeddings generated", result.fact_embeddings_generated);
         }
-        if result.fact_embeddings_needed > 0 {
-            println!("{} documents need fact embeddings (run: factbase check --mode embeddings)", result.fact_embeddings_needed);
-        }
         if let Some(ref stats) = result.stats {
             println!("\nTiming:");
             println!(
