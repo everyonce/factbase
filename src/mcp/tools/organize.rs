@@ -232,6 +232,10 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
                 "rationale": c.rationale,
             })
         }).collect::<Vec<_>>(),
+        "ghost_count": ghost_files.len(),
+        "merge_count": merge_candidates.len(),
+        "split_count": split_candidates.len(),
+        "misplaced_count": misplaced_candidates.len(),
         "duplicate_entries": duplicate_entries.len(),
         "stale_entries": stale_entries.len(),
         "ghost_file_count": ghost_files.len(),

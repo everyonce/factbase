@@ -118,12 +118,26 @@ async fn check_questions(
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
+    let docs_clean = results.iter().filter(|r| r.new_questions == 0 && r.existing_unanswered == 0).count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
     let total_pruned: usize = results.iter().map(|r| r.pruned_questions).sum();
     let total_existing: usize = results.iter().map(|r| r.existing_unanswered + r.existing_answered).sum();
     let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
     let total_suppressed: usize = results.iter().map(|r| r.suppressed_by_review).sum();
     let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
+
+    // Build question type breakdown by parsing generated questions from documents
+    let mut type_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for doc in &all_docs {
+        if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
+            for q in &questions {
+                if !q.answered {
+                    *type_counts.entry(q.question_type.as_str().to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
     let details: Vec<Value> = results.iter()
         .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)
         .map(|r| serde_json::json!({
@@ -135,6 +149,7 @@ async fn check_questions(
     Ok(serde_json::json!({
         "documents_scanned": output.docs_processed,
         "documents_with_new_questions": docs_with_questions,
+        "documents_clean": docs_clean,
         "total_questions_generated": total_new + total_existing,
         "new_unanswered": total_new,
         "already_in_queue": total_existing,
@@ -142,6 +157,7 @@ async fn check_questions(
         "skipped_reviewed": total_skipped,
         "suppressed_by_prior_answers": total_suppressed,
         "deferred_count": deferred_count,
+        "questions_by_type": type_counts,
         "dry_run": dry_run,
         "details": details,
     }))

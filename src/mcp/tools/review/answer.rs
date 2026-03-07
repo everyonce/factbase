@@ -399,11 +399,31 @@ pub fn bulk_answer_questions(
         }
     }
 
+    // Count remaining unanswered questions across all docs
+    let mut remaining_unanswered = 0usize;
+    let mut total_deferred = 0usize;
+    let docs_with_queues = db.get_documents_with_review_queue(None).unwrap_or_default();
+    for doc in &docs_with_queues {
+        if let Some(questions) = parse_review_queue(&doc.content) {
+            for q in &questions {
+                if q.answered {
+                    // skip
+                } else if q.is_deferred() {
+                    total_deferred += 1;
+                } else {
+                    remaining_unanswered += 1;
+                }
+            }
+        }
+    }
+
     Ok(serde_json::json!({
         "success": true,
         "answered": results.len(),
         "results": results,
-        "message": format!("Answered {} question(s). Run `factbase review --apply` to process.", results.len())
+        "remaining_unanswered": remaining_unanswered,
+        "remaining_deferred": total_deferred,
+        "message": format!("Answered {} question(s). {} unanswered remain. Run `factbase review --apply` to process.", results.len(), remaining_unanswered)
     }))
 }
 
