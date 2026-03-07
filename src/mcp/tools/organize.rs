@@ -326,14 +326,13 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
 }
 
 /// Merge two documents into one with fact-level accounting.
-#[instrument(name = "mcp_organize_merge", skip(db, llm, args, progress))]
+#[instrument(name = "mcp_organize_merge", skip(db, _llm, args, progress))]
 async fn organize_merge(
     db: &Database,
-    llm: Option<&dyn LlmProvider>,
+    _llm: Option<&dyn LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let llm = llm.ok_or_else(|| FactbaseError::internal("LLM provider required for organize_merge"))?;
     let doc1 = get_str_arg_required(args, "doc1")?;
     let doc2 = get_str_arg_required(args, "doc2")?;
     let into = get_str_arg(args, "into");
@@ -362,7 +361,7 @@ async fn organize_merge(
     let repo = resolve_repo(db, Some(d1.repo_id.as_str()))?;
 
     progress.log(&format!("Planning merge: keep {} ← {}", keep_id, merge_id));
-    let plan = plan_merge(&keep_id, &[merge_id.as_str()], db, llm).await?;
+    let plan = plan_merge(&keep_id, &[merge_id.as_str()], db).await?;
 
     let temporal_issues: Vec<Value> = plan.temporal_issues.iter().map(|t| serde_json::json!({
         "line_ref": t.line_ref,
@@ -420,14 +419,13 @@ async fn organize_merge(
 }
 
 /// Split a multi-topic document into separate documents.
-#[instrument(name = "mcp_organize_split", skip(db, llm, args, progress))]
+#[instrument(name = "mcp_organize_split", skip(db, _llm, args, progress))]
 async fn organize_split(
     db: &Database,
-    llm: Option<&dyn LlmProvider>,
+    _llm: Option<&dyn LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let llm = llm.ok_or_else(|| FactbaseError::internal("LLM provider required for organize_split"))?;
     let doc_id = get_str_arg_required(args, "doc_id")?;
     let at = get_str_arg(args, "at").map(String::from);
     let dry_run = get_bool_arg(args, "dry_run", false);
@@ -456,7 +454,7 @@ async fn organize_split(
     }
 
     progress.log(&format!("Planning split for {} ({} sections)", doc_id, sections.len()));
-    let plan = plan_split(&doc_id, &sections, db, llm).await?;
+    let plan = plan_split(&doc_id, &sections, db).await?;
 
     let temporal_issues: Vec<Value> = plan.temporal_issues.iter().map(|t| serde_json::json!({
         "line_ref": t.line_ref,

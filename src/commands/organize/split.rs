@@ -5,7 +5,7 @@
 use super::SplitArgs;
 use super::merge::TemporalIssueOutput;
 use crate::commands::{
-    confirm_prompt, find_repo_with_config, print_output, setup_llm_with_timeout, OutputFormat,
+    confirm_prompt, find_repo_with_config, print_output, OutputFormat,
 };
 use factbase::{
     execute_split, extract_sections, plan_split, verify_split, SplitPlan, SplitResult, SplitSection,
@@ -77,7 +77,7 @@ impl SplitResultOutput {
 
 /// Run the split command.
 pub async fn run(args: SplitArgs) -> anyhow::Result<()> {
-    let (config, db, repo) = find_repo_with_config(None)?;
+    let (_config, db, repo) = find_repo_with_config(None)?;
     let format = OutputFormat::resolve(args.json, args.format);
 
     // Validate document ID exists
@@ -119,9 +119,8 @@ pub async fn run(args: SplitArgs) -> anyhow::Result<()> {
         );
     }
 
-    // Create split plan using LLM
-    let llm = setup_llm_with_timeout(&config, args.timeout).await;
-    let plan = plan_split(&args.doc_id, &sections, &db, &llm).await?;
+    // Create split plan
+    let plan = plan_split(&args.doc_id, &sections, &db).await?;
 
     if args.dry_run {
         let output = build_plan_output(&doc.title, &plan, &sections);

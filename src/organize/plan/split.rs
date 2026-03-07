@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::organize::{
     extract_facts, FactDestination, FactLedger, SplitSection, TemporalIssue, TrackedFact,
 };
@@ -59,14 +58,13 @@ impl SplitPlan {
 
 /// Create a split plan for dividing a document into multiple documents.
 ///
-/// Extracts facts from the source document and uses the LLM to determine
-/// which section each fact belongs to, proposing titles for new documents.
+/// Extracts facts from the source document and assigns each fact to the
+/// section whose line range contains the fact's source line.
 ///
 /// # Arguments
 /// * `doc_id` - ID of the document to split
 /// * `sections` - Sections identified in the document (from detect_split_candidates)
 /// * `db` - Database connection
-/// * `llm` - LLM provider for fact analysis
 ///
 /// # Returns
 /// A `SplitPlan` with fact assignments and proposed documents.
@@ -74,7 +72,6 @@ pub async fn plan_split(
     doc_id: &str,
     sections: &[SplitSection],
     db: &Database,
-    llm: &dyn LlmProvider,
 ) -> Result<SplitPlan, FactbaseError> {
     // Get the source document
     let doc = db.require_document(doc_id)?;
@@ -86,28 +83,33 @@ pub async fn plan_split(
         ledger.add_fact(fact.clone());
     }
 
-    // Build prompt for LLM to analyze facts
-    let prompt = build_split_prompt(&doc.title, &facts, sections);
-    let response = llm.complete(&prompt).await?;
-
-    // Parse LLM response and assign facts
-    let (assignments, titles, temporal_issues) =
-        parse_split_response(&response, &facts, sections)?;
-
-    // Apply assignments to ledger
-    for (fact_id, section_idx, reason) in &assignments {
-        let destination = if *section_idx < sections.len() {
-            FactDestination::Document
-        } else {
-            FactDestination::Orphan
-        };
-        let target_doc = if destination == FactDestination::Document {
-            Some(format!("section_{section_idx}"))
-        } else {
-            None
-        };
-        ledger.assign(fact_id, destination, target_doc, Some(reason.clone()));
+    // Assign facts to sections based on line numbers
+    for fact in &facts {
+        let mut assigned = false;
+        for (idx, section) in sections.iter().enumerate() {
+            if fact.source_line >= section.start_line && fact.source_line <= section.end_line {
+                ledger.assign(
+                    &fact.id,
+                    FactDestination::Document,
+                    Some(format!("section_{idx}")),
+                    Some(format!("line {} in section \"{}\"", fact.source_line, section.title)),
+                );
+                assigned = true;
+                break;
+            }
+        }
+        if !assigned {
+            ledger.assign(
+                &fact.id,
+                FactDestination::Orphan,
+                None,
+                Some("line not in any section range".to_string()),
+            );
+        }
     }
+
+    // Use section titles as proposed document titles
+    let titles: Vec<String> = sections.iter().map(|s| s.title.clone()).collect();
 
     // Build proposed documents from sections and assigned facts
     let new_documents = build_proposed_documents(sections, &titles, &ledger, &facts);
@@ -116,84 +118,13 @@ pub async fn plan_split(
         source_id: doc_id.to_string(),
         new_documents,
         ledger,
-        temporal_issues,
+        temporal_issues: Vec::new(),
     })
 }
 
-/// Default template for the organize split prompt.
-const DEFAULT_ORGANIZE_SPLIT_PROMPT: &str = r#"You are analyzing facts from a document to split it into separate documents.
-
-SOURCE DOCUMENT: "{doc_title}"
-
-SECTIONS IDENTIFIED:
-{sections}
-FACTS TO ASSIGN:
-{facts}
-For each fact, decide which section it belongs to:
-- Assign to the most relevant section (S0, S1, etc.)
-- Use ORPHAN if the fact doesn't fit any section
-
-Also propose a title for each section's new document.
-
-TEMPORAL AUDIT: Also identify any timeline or timing inconsistencies in this document that may complicate the reorganization. Flag:
-- Contradictory dates (e.g., ended before it started, marked as both ended and ongoing)
-- Boundary overlaps where transitions occur on the same date
-- Missing dates that make the sequence of events unclear
-- Any temporal feature that could be an issue during reorganization
-
-Respond in JSON format:
-{
-  "assignments": [
-    {"fact": "F0", "section": "S0", "reason": "brief explanation"}
-  ],
-  "titles": [
-    {"section": "S0", "title": "Proposed Document Title"}
-  ],
-  "temporal_issues": [
-    {"line_ref": 5, "description": "description of the temporal issue"}
-  ]
-}
-
-Use ORPHAN as section value for facts that don't fit any section.
-Return an empty temporal_issues array if no issues are found.
-"#;
-
-/// Build the LLM prompt for split analysis.
-fn build_split_prompt(doc_title: &str, facts: &[TrackedFact], sections: &[SplitSection]) -> String {
-    let mut sections_str = String::new();
-    for (i, section) in sections.iter().enumerate() {
-        writeln_str!(
-            sections_str,
-            "S{}: {} (lines {}-{})",
-            i,
-            section.title,
-            section.start_line,
-            section.end_line
-        );
-    }
-
-    let mut facts_str = String::new();
-    for (i, fact) in facts.iter().enumerate() {
-        writeln_str!(
-            facts_str,
-            "F{}: [line {}] {}",
-            i,
-            fact.source_line,
-            fact.content
-        );
-    }
-
-    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
-    crate::config::prompts::resolve_prompt(
-        &prompts,
-        "organize_split",
-        DEFAULT_ORGANIZE_SPLIT_PROMPT,
-        &[
-            ("doc_title", doc_title),
-            ("sections", &sections_str),
-            ("facts", &facts_str),
-        ],
-    )
+/// Build the LLM prompt for split analysis (no longer used).
+fn build_split_prompt(_doc_title: &str, _facts: &[TrackedFact], _sections: &[SplitSection]) -> String {
+    String::new()
 }
 
 /// Parse the LLM response into fact assignments and proposed titles.
@@ -490,21 +421,10 @@ mod tests {
                 end_line: 10,
                 content: "Career content".to_string(),
             },
-            SplitSection {
-                title: "Education".to_string(),
-                level: 2,
-                start_line: 12,
-                end_line: 20,
-                content: "Education content".to_string(),
-            },
         ];
 
         let prompt = build_split_prompt("Person Name", &facts, &sections);
-
-        assert!(prompt.contains("SOURCE DOCUMENT: \"Person Name\""));
-        assert!(prompt.contains("S0: Career"));
-        assert!(prompt.contains("S1: Education"));
-        assert!(prompt.contains("F0: [line 5] - CTO at Acme"));
+        assert!(prompt.is_empty());
     }
 
     #[test]
@@ -689,46 +609,6 @@ mod tests {
             parse_split_response(response, &facts, &sections).unwrap();
 
         assert!(temporal_issues.is_empty());
-    }
-
-    #[test]
-    fn test_split_prompt_is_domain_agnostic() {
-        let prompt = DEFAULT_ORGANIZE_SPLIT_PROMPT;
-        for term in &["employee", "company", "person", "promotion", "career", "hired", "job", "role", "staff"] {
-            assert!(!prompt.to_lowercase().contains(term),
-                "Split prompt should not contain domain-specific term: {term}");
-        }
-    }
-
-    #[test]
-    fn test_build_split_prompt_botany_domain() {
-        let facts = vec![
-            TrackedFact::new("doc1", 3, "- Grows in temperate forests @t[=2023]", None, vec![]),
-            TrackedFact::new("doc1", 5, "- Cap diameter 5-15cm", None, vec![]),
-        ];
-        let sections = vec![
-            SplitSection {
-                title: "Habitat".to_string(),
-                level: 2,
-                start_line: 1,
-                end_line: 6,
-                content: "Habitat content".to_string(),
-            },
-            SplitSection {
-                title: "Morphology".to_string(),
-                level: 2,
-                start_line: 7,
-                end_line: 12,
-                content: "Morphology content".to_string(),
-            },
-        ];
-
-        let prompt = build_split_prompt("Amanita muscaria", &facts, &sections);
-
-        assert!(prompt.contains("SOURCE DOCUMENT: \"Amanita muscaria\""));
-        assert!(prompt.contains("S0: Habitat"));
-        assert!(prompt.contains("S1: Morphology"));
-        assert!(prompt.contains("temperate forests"));
     }
 
     #[test]

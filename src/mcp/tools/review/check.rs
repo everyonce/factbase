@@ -214,7 +214,7 @@ async fn check_discover(
             progress.phase("Discovering entities");
             let existing_titles: Vec<String> = docs.iter().map(|d| d.title.clone()).collect();
             let (suggested_entities, processed) = crate::organize::discover_entities(
-                &docs, &existing_titles, llm_ref, perspective.as_ref(), progress,
+                &docs, &existing_titles, perspective.as_ref(), progress,
                 entity_offset, deadline,
             )
             .await

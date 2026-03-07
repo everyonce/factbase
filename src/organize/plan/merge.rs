@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
+
 use crate::organize::{extract_facts, FactDestination, FactLedger, TemporalIssue, TrackedFact};
 
 /// A plan for merging multiple documents into one.
@@ -48,14 +48,13 @@ impl MergePlan {
 
 /// Create a merge plan for combining documents.
 ///
-/// Extracts facts from all source documents and uses the LLM to determine
-/// which facts to keep, which are duplicates, and which should be orphaned.
+/// Extracts facts from all source documents and uses a simple heuristic
+/// to assign all facts to the target document (keep everything).
 ///
 /// # Arguments
 /// * `keep_id` - ID of the document to keep (target)
 /// * `merge_ids` - IDs of documents to merge into the target
 /// * `db` - Database connection
-/// * `llm` - LLM provider for fact analysis
 ///
 /// # Returns
 /// A `MergePlan` with fact assignments and combined content.
@@ -63,7 +62,6 @@ pub async fn plan_merge(
     keep_id: &str,
     merge_ids: &[&str],
     db: &Database,
-    llm: &dyn LlmProvider,
 ) -> Result<MergePlan, FactbaseError> {
     // Get the target document
     let keep_doc = db.require_document(keep_id)?;
@@ -91,22 +89,24 @@ pub async fn plan_merge(
         all_merge_facts.push((doc.id.clone(), facts));
     }
 
-    // Build prompt for LLM to analyze facts
-    let prompt = build_merge_prompt(&keep_doc.title, &keep_facts, &all_merge_facts);
-    let response = llm.complete(&prompt).await?;
-
-    // Parse LLM response and assign facts
-    let (assignments, temporal_issues) =
-        parse_merge_response(&response, &keep_facts, &all_merge_facts)?;
-
-    // Apply assignments to ledger
-    for (fact_id, destination, reason) in assignments {
-        let target_doc = if destination == FactDestination::Document {
-            Some(keep_id.to_string())
-        } else {
-            None
-        };
-        ledger.assign(&fact_id, destination, target_doc, Some(reason));
+    // Assign all facts to the target document (let the agent decide what to prune)
+    for fact in &keep_facts {
+        ledger.assign(
+            &fact.id,
+            FactDestination::Document,
+            Some(keep_id.to_string()),
+            Some("target document fact".to_string()),
+        );
+    }
+    for (_, facts) in &all_merge_facts {
+        for fact in facts {
+            ledger.assign(
+                &fact.id,
+                FactDestination::Document,
+                Some(keep_id.to_string()),
+                Some("merged fact".to_string()),
+            );
+        }
     }
 
     // Build combined content from kept facts
@@ -117,74 +117,17 @@ pub async fn plan_merge(
         merge_ids: merge_ids.iter().map(ToString::to_string).collect(),
         ledger,
         combined_content,
-        temporal_issues,
+        temporal_issues: Vec::new(),
     })
 }
 
-/// Default template for the organize merge prompt.
-const DEFAULT_ORGANIZE_MERGE_PROMPT: &str = r#"You are analyzing facts from multiple documents to merge them into one.
-
-TARGET DOCUMENT: "{doc_title}"
-
-FACTS FROM TARGET (to keep):
-{keep_facts}
-FACTS FROM DOCUMENTS TO MERGE:
-{merge_facts}
-For each fact from the merge documents, decide:
-- KEEP: Add to target (new information)
-- DUPLICATE: Same as a fact in target (specify which K# it duplicates)
-- ORPHAN: Doesn't fit the target document's topic
-
-TEMPORAL AUDIT: Also identify any timeline or timing inconsistencies across all documents that could affect merge decisions. Flag:
-- Contradictory dates for the same event across documents
-- Overlapping date ranges that conflict when combined
-- Missing dates that make the combined timeline unclear
-- Any temporal feature that could be an issue when merging
-
-Respond in JSON format:
-{
-  "decisions": [
-    {"fact": "M<doc_id>_<index>", "action": "KEEP|DUPLICATE|ORPHAN", "reason": "brief explanation", "duplicates": "K#" (if DUPLICATE)}
-  ],
-  "temporal_issues": [
-    {"line_ref": 5, "description": "description of the temporal issue"}
-  ]
-}
-
-Only include facts from merge documents (M*), not target facts (K*).
-Return an empty temporal_issues array if no issues are found.
-"#;
-
-/// Build the LLM prompt for merge analysis.
+/// Build the LLM prompt for merge analysis (no longer used).
 fn build_merge_prompt(
-    keep_title: &str,
-    keep_facts: &[TrackedFact],
-    merge_facts: &[(String, Vec<TrackedFact>)],
+    _keep_title: &str,
+    _keep_facts: &[TrackedFact],
+    _merge_facts: &[(String, Vec<TrackedFact>)],
 ) -> String {
-    let mut keep_str = String::new();
-    for (i, fact) in keep_facts.iter().enumerate() {
-        writeln_str!(keep_str, "K{}: {}", i, fact.content);
-    }
-
-    let mut merge_str = String::new();
-    for (doc_id, facts) in merge_facts {
-        writeln_str!(merge_str, "\nFrom document {}:", doc_id);
-        for (i, fact) in facts.iter().enumerate() {
-            writeln_str!(merge_str, "M{}_{}: {}", doc_id, i, fact.content);
-        }
-    }
-
-    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
-    crate::config::prompts::resolve_prompt(
-        &prompts,
-        "organize_merge",
-        DEFAULT_ORGANIZE_MERGE_PROMPT,
-        &[
-            ("doc_title", keep_title),
-            ("keep_facts", &keep_str),
-            ("merge_facts", &merge_str),
-        ],
-    )
+    String::new()
 }
 
 /// Parse the LLM response into fact assignments.
@@ -449,10 +392,7 @@ mod tests {
         )];
 
         let prompt = build_merge_prompt("Person Name", &keep_facts, &merge_facts);
-
-        assert!(prompt.contains("TARGET DOCUMENT: \"Person Name\""));
-        assert!(prompt.contains("K0: - CTO at Acme"));
-        assert!(prompt.contains("M0: - VP at BigCo") || prompt.contains("Mdoc2_0: - VP at BigCo"));
+        assert!(prompt.is_empty());
     }
 
     #[test]
@@ -567,30 +507,6 @@ mod tests {
             parse_merge_response(response, &keep_facts, &merge_facts).unwrap();
 
         assert!(temporal_issues.is_empty());
-    }
-
-    #[test]
-    fn test_merge_prompt_is_domain_agnostic() {
-        let prompt = DEFAULT_ORGANIZE_MERGE_PROMPT;
-        for term in &["employee", "company", "person", "promotion", "career", "hired", "job", "role", "staff"] {
-            assert!(!prompt.to_lowercase().contains(term),
-                "Merge prompt should not contain domain-specific term: {term}");
-        }
-    }
-
-    #[test]
-    fn test_build_merge_prompt_botany_domain() {
-        let keep_facts = vec![TrackedFact::new("doc1", 1, "- Native to North America", None, vec![])];
-        let merge_facts = vec![(
-            "doc2".to_string(),
-            vec![TrackedFact::new("doc2", 1, "- Fruiting season: autumn", None, vec![])],
-        )];
-
-        let prompt = build_merge_prompt("Chanterelle", &keep_facts, &merge_facts);
-
-        assert!(prompt.contains("TARGET DOCUMENT: \"Chanterelle\""));
-        assert!(prompt.contains("Native to North America"));
-        assert!(prompt.contains("Fruiting season: autumn"));
     }
 
     #[test]
