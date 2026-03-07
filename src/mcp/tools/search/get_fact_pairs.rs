@@ -88,11 +88,40 @@ pub fn get_fact_pairs(db: &Database, args: &Value) -> Result<Value, FactbaseErro
         }
     }
 
+    // Compute stats
+    let mut docs_involved: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    let mut min_sim = f32::MAX;
+    let mut max_sim = f32::MIN;
+    for p in &pairs_json {
+        if let Some(s) = p.get("similarity").and_then(|v| v.as_f64()) {
+            let s = s as f32;
+            if s < min_sim { min_sim = s; }
+            if s > max_sim { max_sim = s; }
+        }
+        if let Some(id) = p.pointer("/fact_a/doc_id").and_then(|v| v.as_str()) {
+            docs_involved.insert(id);
+        }
+        if let Some(id) = p.pointer("/fact_b/doc_id").and_then(|v| v.as_str()) {
+            docs_involved.insert(id);
+        }
+    }
+
+    let similarity_range = if pairs_json.is_empty() {
+        Value::Null
+    } else {
+        serde_json::json!({
+            "min": (min_sim * 1000.0).round() / 1000.0,
+            "max": (max_sim * 1000.0).round() / 1000.0,
+        })
+    };
+
     Ok(serde_json::json!({
         "pairs": pairs_json,
         "total_fact_embeddings": fact_count,
         "total_pairs_above_threshold": all_pairs.len(),
         "pairs_returned": pairs_json.len(),
+        "docs_involved": docs_involved.len(),
+        "similarity_range": similarity_range,
     }))
 }
 

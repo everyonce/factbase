@@ -95,9 +95,25 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
         }
     }
 
+    // Compute stats
+    let docs_analyzed = candidates.len();
+    let avg_similarity = if suggestions.is_empty() {
+        0.0
+    } else {
+        let total_sim: f64 = suggestions.iter().filter_map(|s| {
+            s.get("candidates").and_then(|c| c.as_array()).map(|arr| {
+                arr.iter().filter_map(|c| c.get("similarity").and_then(|v| v.as_f64())).sum::<f64>()
+                    / arr.len().max(1) as f64
+            })
+        }).sum();
+        ((total_sim / suggestions.len() as f64) * 1000.0).round() / 1000.0
+    };
+
     Ok(serde_json::json!({
         "suggestions": suggestions,
-        "total": suggestions.len()
+        "total": suggestions.len(),
+        "docs_analyzed": docs_analyzed,
+        "avg_similarity": avg_similarity,
     }))
 }
 

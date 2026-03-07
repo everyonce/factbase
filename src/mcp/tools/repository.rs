@@ -83,7 +83,16 @@ pub async fn scan_repository(
     // Acquire write guard right before full_scan — setup above is read-only
     let _guard = WriteGuard::try_acquire()?;
 
-    progress.log(&format!("Scanning repository '{}'...", repo.id));
+    // --- Start-of-operation status ---
+    let files = scanner.find_markdown_files(&repo.path);
+    let total_files = files.len();
+    let existing_docs = db.get_documents_for_repo(&repo.id).unwrap_or_default();
+    let existing_count = existing_docs.len();
+    let provider_name = &config.embedding.provider;
+    progress.log(&format!(
+        "Scanning repository '{}': {} files found, {} existing docs, embedding: {} ({}d)",
+        repo.id, total_files, existing_count, provider_name, provider_dim
+    ));
 
     let ctx = ScanContext {
         scanner: &scanner,
@@ -149,12 +158,15 @@ pub async fn scan_repository(
 
     let fact_hint: Option<String> = None;
 
+    let duration_ms = result.stats.as_ref().map(|s| s.total_ms).unwrap_or(0);
+
     Ok(serde_json::json!({
         "added": result.added,
         "updated": result.updated,
         "unchanged": result.unchanged,
         "reindexed": result.reindexed,
         "deleted": result.deleted,
+        "moved": result.moved,
         "links_detected": result.links_detected,
         "fact_embeddings_generated": result.fact_embeddings_generated,
         "fact_embeddings_needed": result.fact_embeddings_needed,
@@ -162,6 +174,9 @@ pub async fn scan_repository(
         "embeddings_skipped": result.embeddings_skipped,
         "temporal_coverage_percent": temporal_coverage,
         "source_coverage_percent": source_coverage,
+        "duration_ms": duration_ms,
+        "embedding_provider": config.embedding.provider,
+        "embedding_dimension": provider_dim,
         "summary": summary,
         "hint": if result.links_detected == 0 && result.total > 1 {
             Some("Tip: Link detection finds entity title mentions in document text. If you expected links, check that documents reference other entities by their exact title (not markdown links or abbreviations).")
@@ -207,10 +222,12 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // Create .factbase dir and perspective.yaml if needed
     let factbase_dir = abs_path.join(".factbase");
+    let factbase_dir_created = !factbase_dir.exists();
     std::fs::create_dir_all(&factbase_dir)
         .map_err(|e| FactbaseError::internal(format!("Cannot create .factbase dir: {e}")))?;
     let perspective_path = abs_path.join("perspective.yaml");
-    if !perspective_path.exists() {
+    let perspective_created = !perspective_path.exists();
+    if perspective_created {
         let _ = std::fs::write(&perspective_path, crate::models::PERSPECTIVE_TEMPLATE);
     }
 
@@ -225,6 +242,39 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     };
     db.upsert_repository(&repo)?;
 
+    // Count markdown files for the status report
+    let md_count = std::fs::read_dir(&abs_path)
+        .ok()
+        .map(|entries| {
+            fn count_md(dir: &std::path::Path) -> usize {
+                std::fs::read_dir(dir)
+                    .ok()
+                    .map(|entries| {
+                        entries.filter_map(|e| e.ok()).map(|e| {
+                            let p = e.path();
+                            if p.is_dir() && p.file_name().map_or(false, |n| !n.to_string_lossy().starts_with('.')) {
+                                count_md(&p)
+                            } else if p.extension().map_or(false, |ext| ext == "md") {
+                                1
+                            } else {
+                                0
+                            }
+                        }).sum()
+                    })
+                    .unwrap_or(0)
+            }
+            count_md(&abs_path)
+        })
+        .unwrap_or(0);
+
+    let mut created_items = Vec::new();
+    if factbase_dir_created {
+        created_items.push(".factbase/");
+    }
+    if perspective_created {
+        created_items.push("perspective.yaml");
+    }
+
     info!(
         "Initialized repository '{}' at {}",
         repo_id,
@@ -235,7 +285,9 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         "id": repo_id,
         "name": repo_name,
         "path": abs_path.to_string_lossy(),
-        "message": format!("Repository '{}' initialized. Call scan_repository to index documents.", repo_id)
+        "created": created_items,
+        "markdown_files_found": md_count,
+        "message": format!("Repository '{}' initialized at {}. {} markdown files found. Call scan_repository to index.", repo_id, abs_path.display(), md_count)
     }))
 }
 

@@ -52,8 +52,33 @@ pub fn embeddings_import(db: &Database, args: &Value) -> Result<Value, FactbaseE
 /// MCP tool: get embedding status.
 pub fn embeddings_status_tool(db: &Database) -> Result<Value, FactbaseError> {
     let config = Config::load(None).unwrap_or_default();
-    let model = config.embedding.model;
-    let info = embeddings_io::embeddings_status(db, None, &model)?;
-    Ok(serde_json::to_value(&info)
-        .map_err(|e| FactbaseError::internal(format!("Serialization error: {e}")))?)
+    let config_model = &config.embedding.model;
+    let config_dim = config.embedding.dimension;
+    let info = embeddings_io::embeddings_status(db, None, config_model)?;
+
+    let mut result = serde_json::to_value(&info)
+        .map_err(|e| FactbaseError::internal(format!("Serialization error: {e}")))?;
+
+    // Show DB model vs config model if they differ
+    let db_model = db.get_stored_embedding_model().ok().flatten();
+    let db_dim = db.get_stored_embedding_dim().ok().flatten();
+
+    if let Some(obj) = result.as_object_mut() {
+        obj.insert("config_model".to_string(), serde_json::json!(config_model));
+        obj.insert("config_dimension".to_string(), serde_json::json!(config_dim));
+        if let Some(ref stored) = db_model {
+            if stored != config_model {
+                obj.insert("db_model".to_string(), serde_json::json!(stored));
+                obj.insert("model_mismatch".to_string(), serde_json::json!(true));
+            }
+        }
+        if let Some(stored_dim) = db_dim {
+            if stored_dim != config_dim {
+                obj.insert("db_dimension".to_string(), serde_json::json!(stored_dim));
+                obj.insert("dimension_mismatch".to_string(), serde_json::json!(true));
+            }
+        }
+    }
+
+    Ok(result)
 }

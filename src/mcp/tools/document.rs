@@ -206,11 +206,16 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Write the file
     fs::write(&file_path, &doc_content)?;
 
+    // Derive type from path for status report
+    let doc_type = crate::processor::DocumentProcessor::new()
+        .derive_type(&file_path, &repo.path);
+
     let mut response = serde_json::json!({
         "id": id,
         "title": title,
+        "doc_type": doc_type,
         "file_path": file_path.to_string_lossy(),
-        "message": "Document created. Run scan to index."
+        "message": format!("Document '{}' ({}) created at {}. Run scan to index.", title, id, path)
     });
     if let Some(warning) = content_coverage_warning(content) {
         response["warning"] = Value::String(warning);
@@ -319,7 +324,9 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         "id": id,
         "title": title,
         "file_path": file_path.to_string_lossy(),
-        "message": "Document updated. Run scan to re-index."
+        "title_changed": new_title.is_some(),
+        "content_changed": new_content.is_some(),
+        "message": format!("Document '{}' ({}) updated. Run scan to re-index.", title, id)
     }))
 }
 
@@ -351,7 +358,9 @@ pub fn delete_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     Ok(serde_json::json!({
         "id": id,
         "title": doc.title,
-        "message": "Document deleted."
+        "doc_type": doc.doc_type,
+        "file_path": doc.file_path,
+        "message": format!("Document '{}' ({}) deleted.", doc.title, id)
     }))
 }
 
