@@ -4,7 +4,7 @@
 
 use super::MergeArgs;
 use crate::commands::{
-    confirm_prompt, find_repo_with_config, print_output, setup_llm_with_timeout, OutputFormat,
+    confirm_prompt, find_repo_with_config, print_output, OutputFormat,
 };
 use factbase::{execute_merge, plan_merge, verify_merge, MergePlan, MergeResult};
 use serde::Serialize;
@@ -78,7 +78,7 @@ impl MergeResultOutput {
 
 /// Run the merge command.
 pub async fn run(args: MergeArgs) -> anyhow::Result<()> {
-    let (config, db, repo) = find_repo_with_config(None)?;
+    let (_config, db, repo) = find_repo_with_config(None)?;
     let format = OutputFormat::resolve(args.json, args.format);
 
     // Validate document IDs exist
@@ -128,9 +128,8 @@ pub async fn run(args: MergeArgs) -> anyhow::Result<()> {
         &doc2.title
     };
 
-    // Create merge plan using LLM
-    let llm = setup_llm_with_timeout(&config, args.timeout).await;
-    let plan = plan_merge(keep_id, &[merge_id], &db, &llm).await?;
+    // Create merge plan
+    let plan = plan_merge(keep_id, &[merge_id], &db).await?;
 
     if args.dry_run {
         let output = MergePlanOutput {
