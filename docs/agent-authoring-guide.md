@@ -170,14 +170,20 @@ Use markdown footnotes to cite sources. This enables fact verification and confi
 
 ### Source Traceability (Required)
 
-Every source MUST include enough detail to locate the original data. A platform name alone is never sufficient.
+Every source MUST include enough detail to locate the original data. The standard: **someone else could independently find the same source using only your citation.**
 
-**Good sources** — traceable back to original data:
+A platform name alone is never sufficient.
+
+**Good sources** — independently verifiable:
 ```markdown
 [^1]: LinkedIn profile (linkedin.com/in/jsmith), scraped 2024-01-15
 [^2]: Slack #project-alpha, 2024-01-10, https://workspace.slack.com/archives/C01234/p1234
 [^3]: Email from Jane Doe, subject "Q4 Reorg", 2024-01-15
 [^4]: Author knowledge, see [[author-knowledge-doc]]
+[^5]: https://docs.aws.amazon.com/lambda/latest/dg/lambda-urls.html, accessed 2024-06-01
+[^6]: RFC 9110, Section 15.5
+[^7]: "Designing Data-Intensive Applications" by Martin Kleppmann, p. 321
+[^8]: ISBN 978-1-4919-5038-4, Chapter 9
 ```
 
 **Bad sources** — cannot be verified or relocated:
@@ -186,7 +192,13 @@ Every source MUST include enough detail to locate the original data. A platform 
 [^2]: Slack message   ← which channel? which message?
 [^3]: Outlook         ← what email? from whom?
 [^4]: Internal        ← internal what?
+[^5]: AWS documentation  ← which page? which service?
+[^6]: Wikipedia       ← which article?
+[^7]: Internal docs   ← which document? where?
+[^8]: Author knowledge ← agents must never use this; reserved for human owner
 ```
+
+**The rule for agents:** Before writing a fact, verify it with one of your available tools and cite the specific result. If you found it via web search, cite the URL. If you found it in a file, cite the path. If you cannot verify a fact with your tools, do not add it — unverified claims degrade the knowledge base.
 
 ### Author Knowledge Documents
 
