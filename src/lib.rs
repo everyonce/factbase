@@ -109,7 +109,7 @@ pub use processor::{
     DocumentProcessor,
 };
 pub use progress::{ProgressReporter, ProgressSender};
-pub use question_generator::check::{extract_vocabulary, VocabCandidate};
+pub use question_generator::check::VocabCandidate;
 pub use question_generator::cross_validate::make_pair_id;
 pub use question_generator::{
     collect_defined_terms, extract_acronym_from_question, extract_defined_terms, is_glossary_doc,

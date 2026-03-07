@@ -112,7 +112,7 @@ pub async fn check_all_documents(
     docs: &[Document],
     db: &Database,
     _embedding: &dyn EmbeddingProvider,
-    llm: Option<&dyn LlmProvider>,
+    _llm: Option<&dyn LlmProvider>,
     config: &CheckConfig,
     progress: &ProgressReporter,
 ) -> Result<CheckOutput, crate::error::FactbaseError> {
@@ -353,17 +353,8 @@ pub async fn check_all_documents(
         run_placement_check(docs, db, &mut all_results);
     }
 
-    // Vocabulary extraction (requires LLM).
-    let vocabulary_candidates = if llm.is_some()
-        && !deadline_hit
-        && config.deadline.is_none_or(|d| Instant::now() <= d)
-    {
-        progress.phase("Extracting domain vocabulary");
-        let active_doc_refs: Vec<&Document> = all_results.iter().map(|(d, ..)| **d).collect();
-        extract_vocabulary(&active_doc_refs, &defined_terms, llm.unwrap(), config.deadline, progress, 0).await.0
-    } else {
-        Vec::new()
-    };
+    // Vocabulary extraction is now agent-driven via the discover workflow step.
+    let vocabulary_candidates = Vec::new();
 
     // Acquire write guard for non-dry-run (writes review queue to disk+DB).
     // Acquired here — after all read-only question generation — so dry-run
@@ -427,94 +418,18 @@ pub async fn check_all_documents(
     })
 }
 
-/// Default prompt for vocabulary extraction during deep_check.
-const DEFAULT_VOCAB_EXTRACT_PROMPT: &str = "\
-Identify domain-specific vocabulary, acronyms, and technical terms in these document excerpts \
-that would benefit from a glossary definition. Focus on terms that:\n\
-- Are acronyms or abbreviations (e.g., API, HCLS, BCE)\n\
-- Are domain jargon not obvious to a general reader\n\
-- Appear to have a specific meaning in this knowledge base\n\n\
-Already defined terms (skip these): {existing_terms}\n\n\
-Document excerpts:\n{excerpts}\n\n\
-Respond ONLY with a JSON array. Each element: \
-{{\"term\": \"...\", \"definition\": \"brief definition from context\", \"source_line\": <1-based line number>, \"doc_id\": \"...\"}}\n\
-Return an empty array [] if no new terms found.\n";
-
-/// Maximum content length per document for vocab extraction.
-const VOCAB_MAX_CONTENT_LEN: usize = 8_000;
-
-/// Maximum documents per vocab extraction LLM call.
-const VOCAB_BATCH_SIZE: usize = 5;
-
-/// Extract domain vocabulary candidates from documents via LLM.
-/// Returns `(candidates, docs_processed)` for resumption tracking.
+/// Extract domain vocabulary candidates from documents.
+///
+/// Previously used an LLM provider; now returns empty results.
+/// Vocabulary extraction is handled by the agent via the discover workflow step.
 pub async fn extract_vocabulary(
     docs: &[&Document],
-    defined_terms: &HashSet<String>,
-    llm: &dyn LlmProvider,
-    deadline: Option<Instant>,
-    progress: &ProgressReporter,
-    doc_offset: usize,
+    _defined_terms: &HashSet<String>,
+    _deadline: Option<Instant>,
+    _progress: &ProgressReporter,
+    _doc_offset: usize,
 ) -> (Vec<VocabCandidate>, usize) {
-    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
-    let existing = if defined_terms.is_empty() {
-        "(none)".to_string()
-    } else {
-        defined_terms.iter().cloned().collect::<Vec<_>>().join(", ")
-    };
-
-    let mut all_candidates: Vec<VocabCandidate> = Vec::new();
-    let mut seen_terms: HashSet<String> = defined_terms.iter().map(|t| t.to_lowercase()).collect();
-    let remaining = if doc_offset < docs.len() { &docs[doc_offset..] } else { &[] };
-    let mut docs_processed: usize = 0;
-
-    for (i, batch) in remaining.chunks(VOCAB_BATCH_SIZE).enumerate() {
-        if let Some(d) = deadline {
-            if Instant::now() > d {
-                break;
-            }
-        }
-        if i % 2 == 0 {
-            progress.report(doc_offset + i * VOCAB_BATCH_SIZE, docs.len(), "Extracting vocabulary");
-        }
-
-        let mut excerpts = String::new();
-        for doc in batch {
-            let body = crate::patterns::content_body(&doc.content);
-            let truncated = if body.len() > VOCAB_MAX_CONTENT_LEN {
-                &body[..VOCAB_MAX_CONTENT_LEN]
-            } else {
-                body
-            };
-            excerpts.push_str(&format!("--- Document \"{}\" [{}] ---\n{}\n\n", doc.title, doc.id, truncated));
-        }
-
-        let prompt = crate::config::prompts::resolve_prompt(
-            &prompts,
-            "vocab_extract",
-            DEFAULT_VOCAB_EXTRACT_PROMPT,
-            &[("existing_terms", &existing), ("excerpts", &excerpts)],
-        );
-
-        let response = match llm.complete(&prompt).await {
-            Ok(r) => r,
-            Err(e) => {
-                warn!("Vocabulary extraction LLM call failed: {e}");
-                continue;
-            }
-        };
-
-        let candidates: Vec<VocabCandidate> = crate::patterns::parse_json_array(&response, "vocab");
-        for c in candidates {
-            let key = c.term.to_lowercase();
-            if !key.is_empty() && seen_terms.insert(key) {
-                all_candidates.push(c);
-            }
-        }
-        docs_processed += batch.len();
-    }
-
-    (all_candidates, docs_processed)
+    (Vec::new(), docs.len())
 }
 
 /// Check if a document path is in an archive folder.
@@ -554,7 +469,7 @@ fn is_archived(file_path: &str) -> bool {
 mod tests {
     use super::*;
     use crate::database::tests::test_db;
-    use crate::embedding::test_helpers::{near_spike, spike_embedding, MockEmbedding};
+    use crate::embedding::test_helpers::MockEmbedding;
     use crate::models::Document;
     use crate::progress::ProgressReporter;
 
@@ -787,57 +702,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Fact-pair cross-validation integration tests
+    // Shared test helpers
     // -----------------------------------------------------------------------
-
-    use crate::database::tests::test_repo;
-    use crate::llm::test_helpers::MockLlm;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// Embedding provider that counts generate() calls.
-    struct CountingEmbedding {
-        calls: AtomicUsize,
-    }
-
-    impl CountingEmbedding {
-        fn new() -> Self {
-            Self { calls: AtomicUsize::new(0) }
-        }
-        fn call_count(&self) -> usize {
-            self.calls.load(Ordering::SeqCst)
-        }
-    }
-
-    impl crate::EmbeddingProvider for CountingEmbedding {
-        fn generate<'a>(&'a self, _text: &'a str) -> crate::BoxFuture<'a, Result<Vec<f32>, crate::FactbaseError>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Ok(vec![0.1; 1024]) })
-        }
-        fn dimension(&self) -> usize { 1024 }
-    }
-
-    /// LLM provider that counts complete() calls.
-    struct CountingLlm {
-        response: String,
-        calls: AtomicUsize,
-    }
-
-    impl CountingLlm {
-        fn new(response: &str) -> Self {
-            Self { response: response.to_string(), calls: AtomicUsize::new(0) }
-        }
-        fn call_count(&self) -> usize {
-            self.calls.load(Ordering::SeqCst)
-        }
-    }
-
-    impl crate::LlmProvider for CountingLlm {
-        fn complete<'a>(&'a self, _prompt: &'a str) -> crate::BoxFuture<'a, Result<String, crate::FactbaseError>> {
-            self.calls.fetch_add(1, Ordering::SeqCst);
-            let r = self.response.clone();
-            Box::pin(async move { Ok(r) })
-        }
-    }
 
     fn default_check_config() -> CheckConfig {
         CheckConfig {
@@ -848,16 +714,6 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
-        }
-    }
-
-    fn make_test_doc(id: &str, title: &str, content: &str) -> Document {
-        Document {
-            id: id.to_string(),
-            title: title.to_string(),
-            content: content.to_string(),
-            file_path: format!("{id}.md"),
-            ..Document::test_default()
         }
     }
 
@@ -935,81 +791,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_extract_vocabulary_returns_candidates() {
-        use crate::llm::test_helpers::MockLlm;
-        let llm = MockLlm::new(
-            r#"[{"term":"HCLS","definition":"Healthcare and Life Sciences","source_line":3,"doc_id":"aaa"}]"#,
-        );
+    async fn test_extract_vocabulary_returns_empty() {
         let doc = make_doc("aaa", "Project", "# Project\n\n- Expanding HCLS practice\n");
         let docs: Vec<&Document> = vec![&doc];
         let defined = HashSet::new();
         let progress = ProgressReporter::Silent;
-        let (result, processed) = extract_vocabulary(&docs, &defined, &llm, None, &progress, 0).await;
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].term, "HCLS");
-        assert_eq!(result[0].doc_id, "aaa");
+        let (result, processed) = extract_vocabulary(&docs, &defined, None, &progress, 0).await;
+        assert!(result.is_empty(), "vocabulary extraction is now agent-driven");
         assert_eq!(processed, 1);
     }
 
     #[tokio::test]
-    async fn test_extract_vocabulary_deduplicates_against_defined_terms() {
-        use crate::llm::test_helpers::MockLlm;
-        let llm = MockLlm::new(
-            r#"[{"term":"HCLS","definition":"Healthcare","source_line":3,"doc_id":"aaa"},{"term":"API","definition":"Application Programming Interface","source_line":5,"doc_id":"aaa"}]"#,
-        );
-        let doc = make_doc("aaa", "Project", "# Project\n\n- HCLS and API usage\n");
-        let docs: Vec<&Document> = vec![&doc];
-        let mut defined = HashSet::new();
-        defined.insert("HCLS".to_string());
-        let progress = ProgressReporter::Silent;
-        let (result, _) = extract_vocabulary(&docs, &defined, &llm, None, &progress, 0).await;
-        assert_eq!(result.len(), 1, "HCLS should be deduplicated");
-        assert_eq!(result[0].term, "API");
-    }
-
-    #[tokio::test]
-    async fn test_deep_check_returns_vocabulary_candidates() {
-        use crate::llm::test_helpers::MockLlm;
+    async fn test_vocabulary_candidates_always_empty() {
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
-        // LLM returns vocab on first call (cross-validate returns []), then vocab on second
-        let llm = MockLlm::new(
-            r#"[{"term":"BCE","definition":"Before Common Era","source_line":3,"doc_id":"vvv"}]"#,
-        );
         let doc = make_doc("vvv", "History", "# History\n\n- Battle of Marathon 490 BCE\n");
-        let config = default_check_config();
-        let progress = ProgressReporter::Silent;
-        let output = check_all_documents(&[doc], &db, &embedding, Some(&llm), &config, &progress)
-            .await
-            .unwrap();
-        // With LLM present (deep_check), vocabulary extraction runs
-        // MockLlm returns same response for all calls, so vocab may parse from it
-        assert!(!output.vocabulary_candidates.is_empty() || output.vocabulary_candidates.is_empty(),
-            "vocabulary_candidates field should exist on CheckOutput");
-    }
-
-    #[tokio::test]
-    async fn test_no_vocabulary_without_deep_check() {
-        let (db, _tmp) = test_db();
-        let embedding = MockEmbedding::new(4);
-        let doc = make_doc("nnn", "Test", "# Test\n\n- Uses API Gateway\n");
         let config = default_check_config();
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, None, &config, &progress)
             .await
             .unwrap();
         assert!(output.vocabulary_candidates.is_empty(),
-            "vocabulary_candidates should be empty without deep_check (no LLM)");
-    }
-
-    #[test]
-    fn test_vocab_prompt_is_domain_agnostic() {
-        // Verify the default prompt doesn't contain domain-specific terms
-        let prompt = DEFAULT_VOCAB_EXTRACT_PROMPT;
-        for term in &["employee", "company", "person", "promotion", "career", "hired"] {
-            assert!(!prompt.to_lowercase().contains(term),
-                "Vocab prompt should not contain domain-specific term: {term}");
-        }
+            "vocabulary_candidates should always be empty (agent-driven)");
     }
 
     #[tokio::test]

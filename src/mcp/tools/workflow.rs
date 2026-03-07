@@ -9,7 +9,6 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::models::{Perspective, QuestionType};
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
@@ -53,7 +52,7 @@ pub(crate) const DEFAULT_UPDATE_QUESTIONS_INSTRUCTION: &str = "Run per-document 
 
 pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call get_fact_pairs to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call answer_questions with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
-pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing entities and extract domain vocabulary.\n\n1. Call check_repository with mode='discover'. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  3. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  4. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete.\n     - New entities = new titles for the link detector to find\n  5. Record links_detected as LINKS_AFTER\n  6. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  3. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0";
+pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing entities and extract domain vocabulary.\n\n1. Call check_repository with mode='discover'. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  3. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  4. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete.\n     - New entities = new titles for the link detector to find\n  5. Record links_detected as LINKS_AFTER\n  6. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  3. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0\n\nVOCABULARY EXTRACTION:\n  7. Scan documents for undefined acronyms, abbreviations, and domain-specific terms that would benefit from a glossary definition.\n     - Use search_content or list_entities to review document content\n     - Look for uppercase acronyms (e.g., API, HCLS, BCE), technical jargon, and domain-specific terms\n     - Check existing definitions/ documents to avoid duplicates\n  8. For each new term found, either:\n     - Add it to an existing definitions/ document, OR\n     - Create a new definitions/ document if none exists\n     - Include: term, brief definition, and which documents reference it";
 
 
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
@@ -136,13 +135,10 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             Ok(improve_step(step, doc_id, &perspective, &skip, db, &wf_config))
         }
         "setup" => Ok(setup_step(step, args, &wf_config)),
-        "bootstrap" => Ok(serde_json::json!({
-            "error": "The bootstrap workflow requires an LLM provider. Make sure your factbase instance has an LLM configured.",
-            "hint": "Bootstrap is handled as an async workflow. If you're seeing this, the routing in mod.rs didn't intercept it."
-        })),
+        "bootstrap" => Ok(bootstrap(args)?),
         "list" => Ok(serde_json::json!({
             "workflows": [
-                {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure using LLM. Provide domain='mycology' (or any domain) and get suggested document types, folder structure, templates, temporal patterns, and example documents. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
+                {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure. Provide domain='mycology' (or any domain) and get instructions for generating suggested document types, folder structure, templates, and perspective. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
                 {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
                 {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
                 {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (stale, temporal, etc.)."},
@@ -335,56 +331,27 @@ fn build_bootstrap_prompt(
     )
 }
 
-/// Parse the LLM response, extracting JSON from the text.
-fn parse_bootstrap_response(response: &str) -> Option<Value> {
-    serde_json::from_str(response).ok().or_else(|| {
-        response.find('{').and_then(|start| {
-            response
-                .rfind('}')
-                .and_then(|end| serde_json::from_str(&response[start..=end]).ok())
-        })
-    })
-}
-
-/// Run the bootstrap workflow: use LLM to generate domain-specific KB structure.
-pub async fn bootstrap(
-    llm: &dyn LlmProvider,
-    args: &Value,
-) -> Result<Value, FactbaseError> {
+/// Run the bootstrap workflow: return instructions for the agent to generate domain-specific KB structure.
+pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
     let domain = get_str_arg_required(args, "domain")?;
     let entity_types = get_str_arg(args, "entity_types");
-    let _path = get_str_arg(args, "path");
 
     let prompts = crate::Config::load(None)
         .unwrap_or_default()
         .prompts;
     let prompt = build_bootstrap_prompt(&domain, entity_types, &prompts);
-    let response = llm.complete(&prompt).await?;
-
-    let suggestions = parse_bootstrap_response(&response).unwrap_or_else(|| {
-        serde_json::json!({
-            "error": "Could not parse LLM response as JSON. Raw response included.",
-            "raw_response": response
-        })
-    });
-
-    let has_error = suggestions.get("error").is_some();
 
     Ok(serde_json::json!({
         "workflow": "bootstrap",
         "domain": domain,
-        "suggestions": suggestions,
-        "next_steps": if has_error {
-            serde_json::json!([
-                "The LLM response could not be parsed. Try calling workflow='bootstrap' again with a more specific domain description.",
-            ])
-        } else {
-            serde_json::json!([
-                "Use the suggestions above as reference when configuring perspective.yaml (YAML format, not markdown) and creating documents.",
-                "⚠️ REQUIRED NEXT: Call workflow(workflow='setup', step=1) to begin the guided setup process. The setup workflow will walk you through each step (init → configure → create docs → scan → verify).",
-                "Do NOT skip the setup workflow — it provides step-by-step guidance including format rules for temporal tags and source footnotes."
-            ])
-        },
+        "instruction": prompt,
+        "expected_format": "Generate a JSON object with these 4 fields: document_types (array of {name, description}), folder_structure (array of paths), templates (object mapping type to markdown template), perspective ({focus, allowed_types}). Then proceed to setup.",
+        "next_steps": [
+            "Generate the JSON suggestions based on the instruction above.",
+            "Use the suggestions as reference when configuring perspective.yaml (YAML format, not markdown) and creating documents.",
+            "⚠️ REQUIRED NEXT: Call workflow(workflow='setup', step=1) to begin the guided setup process.",
+            "Do NOT skip the setup workflow — it provides step-by-step guidance including format rules for temporal tags and source footnotes."
+        ],
         "note": "These are suggestions — adapt them to your needs. The templates and folder structure can be modified at any time.",
         "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=1) to begin guided setup"
     }))
@@ -1728,135 +1695,42 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_bootstrap_response_valid_json() {
-        let json = r#"{"document_types": [{"name": "species"}], "folder_structure": ["species/"]}"#;
-        let result = parse_bootstrap_response(json);
-        assert!(result.is_some());
-        let v = result.unwrap();
-        assert!(v["document_types"].is_array());
-    }
-
-    #[test]
-    fn test_parse_bootstrap_response_json_in_text() {
-        let text = "Here is the structure:\n{\"document_types\": [{\"name\": \"species\"}]}\nDone.";
-        let result = parse_bootstrap_response(text);
-        assert!(result.is_some());
-        assert!(result.unwrap()["document_types"].is_array());
-    }
-
-    #[test]
-    fn test_parse_bootstrap_response_invalid() {
-        let result = parse_bootstrap_response("This is not JSON at all");
-        assert!(result.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_bootstrap_with_mock_llm() {
-        use crate::llm::test_helpers::MockLlm;
-
-        let mock_response = r##"{"document_types":[{"name":"species","description":"Mushroom species"}],"folder_structure":["species/","habitats/"],"templates":{"species":"# Species Name"},"perspective":{"focus":"Mycology research","allowed_types":["species","habitats"]}}"##;
-        let llm = MockLlm::new(mock_response);
+    fn test_bootstrap_returns_instruction() {
         let args = serde_json::json!({"domain": "mycology", "path": "/tmp/mushrooms"});
-        let result = bootstrap(&llm, &args).await.unwrap();
+        let result = bootstrap(&args).unwrap();
 
         assert_eq!(result["workflow"], "bootstrap");
         assert_eq!(result["domain"], "mycology");
-        assert!(result["suggestions"]["document_types"].is_array());
-        assert!(result["suggestions"]["folder_structure"].is_array());
-        assert!(result["suggestions"]["templates"].is_object());
-        assert!(result["suggestions"]["perspective"].is_object());
+        assert!(result["instruction"].is_string());
+        let instruction = result["instruction"].as_str().unwrap();
+        assert!(instruction.contains("mycology"), "instruction should contain domain");
+        assert!(instruction.contains("document_types"), "instruction should describe expected format");
         assert!(result["next_steps"].is_array());
         let steps = result["next_steps"].as_array().unwrap();
-        // next_steps should route into setup workflow, not list raw tool calls
         let all_steps = steps.iter().map(|s| s.as_str().unwrap_or("")).collect::<Vec<_>>().join(" ");
-        assert!(all_steps.contains("workflow"), "next_steps should mention workflow");
         assert!(all_steps.contains("setup"), "next_steps should route to setup workflow");
     }
 
-    #[tokio::test]
-    async fn test_bootstrap_unparseable_response() {
-        use crate::llm::test_helpers::MockLlm;
-
-        let llm = MockLlm::new("I don't know how to generate JSON");
-        let args = serde_json::json!({"domain": "mycology"});
-        let result = bootstrap(&llm, &args).await.unwrap();
-
-        assert_eq!(result["workflow"], "bootstrap");
-        assert!(result["suggestions"]["error"].is_string());
-        assert!(result["suggestions"]["raw_response"].is_string());
-    }
-
-    #[tokio::test]
-    async fn test_bootstrap_requires_domain() {
-        use crate::llm::test_helpers::MockLlm;
-
-        let llm = MockLlm::new("{}");
+    #[test]
+    fn test_bootstrap_requires_domain() {
         let args = serde_json::json!({});
-        let result = bootstrap(&llm, &args).await;
+        let result = bootstrap(&args);
         assert!(result.is_err());
     }
 
-    #[tokio::test]
-    async fn test_bootstrap_aviation_domain_with_entity_types() {
-        use crate::llm::test_helpers::MockLlm;
-
-        let mock_response = r##"{
-            "document_types": [
-                {"name": "aircraft", "description": "Aircraft models and variants"},
-                {"name": "airline", "description": "Commercial and cargo airlines"},
-                {"name": "airport", "description": "Airports and airfields"},
-                {"name": "incident", "description": "Aviation incidents and investigations"},
-                {"name": "regulation", "description": "Aviation regulations and standards"}
-            ],
-            "folder_structure": ["aircraft/", "airlines/", "airports/", "incidents/", "regulations/"],
-            "templates": {
-                "aircraft": "# Aircraft Name\n\n## Specifications\n- Manufacturer: @t[=2024] [^1]\n- First flight: @t[=2024] [^1]\n\n## Operational History\n- In service with: @t[2020..] [^2]\n\n---\n[^1]: Manufacturer data sheet\n[^2]: Fleet records",
-                "airline": "# Airline Name\n\n## Overview\n- Founded: @t[=1990] [^1]\n- Hub airports: [^1]\n\n## Fleet\n- Operates: @t[~2024] [^2]\n\n---\n[^1]: Corporate filings\n[^2]: Fleet tracker"
-            },
-            "perspective": {
-                "focus": "Aviation industry knowledge covering aircraft, airlines, airports, incidents, and regulations",
-                "allowed_types": ["aircraft", "airline", "airport", "incident", "regulation"]
-            }
-        }"##;
-        let llm = MockLlm::new(mock_response);
+    #[test]
+    fn test_bootstrap_with_entity_types() {
         let args = serde_json::json!({
             "domain": "aviation",
-            "entity_types": "aircraft, airlines, airports, incidents, regulations"
+            "entity_types": "aircraft, airlines, airports"
         });
-        let result = bootstrap(&llm, &args).await.unwrap();
+        let result = bootstrap(&args).unwrap();
 
         assert_eq!(result["workflow"], "bootstrap");
         assert_eq!(result["domain"], "aviation");
-
-        // Validate structural completeness of suggestions
-        let suggestions = &result["suggestions"];
-        let doc_types = suggestions["document_types"].as_array().unwrap();
-        assert!(doc_types.len() >= 3, "should suggest multiple document types");
-        for dt in doc_types {
-            assert!(dt["name"].is_string(), "each type needs a name");
-            assert!(dt["description"].is_string(), "each type needs a description");
-        }
-
-        let folders = suggestions["folder_structure"].as_array().unwrap();
-        assert!(!folders.is_empty());
-
-        let templates = suggestions["templates"].as_object().unwrap();
-        assert!(!templates.is_empty());
-        // Templates should contain temporal tags
-        for (_name, tmpl) in templates {
-            let t = tmpl.as_str().unwrap();
-            assert!(t.contains("@t["), "template should include temporal tag examples");
-            assert!(t.contains("[^"), "template should include source footnotes");
-        }
-
-        let perspective = suggestions["perspective"].as_object().unwrap();
-        assert!(perspective.contains_key("focus"));
-        assert!(perspective.contains_key("allowed_types"));
-
-        // next_steps should route to setup workflow
-        let steps = result["next_steps"].as_array().unwrap();
-        let all = steps.iter().filter_map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
-        assert!(all.contains("setup"));
+        let instruction = result["instruction"].as_str().unwrap();
+        assert!(instruction.contains("aviation"));
+        assert!(instruction.contains("aircraft, airlines, airports"));
     }
 
     #[test]
@@ -1887,11 +1761,12 @@ mod tests {
     }
 
     #[test]
-    fn test_workflow_bootstrap_without_llm_returns_error() {
+    fn test_workflow_bootstrap_returns_instruction() {
         let (db, _tmp) = test_db();
-        let args = serde_json::json!({"workflow": "bootstrap"});
+        let args = serde_json::json!({"workflow": "bootstrap", "domain": "mycology"});
         let result = workflow(&db, &args).unwrap();
-        assert!(result["error"].is_string());
+        assert_eq!(result["workflow"], "bootstrap");
+        assert!(result["instruction"].is_string());
     }
 
     #[test]
