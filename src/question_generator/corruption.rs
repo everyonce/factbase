@@ -1,6 +1,6 @@
 //! Corruption detection for the review system.
 //!
-//! Detects document corruption patterns from failed `apply_review_answers` runs
+//! Detects document corruption patterns from failed review application runs
 //! and other workflows. Generates `@q[corruption]` questions.
 
 use crate::models::{QuestionType, ReviewQuestion};

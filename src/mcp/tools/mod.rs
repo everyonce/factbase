@@ -138,10 +138,10 @@ impl McpResponse {
 /// `McpResponse` with either success result or error code/message.
 ///
 /// # Supported Tools
-/// - Search: `search_knowledge`, `search_content`, `search_knowledge (temporal)`
-/// - Entity: `get_entity`, `list_entities`, `get_perspective`, `list_repositories`, `get_document_stats`
+/// - Search: `search_knowledge`, `search_content`
+/// - Entity: `get_entity`, `list_entities`, `get_perspective`, `list_repositories`
 /// - Document: `create_document`, `update_document`, `delete_document`, `bulk_create_documents`
-/// - Review: `get_review_queue`, `answer_question`, `generate_questions`, `bulk_answer_questions`
+/// - Review: `get_review_queue`, `answer_questions`, `check_repository`
 // Dispatches a blocking tool function with cloned db and args via `run_blocking`.
 macro_rules! blocking_tool {
     ($db:expr, $args:expr, $reporter:expr, $fn:path) => {{

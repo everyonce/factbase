@@ -110,7 +110,7 @@ The agent has access to 25 tools. You don't need to know them — the workflows 
 | Search | `search_knowledge`, `search_content` |
 | Read | `get_entity`, `list_entities`, `list_repositories`, `get_perspective` |
 | Write | `create_document`, `update_document`, `delete_document`, `bulk_create_documents` |
-| Quality | `get_review_queue`, `answer_questions`, `generate_questions`, `check_repository`, `apply_review_answers`, `get_deferred_items` |
+| Quality | `get_review_queue`, `answer_questions`, `check_repository`, `get_deferred_items`, `get_fact_pairs` |
 | Workflows | `workflow` |
 | Organize | `organize_analyze`, `organize` |
 | Embeddings | `embeddings_export`, `embeddings_import`, `embeddings_status` |

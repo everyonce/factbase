@@ -142,14 +142,14 @@ pub async fn check_all_documents(
         ));
     }
 
-    // Detect documents with corruption artifacts from failed apply_review_answers
+    // Detect documents with corruption artifacts from failed review application
     let (clean_docs, corrupted_docs): (Vec<_>, Vec<_>) = active_docs
         .into_iter()
         .partition(|d| !has_corruption_artifacts(&d.content));
     if !corrupted_docs.is_empty() {
         for doc in &corrupted_docs {
             warn!(
-                "{} [{}]: skipped — contains corruption artifacts from a failed apply_review_answers run",
+                "{} [{}]: skipped — contains corruption artifacts from a failed review application",
                 doc.title, doc.id
             );
         }
@@ -217,7 +217,7 @@ pub async fn check_all_documents(
                     progress.report(idx + 1, total_active, &format!("Checking {}", doc.title));
 
                     // Prefer fresh content from disk over potentially stale database content.
-                    // apply_review_answers writes reviewed markers to files but doesn't
+                    // Review application writes reviewed markers to files but doesn't
                     // update the database, so the DB content may lack those markers.
                     let abs_path = repo_paths_ref
                         .get(&doc.repo_id)

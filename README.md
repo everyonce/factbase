@@ -176,7 +176,7 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 27 MCP tools:
+Factbase exposes 26 MCP tools:
 
 | Tool | Description |
 |------|-------------|
@@ -194,9 +194,7 @@ Factbase exposes 27 MCP tools:
 | `init_repository` | Initialize a new factbase repository at a directory path |
 | `get_review_queue` | Get pending review questions |
 | `answer_questions` | Answer or defer one or more review questions |
-| `generate_questions` | Generate review questions for a specific document |
-| `check_repository` | Run quality checks on a repository (modes: questions, cross_validate, discover) |
-| `apply_review_answers` | Apply answered review questions to document content |
+| `check_repository` | Run quality checks on a repository |
 | `get_deferred_items` | Get deferred review items needing human attention |
 | `workflow` | Run a guided workflow (update, resolve, ingest, enrich, improve) |
 | `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
@@ -207,6 +205,7 @@ Factbase exposes 27 MCP tools:
 | `embeddings_status` | Check embedding coverage and statistics |
 | `get_link_suggestions` | Find documents with few links and suggest similar unlinked candidates |
 | `store_links` | Write `[[id]]` references into document files' Links: blocks |
+| `get_fact_pairs` | Get embedding-similar fact pairs for cross-document validation |
 
 ## Document Format
 

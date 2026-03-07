@@ -1,4 +1,4 @@
-//! Search-related MCP tools: search_knowledge, search_content, search_temporal, get_fact_pairs
+//! Search-related MCP tools: search_knowledge, search_content, get_fact_pairs
 
 mod get_fact_pairs;
 mod search_content;

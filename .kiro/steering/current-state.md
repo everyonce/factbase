@@ -60,7 +60,7 @@
 - `factbase organize retype <id> --type <type>` - Override document type
 - `factbase organize apply` - Process answered orphan markers
 
-## MCP Tools (27)
+## MCP Tools (26)
 
 ### Search Operations
 | Tool | Description |
@@ -89,9 +89,7 @@
 |------|-------------|
 | `get_review_queue` | Get pending review questions |
 | `answer_questions` | Answer one or more review questions |
-| `generate_questions` | Generate review questions for a document |
-| `check_repository` | Run quality checks (modes: questions, cross_validate, discover) |
-| `apply_review_answers` | Process answered review questions |
+| `check_repository` | Run quality checks on a repository |
 | `get_deferred_items` | Get deferred questions needing human attention |
 
 ### Workflow & Scan Operations
@@ -116,6 +114,7 @@
 |------|-------------|
 | `get_link_suggestions` | Find documents with few links and suggest similar unlinked candidates |
 | `store_links` | Write `[[id]]` references into document files' Links: blocks |
+| `get_fact_pairs` | Get embedding-similar fact pairs for cross-document validation |
 
 ## Web API Endpoints (20 total, feature-gated)
 

@@ -315,7 +315,7 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     fs::write(&file_path, &doc_content)?;
 
     // Sync content and title to database so subsequent tools (answer_questions,
-    // apply_review_answers, get_entity) see the current data instead of stale pre-edit values.
+    // get_entity) see the current data instead of stale pre-edit values.
     let new_hash = crate::processor::content_hash(&doc_content);
     db.update_document_content(&id, &doc_content, &new_hash)?;
     db.update_document_title(&id, &title)?;

@@ -1,7 +1,7 @@
-//! Output validation for apply_review_answers.
+//! Output validation for review answer application.
 //!
-//! Validates LLM-rewritten sections and full documents before writing to disk,
-//! preventing document corruption from malformed LLM output.
+//! Validates rewritten sections and full documents before writing to disk,
+//! preventing document corruption from malformed output.
 
 use crate::output::truncate_str;
 use crate::patterns::{FACT_LINE_REGEX, ID_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX};

@@ -8,8 +8,8 @@
 
 ### Architecture & Patterns
 - Filesystem is truth — markdown files on disk are authoritative, SQLite is the index
-- Two-phase scanning: index documents + embeddings (pass 1), detect links via LLM (pass 2)
-- `EmbeddingProvider` and `LlmProvider` traits allow swapping backends (Bedrock default, Ollama alternative)
+- Two-phase scanning: index documents + embeddings (pass 1), detect links via string matching (pass 2)
+- `EmbeddingProvider` trait allows swapping backends (local CPU default, Bedrock/Ollama alternative)
 - `cfg!(feature = "bedrock")` in default functions enables compile-time provider switching
 - Database uses `r2d2` connection pool for thread-safe access across watcher thread and MCP server
 - MCP server supports both stdio transport (`factbase mcp`) and Streamable HTTP (`factbase serve`)
@@ -61,7 +61,7 @@
 - Binary-crate test helpers: `commands/test_helpers.rs` (`test_db`, `make_test_repo`, `make_test_doc`)
 - Binary crate CANNOT access `pub(crate)` items from lib crate — separate test helper copies required
 - `#[cfg(test)]` gated shared helper modules (e.g., `organize/test_helpers.rs`) for cross-module test dedup
-- Shared mock providers: `embedding::test_helpers` (`MockEmbedding`, `HashEmbedding`), `llm::test_helpers` (`MockLlm`)
+- Shared mock providers: `embedding::test_helpers` (`MockEmbedding`, `HashEmbedding`)
 - f32 precision in JSON: use `round()` comparison in tests, not exact equality
 - `TestScanSetup` struct in integration tests owns Config/Scanner/Processor/Embedding/LinkDetector/ScanOptions; `context(&self) -> ScanContext<'_>` borrows all fields
 - `test_scan_options()` and `test_repo(id, path)` helpers in `tests/common/mod.rs`
