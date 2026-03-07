@@ -150,7 +150,7 @@ impl Config {
         Ok(config)
     }
 
-    /// Get the effective review LLM model (review.model if set, otherwise llm.model)
+    /// Get the effective review LLM model (deprecated — LLM no longer used server-side)
     pub fn review_model(&self) -> &str {
         self.review.model.as_deref().unwrap_or(&self.llm.model)
     }
@@ -227,11 +227,6 @@ impl Config {
         if let Err(e) = validate_timeout(self.embedding.timeout_secs) {
             return Err(FactbaseError::config(
                 e.to_string().replace("--timeout", "embedding.timeout_secs"),
-            ));
-        }
-        if let Err(e) = validate_timeout(self.llm.timeout_secs) {
-            return Err(FactbaseError::config(
-                e.to_string().replace("--timeout", "llm.timeout_secs"),
             ));
         }
 
@@ -322,9 +317,9 @@ mod tests {
 
     #[test]
     fn test_validate_llm_timeout() {
-        let mut c = valid_config();
-        c.llm.timeout_secs = 301;
-        assert!(c.validate().unwrap_err().to_string().contains("llm.timeout_secs"));
+        // LLM config is kept for backward compatibility but no longer validated
+        let c = valid_config();
+        assert!(c.validate().is_ok());
     }
 
     #[test]

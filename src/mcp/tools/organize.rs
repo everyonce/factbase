@@ -5,7 +5,6 @@ use std::path::Path;
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::mcp::tools::helpers::WriteGuard;
 use crate::mcp::tools::{get_bool_arg, get_str_arg, get_str_arg_required, run_blocking};
 use crate::organize::{
@@ -33,11 +32,10 @@ fn resolve_repo(db: &Database, repo_id: Option<&str>) -> Result<crate::models::R
 
 /// Unified organize tool dispatcher. Routes to the appropriate action based on the "action" field.
 /// Supports: move, retype, apply. Merge and split are now agent-driven via get_entity + CRUD tools.
-#[instrument(name = "mcp_organize", skip(db, _embedding, _llm, args, _progress))]
+#[instrument(name = "mcp_organize", skip(db, _embedding, args, _progress))]
 pub async fn organize<E: EmbeddingProvider>(
     db: &Database,
     _embedding: &E,
-    _llm: Option<&dyn LlmProvider>,
     args: &Value,
     _progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
@@ -242,10 +240,9 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
 }
 
 /// Merge two documents into one with fact-level accounting.
-#[instrument(name = "mcp_organize_merge", skip(db, _llm, args, progress))]
+#[instrument(name = "mcp_organize_merge", skip(db, args, progress))]
 async fn organize_merge(
     db: &Database,
-    _llm: Option<&dyn LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
@@ -335,10 +332,9 @@ async fn organize_merge(
 }
 
 /// Split a multi-topic document into separate documents.
-#[instrument(name = "mcp_organize_split", skip(db, _llm, args, progress))]
+#[instrument(name = "mcp_organize_split", skip(db, args, progress))]
 async fn organize_split(
     db: &Database,
-    _llm: Option<&dyn LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {

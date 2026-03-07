@@ -196,7 +196,7 @@ mod tests {
 
         db.update_links(
             "doc2",
-            &[crate::llm::DetectedLink {
+            &[crate::link_detection::DetectedLink {
                 target_id: "doc1".into(),
                 target_title: "Doc 1".into(),
                 mention_text: "Doc 1".into(),
@@ -206,7 +206,7 @@ mod tests {
         .expect("update_links doc2");
         db.update_links(
             "doc3",
-            &[crate::llm::DetectedLink {
+            &[crate::link_detection::DetectedLink {
                 target_id: "doc1".into(),
                 target_title: "Doc 1".into(),
                 mention_text: "Doc 1".into(),

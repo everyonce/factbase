@@ -3,7 +3,6 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::mcp::tools::helpers::resolve_doc_path;
 use crate::mcp::tools::{get_bool_arg, get_str_arg, resolve_repo_filter};
 use crate::patterns::has_corruption_artifacts;
@@ -28,7 +27,7 @@ use super::format_question_json;
 ///
 /// Analyzes document content for missing temporal tags, conflicts,
 /// missing sources, ambiguous facts, stale information, and duplicates.
-/// When embedding and LLM providers are available, also runs cross-document
+/// When embedding provider is available, also runs cross-document
 /// fact validation to detect conflicts with other documents.
 /// Appends new questions to the document's review queue.
 ///
@@ -40,19 +39,18 @@ use super::format_question_json;
 /// # Returns
 /// JSON with results. For multi-doc mode, may include `continue: true` if
 /// time budget was reached before processing all documents.
-#[instrument(name = "mcp_generate_questions", skip(db, embedding, llm, args))]
+#[instrument(name = "mcp_generate_questions", skip(db, embedding, args))]
 pub async fn generate_questions(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
-    llm: Option<&dyn LlmProvider>,
     args: &Value,
 ) -> Result<Value, FactbaseError> {
     let doc_id_opt = get_str_arg(args, "doc_id");
     let dry_run = get_bool_arg(args, "dry_run", false);
 
     match doc_id_opt {
-        Some(id) => generate_questions_single(db, embedding, llm, id, dry_run).await,
-        None => generate_questions_all(db, embedding, llm, args, dry_run).await,
+        Some(id) => generate_questions_single(db, embedding, id, dry_run).await,
+        None => generate_questions_all(db, embedding, args, dry_run).await,
     }
 }
 
@@ -60,7 +58,6 @@ pub async fn generate_questions(
 async fn generate_questions_single(
     db: &Database,
     _embedding: &dyn EmbeddingProvider,
-    _llm: Option<&dyn LlmProvider>,
     doc_id: &str,
     dry_run: bool,
 ) -> Result<Value, FactbaseError> {
@@ -179,7 +176,6 @@ async fn generate_questions_single(
 async fn generate_questions_all(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
-    llm: Option<&dyn LlmProvider>,
     args: &Value,
     dry_run: bool,
 ) -> Result<Value, FactbaseError> {
@@ -227,7 +223,7 @@ async fn generate_questions_all(
             }
         }
 
-        match generate_questions_single(db, embedding, llm, &doc.id, dry_run).await {
+        match generate_questions_single(db, embedding, &doc.id, dry_run).await {
             Ok(result) => {
                 let count = result["questions_generated"].as_u64().unwrap_or(0);
                 if count > 0 {

@@ -51,7 +51,7 @@ pub async fn check_repository(
 
     // If doc_id is provided, check just that one document
     if doc_id.is_some() {
-        return super::generate_questions(db, embedding, None, args).await;
+        return super::generate_questions(db, embedding, args).await;
     }
 
     // Handle deprecated mode parameter gracefully
@@ -114,7 +114,7 @@ async fn check_questions(
         repo_id: repo_id.map(String::from),
     };
 
-    let output = check_all_documents(&all_docs, db, embedding, None, &config, progress).await?;
+    let output = check_all_documents(&all_docs, db, embedding, &config, progress).await?;
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();

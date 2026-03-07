@@ -3,7 +3,6 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::mcp::tools::get_str_arg;
 use crate::mcp::tools::helpers::WriteGuard;
 use crate::{
@@ -16,7 +15,6 @@ use tracing::info;
 pub async fn scan_repository(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
-    _llm: Option<&dyn LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {

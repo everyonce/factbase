@@ -1,6 +1,5 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
-use crate::llm::LlmProvider;
 use crate::mcp::initialize_result;
 use crate::mcp::tools::{handle_tool_call, tools_list, McpRequest, McpResponse};
 use futures::FutureExt;
@@ -44,7 +43,6 @@ fn parent_changed(_original: u32) -> bool {
 pub async fn run_stdio<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
-    llm: Option<&dyn LlmProvider>,
 ) -> anyhow::Result<()> {
     let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<io::Result<String>>();
 
@@ -88,7 +86,7 @@ pub async fn run_stdio<E: EmbeddingProvider>(
                 };
                 // Reset keepalive timer on any client activity
                 keepalive.reset();
-                if let Err(e) = handle_message(db, embedding, llm, &line, &mut writer, &ping_id).await {
+                if let Err(e) = handle_message(db, embedding, &line, &mut writer, &ping_id).await {
                     if is_broken_pipe(&e) {
                         debug!("stdout broken pipe, exiting");
                         break;
@@ -194,7 +192,6 @@ fn write_progress(
 async fn run_stdio_io<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
-    llm: Option<&dyn LlmProvider>,
     reader: impl BufRead,
     mut writer: impl Write,
 ) -> anyhow::Result<()> {
@@ -212,7 +209,7 @@ async fn run_stdio_io<E: EmbeddingProvider>(
             continue;
         }
 
-        handle_message(db, embedding, llm, &line, &mut writer, &ping_id).await?;
+        handle_message(db, embedding, &line, &mut writer, &ping_id).await?;
     }
 
     debug!("stdio loop exiting (EOF)");
@@ -223,7 +220,6 @@ async fn run_stdio_io<E: EmbeddingProvider>(
 async fn handle_message<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
-    llm: Option<&dyn LlmProvider>,
     line: &str,
     writer: &mut impl Write,
     ping_id: &AtomicU64,
@@ -271,7 +267,7 @@ async fn handle_message<E: EmbeddingProvider>(
                 };
 
                 let tool_fut = std::panic::AssertUnwindSafe(
-                    handle_tool_call(db, embedding, llm, request, progress),
+                    handle_tool_call(db, embedding, request, progress),
                 )
                 .catch_unwind();
                 tokio::pin!(tool_fut);
@@ -432,7 +428,7 @@ mod tests {
 
         let reader = Cursor::new(input);
         let mut output = Vec::new();
-        run_stdio_io(&db, &embedding, None, reader, &mut output)
+        run_stdio_io(&db, &embedding, reader, &mut output)
             .await
             .unwrap();
 
@@ -622,7 +618,7 @@ mod tests {
 
         let reader = Cursor::new(input);
         let mut output = Vec::new();
-        run_stdio_io(&db, &embedding, None, reader, &mut output)
+        run_stdio_io(&db, &embedding, reader, &mut output)
             .await
             .unwrap();
 
@@ -704,7 +700,7 @@ mod tests {
 
         let reader = Cursor::new(input);
         let mut output = Vec::new();
-        run_stdio_io(&db, &embedding, None, reader, &mut output)
+        run_stdio_io(&db, &embedding, reader, &mut output)
             .await
             .unwrap();
 
@@ -772,12 +768,12 @@ mod tests {
         let embedding = StubEmbedding;
         let ping_id = AtomicU64::new(1);
         let mut output = Vec::new();
-        handle_message(&db, &embedding, None, "", &mut output, &ping_id)
+        handle_message(&db, &embedding, "", &mut output, &ping_id)
             .await
             .unwrap();
         assert!(output.is_empty());
 
-        handle_message(&db, &embedding, None, "   ", &mut output, &ping_id)
+        handle_message(&db, &embedding, "   ", &mut output, &ping_id)
             .await
             .unwrap();
         assert!(output.is_empty());
@@ -791,7 +787,7 @@ mod tests {
         let ping_id = AtomicU64::new(1);
         let mut output = Vec::new();
         let line = r#"{"jsonrpc":"2.0","id":42,"method":"ping"}"#;
-        handle_message(&db, &embedding, None, line, &mut output, &ping_id)
+        handle_message(&db, &embedding, line, &mut output, &ping_id)
             .await
             .unwrap();
         let resp: Value = serde_json::from_str(&String::from_utf8(output).unwrap().trim()).unwrap();
@@ -813,7 +809,7 @@ mod tests {
         // Call list_repositories (fast, no progress token) — exercises the
         // no-progress keepalive select loop added to fix Transport closed.
         let line = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}"#;
-        handle_message(&db, &embedding, None, line, &mut output, &ping_id)
+        handle_message(&db, &embedding, line, &mut output, &ping_id)
             .await
             .unwrap();
 
@@ -903,7 +899,7 @@ mod tests {
 
         let reader = Cursor::new(input);
         let mut output = Vec::new();
-        run_stdio_io(&db, &embedding, None, reader, &mut output)
+        run_stdio_io(&db, &embedding, reader, &mut output)
             .await
             .unwrap();
 

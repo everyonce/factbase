@@ -4,7 +4,6 @@
 //! - Database connectivity
 //! - Inference backend availability (Bedrock or Ollama)
 //! - Embedding model availability
-//! - LLM model availability
 //!
 //! # Module Organization
 //!
@@ -61,7 +60,6 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
                         database: CheckStatus::err(&err_msg),
                         ollama_server: CheckStatus::err("Config not loaded"),
                         embedding_model: CheckStatus::err("Config not loaded"),
-                        llm_model: CheckStatus::err("Config not loaded"),
                         overall_healthy: false,
                     };
                     println!("{}", format_json(&output)?);
@@ -95,63 +93,27 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
 
     qprintln!();
 
-    let is_bedrock = config.embedding.provider == "bedrock" || config.llm.provider == "bedrock";
+    let is_bedrock = config.embedding.provider == "bedrock";
 
-    let (embed_ok, embed_status, llm_ok, llm_status, server_ok, server_status) = if is_bedrock {
+    let (embed_ok, embed_status, server_ok, server_status) = if is_bedrock {
         // Bedrock provider: check model configuration, not Ollama server
         qprintln!("Checking Bedrock configuration...\n");
 
-        let embed_ok = config.embedding.provider == "bedrock";
-        let llm_ok = config.llm.provider == "bedrock";
-
-        if embed_ok {
-            let region = config.embedding.effective_base_url();
-            qprintln!(
-                "✓ Embedding model: {} (Bedrock, region: {})",
-                config.embedding.model,
-                region
-            );
-        } else {
-            qprintln!(
-                "  Embedding model: {} (provider: {})",
-                config.embedding.model,
-                config.embedding.provider
-            );
-        }
-
-        if llm_ok {
-            let region = config.llm.effective_base_url();
-            qprintln!(
-                "✓ LLM model: {} (Bedrock, region: {})",
-                config.llm.model,
-                region
-            );
-        } else {
-            qprintln!(
-                "  LLM model: {} (provider: {})",
-                config.llm.model,
-                config.llm.provider
-            );
-        }
+        let region = config.embedding.effective_base_url();
+        qprintln!(
+            "✓ Embedding model: {} (Bedrock, region: {})",
+            config.embedding.model,
+            region
+        );
 
         qprintln!();
         qprintln!("Tip: If you get AccessDeniedException during scan, enable model access at:");
         qprintln!("  https://console.aws.amazon.com/bedrock/home#/modelaccess");
-        qprintln!("  Required permissions: bedrock:InvokeModel, bedrock:Converse");
+        qprintln!("  Required permissions: bedrock:InvokeModel");
 
         (
-            embed_ok,
-            if embed_ok {
-                CheckStatus::ok()
-            } else {
-                CheckStatus::err("not using bedrock")
-            },
-            llm_ok,
-            if llm_ok {
-                CheckStatus::ok()
-            } else {
-                CheckStatus::err("not using bedrock")
-            },
+            true,
+            CheckStatus::ok(),
             true, // no server to check for Bedrock
             CheckStatus::ok(),
         )
@@ -176,20 +138,14 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
             let models = fetch_available_models(&client, base_url).await;
             let (embed_ok, embed_status) =
                 check_and_fix_model(&args, &models, &config.embedding.model, "Embedding", quiet);
-            let (llm_ok, llm_status) =
-                check_and_fix_model(&args, &models, &config.llm.model, "LLM", quiet);
             (
                 embed_ok,
                 embed_status,
-                llm_ok,
-                llm_status,
                 server_ok,
                 CheckStatus::ok(),
             )
         } else {
             (
-                false,
-                CheckStatus::err("Ollama server not available"),
                 false,
                 CheckStatus::err("Ollama server not available"),
                 false,
@@ -199,14 +155,13 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
     };
 
     // Summary
-    let all_ok = db_ok && server_ok && embed_ok && llm_ok;
+    let all_ok = db_ok && server_ok && embed_ok;
 
     if args.json {
         let output = DoctorOutput {
             database: db_status,
             ollama_server: server_status,
             embedding_model: embed_status,
-            llm_model: llm_status,
             overall_healthy: all_ok,
         };
         println!("{}", format_json(&output)?);

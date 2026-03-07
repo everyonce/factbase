@@ -191,51 +191,19 @@ pub struct ApplyRequest {
 
 /// POST /api/apply - Apply answered review questions to documents.
 ///
-/// Requires LLM provider (available when started via `factbase serve`).
-/// Returns CLI instructions if LLM is not available.
+/// Review application is now agent-driven. Returns CLI/agent instructions.
 pub async fn post_apply(
-    State(state): State<Arc<WebAppState>>,
     Json(body): Json<ApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
-    let llm = state.llm.as_ref().ok_or_else(|| {
-        let mut cmd = "factbase review --apply".to_string();
-        if let Some(ref repo) = body.repo {
-            cmd.push_str(&format!(" --repo {repo}"));
-        }
-        if body.dry_run.unwrap_or(false) {
-            cmd.push_str(" --dry-run");
-        }
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ApiError::new(
-                format!("LLM provider not available. Run via CLI: `{cmd}`"),
-                "LLM_REQUIRED",
-            )),
-        )
-    })?;
-
-    let db = state.db.clone();
-    let llm = llm.clone();
-    let dry_run = body.dry_run.unwrap_or(false);
-    let repo = body.repo.clone();
-    let doc_id = body.doc_id.clone();
-
-    let args = serde_json::json!({
-        "repo": repo,
-        "doc_id": doc_id,
-        "dry_run": dry_run,
-    });
-
-    let result = crate::mcp::tools::apply_review_answers(
-        &db,
-        Some(&*llm),
-        &args,
-        &ProgressReporter::Silent,
-    )
-    .await
-    .map_err(super::errors::handle_error)?;
-
-    Ok(Json(result))
+    let mut cmd = "Use your MCP agent to apply review answers via update_document".to_string();
+    if let Some(ref repo) = body.repo {
+        cmd.push_str(&format!(" (repo: {repo})"));
+    }
+    Ok(Json(serde_json::json!({
+        "status": "agent_required",
+        "message": cmd,
+        "hint": "Review application is now handled by the MCP agent. Use the 'resolve' workflow."
+    })))
 }
 
 /// POST /api/scan - Trigger repository scan.

@@ -22,10 +22,9 @@ fn get_doc_id_arg(args: &Value) -> Option<String> {
 /// Apply answered review questions, rewriting document content.
 ///
 /// This is the MCP equivalent of `factbase review --apply`.
-#[instrument(name = "mcp_apply_review_answers", skip(db, _llm, args, progress))]
+#[instrument(name = "mcp_apply_review_answers", skip(db, args, progress))]
 pub async fn apply_review_answers(
     db: &Database,
-    _llm: Option<&dyn crate::llm::LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {

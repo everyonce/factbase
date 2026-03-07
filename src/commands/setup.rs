@@ -26,8 +26,8 @@
 
 use super::utils::db_not_found_error;
 use factbase::{
-    CachedEmbedding, Config, Database, EmbeddingProvider, LlmProvider,
-    OllamaEmbedding, OllamaLlm, PersistentCachedEmbedding, Repository, ReviewLlm,
+    CachedEmbedding, Config, Database, EmbeddingProvider,
+    OllamaEmbedding, PersistentCachedEmbedding, Repository,
 };
 use std::path::PathBuf;
 
@@ -262,66 +262,10 @@ pub async fn setup_cached_embedding(
     CachedEmbedding::new(persistent, config.embedding.cache_size)
 }
 
-/// Create an LLM provider for the given model name using config settings.
-async fn create_llm(
-    config: &Config,
-    model: &str,
-    timeout_override: Option<u64>,
-) -> Box<dyn LlmProvider> {
-    match config.llm.provider.as_str() {
-        #[cfg(feature = "bedrock")]
-        "bedrock" => {
-            let region = resolve_bedrock_region(config.llm.effective_base_url());
-            let timeout = timeout_override.unwrap_or(config.llm.timeout_secs);
-            Box::new(
-                factbase::bedrock::BedrockLlm::new(model, region, config.llm.profile.as_deref(), timeout)
-                    .await,
-            )
-        }
-        #[cfg(not(feature = "bedrock"))]
-        "bedrock" => {
-            eprintln!("error: Config specifies provider 'bedrock' but this binary was built without Bedrock support.");
-            eprintln!("hint: Install with Bedrock support: cargo install --path . --features bedrock");
-            eprintln!("      Or switch to Ollama: set embedding.provider = 'ollama' in config.");
-            std::process::exit(1);
-        }
-        other => {
-            let base_url = config.llm.effective_base_url();
-            validate_ollama_url(base_url, "llm", other);
-            let timeout = timeout_override.unwrap_or(config.llm.timeout_secs);
-            Box::new(OllamaLlm::with_config(
-                base_url,
-                model,
-                timeout,
-                config.ollama.max_retries,
-                config.ollama.retry_delay_ms,
-            ))
-        }
-    }
-}
-
-/// Create LLM provider from config with optional timeout override
-pub async fn setup_llm_with_timeout(
-    config: &Config,
-    timeout_override: Option<u64>,
-) -> Box<dyn LlmProvider> {
-    create_llm(config, &config.llm.model, timeout_override).await
-}
-
-/// Create ReviewLlm service from config with optional timeout override
-pub async fn setup_review_llm_with_timeout(
-    config: &Config,
-    timeout_override: Option<u64>,
-) -> ReviewLlm {
-    let model_name = config.review_model().to_string();
-    let llm = create_llm(config, &model_name, timeout_override).await;
-    ReviewLlm::new(llm, model_name)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factbase::config::{EmbeddingConfig, LlmConfig, OllamaConfig};
+    use factbase::config::{EmbeddingConfig, OllamaConfig};
     use factbase::EmbeddingProvider;
 
     fn test_config() -> Config {
@@ -332,12 +276,6 @@ mod tests {
                 dimension: 1024,
                 timeout_secs: 30,
                 cache_size: 100,
-                ..Default::default()
-            },
-            llm: LlmConfig {
-                base_url: "http://localhost:11434".to_string(),
-                model: "test-llm".to_string(),
-                timeout_secs: 60,
                 ..Default::default()
             },
             ollama: OllamaConfig {
@@ -363,25 +301,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_setup_llm_with_timeout_uses_config_default() {
-        let config = test_config();
-        let _llm = setup_llm_with_timeout(&config, None).await;
-    }
-
-    #[tokio::test]
-    async fn test_setup_llm_with_timeout_override() {
-        let config = test_config();
-        let _llm = setup_llm_with_timeout(&config, Some(180)).await;
-    }
-
-    #[tokio::test]
     async fn test_setup_link_detector_no_llm_needed() {
         let _detector = factbase::LinkDetector::new();
-    }
-
-    #[tokio::test]
-    async fn test_setup_review_llm_with_timeout() {
-        let config = test_config();
-        let _review_llm = setup_review_llm_with_timeout(&config, Some(120)).await;
     }
 }

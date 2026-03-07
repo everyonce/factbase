@@ -54,9 +54,9 @@ pub fn redirect_database_links(
             }
         }
 
-        let detected: Vec<crate::llm::DetectedLink> = source_links
+        let detected: Vec<crate::link_detection::DetectedLink> = source_links
             .into_iter()
-            .map(|l| crate::llm::DetectedLink {
+            .map(|l| crate::link_detection::DetectedLink {
                 target_id: l.target_id,
                 target_title: String::new(),
                 mention_text: String::new(),
@@ -157,7 +157,7 @@ mod tests {
         // Create link from doc3 to doc2
         db.update_links(
             "doc3",
-            &[crate::llm::DetectedLink {
+            &[crate::link_detection::DetectedLink {
                 target_id: "doc2".to_string(),
                 target_title: "Doc 2".to_string(),
                 mention_text: "Doc 2".to_string(),
@@ -271,7 +271,7 @@ mod tests {
         // Create database link
         db.update_links(
             "ghi789",
-            &[crate::llm::DetectedLink {
+            &[crate::link_detection::DetectedLink {
                 target_id: "abc123".to_string(),
                 target_title: "Doc 1".to_string(),
                 mention_text: "Doc 1".to_string(),

@@ -139,7 +139,7 @@ fn find_ancestor_container(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::DetectedLink;
+    use crate::link_detection::DetectedLink;
     use crate::models::Repository;
     use tempfile::TempDir;
 

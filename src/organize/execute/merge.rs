@@ -358,7 +358,7 @@ mod tests {
         // Create link from doc3 to doc2
         db.update_links(
             "doc3",
-            &[crate::llm::DetectedLink {
+            &[crate::link_detection::DetectedLink {
                 target_id: "doc2".to_string(),
                 target_title: "Doc 2".to_string(),
                 mention_text: "Doc 2".to_string(),

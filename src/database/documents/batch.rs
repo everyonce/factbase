@@ -237,7 +237,7 @@ mod tests {
         db.upsert_document(&linker).expect("upsert");
 
         // linker1 links TO changed1
-        use crate::llm::DetectedLink;
+        use crate::link_detection::DetectedLink;
         db.update_links(
             "linker1",
             &[DetectedLink {
