@@ -15,14 +15,32 @@ use super::iter_fact_lines;
 /// Default number of days a reviewed marker suppresses question regeneration.
 const REVIEWED_SKIP_DAYS: i64 = 180;
 
+/// Default document types treated as glossary/definitions.
+const DEFAULT_GLOSSARY_TYPES: &[&str] = &["definition", "definitions", "glossary", "reference"];
+
 /// Check if a document is a glossary/definition/reference document.
 ///
-/// Matches by doc_type (`definition`, `glossary`, `reference`) or by
+/// Matches by doc_type against `glossary_types` (or defaults) or by
 /// title in the first 3 lines (`# Glossary`, `# Definitions`).
 pub fn is_glossary_doc(doc_type: Option<&str>, content: &str) -> bool {
+    is_glossary_doc_with_types(doc_type, content, None)
+}
+
+/// Check if a document is a glossary/definition/reference document,
+/// with optional custom glossary types from perspective.yaml.
+pub fn is_glossary_doc_with_types(
+    doc_type: Option<&str>,
+    content: &str,
+    custom_types: Option<&[String]>,
+) -> bool {
     doc_type.is_some_and(|t| {
         let l = t.to_lowercase();
-        l == "definition" || l == "glossary" || l == "reference"
+        if let Some(types) = custom_types {
+            types.iter().any(|ct| ct.to_lowercase() == l)
+                || DEFAULT_GLOSSARY_TYPES.iter().any(|d| *d == l)
+        } else {
+            DEFAULT_GLOSSARY_TYPES.iter().any(|d| *d == l)
+        }
     }) || content.lines().take(3).any(|l| {
         let lower = l.to_lowercase();
         lower.contains("# glossary") || lower.contains("# definitions")
@@ -70,10 +88,26 @@ pub fn extract_acronym_from_question(description: &str) -> Option<String> {
 
 /// Collect all defined terms from glossary/definition/reference documents.
 pub fn collect_defined_terms(docs: &[crate::models::Document]) -> HashSet<String> {
+    collect_defined_terms_with_types(docs, None)
+}
+
+/// Collect all defined terms from glossary/definition/reference documents,
+/// with optional custom glossary types from perspective.yaml.
+///
+/// Includes both terms extracted from document content (`**TERM**:`, `## TERM`)
+/// and document titles of glossary docs (for repos with one-doc-per-term layout).
+pub fn collect_defined_terms_with_types(
+    docs: &[crate::models::Document],
+    glossary_types: Option<&[String]>,
+) -> HashSet<String> {
     let mut terms = HashSet::new();
     for doc in docs {
-        if is_glossary_doc(doc.doc_type.as_deref(), &doc.content) {
+        if is_glossary_doc_with_types(doc.doc_type.as_deref(), &doc.content, glossary_types) {
             terms.extend(extract_defined_terms(&doc.content));
+            // Include the doc title as a defined term (supports one-doc-per-term layout)
+            if !doc.title.is_empty() {
+                terms.insert(doc.title.clone());
+            }
         }
     }
     terms
@@ -320,7 +354,7 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
         break; // One per fact line
     }
 
-    found.map(|acronym| format!("what does \"{acronym}\" mean in this context?"))
+    found.map(|acronym| format!("what does \"{acronym}\" mean in this context? Consider creating a definitions/ doc for this term"))
 }
 
 #[cfg(test)]
@@ -529,7 +563,8 @@ mod tests {
         let terms = collect_defined_terms(&[glossary, regular]);
         assert!(terms.contains("HCLS"));
         assert!(terms.contains("RFP"));
-        assert_eq!(terms.len(), 2);
+        assert!(terms.contains("Glossary")); // doc title is also included
+        assert_eq!(terms.len(), 3);
     }
 
     #[test]
@@ -578,5 +613,87 @@ mod tests {
             None
         );
         assert_eq!(extract_acronym_from_question(""), None);
+    }
+
+    #[test]
+    fn test_definitions_plural_type_recognized_as_glossary() {
+        // Documents with type "definitions" (plural, from folder name) should be glossary docs
+        assert!(is_glossary_doc(Some("definitions"), "# SA\n\n- Solutions Architect"));
+        assert!(is_glossary_doc(Some("Definitions"), "# SA\n\n- Solutions Architect"));
+    }
+
+    #[test]
+    fn test_doc_titles_included_as_defined_terms() {
+        use crate::models::Document;
+        // Individual definition docs (one-doc-per-term layout like definitions/SA.md)
+        let sa_doc = Document {
+            id: "aaa".to_string(),
+            title: "SA".to_string(),
+            content: "# SA\n\n- **SA**: Solutions Architect\n".to_string(),
+            doc_type: Some("definitions".to_string()),
+            ..Document::test_default()
+        };
+        let hcls_doc = Document {
+            id: "bbb".to_string(),
+            title: "HCLS".to_string(),
+            content: "# HCLS\n\nHealthcare and Life Sciences\n".to_string(),
+            doc_type: Some("definitions".to_string()),
+            ..Document::test_default()
+        };
+        let terms = collect_defined_terms(&[sa_doc, hcls_doc]);
+        // Both titles and content terms should be included
+        assert!(terms.contains("SA"), "doc title SA should be a defined term");
+        assert!(terms.contains("HCLS"), "doc title HCLS should be a defined term");
+    }
+
+    #[test]
+    fn test_definitions_docs_suppress_ambiguous_questions() {
+        use crate::models::Document;
+        // Simulate definitions/ folder with individual docs
+        let sa_doc = Document {
+            id: "d01".to_string(),
+            title: "SA".to_string(),
+            content: "# SA\n\n- Solutions Architect\n".to_string(),
+            doc_type: Some("definitions".to_string()),
+            ..Document::test_default()
+        };
+        let terms = collect_defined_terms(&[sa_doc]);
+        // SA should not be flagged as ambiguous in other docs
+        let q = generate_ambiguous_questions_with_type(
+            "# Project\n\n- Working with SA team on deployment",
+            Some("project"),
+            &terms,
+        );
+        assert!(q.iter().all(|q| !q.description.contains("SA")),
+            "SA should be suppressed by definitions doc");
+    }
+
+    #[test]
+    fn test_unknown_acronym_suggests_definitions_doc() {
+        // Unknown acronyms should include a suggestion to create a definitions doc
+        let q = generate_ambiguous_questions("# Project\n\n- Uses XYZQ for analytics");
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("Consider creating a definitions/ doc"),
+            "Should suggest creating a definitions doc, got: {}", q[0].description);
+    }
+
+    #[test]
+    fn test_custom_glossary_types_from_perspective() {
+        use crate::models::Document;
+        // Custom glossary type "acronym" configured via perspective.yaml
+        let doc = Document {
+            id: "c01".to_string(),
+            title: "FHIR".to_string(),
+            content: "# FHIR\n\nFast Healthcare Interoperability Resources\n".to_string(),
+            doc_type: Some("acronym".to_string()),
+            ..Document::test_default()
+        };
+        // Without custom types, "acronym" type is not recognized as glossary
+        let terms_default = collect_defined_terms(&[doc.clone()]);
+        assert!(!terms_default.contains("FHIR"), "acronym type not in defaults");
+        // With custom types, it is recognized
+        let custom = vec!["acronym".to_string()];
+        let terms_custom = collect_defined_terms_with_types(&[doc], Some(&custom));
+        assert!(terms_custom.contains("FHIR"), "acronym type should be recognized with custom glossary_types");
     }
 }

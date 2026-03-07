@@ -20,6 +20,8 @@ pub struct ReviewConfig {
     pub stale_threshold: i64,
     /// Required fields per document type (from perspective.yaml)
     pub required_fields: Option<HashMap<String, Vec<String>>>,
+    /// Terms defined in glossary/definitions docs (suppresses ambiguous questions)
+    pub defined_terms: HashSet<String>,
 }
 
 impl Default for ReviewConfig {
@@ -27,6 +29,7 @@ impl Default for ReviewConfig {
         Self {
             stale_threshold: 365,
             required_fields: None,
+            defined_terms: HashSet::new(),
         }
     }
 }
@@ -58,7 +61,7 @@ pub fn generate_questions_for_content(
 ) -> Vec<ReviewQuestion> {
     let body = factbase::content_body(content);
 
-    let mut new_questions = run_generators(body, doc_type, &HashSet::new(), config.stale_threshold, true);
+    let mut new_questions = run_generators(body, doc_type, &config.defined_terms, config.stale_threshold, true);
 
     // Deduplicate: stale subsumes temporal for the same line
     let stale_lines: HashSet<_> = new_questions
@@ -94,7 +97,7 @@ pub fn generate_and_prune(
 ) -> (Vec<ReviewQuestion>, String, usize) {
     let body = factbase::content_body(content);
 
-    let mut all_generated = run_generators(body, doc_type, &HashSet::new(), config.stale_threshold, true);
+    let mut all_generated = run_generators(body, doc_type, &config.defined_terms, config.stale_threshold, true);
     if let Some(ref required_fields) = config.required_fields {
         all_generated.extend(generate_required_field_questions(
             body,
@@ -209,6 +212,7 @@ pub fn count_suppressed_questions(content: &str, max_age: Option<i64>) -> usize 
     let config = ReviewConfig {
         stale_threshold,
         required_fields: None,
+        ..Default::default()
     };
 
     let (normal, _, _) = generate_and_prune(content, None, &config);

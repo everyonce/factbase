@@ -110,6 +110,7 @@ async fn check_questions(
     let perspective = load_perspective(db, repo_id);
     let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
     let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
+    let glossary_types = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.glossary_types.clone());
 
     let all_docs = load_docs(db, repo_id)?;
 
@@ -123,6 +124,7 @@ async fn check_questions(
         deadline: None, // No time-boxing — rule-based checks are fast
         acquire_write_guard: true,
         repo_id: repo_id.map(String::from),
+        glossary_types,
     };
 
     let output = check_all_documents(&all_docs, db, embedding, &config, progress).await?;
@@ -208,6 +210,7 @@ async fn check_batch(
     let perspective = load_perspective(db, repo_id);
     let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
     let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
+    let glossary_types = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.glossary_types.clone());
 
     progress.phase("Checking selected documents");
 
@@ -219,6 +222,7 @@ async fn check_batch(
         deadline: None,
         acquire_write_guard: true,
         repo_id: repo_id.map(String::from),
+        glossary_types,
     };
 
     let output = check_all_documents(&docs, db, embedding, &config, progress).await?;

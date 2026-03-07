@@ -94,6 +94,7 @@ fn test_context_with_review_perspective() {
         stale_days: Some(180),
         required_fields: Some(required_fields),
         ignore_patterns: Some(vec!["*.draft.md".to_string()]),
+        glossary_types: None,
     };
 
     let perspective = Perspective {
