@@ -882,15 +882,14 @@ mod tests {
             link_detector: &link_detector, opts: &opts, progress: &progress,
         };
 
-        // First scan: indexes docs, reports fact embeddings needed (deferred to check_repository)
+        // First scan: indexes docs and generates fact embeddings
         let r1 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert!(r1.fact_embeddings_needed > 0);
-        assert_eq!(r1.fact_embeddings_generated, 0);
+        assert_eq!(r1.fact_embeddings_needed, 0);
+        assert!(r1.fact_embeddings_generated > 0);
 
-        // Second scan with no changes: fact embeddings still needed (not yet generated)
+        // Second scan with no changes: no fact embeddings needed or generated
         let r2 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        // No changed docs, but fact_embeddings table is empty so all docs need embeddings
-        assert!(r2.fact_embeddings_needed > 0);
+        assert_eq!(r2.fact_embeddings_needed, 0);
     }
 
     #[tokio::test]
@@ -920,13 +919,13 @@ mod tests {
             link_detector: &link_detector, opts: &opts, progress: &progress,
         };
 
-        // First scan indexes docs — fact embeddings deferred
+        // First scan indexes docs and generates fact embeddings
         let r1 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert!(r1.fact_embeddings_needed > 0);
+        assert!(r1.fact_embeddings_generated > 0);
 
-        // Rescan with no file changes: still reports fact embeddings needed
+        // Rescan with no file changes: no new fact embeddings
         let r2 = crate::full_scan(&repo, &db, &ctx).await.unwrap();
-        assert!(r2.fact_embeddings_needed > 0);
+        assert_eq!(r2.fact_embeddings_needed, 0);
     }
 
     #[tokio::test]

@@ -147,14 +147,7 @@ pub async fn scan_repository(
         )
     };
 
-    let fact_hint = if result.fact_embeddings_needed > 0 {
-        Some(format!(
-            "Run check_repository with mode='embeddings' to generate fact embeddings for {} document(s).",
-            result.fact_embeddings_needed
-        ))
-    } else {
-        None
-    };
+    let fact_hint: Option<String> = None;
 
     Ok(serde_json::json!({
         "added": result.added,

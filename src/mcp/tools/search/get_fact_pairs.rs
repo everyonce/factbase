@@ -39,7 +39,7 @@ pub fn get_fact_pairs(db: &Database, args: &Value) -> Result<Value, FactbaseErro
         return Ok(serde_json::json!({
             "pairs": [],
             "total_fact_embeddings": 0,
-            "message": "No fact embeddings found. Run scan_repository first, then check_repository with mode='embeddings' to generate fact-level embeddings."
+            "message": "No fact embeddings found. Run scan_repository to generate document and fact-level embeddings."
         }));
     }
 
