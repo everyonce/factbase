@@ -521,16 +521,7 @@ pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> S
                 .line_ref
                 .map(|n| format!("Line {n}: "))
                 .unwrap_or_default();
-            let type_tag = match q.question_type {
-                QuestionType::Temporal => "temporal",
-                QuestionType::Conflict => "conflict",
-                QuestionType::Missing => "missing",
-                QuestionType::Ambiguous => "ambiguous",
-                QuestionType::Stale => "stale",
-                QuestionType::Duplicate => "duplicate",
-                QuestionType::Corruption => "corruption",
-                QuestionType::Precision => "precision",
-            };
+            let type_tag = q.question_type.as_str();
             {
                 write_str!(
                     questions_text,

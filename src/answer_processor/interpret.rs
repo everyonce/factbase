@@ -244,8 +244,8 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
             _ => ChangeInstruction::Dismiss,
         },
 
-        // Missing: nothing meaningful beyond dismiss/defer/delete (handled above)
-        Missing => ChangeInstruction::Dismiss,
+        // Missing/WeakSource: nothing meaningful beyond dismiss/defer/delete (handled above)
+        Missing | WeakSource => ChangeInstruction::Dismiss,
 
         // Stale: confirmations refresh last-seen date, corrections update temporal
         Stale => match answer_type {

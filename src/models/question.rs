@@ -20,6 +20,8 @@ pub enum QuestionType {
     Corruption,
     /// Imprecise language that could change truth value (weasel words, vague qualifiers)
     Precision,
+    /// Citation too vague to independently verify
+    WeakSource,
 }
 
 impl QuestionType {
@@ -34,6 +36,7 @@ impl QuestionType {
             QuestionType::Duplicate => "duplicate",
             QuestionType::Corruption => "corruption",
             QuestionType::Precision => "precision",
+            QuestionType::WeakSource => "weak-source",
         }
     }
 }
@@ -57,6 +60,7 @@ impl std::str::FromStr for QuestionType {
             "duplicate" => Ok(QuestionType::Duplicate),
             "corruption" => Ok(QuestionType::Corruption),
             "precision" => Ok(QuestionType::Precision),
+            "weak-source" => Ok(QuestionType::WeakSource),
             _ => Err(format!("Unknown question type: {s}")),
         }
     }
@@ -153,6 +157,10 @@ mod tests {
             "precision".parse::<QuestionType>().unwrap(),
             QuestionType::Precision
         );
+        assert_eq!(
+            "weak-source".parse::<QuestionType>().unwrap(),
+            QuestionType::WeakSource
+        );
     }
 
     #[test]
@@ -172,6 +180,7 @@ mod tests {
         assert_eq!(QuestionType::Duplicate.as_str(), "duplicate");
         assert_eq!(QuestionType::Corruption.as_str(), "corruption");
         assert_eq!(QuestionType::Precision.as_str(), "precision");
+        assert_eq!(QuestionType::WeakSource.as_str(), "weak-source");
     }
 
     #[test]
@@ -184,6 +193,7 @@ mod tests {
         assert_eq!(QuestionType::Duplicate.to_string(), "duplicate");
         assert_eq!(QuestionType::Corruption.to_string(), "corruption");
         assert_eq!(QuestionType::Precision.to_string(), "precision");
+        assert_eq!(QuestionType::WeakSource.to_string(), "weak-source");
     }
 
     #[test]
@@ -197,6 +207,7 @@ mod tests {
             QuestionType::Duplicate,
             QuestionType::Corruption,
             QuestionType::Precision,
+            QuestionType::WeakSource,
         ] {
             let s = qt.to_string();
             let parsed: QuestionType = s.parse().unwrap();

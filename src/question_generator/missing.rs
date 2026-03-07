@@ -80,7 +80,7 @@ pub fn generate_source_quality_questions(content: &str) -> Vec<ReviewQuestion> {
 }
 
 /// Check if a source definition is too vague to trace back to original data.
-fn is_untraceable_source(context: &str) -> bool {
+pub(crate) fn is_untraceable_source(context: &str) -> bool {
     let lower = context.trim().to_lowercase();
 
     // Very short sources are almost always untraceable

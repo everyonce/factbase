@@ -9,6 +9,7 @@
 //! - `@q[duplicate]` for documents with high similarity to other documents
 //! - `@q[corruption]` for document corruption (garbage footnotes, corrupted titles, etc.)
 //! - `@q[precision]` for imprecise language that could change truth value
+//! - `@q[weak-source]` for citations too vague to independently verify
 //!
 //! # Module Organization
 //!
@@ -38,6 +39,7 @@
 //! - [`generate_required_field_questions`] - Generate missing required field questions
 
 mod ambiguous;
+mod citation;
 mod conflict;
 pub mod cross_validate;
 pub(crate) mod corruption;
@@ -45,7 +47,7 @@ mod duplicate;
 pub(crate) mod facts;
 mod fields;
 pub mod check;
-mod missing;
+pub(crate) mod missing;
 pub(crate) mod placement;
 mod precision;
 mod stale;
@@ -63,6 +65,7 @@ pub use corruption::generate_corruption_questions;
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};
+pub use citation::generate_weak_source_questions;
 pub use precision::generate_precision_questions;
 pub use stale::generate_stale_questions;
 pub use temporal::generate_temporal_questions;

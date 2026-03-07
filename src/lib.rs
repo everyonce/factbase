@@ -108,6 +108,7 @@ pub use processor::{
     calculate_fact_stats,
     calculate_recency_boost, chunk_document,
     content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
+    is_citation_specific,
     merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
     overlaps_point, overlaps_range,
     parse_links_block, parse_referenced_by_block, parse_review_queue, prune_stale_questions,
@@ -123,7 +124,7 @@ pub use question_generator::{
     generate_conflict_questions, generate_corruption_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_precision_questions, generate_required_field_questions,
-    generate_source_quality_questions,
+    generate_source_quality_questions, generate_weak_source_questions,
     generate_stale_questions, generate_temporal_questions,
 };
 pub use scanner::{full_scan, run_fact_embedding_phase, scan_all_repositories, FactEmbeddingInput, FactEmbeddingOutput, ScanContext, ScanOptions, Scanner};

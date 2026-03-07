@@ -159,6 +159,27 @@ async fn check_questions(
         }))
         .collect();
 
+    // Citation quality stats across all documents
+    let mut citations_specific: usize = 0;
+    let mut citations_vague: usize = 0;
+    let mut citations_missing: usize = 0;
+    for doc in &all_docs {
+        let body = crate::patterns::content_body(&doc.content);
+        let defs = crate::processor::parse_source_definitions(body);
+        let refs = crate::processor::parse_source_references(body);
+        let ref_numbers: std::collections::HashSet<u32> = refs.iter().map(|r| r.number).collect();
+        for d in &defs {
+            if !ref_numbers.contains(&d.number) { continue; }
+            if crate::question_generator::missing::is_untraceable_source(&d.context) {
+                citations_missing += 1;
+            } else if crate::processor::is_citation_specific(&d.context) {
+                citations_specific += 1;
+            } else {
+                citations_vague += 1;
+            }
+        }
+    }
+
     Ok(serde_json::json!({
         "documents_scanned": output.docs_processed,
         "documents_with_new_questions": docs_with_questions,
@@ -171,6 +192,9 @@ async fn check_questions(
         "suppressed_by_prior_answers": total_suppressed,
         "deferred_count": deferred_count,
         "questions_by_type": type_counts,
+        "citations_specific": citations_specific,
+        "citations_vague": citations_vague,
+        "citations_missing": citations_missing,
         "dry_run": dry_run,
         "details": details,
     }))
