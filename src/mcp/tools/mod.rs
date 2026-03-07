@@ -53,7 +53,7 @@ pub use review::{
     answer_question, answer_questions, apply_review_answers, bulk_answer_questions,
     generate_questions, get_deferred_items, get_review_queue, check_repository,
 };
-pub use search::{search_content, search_knowledge};
+pub use search::{get_fact_pairs, search_content, search_knowledge};
 
 // Re-export helpers for submodules
 pub(crate) use helpers::{
@@ -263,6 +263,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "embeddings_status" => blocking_tool!(db, embeddings_status_tool),
                 "get_link_suggestions" => get_link_suggestions(db, embedding, &args).await?,
                 "store_links" => blocking_tool!(db, args, store_links),
+                "get_fact_pairs" => blocking_tool!(db, args, get_fact_pairs),
                 _ => {
                     return Ok(Some(McpResponse::error(
                         -32602,
@@ -408,6 +409,7 @@ mod tests {
             "embeddings_status",
             "get_link_suggestions",
             "store_links",
+            "get_fact_pairs",
         ]
         .iter()
         .map(|s| s.to_string())
