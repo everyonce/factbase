@@ -50,7 +50,7 @@ pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to
 
 pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call get_fact_pairs to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call answer_questions with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
-pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call get_link_suggestions to find documents with few links that are embedding-similar to other documents.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n   - store_links writes `[[id]]` references into the file's Links: block and updates the database.\n4. Record: links_added, documents_modified";
+pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call get_link_suggestions TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type (e.g., exclude_types=[\"person\"] if reviewing people docs) with min_similarity=0.5. This finds connections between different entity types.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7. This finds related entities of the same kind.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n   - store_links writes `[[id]]` references into the file's Links: block and updates the database.\n4. Record: links_added, documents_modified";
 
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
@@ -85,6 +85,8 @@ pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}'
 pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.{fields}{format_rules}";
 
 pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify your work. Call check_repository with doc_id and dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
+
+pub(crate) const DEFAULT_INGEST_LINKS_INSTRUCTION: &str = "Discover cross-references for your new documents.\n\n1. Call get_link_suggestions with exclude_types matching the new document types (cross-type discovery, min_similarity=0.5).\n2. Review suggestions: does the candidate genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n4. Record: links_added, documents_modified";
 
 // --- Enrich workflow ---
 pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list (sorted by attention_score, highest first). Reference entities are excluded — they exist for linking, not enrichment.\nPick the top 3-5 entities that need work. You will enrich them ONE AT A TIME — fully completing each before moving to the next.\n\nCall get_entity on the first entity to begin.{ctx}";
@@ -804,7 +806,7 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
     let topic = get_str_arg(args, "topic").unwrap_or("the requested topic");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
-    let total = 4;
+    let total = 5;
     match step {
         1 => serde_json::json!({
             "workflow": "ingest",
@@ -833,6 +835,13 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "instruction": resolve(wf, "ingest.verify", DEFAULT_INGEST_VERIFY_INSTRUCTION, &[]),
             "next_tool": "check_repository",
             "suggested_args": {"dry_run": true},
+            "when_done": "Call workflow with workflow='ingest', step=5"
+        }),
+        5 => serde_json::json!({
+            "workflow": "ingest",
+            "step": 5, "total_steps": total,
+            "instruction": resolve(wf, "ingest.links", DEFAULT_INGEST_LINKS_INSTRUCTION, &[]),
+            "next_tool": "get_link_suggestions",
             "complete": true
         }),
         _ => serde_json::json!({
