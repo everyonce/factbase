@@ -6,7 +6,7 @@
 //!
 //! - `queue` - Review queue retrieval (`get_review_queue`)
 //! - `answer` - Question answering (`answer_question`, `bulk_answer_questions`)
-//! - `generate` - Question generation (`generate_questions`)
+//! - `generate` - Question generation (internal, used by check_repository)
 //! - `check` - Repository-wide quality checks (`check_repository`)
 //!
 //! # Public API
@@ -19,7 +19,6 @@
 //! - `check_repository` - Run rule-based quality checks
 
 pub(crate) mod answer;
-mod apply;
 mod generate;
 mod check;
 mod queue;

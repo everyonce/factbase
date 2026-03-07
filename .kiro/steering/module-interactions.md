@@ -408,12 +408,12 @@ web/
 ### `question_generator.rs`
 - Generates review questions for documents
 - Analyzes temporal coverage, source citations
-- Used by: check, MCP generate_questions
+- Used by: check, MCP check_repository
 
 ### `answer_processor.rs`
 - Processes answered review questions
 - Updates documents with temporal tags, sources
-- Used by: review --apply, MCP answer_question
+- Used by: review --apply, web API
 
 ### `mcp/server.rs`
 - HTTP server via `axum`
@@ -422,10 +422,10 @@ web/
 - Used by: main (serve command)
 
 ### `mcp/tools/`
-- `search.rs`: search_knowledge, search_content, search_temporal
-- `entity.rs`: get_entity, list_entities, get_perspective, list_repositories, get_document_stats
+- `search.rs`: search_knowledge, search_content
+- `entity.rs`: get_entity, list_entities, get_perspective, list_repositories
 - `document.rs`: create_document, update_document, delete_document, bulk_create_documents
-- `review.rs`: get_review_queue, answer_question, bulk_answer_questions, generate_questions
+- `review.rs`: get_review_queue, answer_questions, check_repository
 - Used by: mcp/server
 
 ## Key Interfaces Between Modules

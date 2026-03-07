@@ -104,7 +104,7 @@ pub fn get_authoring_guide() -> Value {
         "inbox_blocks": {
             "description": "Stage corrections or new facts for LLM-assisted integration into the document body.",
             "format": "<!-- factbase:inbox -->\n- New fact here\n<!-- /factbase:inbox -->",
-            "processing": "Integrated by apply_review_answers or `factbase review --apply`, then the block is removed"
+            "processing": "Processed by `factbase review --apply` or agent via update_document, then the block is removed"
         },
         "common_mistakes": [
             "Putting text/descriptions inside @t[...] instead of dates — WRONG: @t[seasonal], @t[Wolfgang Amadeus Mozart], @t[Active Production Status: Ongoing], @t[Total Produced: 650+] — RIGHT: @t[~2024] or @t[2020..2023] or @t[?]",

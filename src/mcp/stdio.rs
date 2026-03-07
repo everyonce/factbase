@@ -273,7 +273,7 @@ async fn handle_message<E: EmbeddingProvider>(
                 tokio::pin!(tool_fut);
 
                 // Keepalive timer ensures pings continue during long-running
-                // tool calls (e.g. apply_review_answers with LLM), preventing
+                // tool calls (e.g. scan_repository with embeddings), preventing
                 // the client transport from timing out and closing.
                 let mut keepalive = tokio::time::interval(
                     std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS),

@@ -72,7 +72,7 @@ async fn generate_questions_single(
         )));
     }
 
-    // Skip documents with corruption artifacts from failed apply_review_answers
+    // Skip documents with corruption artifacts from failed review application
     if has_corruption_artifacts(&doc.content) {
         return Ok(serde_json::json!({
             "doc_id": doc_id,
@@ -81,12 +81,12 @@ async fn generate_questions_single(
             "questions": [],
             "dry_run": dry_run,
             "corrupted": true,
-            "message": "Document contains corruption artifacts from a failed apply_review_answers run — rebuild content before checking"
+            "message": "Document contains corruption artifacts from a failed review application — rebuild content before checking"
         }));
     }
 
     // Prefer fresh content from disk over potentially stale database content.
-    // apply_review_answers writes reviewed markers to files but doesn't always
+    // Review application writes reviewed markers to files but doesn't always
     // update the database, so the DB content may lack those markers.
     let file_path = resolve_doc_path(db, &doc)?;
     let disk_content = fs::read_to_string(&file_path).ok();

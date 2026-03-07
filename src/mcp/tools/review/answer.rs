@@ -128,7 +128,7 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let doc = db.require_document(&doc_id)?;
 
     // Resolve absolute path via repo root so we read/write the same file
-    // that apply_review_answers will later read.
+    // that the agent will later update via update_document.
     let file_path = resolve_doc_path(db, &doc)?;
     if !file_path.exists() {
         return Err(FactbaseError::not_found(format!(
@@ -214,7 +214,7 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
             "question_type": type_str,
             "description": question.description,
             "answer": answer_text,
-            "message": "Question answered. Call apply_review_answers to apply changes to the document."
+            "message": "Question answered. Use update_document to apply changes to the document."
         }))
     }
 }
@@ -301,7 +301,7 @@ pub fn bulk_answer_questions(
 
     // Validate all documents and questions exist before making any changes.
     // Resolve absolute paths via repo root so we read/write the same files
-    // that apply_review_answers will later read.
+    // that the agent will later update via update_document.
     let mut doc_disk_content: HashMap<String, (PathBuf, String)> = HashMap::new();
     for (doc_id, answers_for_doc) in &by_doc {
         let doc = db.require_document(doc_id)?;
@@ -529,7 +529,7 @@ Some footer text.
     }
 
     /// Roundtrip test: modify two questions, then parse — both should be recognized as answered.
-    /// Reproduces the bug where apply_review_answers finds 0 answered questions after
+    /// Reproduces the bug where review apply finds 0 answered questions after
     /// answer_questions succeeds.
     #[test]
     fn test_modify_then_parse_roundtrip_two_answers() {
@@ -667,7 +667,7 @@ Some footer text.
     #[test]
     fn test_believed_answer_stays_in_queue() {
         // A believed answer should be stored as deferred (unchecked) so it
-        // won't be picked up by apply_review_answers.
+        // won't be picked up by review apply.
         use crate::processor::parse_review_queue;
 
         let original_content = "\
@@ -707,7 +707,7 @@ Some footer text.
     #[test]
     fn test_verified_answer_gets_applied() {
         // A verified answer should be marked as answered (checked) so
-        // apply_review_answers will process it.
+        // review apply will process it.
         use crate::processor::parse_review_queue;
 
         let original_content = "\

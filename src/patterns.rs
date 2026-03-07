@@ -143,7 +143,7 @@ pub static META_COMMENTARY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:^[-*]\s+)?(?:(?:I'(?:ll|ve|m|d)|I (?:will|have|can|should|would|need to)|let me|here (?:is|are)|note(?::|\s+that))\s+.{0,60}(?:rewrit|rephras|clarif|updat|revis|summariz|merg|reorganiz|edit|modif|format|correct|adjust|document|section|content|entry|fact|the (?:above|below|following))|(?:rewrit|rephras|updat|revis|merg|reorganiz|edit|modif|format|correct|adjust)(?:e|ed|ing|ten)?\s+.{0,40}(?:as (?:if|though)|(?:factual|document|entry|section) content|this (?:document|section|entry|fact)))").expect("meta commentary regex should be valid")
 });
 
-/// Detects corruption artifacts from failed `apply_review_answers` runs.
+/// Detects corruption artifacts from failed review application runs.
 ///
 /// These are process/system phrases that should never appear in factual document
 /// content. When multiple matches are found in a document, the content is likely
@@ -165,7 +165,7 @@ static CORRUPTION_ARTIFACT_PHRASES: LazyLock<Regex> = LazyLock::new(|| {
 const CORRUPTION_THRESHOLD: usize = 2;
 
 /// Returns `true` if the document content contains corruption artifacts from a
-/// failed `apply_review_answers` run (e.g. meta-commentary about changes,
+/// failed review application run (e.g. meta-commentary about changes,
 /// corruption metadata, format mismatches).
 pub fn has_corruption_artifacts(content: &str) -> bool {
     CORRUPTION_ARTIFACT_PHRASES.find_iter(content).count() >= CORRUPTION_THRESHOLD

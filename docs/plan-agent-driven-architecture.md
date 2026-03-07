@@ -1,6 +1,7 @@
 # Plan: Agent-Driven Architecture
 
-**Status:** Planned
+**Status:** Complete (all 7 phases)
+**Completion Date:** 2026-03-07
 **Goal:** Remove all server-side LLM usage. Factbase becomes an embedding engine + index + API. All reasoning moves to the client agent via MCP.
 
 ## Motivation
@@ -296,7 +297,7 @@ Remove the hard dependency on Bedrock/cloud embedding providers. Factbase works 
 ### Paging retention
 - `scan_repository` keeps time-budgeted paging with resume tokens for embedding generation
 - Local CPU embeddings are slower than Bedrock API — paging is even MORE important here
-- `check_repository mode=embeddings` keeps paging for re-embed operations
+- `check_repository` no longer has modes — fact embeddings are generated during scan_repository
 - Agent stays in the loop: no 10-minute black holes waiting for CPU inference
 
 ### What this enables
@@ -319,9 +320,10 @@ Remove the hard dependency on Bedrock/cloud embedding providers. Factbase works 
 |--------|--------|-------|
 | Server-side LLM | Required (Haiku/Ollama) | None |
 | LLM call sites | 9 across 7 files | 0 |
-| MCP tools | 25 | ~23 |
+| MCP tools | 25 | 26 |
 | Paged/resumable operations | ~6 | 1 (scan only) |
 | Config sections | database, embedding, llm, server, web | database, server, web (embedding optional) |
 | Workflow paging warnings | ~12 blocks | ~1 block |
 | `llm.complete()` calls in codebase | 14 | 0 |
 | Cloud dependency | Required (LLM + Embedding) | Optional (Embedding only, local fallback) |
+| Unit/binary tests | ~1800 | ~2189 (with all features) |

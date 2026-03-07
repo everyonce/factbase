@@ -1,6 +1,6 @@
 //! Shared apply-all loop for review answer processing.
 //!
-//! Used by both MCP `apply_review_answers` and CLI `review --apply`.
+//! Used by both CLI `review --apply` and web API.
 
 use crate::database::Database;
 use crate::error::FactbaseError;
@@ -613,7 +613,7 @@ mod tests {
         assert!(texts.is_empty());
     }
 
-    /// Reproduces the bug where apply_review_answers returns 0 when the disk
+    /// Reproduces the bug where review apply returns 0 when the disk
     /// file has answered questions but the DB content is stale (unanswered).
     /// The fix: read from disk first (filesystem is source of truth).
     #[tokio::test]
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(result.documents.len(), 1, "Should process 1 document from disk");
     }
 
-    /// Reproduces the bug where apply_review_answers returns 0 when the disk
+    /// Reproduces the bug where review apply returns 0 when the disk
     /// file has unanswered questions but the DB content has answered questions.
     /// The fix: fall back to DB content and sync it to disk.
     #[tokio::test]
@@ -960,7 +960,7 @@ mod tests {
         assert!(result.documents.is_empty());
     }
 
-    /// Reproduces the bug where apply_review_answers returns no-op when the
+    /// Reproduces the bug where review apply returns no-op when the
     /// DB has_review_queue flag is FALSE but the disk file has answered questions.
     /// This happens when the review queue was added/answered externally without
     /// updating the DB flag (e.g., file edited outside factbase tools, or a
@@ -1054,7 +1054,7 @@ mod tests {
 
     /// Reproduces the bug where answers are written directly into the document
     /// file (not via answer_questions tool) and both DB and disk are in sync,
-    /// but apply_review_answers still returns "No answered questions to apply."
+    /// but review apply still returns "No answered questions to apply."
     #[tokio::test]
     async fn test_apply_processes_answers_written_directly_to_file() {
         use crate::database::Database;
