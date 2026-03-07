@@ -41,7 +41,7 @@ That's it. Everything below is optional depth.
 ## Features
 
 - **Semantic search** - Find documents by meaning, not just keywords
-- **Automatic link detection** - LLM discovers entity references across documents
+- **Automatic link detection** - String matching discovers entity references across documents
 - **Cross-document validation** - Fact-level embeddings detect conflicts across documents
 - **Live updates** - File watcher keeps index in sync
 - **MCP server** - AI agents can search and explore your knowledge base
@@ -57,8 +57,8 @@ Optional power features (plain markdown works without these):
 ## Prerequisites
 
 - Rust 1.70+
-- AWS credentials configured (for Amazon Bedrock — the default inference backend)
-- Or [Ollama](https://ollama.ai) for self-hosted inference (see [docs/inference-providers.md](docs/inference-providers.md))
+- AWS credentials configured (for Amazon Bedrock embedding — the default inference backend)
+- Or [Ollama](https://ollama.ai) for self-hosted embedding (see [docs/inference-providers.md](docs/inference-providers.md))
 
 ## Installation
 
@@ -155,11 +155,6 @@ embedding:
   dimension: 1024
   region: us-east-1    # AWS region (for bedrock) or base_url for ollama
 
-llm:
-  provider: bedrock
-  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
-  region: us-east-1
-
 server:
   host: 127.0.0.1
   port: 3000
@@ -171,7 +166,7 @@ web:
 
 cross_validate:
   fact_similarity_threshold: 0.5  # Minimum similarity for fact pairs (0.0-1.0)
-  batch_size: 10                  # Fact pairs per LLM batch call (1-50)
+  batch_size: 10                  # Fact pairs per batch (1-50)
 ```
 
 See [examples/config.yaml](examples/config.yaml) for all options including watcher, rate limiting, and compression settings.
@@ -229,7 +224,7 @@ See [docs/fact-document-format.md](docs/fact-document-format.md) for the complet
 
 ## Troubleshooting
 
-**Bedrock Access Denied** — Enable model access in the [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess), or check IAM permissions for `bedrock:InvokeModel` and `bedrock:Converse`.
+**Bedrock Access Denied** — Enable model access in the [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess), or check IAM permissions for `bedrock:InvokeModel`.
 
 **Embedding Dimension Mismatch** — Occurs after switching models. Fix with `factbase scan --reindex`.
 

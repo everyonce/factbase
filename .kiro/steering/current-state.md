@@ -14,8 +14,7 @@
 - **Alternative**: amazon.nova-2-multimodal-embeddings-v1:0
 
 ### LLM Model
-- **Model**: us.anthropic.claude-haiku-4-5-20251001-v1:0 via Bedrock
-- **Usage**: Link detection, review question generation
+- **Status**: Removed (Phase 6 complete). All reasoning is now agent-driven via MCP.
 
 ## Known Limitations
 
@@ -134,7 +133,7 @@ Requires `web` feature and `web.enabled = true` in config.
 - `GET /api/review/status` - Queue summary (includes deferred)
 
 ### Actions
-- `POST /api/apply` - Apply answered review questions (requires LLM)
+- `POST /api/apply` - Apply answered review questions (agent-driven)
 - `POST /api/scan` - Trigger scan (returns CLI instructions)
 - `POST /api/check` - Trigger quality checks (returns CLI instructions)
 
@@ -192,7 +191,7 @@ The codebase has been modularized into focused submodules. See `.kiro/steering/m
 | `models/` | document, repository, link, search, scan, stats, temporal, question |
 | `database/` | schema, documents/, repositories, links, embeddings, search/, stats/, compression |
 | `processor/` | core, temporal/, sources, review, chunks, stats |
-| `llm/` | ollama, link_detector, review, test_helpers |
+| `link_detection.rs` | DetectedLink, LinkDetector (string matching) |
 | `scanner/` | options, progress, orchestration/ |
 | `organize/` | types, extract, links, orphans, review, audit, snapshot, verify, detect/, plan/, execute/ |
 | `question_generator/` | temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, placement, fields, facts, cross_validate, check |

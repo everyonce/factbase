@@ -141,38 +141,38 @@ Eliminate every remaining `llm.complete()` call site.
 ### Tasks
 
 #### Review application (`answer_processor/apply.rs`)
-- [ ] Remove `apply_review_answers` MCP tool from tool routing and schema
-- [ ] Update resolve workflow: agent rewrites documents via `update_document` instead of calling apply
-- [ ] Keep rule-based application logic for web GUI (mechanical: insert @t tag, add footnote) — extract into separate module if needed
+- [x] Remove `apply_review_answers` MCP tool from tool routing and schema
+- [x] Update resolve workflow: agent rewrites documents via `update_document` instead of calling apply
+- [x] Keep rule-based application logic for web GUI (mechanical: insert @t tag, add footnote) — extract into separate module if needed
 
 #### Inbox processing (`answer_processor/inbox.rs`)
-- [ ] Remove LLM call from inbox processing
-- [ ] Update ingest workflow: agent handles inbox merging via `update_document`
+- [x] Remove LLM call from inbox processing
+- [x] Update ingest workflow: agent handles inbox merging via `update_document`
 
 #### Organize planning (`organize/plan/merge.rs`, `organize/plan/split.rs`)
-- [ ] Remove LLM calls from merge and split planning
-- [ ] Remove merge/split modes from `organize` MCP tool (or make them return raw data for agent to plan)
-- [ ] Update organize workflow: agent reads docs via `get_entity`, plans merge/split, executes via CRUD tools
-- [ ] Keep `organize_analyze` (heuristic detection, no LLM)
-- [ ] Keep `organize` move/retype/apply modes (mechanical, no LLM)
+- [x] Remove LLM calls from merge and split planning
+- [x] Remove merge/split modes from `organize` MCP tool (or make them return raw data for agent to plan)
+- [x] Update organize workflow: agent reads docs via `get_entity`, plans merge/split, executes via CRUD tools
+- [x] Keep `organize_analyze` (heuristic detection, no LLM)
+- [x] Keep `organize` move/retype/apply modes (mechanical, no LLM)
 
 #### Entity discovery (`organize/detect/entity_discovery.rs`)
-- [ ] Remove LLM calls from entity discovery (both call sites)
-- [ ] Make entity discovery heuristic-only (co-occurrence analysis, title pattern matching) or move entirely to workflow
-- [ ] Remove `discover` mode from `check_repository`
+- [x] Remove LLM calls from entity discovery (both call sites)
+- [x] Make entity discovery heuristic-only (co-occurrence analysis, title pattern matching) or move entirely to workflow
+- [x] Remove `discover` mode from `check_repository`
 
 #### Vocabulary extraction (`question_generator/check.rs`)
-- [ ] Remove LLM call for domain vocabulary extraction
-- [ ] Move to workflow step: agent extracts vocabulary during update/discover
+- [x] Remove LLM call for domain vocabulary extraction
+- [x] Move to workflow step: agent extracts vocabulary during update/discover
 
 #### Acronym auto-resolution (`mcp/tools/workflow.rs`)
-- [ ] Remove LLM call for glossary acronym resolution
-- [ ] Agent handles during resolve workflow
+- [x] Remove LLM call for glossary acronym resolution
+- [x] Agent handles during resolve workflow
 
 ### Verification
-- [ ] `grep -r '\.complete(' src/` returns zero results (excluding test helpers and trait definitions)
-- [ ] All MCP tools work without LLM configuration
-- [ ] `cargo test --lib` passes
+- [x] `grep -r '\.complete(' src/` returns zero results (excluding test helpers and trait definitions)
+- [x] All MCP tools work without LLM configuration
+- [x] `cargo test --lib` passes
 
 ---
 
@@ -221,36 +221,36 @@ Remove the LLM module and update all documentation.
 ### Tasks
 
 #### Code removal
-- [ ] Remove `src/llm/` module (mod.rs, ollama.rs, link_detector.rs, review.rs)
-- [ ] Remove `LlmProvider` trait (or keep as dead code if needed for future extensibility — probably remove)
-- [ ] Remove `llm` field from AppState / setup code
-- [ ] Remove `llm:` config section (or make it fully optional/ignored with deprecation warning)
-- [ ] Remove LLM-related config validation
-- [ ] Update `factbase doctor` — only check embedding connectivity, not LLM
-- [ ] Update `factbase serve` / `factbase mcp` — don't construct LlmProvider
-- [ ] Clean up `ollama.rs` if only used by LLM (check if embedding uses it too)
-- [ ] Remove LLM-related dependencies if no longer needed
-- [ ] Evaluate `bedrock` feature flag — may become `bedrock-embedding` only
+- [x] Remove `src/llm/` module (mod.rs, ollama.rs, link_detector.rs, review.rs)
+- [x] Remove `LlmProvider` trait (or keep as dead code if needed for future extensibility — probably remove)
+- [x] Remove `llm` field from AppState / setup code
+- [x] Remove `llm:` config section (or make it fully optional/ignored with deprecation warning)
+- [x] Remove LLM-related config validation
+- [x] Update `factbase doctor` — only check embedding connectivity, not LLM
+- [x] Update `factbase serve` / `factbase mcp` — don't construct LlmProvider
+- [x] Clean up `ollama.rs` if only used by LLM (check if embedding uses it too)
+- [x] Remove LLM-related dependencies if no longer needed
+- [x] Evaluate `bedrock` feature flag — may become `bedrock-embedding` only
 
 #### Documentation
-- [ ] Update README.md — remove LLM config from examples, update prerequisites
-- [ ] Update `docs/cli-reference.md`
-- [ ] Update `docs/agent-integration.md`
-- [ ] Update `docs/quickstart.md` — simpler setup without LLM
-- [ ] Update `docs/inference-providers.md` — embedding only
-- [ ] Update `docs/authoring-guide.md` — add `Links:` format
-- [ ] Update `docs/agent-authoring-guide.md` — add `Links:` format
-- [ ] Update `docs/review-system.md`
-- [ ] Update `examples/config.yaml` — remove `llm:` section
-- [ ] Update `examples/person.md`, `examples/company.md` — add `Links:` blocks
-- [ ] Update `.kiro/steering/` docs (architecture, module-interactions, current-state, coding-conventions)
-- [ ] Update CHANGELOG.md
+- [x] Update README.md — remove LLM config from examples, update prerequisites
+- [x] Update `docs/cli-reference.md`
+- [x] Update `docs/agent-integration.md`
+- [x] Update `docs/quickstart.md` — simpler setup without LLM
+- [x] Update `docs/inference-providers.md` — embedding only
+- [x] Update `docs/authoring-guide.md` — add `Links:` format
+- [x] Update `docs/agent-authoring-guide.md` — add `Links:` format
+- [x] Update `docs/review-system.md`
+- [x] Update `examples/config.yaml` — remove `llm:` section
+- [x] Update `examples/person.md`, `examples/company.md` — add `Links:` blocks
+- [x] Update `.kiro/steering/` docs (architecture, module-interactions, current-state, coding-conventions)
+- [x] Update CHANGELOG.md
 
 #### Testing
-- [ ] Remove or update all tests that use MockLlm for non-test-helper purposes
-- [ ] Verify full test suite passes: `cargo test --lib`, `cargo test --bin factbase`
-- [ ] Update integration tests
-- [ ] Update web frontend tests if affected
+- [x] Remove or update all tests that use MockLlm for non-test-helper purposes
+- [x] Verify full test suite passes: `cargo test --lib`, `cargo test --bin factbase`
+- [x] Update integration tests
+- [x] Update web frontend tests if affected
 
 ---
 
