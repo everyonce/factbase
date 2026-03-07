@@ -1,6 +1,8 @@
 # Inference Providers
 
-Factbase uses an embedding model for semantic search and an LLM for link detection and review operations. It supports two backends: Amazon Bedrock (default) and Ollama (self-hosted).
+Factbase uses an embedding model for semantic search and link detection. It supports two backends: Amazon Bedrock (default) and Ollama (self-hosted).
+
+> **Note:** As of Phase 6, factbase no longer uses a server-side LLM. All reasoning (link review, cross-validation, review application) is handled by the client agent via MCP. Only an embedding model is required.
 
 ## Amazon Bedrock (default)
 
@@ -24,13 +26,8 @@ Factbase works with zero config if your AWS environment is set up (credentials +
 # ~/.config/factbase/config.yaml
 embedding:
   provider: bedrock
-  model: amazon.titan-embed-text-v2:0
+  model: amazon.nova-2-multimodal-embeddings-v1:0
   dimension: 1024
-  region: us-east-1    # AWS region
-
-llm:
-  provider: bedrock
-  model: us.anthropic.claude-3-5-haiku-20241022-v1:0
   region: us-east-1    # AWS region
 ```
 
@@ -38,24 +35,11 @@ The `region` field specifies the AWS region for Bedrock API calls. The older `ba
 
 ### Supported models
 
-Any Bedrock model that supports the relevant API works:
-
 **Embedding models** (via InvokeModel):
 | Model | ID | Dimensions |
 |-------|----|------------|
 | Titan Embed Text V2 | `amazon.titan-embed-text-v2:0` | 256, 512, 1024 |
 | Nova Multimodal Embeddings | `amazon.nova-2-multimodal-embeddings-v1:0` | 256, 384, 1024, 3072 |
-
-**LLM models** (via Converse API — any chat model works):
-| Model | ID | Notes |
-|-------|----|-------|
-| Claude 3.5 Haiku | `us.anthropic.claude-3-5-haiku-20241022-v1:0` | Cross-region, fast |
-| Claude Haiku 4.5 | `us.anthropic.claude-haiku-4-5-20251001-v1:0` | Cross-region, latest |
-| Claude 3.5 Sonnet | `us.anthropic.claude-3-5-sonnet-20241022-v2:0` | Higher quality |
-| Nova Lite | `amazon.nova-lite-v1:0` | Low cost |
-| Nova Pro | `amazon.nova-pro-v1:0` | Balanced |
-
-Cross-region model IDs (prefixed with `us.`) route to the nearest available region automatically.
 
 ### AWS credentials
 
@@ -85,8 +69,6 @@ The region is set via `region` in config. If omitted, it uses the standard AWS r
 
 **ValidationException with cross-region models**: Use the `us.` prefix for cross-region inference (e.g., `us.anthropic.claude-3-5-haiku-20241022-v1:0`).
 
-**Timeout errors**: Bedrock calls use the AWS SDK defaults. For large documents, the LLM call may take 30+ seconds — this is normal.
-
 ---
 
 ## Ollama (self-hosted)
@@ -99,16 +81,8 @@ The region is set via `region` in config. If omitted, it uses the standard AWS r
 # Install Ollama
 curl -fsSL https://ollama.ai/install.sh | sh
 
-# Pull models
+# Pull embedding model
 ollama pull qwen3-embedding:0.6b    # embeddings (1024 dims, 32K context)
-ollama pull rnj-1:latest             # link detection
-
-# Optional: create extended context model for large documents
-cat > /tmp/rnj-1-extended.modelfile << 'EOF'
-FROM rnj-1:latest
-PARAMETER num_ctx 49152
-EOF
-ollama create rnj-1-extended -f /tmp/rnj-1-extended.modelfile
 ```
 
 ### Configuration
@@ -120,12 +94,6 @@ embedding:
   base_url: http://localhost:11434
   model: qwen3-embedding:0.6b
   dimension: 1024
-  timeout_secs: 30
-
-llm:
-  provider: ollama
-  base_url: http://localhost:11434
-  model: rnj-1-extended
   timeout_secs: 30
 
 ollama:
@@ -165,8 +133,6 @@ processor:
 ```yaml
 embedding:
   timeout_secs: 120
-llm:
-  timeout_secs: 120
 ```
 
 ### Verify setup
@@ -175,5 +141,4 @@ llm:
 factbase doctor
 # ✓ Ollama server: http://localhost:11434 (running)
 # ✓ Embedding model: qwen3-embedding:0.6b (available)
-# ✓ LLM model: rnj-1-extended (available)
 ```

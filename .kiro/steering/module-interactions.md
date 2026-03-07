@@ -25,10 +25,10 @@
     │           │             │
     ▼           ▼             ▼
 ┌─────────┐ ┌───────┐   ┌──────────┐
-│embedding│ │  llm  │   │ database │
+│embedding│ │       │   │ database │
 └─────────┘ └───────┘   └──────────┘
-    │           │             │
-    └─────────┬─┴─────────────┘
+    │                         │
+    └─────────┬───────────────┘
               │
               ▼
          ┌─────────┐
@@ -43,8 +43,9 @@ src/
 ├── main.rs              # CLI entry point, clap setup
 ├── lib.rs               # Module declarations, re-exports
 ├── error.rs             # Error types (FactbaseError)
+├── link_detection.rs    # DetectedLink, LinkDetector (string matching)
 ├── ollama.rs            # Shared Ollama HTTP client
-├── bedrock.rs           # Amazon Bedrock provider (feature-gated)
+├── bedrock.rs           # Amazon Bedrock embedding provider (feature-gated)
 ├── embedding.rs         # EmbeddingProvider trait + Ollama impl
 ├── watcher.rs           # File system monitoring
 ├── cache.rs             # LRU caching utilities
@@ -98,12 +99,6 @@ src/
 │       ├── sources.rs   # Source stats
 │       ├── compression.rs # Compression stats
 │       └── cache.rs     # Stats caching
-│
-├── llm/                 # LLM operations (modular)
-│   ├── mod.rs           # LlmProvider trait
-│   ├── ollama.rs        # OllamaLlm impl
-│   ├── link_detector.rs # Entity link detection
-│   └── review.rs        # Review LLM operations
 │
 ├── scanner/             # File scanning (modular)
 │   ├── mod.rs           # Scanner struct, file discovery
@@ -174,8 +169,8 @@ src/
 │   │   └── duplicate_entries.rs # Cross-document duplicate entry detection
 │   ├── plan/            # Planning operations
 │   │   ├── mod.rs
-│   │   ├── merge.rs     # Merge planning with LLM
-│   │   └── split.rs     # Split planning with LLM
+│   │   ├── merge.rs     # Merge planning (agent-driven)
+│   │   └── split.rs     # Split planning (agent-driven)
 │   └── execute/         # Execution operations
 │       ├── mod.rs
 │       ├── merge.rs     # Merge execution with verification
@@ -327,7 +322,7 @@ web/
 ### `config.rs`
 - Loads `~/.config/factbase/config.yaml`
 - Provides defaults when config missing
-- Used by: main, scanner, processor, embedding, llm, mcp, watcher
+- Used by: main, scanner, processor, embedding, mcp, watcher
 
 ### `error.rs`
 - Defines `FactbaseError` enum
@@ -356,12 +351,11 @@ web/
 ### `ollama.rs`
 - Shared Ollama HTTP client
 - Connection pooling and retry logic
-- Used by: embedding, llm (when using Ollama provider)
+- Used by: embedding (when using Ollama provider)
 
 ### `bedrock.rs` (feature-gated)
-- Amazon Bedrock provider implementations
+- Amazon Bedrock embedding provider
 - `BedrockEmbedding`: Titan and Nova embedding models via InvokeModel
-- `BedrockLlm`: Any chat model via Converse API
 - Used by: setup.rs (when provider = "bedrock")
 
 ### `embedding.rs`
@@ -369,10 +363,9 @@ web/
 - `OllamaEmbedding` implementation
 - Used by: processor, mcp (for search queries)
 
-### `llm/`
-- `LlmProvider` trait (async, Send + Sync)
-- `OllamaLlm` implementation
-- `LinkDetector` service for entity detection
+### `link_detection.rs`
+- `DetectedLink` struct
+- `LinkDetector` service for entity detection (string matching, no LLM)
 - Used by: scanner (link pass)
 
 ### `scanner.rs`
@@ -451,8 +444,8 @@ processor.new(embedding: Box<dyn EmbeddingProvider>, db: Database)
 // Scanner calls link detector in second pass
 link_detector.detect_links(content, source_id) -> Result<Vec<DetectedLink>>
 
-// LinkDetector needs LLM provider and database
-link_detector.new(llm: Box<dyn LlmProvider>, db: Database)
+// LinkDetector uses string matching (no LLM)
+link_detector.detect_links(content, source_id, known_entities) -> Vec<DetectedLink>
 ```
 
 ### MCP Server ↔ Database

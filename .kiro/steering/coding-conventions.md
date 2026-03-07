@@ -88,7 +88,7 @@ src/
 ├── ollama.rs        # Shared Ollama HTTP client
 ├── bedrock.rs       # Amazon Bedrock provider (feature-gated)
 ├── embedding.rs     # EmbeddingProvider trait + Ollama impl
-├── llm.rs           # LlmProvider trait + Ollama impl + LinkDetector
+├── link_detection.rs # DetectedLink, LinkDetector (string matching)
 ├── scanner.rs       # File discovery + scan orchestration
 ├── processor.rs     # Document processing (ID, title, type)
 ├── watcher.rs       # File system monitoring

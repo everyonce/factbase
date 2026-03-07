@@ -31,7 +31,6 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 
 ### 5. Modular Provider Architecture
 - `EmbeddingProvider` trait allows swapping embedding backends
-- `LlmProvider` trait allows swapping LLM backends
 - Currently supports Amazon Bedrock (default) and Ollama
 
 ## System Components
@@ -49,7 +48,7 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 │  - Extracts/injects document IDs                            │
 │  - Parses title, derives type from folder                   │
 │  - Generates embeddings via inference backend (batched, 10 at a time)  │
-│  - Detects entity links via LLM (batched, 5 at a time)      │
+│  - Detects entity links via string matching (batched, 5 at a time)    │
 └────────────────┬────────────────────────────────────────────┘
                  │
                  ▼
@@ -74,7 +73,7 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 ┌─────────────────────────────────────────────────────────────┐
 │              MCP Server                                      │
 │  - HTTP server on localhost:3000 (configurable)             │
-│  - 25 tools for AI agents (search, entity, CRUD, review, workflow, organize, embeddings)  │
+│  - 26 tools for AI agents (search, entity, CRUD, review, workflow, organize, embeddings)  │
 │  - search_knowledge, search_content                         │
 │  - get_entity, list_entities, get_perspective               │
 │  - create/update/delete/bulk_create documents               │
@@ -106,8 +105,8 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 
 ### Link Detection Flow
 1. Get list of all document titles from database
-2. Build prompt with known entities + document content
-3. LLM returns JSON array of detected mentions
+2. Build match candidates (full title, unique words, abbreviations)
+3. String matching finds entity mentions in document content
 4. Also extract manual `[[id]]` links via regex
 5. Merge and deduplicate
 6. Store in document_links table
@@ -117,13 +116,13 @@ Factbase is a filesystem-based knowledge management system that indexes markdown
 Global config at `~/.config/factbase/config.yaml`:
 - Database location and pool size
 - Repository paths
-- Inference provider settings (embedding model, LLM model, region)
+- Inference provider settings (embedding model, region)
 - Watcher settings (debounce, ignore patterns)
 - Rate limiting settings
 
 ## Error Handling Philosophy
 
-- **Inference errors are fatal**: If embedding/LLM fails, exit immediately
+- **Inference errors are fatal**: If embedding fails, exit immediately
 - User must fix the underlying issue (check credentials, model access, etc.)
 - Partial indexing is worse than failing completely
 - Clear error messages tell user what to do

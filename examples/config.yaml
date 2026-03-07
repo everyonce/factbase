@@ -34,13 +34,6 @@ embedding:
   cache_size: 100              # Query embedding cache (1-10000)
   timeout_secs: 30             # HTTP timeout (1-300)
 
-llm:
-  provider: bedrock
-  profile: default             # AWS profile name (optional, uses default credentials if omitted)
-  region: us-east-1            # AWS region
-  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
-  timeout_secs: 30             # HTTP timeout (1-300)
-
 # --- Alternative: Ollama (self-hosted) ---
 # See docs/inference-providers.md for setup instructions.
 #
@@ -50,12 +43,6 @@ llm:
 #   model: qwen3-embedding:0.6b   # 1024 dims, 32K context
 #   dimension: 1024
 #   cache_size: 100
-#   timeout_secs: 30
-#
-# llm:
-#   provider: ollama
-#   base_url: http://localhost:11434
-#   model: rnj-1-extended          # Extended context model (49K)
 #   timeout_secs: 30
 #
 # ollama:
@@ -77,61 +64,18 @@ web:
 
 cross_validate:
   fact_similarity_threshold: 0.5  # Minimum cosine similarity for fact pairs (0.0-1.0)
-  batch_size: 10                  # Fact pairs per LLM batch call (1-50)
+  batch_size: 10                  # Fact pairs per batch (1-50)
 
 temporal:
   min_coverage: 0.8               # Minimum temporal tag coverage threshold (0.0-1.0)
   recency_window_days: 180        # Window for recency boost (days)
   recency_boost_factor: 0.2       # Max boost for recent @t[~...] facts (0.0-1.0)
 
-review:
-  model: null                     # Override LLM model for review operations (optional)
-
 # --- Workflow Text Overrides ---
 # Override any workflow step instruction text via flat keys.
 # Use {placeholder} for dynamic parts; unknown placeholders are left as-is.
 #
 # workflows:
-#   # Override the update scan instruction (vars: ctx)
 #   update.scan: |
 #     Custom scan instructions...
 #     {ctx}
-#
-#   # Override the improve cleanup instruction (vars: doc_hint, ctx)
-#   improve.cleanup: |
-#     Custom cleanup for {doc_hint}...
-#     {ctx}
-#
-#   # See src/config/workflows.rs for all available keys and their placeholders.
-
-# --- Prompt Templates ---
-# Override any LLM prompt template. Use {placeholder} for variables.
-# If a key is absent, the built-in default is used.
-#
-# prompts:
-#   # Design KB structure for a domain (vars: domain, entity_types)
-#   bootstrap: "Design a knowledge base for: {domain}{entity_types}..."
-#
-#   # Rewrite a document section with changes (vars: section, changes)
-#   rewrite_section: "Rewrite this:\n{section}\n\nChanges:\n{changes}"
-#
-#   # Merge inbox notes into a document (vars: document_content, inbox_content)
-#   inbox_merge: "Integrate inbox into document:\n{document_content}\n\n{inbox_content}"
-#
-#   # Merge facts from multiple documents (vars: doc_title, keep_facts, merge_facts)
-#   organize_merge: "Merge into \"{doc_title}\":\n{keep_facts}\n{merge_facts}"
-#
-#   # Split a document into sections (vars: doc_title, sections, facts)
-#   organize_split: "Split \"{doc_title}\":\n{sections}\n{facts}"
-#
-#   # Cross-validate facts against other documents (vars: doc_title, fact_batch)
-#   cross_validate: "Validate facts in \"{doc_title}\":\n{fact_batch}"
-#
-#   # Cross-validate fact pairs from different documents (vars: fact_pairs)
-#   cross_validate_pairs: "Compare these fact pairs:\n{fact_pairs}"
-#
-#   # Detect entity mentions in a single document (vars: entities_list, content)
-#   link_detect: "Find mentions of:\n{entities_list}\n\nIn:\n{content}"
-#
-#   # Detect entity mentions across multiple documents (vars: entities_list, docs_section)
-#   link_detect_batch: "Find mentions of:\n{entities_list}\n\nIn:\n{docs_section}"

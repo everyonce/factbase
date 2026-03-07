@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **LLM infrastructure** (Phase 6 complete): All server-side LLM usage removed
+  - Removed `src/llm/` module (`LlmProvider` trait, `OllamaLlm`, `ReviewLlm`, `MockLlm`)
+  - Removed `BedrockLlm` from `bedrock.rs` (Bedrock is now embedding-only)
+  - Removed `llm` field from MCP server and web server state
+  - Removed `setup_llm_with_timeout`, `setup_review_llm_with_timeout` from setup
+  - Removed LLM model check from `factbase doctor` (embedding-only now)
+  - Removed LLM model from `factbase version` output
+  - Removed LLM timeout validation from config
+  - `llm:` config section is now ignored (backward compatible)
+
+### Changed
+- Moved `DetectedLink` and `LinkDetector` from `llm/` to `link_detection.rs`
+- Web UI `/api/apply` endpoint now returns agent instructions instead of using server-side LLM
+- `factbase doctor` only checks embedding connectivity (not LLM)
+- `examples/config.yaml` no longer includes `llm:` section
+
 ## [50.86.2] - 2026-03-05
 
 ### Fixed
