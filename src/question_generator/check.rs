@@ -377,7 +377,8 @@ pub async fn check_all_documents(
         filter_sequential_conflicts(content, &mut questions);
 
         let count = questions.len();
-        let needs_write = count > 0 || pruned_count > 0;
+        let has_dup_sections = has_duplicate_review_sections(&pruned_content);
+        let needs_write = count > 0 || pruned_count > 0 || has_dup_sections;
         if needs_write && !config.dry_run {
             let updated = append_review_questions(&pruned_content, &questions);
             let path = abs_path.unwrap_or_else(|| PathBuf::from(&doc.file_path));
@@ -461,6 +462,18 @@ fn run_placement_check<'a>(
 
 fn is_archived(file_path: &str) -> bool {
     file_path.contains("/archive/") || file_path.starts_with("archive/")
+}
+
+/// Check if content has duplicate `## Review Queue` headings or markers.
+fn has_duplicate_review_sections(content: &str) -> bool {
+    let heading_count = content
+        .lines()
+        .filter(|l| l.trim() == "## Review Queue")
+        .count();
+    let marker_count = content
+        .matches(crate::patterns::REVIEW_QUEUE_MARKER)
+        .count();
+    heading_count > 1 || marker_count > 1
 }
 
 #[cfg(test)]
@@ -896,5 +909,77 @@ mod tests {
             .unwrap();
         assert_eq!(output.docs_processed, 2, "questions mode should count question-gen docs");
         assert_eq!(output.docs_total, 2);
+    }
+
+    /// Running check twice on the same document must not create duplicate
+    /// `## Review Queue` sections.
+    #[tokio::test]
+    async fn test_check_twice_no_duplicate_review_sections() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        // Create a temp repo with a markdown file
+        let repo_dir = tempfile::tempdir().unwrap();
+        let md_path = repo_dir.path().join("test-doc.md");
+        std::fs::write(&md_path, "<!-- factbase:ddd -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+
+        let repo = crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "ddd".to_string(),
+            title: "Test".to_string(),
+            content: "<!-- factbase:ddd -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            file_path: "test-doc.md".to_string(),
+            repo_id: "test-repo".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        // First check — should create review queue
+        let output1 = check_all_documents(&[doc.clone()], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+        assert!(output1.results.iter().any(|r| r.new_questions > 0), "First check should generate questions");
+
+        // Read the file after first check
+        let after_first = std::fs::read_to_string(&md_path).unwrap();
+        let heading_count = after_first.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "After first check: one heading");
+
+        // Update doc content to match what's on disk
+        let doc2 = Document {
+            content: after_first.clone(),
+            ..doc
+        };
+
+        // Second check — should NOT create duplicate sections
+        let _output2 = check_all_documents(&[doc2], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+
+        let after_second = std::fs::read_to_string(&md_path).unwrap();
+        let heading_count = after_second.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "After second check: still one heading, got:\n{after_second}");
+        let marker_count = after_second.matches("<!-- factbase:review -->").count();
+        assert_eq!(marker_count, 1, "After second check: still one marker");
     }
 }

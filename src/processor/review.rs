@@ -251,6 +251,19 @@ fn question_description_matches(line: &str, valid: &HashSet<String>) -> bool {
     true
 }
 
+/// Find the byte offset of a bare `## Review Queue` heading (without a marker).
+/// Returns `None` if no such heading exists or if the marker is already present.
+fn find_bare_review_heading(content: &str) -> Option<usize> {
+    let mut offset = 0;
+    for line in content.lines() {
+        if line.trim() == "## Review Queue" {
+            return Some(offset);
+        }
+        offset += line.len() + 1; // +1 for newline
+    }
+    None
+}
+
 /// Normalize the review queue section to prevent format degradation.
 ///
 /// This function:
@@ -398,20 +411,104 @@ fn strip_orphaned_blockquotes(queue_content: &str) -> String {
     result.join("\n")
 }
 
-/// Append review questions to a document's Review Queue section.
-/// Creates the section if it doesn't exist.
-pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> String {
-    let mut result = content.to_string();
+/// Merge duplicate `## Review Queue` sections into one.
+///
+/// If a document has multiple review queue sections (with or without markers),
+/// this consolidates all questions into a single section. Returns the cleaned
+/// content.
+pub fn merge_duplicate_review_sections(content: &str) -> String {
+    // Count occurrences of the heading
+    let heading_count = content
+        .lines()
+        .filter(|l| l.trim() == "## Review Queue")
+        .count();
+    let marker_count = content.matches(REVIEW_QUEUE_MARKER).count();
 
-    // Check if Review Queue section exists
+    if heading_count <= 1 && marker_count <= 1 {
+        return content.to_string();
+    }
+
+    // Extract all question lines from anywhere in the review sections
+    let body_end = crate::patterns::body_end_offset(content);
+    let review_area = &content[body_end..];
+    let mut questions: Vec<String> = Vec::new();
+    let mut in_question = false;
+
+    for line in review_area.lines() {
+        let trimmed = line.trim();
+        if trimmed == "## Review Queue"
+            || trimmed == REVIEW_QUEUE_MARKER
+            || trimmed == "---"
+            || trimmed.is_empty()
+        {
+            in_question = false;
+            continue;
+        }
+        if trimmed.starts_with("- [") {
+            in_question = true;
+            questions.push(line.to_string());
+        } else if in_question && trimmed.starts_with('>') {
+            questions.push(line.to_string());
+            in_question = false;
+        } else {
+            in_question = false;
+        }
+    }
+
+    // Rebuild: body + single review section
+    let mut body = content[..body_end].trim_end().to_string();
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+
+    if questions.is_empty() {
+        return body;
+    }
+
+    body.push_str("\n---\n\n## Review Queue\n\n");
+    body.push_str(REVIEW_QUEUE_MARKER);
+    body.push('\n');
+    for line in &questions {
+        body.push_str(line);
+        body.push('\n');
+    }
+    body
+}
+
+/// Append review questions to a document's Review Queue section.
+/// Creates the section if it doesn't exist. Handles pre-existing
+/// `## Review Queue` headings without the marker comment.
+pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> String {
+    // First, merge any duplicate review sections from prior bugs
+    let mut result = merge_duplicate_review_sections(content);
+
+    // Check if Review Queue section exists (by marker)
     if !result.contains(REVIEW_QUEUE_MARKER) {
-        // Add Review Queue section at the end
-        if !result.ends_with('\n') {
+        // Check for bare `## Review Queue` heading without marker
+        if let Some(heading_pos) = find_bare_review_heading(&result) {
+            // Insert marker after the heading line
+            let after_heading = heading_pos
+                + result[heading_pos..]
+                    .find('\n')
+                    .map(|n| n + 1)
+                    .unwrap_or(result.len() - heading_pos);
+            // Skip blank lines after heading
+            let mut insert_at = after_heading;
+            while insert_at < result.len()
+                && result.as_bytes().get(insert_at) == Some(&b'\n')
+            {
+                insert_at += 1;
+            }
+            result.insert_str(insert_at, &format!("{}\n", REVIEW_QUEUE_MARKER));
+        } else {
+            // No review section at all — create one
+            if !result.ends_with('\n') {
+                result.push('\n');
+            }
+            result.push_str("\n---\n\n## Review Queue\n\n");
+            result.push_str(REVIEW_QUEUE_MARKER);
             result.push('\n');
         }
-        result.push_str("\n---\n\n## Review Queue\n\n");
-        result.push_str(REVIEW_QUEUE_MARKER);
-        result.push('\n');
     }
 
     // Find the marker position and append questions after it
@@ -896,5 +993,93 @@ Line 3
             normalize_conflict_desc("\"Role A\" overlaps with \"Role B\" [pattern:same_entity_transition]"),
             "\"Role A\" overlaps with \"Role B\""
         );
+    }
+
+    // ============================================================================
+    // Duplicate Review Queue Section Tests
+    // ============================================================================
+
+    #[test]
+    fn test_append_to_existing_heading_without_marker() {
+        // Document has ## Review Queue heading but no marker
+        let content = "# Doc\n\n- Fact\n\n---\n\n## Review Queue\n\n";
+        let questions = vec![ReviewQuestion {
+            question_type: QuestionType::Temporal,
+            line_ref: Some(3),
+            description: "when was this true?".to_string(),
+            answered: false,
+            answer: None,
+            line_number: 0,
+        }];
+        let result = append_review_questions(content, &questions);
+        let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "Should have exactly one ## Review Queue heading, got:\n{result}");
+        assert!(result.contains(REVIEW_QUEUE_MARKER), "Should contain marker");
+        assert!(result.contains("@q[temporal]"), "Should contain the question");
+    }
+
+    #[test]
+    fn test_append_twice_no_duplicate_sections() {
+        let content = "# Doc\n\n- Fact without temporal tag\n";
+        let q1 = vec![ReviewQuestion {
+            question_type: QuestionType::Temporal,
+            line_ref: Some(3),
+            description: "when was this true?".to_string(),
+            answered: false,
+            answer: None,
+            line_number: 0,
+        }];
+        let after_first = append_review_questions(content, &q1);
+        let heading_count = after_first.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "First append: one heading");
+
+        // Second append with a different question
+        let q2 = vec![ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: Some(3),
+            description: "what is the source?".to_string(),
+            answered: false,
+            answer: None,
+            line_number: 0,
+        }];
+        let after_second = append_review_questions(&after_first, &q2);
+        let heading_count = after_second.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "Second append: still one heading, got:\n{after_second}");
+        let marker_count = after_second.matches(REVIEW_QUEUE_MARKER).count();
+        assert_eq!(marker_count, 1, "Should have exactly one marker");
+    }
+
+    #[test]
+    fn test_merge_duplicate_review_sections() {
+        // Document with two complete review sections
+        let content = "# Doc\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` question one\n  > \n\n\
+                       ---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[missing]` question two\n  > \n";
+        let result = merge_duplicate_review_sections(content);
+        let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "Should merge to one heading, got:\n{result}");
+        let marker_count = result.matches(REVIEW_QUEUE_MARKER).count();
+        assert_eq!(marker_count, 1, "Should have one marker");
+        assert!(result.contains("question one"), "Should preserve first question");
+        assert!(result.contains("question two"), "Should preserve second question");
+    }
+
+    #[test]
+    fn test_merge_duplicate_review_sections_no_duplicates() {
+        let content = "# Doc\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` question one\n  > \n";
+        let result = merge_duplicate_review_sections(content);
+        assert_eq!(result, content, "No change when no duplicates");
+    }
+
+    #[test]
+    fn test_merge_duplicate_headings_without_markers() {
+        // Two headings but only one marker
+        let content = "# Doc\n\n- Fact\n\n## Review Queue\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` question\n  > \n";
+        let result = merge_duplicate_review_sections(content);
+        let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
+        assert_eq!(heading_count, 1, "Should merge duplicate headings, got:\n{result}");
     }
 }
