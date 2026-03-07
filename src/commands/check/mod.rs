@@ -378,46 +378,16 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         } // End of batch loop
 
         // Cross-document fact validation has been moved to the agent via get_fact_pairs tool.
-        // The --deep-check flag now only runs vocabulary extraction.
+        // Vocabulary extraction has been moved to the agent via the discover workflow step.
         if !args.no_questions {
         if deep_check_providers.is_some() {
             if is_table_format && !args.quiet {
                 println!("  Cross-document validation is now agent-driven via get_fact_pairs tool.");
-                println!("  Use `factbase serve` + MCP agent for cross-document fact comparison.");
+                println!("  Vocabulary extraction is now agent-driven via the discover workflow step.");
+                println!("  Use `factbase serve` + MCP agent for these features.");
             }
         }
         } // end --no-questions guard
-
-        // Vocabulary extraction (deep_check only, requires LLM)
-        if let Some((_, ref llm)) = deep_check_providers {
-            progress.phase("Extracting domain vocabulary");
-            let vocab_docs = db.list_documents(None, Some(&repo.id), None, 10000)?;
-            let defined_terms = factbase::collect_defined_terms(&vocab_docs);
-            let doc_refs: Vec<&factbase::models::Document> = docs.iter().collect();
-            let candidates = factbase::extract_vocabulary(
-                &doc_refs,
-                &defined_terms,
-                llm.as_ref(),
-                None,
-                &progress,
-                0,
-            )
-            .await
-            .0;
-            if is_table_format && !args.quiet {
-                if candidates.is_empty() {
-                    println!("  No new vocabulary candidates found.");
-                } else {
-                    println!("  Vocabulary candidates ({}):", candidates.len());
-                    for c in &candidates {
-                        println!("    {} — {} (from [{}])", c.term, c.definition, c.doc_id);
-                    }
-                }
-                if !defined_terms.is_empty() {
-                    println!("  ({} terms already defined in glossary/reference docs)", defined_terms.len());
-                }
-            }
-        }
 
         if is_table_format && !type_counts.is_empty() {
             println!("  Type distribution:");

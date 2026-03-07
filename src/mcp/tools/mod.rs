@@ -241,18 +241,12 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                     organize(db, embedding, llm, &a, &reporter).await?
                 }
                 "workflow" => {
-                    // Bootstrap needs async LLM access; other workflows are sync
+                    // Bootstrap is now sync (no LLM); other workflows are also sync
                     let is_bootstrap = args.get("workflow")
                         .and_then(|v| v.as_str())
                         .map_or(false, |w| w == "bootstrap");
                     if is_bootstrap {
-                        if let Some(llm) = llm {
-                            workflow::bootstrap(llm, &args).await?
-                        } else {
-                            serde_json::json!({
-                                "error": "The bootstrap workflow requires an LLM provider. Configure an LLM in your factbase config."
-                            })
-                        }
+                        workflow::bootstrap(&args)?
                     } else {
                         blocking_tool!(db, args, workflow::workflow)
                     }
