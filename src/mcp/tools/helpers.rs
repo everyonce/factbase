@@ -58,6 +58,13 @@ pub(crate) fn get_bool_arg(args: &Value, key: &str, default: bool) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
+/// Extract optional string array argument.
+pub(crate) fn get_str_array_arg(args: &Value, key: &str) -> Option<Vec<String>> {
+    args.get(key).and_then(Value::as_array).map(|arr| {
+        arr.iter().filter_map(Value::as_str).map(String::from).collect()
+    })
+}
+
 /// Resolve an optional repo filter (which may be a name or ID) to the canonical repo ID.
 ///
 /// Returns `Ok(None)` if input is `None`, `Ok(Some(id))` if resolved,
@@ -398,6 +405,26 @@ mod tests {
         let result = get_str_arg_required(&args, "id");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Missing id"));
+    }
+
+    #[test]
+    fn test_get_str_array_arg_present() {
+        let args = serde_json::json!({"ids": ["a", "b", "c"]});
+        let result = get_str_array_arg(&args, "ids");
+        assert_eq!(result, Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
+    }
+
+    #[test]
+    fn test_get_str_array_arg_missing() {
+        let args = serde_json::json!({});
+        assert_eq!(get_str_array_arg(&args, "ids"), None);
+    }
+
+    #[test]
+    fn test_get_str_array_arg_empty() {
+        let args = serde_json::json!({"ids": []});
+        let result = get_str_array_arg(&args, "ids");
+        assert_eq!(result, Some(vec![]));
     }
 
     #[test]

@@ -82,9 +82,9 @@ pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to s
 
 pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}' using your available tools. Strategies:\n- **Search**: Use available research tools for recent, authoritative information. Try specific queries like '{entity name} {fact type} {year}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the reference (URL, document ID, publication, etc.), author, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}";
 
-pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.{fields}{format_rules}";
+pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.\n\nKeep track of all document IDs you create — you'll need them for the verify step.{fields}{format_rules}\n\n⚠️ NEXT: When done creating documents, you MUST call: workflow(workflow='ingest', step=4)";
 
-pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify your work. Call check_repository with doc_id and dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
+pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify the quality of your new documents.\n\n1. Call check_repository with doc_ids=[list of all document IDs you created] to run quality checks on them.\n2. Review the results — questions indicate quality issues:\n   - Missing @t[] tags: add temporal context (when was this verified? what year?)\n   - Missing sources: add footnotes for any unsourced claims\n   - Ambiguous terms: clarify or create definitions/ entries\n3. Fix what you can NOW using update_document. The rest stays in the review queue for resolve.\n4. Run scan_repository to re-index after any fixes.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.\n\n⚠️ NEXT: When done verifying, you MUST call: workflow(workflow='ingest', step=5)";
 
 pub(crate) const DEFAULT_INGEST_LINKS_INSTRUCTION: &str = "Discover cross-references for your new documents.\n\n1. Call get_link_suggestions with exclude_types matching the new document types (cross-type discovery, min_similarity=0.5).\n2. Review suggestions: does the candidate genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n4. Record: links_added, documents_modified";
 
@@ -834,7 +834,6 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "ingest.verify", DEFAULT_INGEST_VERIFY_INSTRUCTION, &[]),
             "next_tool": "check_repository",
-            "suggested_args": {"dry_run": true},
             "when_done": "Call workflow with workflow='ingest', step=5"
         }),
         5 => serde_json::json!({
@@ -1194,6 +1193,31 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("current_role"));
+    }
+
+    #[test]
+    fn test_ingest_create_has_required_next() {
+        let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("NEXT:"), "create step should have REQUIRED NEXT routing");
+        assert!(instruction.contains("workflow(workflow='ingest', step=4)"), "should route to step 4");
+    }
+
+    #[test]
+    fn test_ingest_verify_no_dry_run() {
+        let step = ingest_step(4, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(!instruction.contains("dry_run"), "verify step should not mention dry_run");
+        assert!(step.get("suggested_args").is_none(), "verify step should not have suggested_args with dry_run");
+        assert!(instruction.contains("doc_ids"), "verify step should tell agent to use doc_ids");
+    }
+
+    #[test]
+    fn test_ingest_verify_has_required_next() {
+        let step = ingest_step(4, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("NEXT:"), "verify step should have REQUIRED NEXT routing");
+        assert!(instruction.contains("workflow(workflow='ingest', step=5)"), "should route to step 5");
     }
 
     #[test]
