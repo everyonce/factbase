@@ -1138,6 +1138,7 @@ mod tests {
                     vec!["current_role".into(), "location".into()],
                 )])),
                 ignore_patterns: None,
+                glossary_types: None,
             }),
         })
     }

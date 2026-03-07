@@ -9,7 +9,7 @@ use crate::processor::{
 };
 use crate::progress::ProgressReporter;
 use crate::question_generator::{
-    collect_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
+    collect_defined_terms_with_types, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
     generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
     generate_missing_questions, generate_precision_questions,
     generate_required_field_questions, generate_source_quality_questions,
@@ -69,6 +69,8 @@ pub struct CheckConfig {
     pub acquire_write_guard: bool,
     /// Optional repo ID to scope operations to a single repository.
     pub repo_id: Option<String>,
+    /// Document types to treat as glossary/definitions (from perspective.yaml).
+    pub glossary_types: Option<Vec<String>>,
 }
 
 /// Result of linting a single document.
@@ -188,9 +190,9 @@ pub async fn check_all_documents(
 
     let title_map_ref = &title_map;
 
-    // Collect defined terms from definitions/glossary/reference documents so we don't
+    // Collect defined terms from glossary/definition/reference documents so we don't
     // flag acronyms that are already defined in the repo.
-    let defined_terms = collect_defined_terms(docs);
+    let defined_terms = collect_defined_terms_with_types(docs, config.glossary_types.as_deref());
     let defined_terms_ref = &defined_terms;
 
     let mut all_results = Vec::new();
@@ -525,6 +527,7 @@ mod tests {
                     deadline: None,
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -553,6 +556,7 @@ mod tests {
                     deadline: None,
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -577,6 +581,7 @@ mod tests {
                     deadline: None,
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -602,6 +607,7 @@ mod tests {
                     deadline: None,
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -633,6 +639,7 @@ mod tests {
                     deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -659,6 +666,7 @@ mod tests {
                     deadline: None,
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -694,6 +702,7 @@ mod tests {
                     deadline: None,
                     acquire_write_guard: false,
                     repo_id: None,
+                    glossary_types: None,
                 };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -720,6 +729,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: true,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
@@ -741,6 +751,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         }
     }
 
@@ -787,6 +798,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, &config, &progress)
@@ -884,6 +896,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
@@ -918,6 +931,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -967,6 +981,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1043,6 +1058,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1100,6 +1116,7 @@ mod tests {
             deadline: None,
             acquire_write_guard: false,
             repo_id: None,
+            glossary_types: None,
         };
         let progress = ProgressReporter::Silent;
 

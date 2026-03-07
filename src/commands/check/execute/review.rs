@@ -22,6 +22,7 @@ pub fn generate_review_questions(
     db: &Database,
     opts: &ReviewQuestionOptions,
     title_duplicates: &[(&str, &str)], // (id, title) of docs with same title
+    defined_terms: &std::collections::HashSet<String>,
 ) -> anyhow::Result<(usize, Option<ExportedDocQuestions>)> {
     // Check if file should be skipped based on ignore_patterns
     let should_skip = repo
@@ -87,6 +88,7 @@ pub fn generate_review_questions(
     let review_config = ReviewConfig {
         stale_threshold,
         required_fields,
+        defined_terms: defined_terms.clone(),
     };
 
     // Generate questions and prune stale ones

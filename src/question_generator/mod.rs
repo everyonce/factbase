@@ -54,7 +54,7 @@ mod temporal;
 use crate::patterns::{FACT_LINE_REGEX, META_COMMENTARY_REGEX};
 
 // Re-export all public items
-pub use ambiguous::{collect_defined_terms, extract_acronym_from_question, extract_defined_terms, is_glossary_doc, generate_ambiguous_questions, generate_ambiguous_questions_with_type};
+pub use ambiguous::{collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question, extract_defined_terms, is_glossary_doc, is_glossary_doc_with_types, generate_ambiguous_questions, generate_ambiguous_questions_with_type};
 pub use conflict::{
     classify_conflict_pattern, filter_sequential_conflicts, generate_conflict_questions,
     generate_duplicate_entry_questions, ConflictPattern,

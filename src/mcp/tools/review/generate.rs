@@ -3,12 +3,12 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::mcp::tools::helpers::resolve_doc_path;
+use crate::mcp::tools::helpers::{load_perspective, resolve_doc_path};
 use crate::mcp::tools::{get_bool_arg, get_str_arg, resolve_repo_filter};
 use crate::patterns::has_corruption_artifacts;
 use crate::processor::{append_review_questions, content_hash, parse_review_queue};
 use crate::question_generator::{
-    collect_defined_terms, filter_sequential_conflicts,
+    collect_defined_terms_with_types, filter_sequential_conflicts,
     generate_ambiguous_questions_with_type, generate_conflict_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_precision_questions, generate_stale_questions, generate_temporal_questions,
@@ -97,6 +97,8 @@ async fn generate_questions_single(
     let body = crate::patterns::content_body(content);
 
     // Collect defined terms from glossary/definition/reference documents
+    let perspective = load_perspective(db, Some(&doc.repo_id));
+    let glossary_types = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.glossary_types.clone());
     let all_docs = {
         let mut docs = Vec::new();
         for repo in db.list_repositories()? {
@@ -104,7 +106,7 @@ async fn generate_questions_single(
         }
         docs
     };
-    let defined_terms = collect_defined_terms(&all_docs);
+    let defined_terms = collect_defined_terms_with_types(&all_docs, glossary_types.as_deref());
 
     // Generate all question types
     let mut new_questions = generate_temporal_questions(body);

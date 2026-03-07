@@ -118,7 +118,7 @@ pub use progress::{ProgressReporter, ProgressSender};
 pub use question_generator::check::VocabCandidate;
 pub use question_generator::cross_validate::make_pair_id;
 pub use question_generator::{
-    collect_defined_terms, extract_acronym_from_question, extract_defined_terms, is_glossary_doc,
+    collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question, extract_defined_terms, is_glossary_doc, is_glossary_doc_with_types,
     filter_sequential_conflicts, generate_ambiguous_questions,
     generate_conflict_questions, generate_corruption_questions,
     generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,

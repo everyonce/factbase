@@ -223,6 +223,16 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
             .as_ref()
             .and_then(|p| p.allowed_types.as_ref());
 
+        // Collect defined terms from glossary/definitions docs for acronym suppression.
+        // Uses all docs (including filtered ones) so terms from glossary docs are always available.
+        let glossary_types = repo
+            .perspective
+            .as_ref()
+            .and_then(|p| p.review.as_ref())
+            .and_then(|r| r.glossary_types.clone());
+        let all_repo_docs = db.list_documents(None, Some(&repo.id), None, 10000)?;
+        let defined_terms = factbase::collect_defined_terms_with_types(&all_repo_docs, glossary_types.as_deref());
+
         // Report check phase via ProgressReporter
         progress.phase("Generating review questions");
 
@@ -357,7 +367,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                         .get(&doc.title.to_lowercase())
                         .map_or(&[][..], |v| v.as_slice());
                     let (new_count, exported) =
-                        execute::generate_review_questions(doc, repo, &db, &opts, title_dupes)?;
+                        execute::generate_review_questions(doc, repo, &db, &opts, title_dupes, &defined_terms)?;
                     review_new_total += new_count;
                     if let Some(e) = exported {
                         exported_questions.push(e);

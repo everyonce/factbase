@@ -12,6 +12,8 @@ pub struct ReviewPerspective {
     pub required_fields: Option<HashMap<String, Vec<String>>>,
     /// Glob patterns for files to skip during review
     pub ignore_patterns: Option<Vec<String>>,
+    /// Document types to treat as glossary/definitions (default: ["definitions"])
+    pub glossary_types: Option<Vec<String>>,
 }
 
 /// Repository perspective metadata loaded from `perspective.yaml`.
