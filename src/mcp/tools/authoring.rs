@@ -99,7 +99,7 @@ pub fn get_authoring_guide() -> Value {
             "tip": "Use the EXACT entity title as it appears in the document's # heading. 'Delta Air Lines' not 'Delta' or 'the airline'. 'Mount Vesuvius' not 'the volcano'.",
             "manual": "See [[betula-pendula]] for the full specification ← use the filename stem (lowercase-with-hyphens), not the hex ID",
             "style": "Always use the filename stem (e.g., [[alice-chen]], [[project-atlas]]) rather than the hex document ID (e.g., [[a1b2c3]]). Readable names make cross-references understandable without looking up IDs. The `factbase check` command flags hex-ID cross-refs and suggests the readable alternative.",
-            "links_block": "Add a Links: line at the bottom of the document (after footnotes) to declare cross-references using hex IDs: `Links: [[abc123]] [[def456]]`. The store_links MCP tool manages this block. Use get_link_suggestions to discover missing cross-references."
+            "links_block": "Factbase uses directional link blocks at the bottom of documents:\n\n`References: [[abc123]] [[def456]]` — outbound links FROM this document TO those documents.\n`Referenced by: [[ghi789]]` — inbound links FROM those documents TO this document.\n\nThe store_links MCP tool manages both blocks automatically. Legacy `Links:` format is treated as `References:` for backward compatibility. Use get_link_suggestions to discover missing cross-references."
         },
         "inbox_blocks": {
             "description": "Stage corrections or new facts for LLM-assisted integration into the document body.",

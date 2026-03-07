@@ -81,7 +81,10 @@ pub use chunks::{chunk_document, DocumentChunk};
 pub use stats::{calculate_fact_stats, count_facts, count_facts_with_temporal_tags};
 
 // Re-export links types and functions
-pub use links::{append_links_to_content, parse_links_block};
+pub use links::{
+    append_links_to_content, append_referenced_by_to_content, parse_links_block,
+    parse_referenced_by_block,
+};
 
 // Note: Unit tests are distributed to their respective submodules:
 // - core.rs: 16 tests (ID, title, type, hash)

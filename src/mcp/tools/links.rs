@@ -5,7 +5,10 @@ use std::collections::{HashMap, HashSet};
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::processor::{append_links_to_content, parse_links_block};
+use crate::processor::{
+    append_links_to_content, append_referenced_by_to_content, parse_links_block,
+    parse_referenced_by_block,
+};
 use serde_json::Value;
 
 use super::helpers::{get_str_arg, get_u64_arg, resolve_repo_filter, run_blocking};
@@ -145,15 +148,18 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
     }))
 }
 
-/// Store links by writing [[id]] references into document files' Links: blocks.
+/// Store links by writing [[id]] references into document files.
+/// Writes `References:` to source files and `Referenced by:` to target files.
+/// Only the forward direction (source→target) is added to the database.
 pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let links = args
         .get("links")
         .and_then(Value::as_array)
         .ok_or_else(|| FactbaseError::Parse("'links' array is required".into()))?;
 
-    // Group by source_id
-    let mut grouped: HashMap<String, Vec<String>> = HashMap::new();
+    // Group by source_id (for References:) and by target_id (for Referenced by:)
+    let mut by_source: HashMap<String, Vec<String>> = HashMap::new();
+    let mut by_target: HashMap<String, Vec<String>> = HashMap::new();
     for link in links {
         let source_id = link
             .get("source_id")
@@ -163,17 +169,22 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
             .get("target_id")
             .and_then(Value::as_str)
             .ok_or_else(|| FactbaseError::Parse("each link needs 'target_id'".into()))?;
-        grouped
+        by_source
             .entry(source_id.to_string())
             .or_default()
             .push(target_id.to_string());
+        by_target
+            .entry(target_id.to_string())
+            .or_default()
+            .push(source_id.to_string());
     }
 
     let mut added = 0usize;
     let mut skipped_existing = 0usize;
     let mut documents_modified = 0usize;
 
-    for (source_id, target_ids) in &grouped {
+    // Write References: blocks to source documents
+    for (source_id, target_ids) in &by_source {
         let doc = db
             .get_document(source_id)?
             .ok_or_else(|| FactbaseError::NotFound(format!("Document {source_id} not found")))?;
@@ -204,10 +215,41 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
         let updated_content = append_links_to_content(&content, &new_ids);
         std::fs::write(file_path, &updated_content)?;
 
-        // Update DB links
+        // Update DB links (forward direction only)
         let target_refs: Vec<&str> = new_ids.iter().copied().collect();
         let db_added = db.add_links(source_id, &target_refs)?;
         added += db_added;
+        documents_modified += 1;
+    }
+
+    // Write Referenced by: blocks to target documents
+    for (target_id, source_ids) in &by_target {
+        let doc = match db.get_document(target_id)? {
+            Some(d) => d,
+            None => continue, // target may not exist yet
+        };
+
+        let file_path = match super::helpers::resolve_doc_path(db, &doc) {
+            Ok(p) if p.exists() => p,
+            _ => continue,
+        };
+
+        let content = std::fs::read_to_string(&file_path)?;
+        let existing_ids: HashSet<String> =
+            parse_referenced_by_block(&content).into_iter().collect();
+
+        let new_ids: Vec<&str> = source_ids
+            .iter()
+            .filter(|id| !existing_ids.contains(id.as_str()))
+            .map(String::as_str)
+            .collect();
+
+        if new_ids.is_empty() {
+            continue;
+        }
+
+        let updated_content = append_referenced_by_to_content(&content, &new_ids);
+        std::fs::write(file_path, &updated_content)?;
         documents_modified += 1;
     }
 
@@ -354,25 +396,34 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let tmp_dir = tempfile::TempDir::new().unwrap();
-        let file_path = tmp_dir.path().join("doc1.md");
-        std::fs::write(&file_path, "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.").unwrap();
+        let src_path = tmp_dir.path().join("doc1.md");
+        let tgt_path = tmp_dir.path().join("target.md");
+        std::fs::write(&src_path, "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.").unwrap();
+        std::fs::write(&tgt_path, "<!-- factbase:abc123 -->\n# Target Doc\n\nContent.").unwrap();
 
         let mut doc = test_doc("doc001", "Doc 1");
-        doc.file_path = file_path.to_string_lossy().to_string();
+        doc.file_path = src_path.to_string_lossy().to_string();
         db.upsert_document(&doc).unwrap();
 
-        db.upsert_document(&test_doc("abc123", "Target Doc")).unwrap();
+        let mut target = test_doc("abc123", "Target Doc");
+        target.file_path = tgt_path.to_string_lossy().to_string();
+        db.upsert_document(&target).unwrap();
 
         let args = serde_json::json!({
             "links": [{"source_id": "doc001", "target_id": "abc123"}]
         });
         let result = store_links(&db, &args).unwrap();
         assert_eq!(result["added"], 1);
-        assert_eq!(result["documents_modified"], 1);
+        assert_eq!(result["documents_modified"], 2); // both source and target
 
-        // Verify file was updated
-        let content = std::fs::read_to_string(&file_path).unwrap();
-        assert!(content.contains("Links: [[abc123]]"));
+        // Verify source file has References:
+        let src_content = std::fs::read_to_string(&src_path).unwrap();
+        assert!(src_content.contains("References: [[abc123]]"));
+        assert!(!src_content.contains("Links:"));
+
+        // Verify target file has Referenced by:
+        let tgt_content = std::fs::read_to_string(&tgt_path).unwrap();
+        assert!(tgt_content.contains("Referenced by: [[doc001]]"));
     }
 
     #[test]
@@ -385,7 +436,7 @@ mod tests {
         let file_path = tmp_dir.path().join("doc1.md");
         std::fs::write(
             &file_path,
-            "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.\n\nLinks: [[abc123]]",
+            "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.\n\nReferences: [[abc123]]",
         )
         .unwrap();
 
@@ -404,7 +455,6 @@ mod tests {
         let result = store_links(&db, &args).unwrap();
         assert_eq!(result["added"], 1);
         assert_eq!(result["skipped_existing"], 1);
-        assert_eq!(result["documents_modified"], 1);
 
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("[[abc123]]"));

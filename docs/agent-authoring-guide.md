@@ -294,14 +294,19 @@ Do **not** create definitions files for one-off clarifications (like "is this ho
    ```
    Use the filename stem (e.g., `[[alice-chen]]`, `[[project-atlas]]`) rather than the hex document ID. Readable names make cross-references understandable without looking up IDs.
 
-4. **Links block** — Add a `Links:` line at the bottom of the document (after footnotes) to declare explicit cross-references:
+4. **Link blocks** — Add directional link blocks at the bottom of the document (after footnotes) to declare explicit cross-references:
    ```markdown
    ---
    [^1]: Source one
 
-   Links: [[abc123]] [[def456]]
+   References: [[abc123]] [[def456]]
+   Referenced by: [[ghi789]]
    ```
-   The `store_links` MCP tool manages this block automatically. You can also add it manually. Use `get_link_suggestions` to discover missing cross-references.
+   - `References:` = outbound links FROM this document TO those documents.
+   - `Referenced by:` = inbound links FROM those documents TO this document.
+   - The `store_links` MCP tool manages both blocks automatically. You can also add them manually.
+   - Legacy `Links:` format is treated as `References:` for backward compatibility.
+   - Use `get_link_suggestions` to discover missing cross-references.
 
 ---
 
