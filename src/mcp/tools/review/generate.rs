@@ -154,6 +154,14 @@ async fn generate_questions_single(
         fs::write(&file_path, &updated_content)?;
         let new_hash = content_hash(&updated_content);
         db.update_document_content(&doc_id, &updated_content, &new_hash)?;
+    } else if !dry_run && has_duplicate_review_sections(content) {
+        // Clean up duplicate review sections even when no new questions
+        let updated_content = crate::processor::merge_duplicate_review_sections(content);
+        if updated_content != content {
+            fs::write(&file_path, &updated_content)?;
+            let new_hash = content_hash(&updated_content);
+            db.update_document_content(&doc_id, &updated_content, &new_hash)?;
+        }
     }
 
     Ok(serde_json::json!({
@@ -269,6 +277,18 @@ async fn generate_questions_all(
     );
 
     Ok(result)
+}
+
+/// Check if content has duplicate `## Review Queue` headings or markers.
+fn has_duplicate_review_sections(content: &str) -> bool {
+    let heading_count = content
+        .lines()
+        .filter(|l| l.trim() == "## Review Queue")
+        .count();
+    let marker_count = content
+        .matches(crate::patterns::REVIEW_QUEUE_MARKER)
+        .count();
+    heading_count > 1 || marker_count > 1
 }
 
 /// Filters out questions that already exist in the review queue.
