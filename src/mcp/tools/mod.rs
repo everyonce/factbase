@@ -50,7 +50,7 @@ pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
 pub use repository::{init_repository, scan_repository};
 pub use review::{
-    answer_question, answer_questions, apply_review_answers, bulk_answer_questions,
+    answer_question, answer_questions, bulk_answer_questions,
     generate_questions, get_deferred_items, get_review_queue, check_repository,
 };
 pub use search::{get_fact_pairs, search_content, search_knowledge};
@@ -201,11 +201,9 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "answer_questions" => {
                     blocking_tool!(db, args, reporter, answer_questions)
                 }
-                "check_repository" => check_repository(db, embedding, llm, &args, &reporter).await?,
-                "generate_questions" => generate_questions(db, embedding, llm, &args).await?,
+                "check_repository" => check_repository(db, embedding, &args, &reporter).await?,
                 "scan_repository" => scan_repository(db, embedding, llm, &args, &reporter).await?,
                 "init_repository" => blocking_tool!(db, args, init_repository),
-                "apply_review_answers" => apply_review_answers(db, llm, &args, &reporter).await?,
                 "get_duplicate_entries" => {
                     organize_analyze(db, embedding, &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}), &reporter).await?
                 }
@@ -214,16 +212,6 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 }
                 "organize" => {
                     organize(db, embedding, llm, &args, &reporter).await?
-                }
-                "organize_merge" => {
-                    let mut a = args.clone();
-                    a.as_object_mut().map(|m| m.insert("action".into(), "merge".into()));
-                    organize(db, embedding, llm, &a, &reporter).await?
-                }
-                "organize_split" => {
-                    let mut a = args.clone();
-                    a.as_object_mut().map(|m| m.insert("action".into(), "split".into()));
-                    organize(db, embedding, llm, &a, &reporter).await?
                 }
                 "organize_move" => {
                     let mut a = args.clone();
@@ -375,7 +363,10 @@ mod tests {
             .filter_map(|t| t["name"].as_str().map(String::from))
             .collect();
 
-        let dispatch_names: HashSet<String> = [
+        // These are the tools in the schema. Dispatch may have additional aliases
+        // (organize_move, organize_retype, organize_apply, get_duplicate_entries)
+        // that route to the same handler but aren't in the schema.
+        let expected_schema_names: HashSet<String> = [
             "search_knowledge",
             "get_entity",
             "list_entities",
@@ -390,10 +381,8 @@ mod tests {
             "get_deferred_items",
             "answer_questions",
             "check_repository",
-            "generate_questions",
             "scan_repository",
             "init_repository",
-            "apply_review_answers",
             "get_authoring_guide",
             "workflow",
             "organize_analyze",
@@ -409,20 +398,19 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
 
-        let in_schema_not_dispatch: Vec<_> = schema_names.difference(&dispatch_names).collect();
-        let in_dispatch_not_schema: Vec<_> = dispatch_names.difference(&schema_names).collect();
+        let in_schema_not_expected: Vec<_> = schema_names.difference(&expected_schema_names).collect();
+        let in_expected_not_schema: Vec<_> = expected_schema_names.difference(&schema_names).collect();
 
         assert!(
-            in_schema_not_dispatch.is_empty(),
-            "Tools in schema but missing from dispatch: {:?}",
-            in_schema_not_dispatch
+            in_schema_not_expected.is_empty(),
+            "Unexpected tools in schema: {:?}",
+            in_schema_not_expected
         );
         assert!(
-            in_dispatch_not_schema.is_empty(),
-            "Tools in dispatch but missing from schema: {:?}",
-            in_dispatch_not_schema
+            in_expected_not_schema.is_empty(),
+            "Missing tools from schema: {:?}",
+            in_expected_not_schema
         );
-        assert_eq!(schema_names.len(), dispatch_names.len());
     }
 
     #[test]
@@ -717,7 +705,7 @@ mod tests {
         let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
 
         let args = serde_json::json!({"mode": "questions"});
-        check_repository(&db, &embedding, None, &args, &reporter)
+        check_repository(&db, &embedding, &args, &reporter)
             .await
             .unwrap();
 
@@ -740,7 +728,8 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        let scaling_tools = ["scan_repository", "check_repository", "apply_review_answers", "generate_questions", "organize_analyze"];
+        // Only scan_repository still has time_budget_secs (paged for embeddings)
+        let scaling_tools = ["scan_repository"];
         for tool_name in &scaling_tools {
             let tool = tools
                 .iter()
@@ -819,15 +808,15 @@ mod tests {
             .await
             .unwrap();
 
-        // Check with a generous budget — should complete
-        let args = serde_json::json!({"mode": "questions", "time_budget_secs": 30});
-        let result = check_repository(&db, &embedding, None, &args, &silent)
+        // Check — should complete (no paging)
+        let args = serde_json::json!({});
+        let result = check_repository(&db, &embedding, &args, &silent)
             .await
             .unwrap();
 
         assert!(result.get("documents_scanned").is_some());
-        // Should complete within budget (no continue flag)
-        assert!(result.get("continue").is_none() || result["continue"] == false);
+        // No paging — should always complete
+        assert!(result.get("continue").is_none());
     }
 
     #[tokio::test]

@@ -1,6 +1,6 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 27 MCP tools exposed by factbase.
+//! Contains the JSON schema for all 26 MCP tools exposed by factbase.
 
 use serde_json::Value;
 
@@ -196,40 +196,19 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "check_repository",
-                "description": "Run quality checks on a repository. Requires a `mode` parameter to select what to check. Each mode is time-boxed and WILL return `continue: true` with a `resume` token for non-trivial repositories — you MUST call again passing the resume token until done.\n\nModes:\n- 'questions': Per-document quality checks (stale, temporal, source, missing). Pages via resume token.\n- 'discover': Entity suggestions + vocabulary extraction. Pages via resume token.\n- 'embeddings': Generate fact-level embeddings for cross-validation. Pages via resume token.\n\nFor cross-document fact comparison, use the get_fact_pairs tool instead.\n\nIf doc_id is provided, checks just that document (ignores mode).",
+                "description": "Run quality checks on a repository. Generates review questions for stale facts, missing sources, temporal gaps, conflicts, and other issues. A single call checks all documents — no paging needed.\n\nIf doc_id is provided, checks just that document (replaces the old generate_questions tool).\n\nFor cross-document fact comparison, use the get_fact_pairs tool instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "mode": { "type": "string", "enum": ["questions", "discover", "embeddings"], "description": "Required. 'questions' for per-doc quality checks, 'discover' for entity suggestions + vocabulary, 'embeddings' for fact embedding generation." },
                         "repo": { "type": "string", "description": "Repository ID (optional)" },
-                        "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted). Ignores mode when set." },
-                        "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" },
-                        "deep_check": { "type": "boolean", "description": "Deprecated: accepted but ignored. Use mode='cross_validate' instead." },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." },
-                        "checked_pair_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." },
-                        "checked_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." }
-                    },
-                    "required": ["mode"]
-                }
-            },
-            {
-                "name": "generate_questions",
-                "description": "Generate review questions for a single document or all documents. Lighter than check_repository (no entity discovery or deep cross-validation). For large repositories, may return partial results with `continue: true` — call again with the resume token to process remaining documents.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "doc_id": { "type": "string", "description": "Document ID (optional, generates for all documents if omitted)" },
-                        "repo": { "type": "string", "description": "Filter by repository ID (optional, used when doc_id is omitted)" },
-                        "dry_run": { "type": "boolean", "description": "Preview questions without modifying files (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
+                        "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
+                        "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" }
                     }
                 }
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate document embeddings, and detect entity links. Fact-level embeddings for cross-validation are generated separately via check_repository with mode='embeddings'. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
+                "description": "Re-index documents, generate document and fact embeddings, and detect entity links. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -252,20 +231,6 @@ pub fn tools_list() -> Value {
                         "name": { "type": "string", "description": "Display name (optional, defaults to id)" }
                     },
                     "required": ["path"]
-                }
-            },
-            {
-                "name": "apply_review_answers",
-                "description": "Apply answered review questions to document content via LLM rewrite. For large repositories, may return partial results with `continue: true` — call again with the resume token to process remaining documents.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "doc_id": { "type": "string", "description": "Apply only for this document (optional, applies all if omitted)" },
-                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
-                        "dry_run": { "type": "boolean", "description": "Preview changes without modifying files (default: false)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
-                    }
                 }
             },
             {
@@ -299,38 +264,30 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "organize_analyze",
-                "description": "Analyze repository for reorganization opportunities: ghost files (duplicate files sharing an ID/title in the same directory), merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only. Supports time-boxing via time_budget_secs; pass resume token to continue.",
+                "description": "Analyze repository for reorganization opportunities: ghost files (duplicate files sharing an ID/title in the same directory), merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
                         "focus": { "type": "string", "enum": ["duplicates", "structure"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info. 'structure' returns misplaced document candidates." },
                         "merge_threshold": { "type": "number", "description": "Minimum similarity for merge candidates (default: 0.95)" },
-                        "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." },
-                        "completed_phases": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." },
-                        "analyzed_doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Deprecated: ignored. Kept for backward compatibility." }
+                        "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" }
                     }
                 }
             },
             {
                 "name": "organize",
-                "description": "Execute a knowledge base reorganization action: merge two documents, split a multi-topic document, move a document to a different folder, change a document's type, or process orphan assignments.",
+                "description": "Execute a knowledge base reorganization action: move a document to a different folder, change a document's type, or process orphan assignments. For merge/split, use get_entity + update_document + create_document/delete_document directly.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "action": { "type": "string", "enum": ["merge", "split", "move", "retype", "apply"], "description": "The reorganization action to perform" },
-                        "doc1": { "type": "string", "description": "First document ID (merge)" },
-                        "doc2": { "type": "string", "description": "Second document ID (merge)" },
-                        "into": { "type": "string", "description": "Which document to keep — must be doc1 or doc2 (merge, optional)" },
-                        "doc_id": { "type": "string", "description": "Document ID (split, move, retype)" },
-                        "at": { "type": "string", "description": "Split at specific section title (split, optional)" },
+                        "action": { "type": "string", "enum": ["move", "retype", "apply"], "description": "The reorganization action to perform" },
+                        "doc_id": { "type": "string", "description": "Document ID (move, retype)" },
                         "to": { "type": "string", "description": "Destination folder relative to repo root (move)" },
                         "new_type": { "type": "string", "description": "New type to assign (retype)" },
                         "persist": { "type": "boolean", "description": "Persist type override to file (retype, default: false)" },
                         "repo": { "type": "string", "description": "Repository ID (apply, optional)" },
-                        "dry_run": { "type": "boolean", "description": "Preview without executing (merge, split, move; default: false)" }
+                        "dry_run": { "type": "boolean", "description": "Preview without executing (move; default: false)" }
                     },
                     "required": ["action"]
                 }
@@ -445,7 +402,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 28, "should have 28 tools");
+        assert_eq!(tools.len(), 26, "should have 26 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -455,7 +412,6 @@ mod tests {
         assert!(names.contains(&"check_repository"));
         assert!(names.contains(&"scan_repository"));
         assert!(names.contains(&"init_repository"));
-        assert!(names.contains(&"apply_review_answers"));
         assert!(names.contains(&"list_entities"));
         assert!(names.contains(&"list_repositories"));
         assert!(names.contains(&"get_perspective"));
@@ -472,10 +428,27 @@ mod tests {
         assert!(names.contains(&"embeddings_export"));
         assert!(names.contains(&"embeddings_import"));
         assert!(names.contains(&"embeddings_status"));
-        assert!(names.contains(&"generate_questions"));
         assert!(names.contains(&"get_link_suggestions"));
         assert!(names.contains(&"store_links"));
         assert!(names.contains(&"get_fact_pairs"));
+
+        // Removed tools should NOT be present
+        assert!(!names.contains(&"generate_questions"), "generate_questions should be removed");
+        assert!(!names.contains(&"apply_review_answers"), "apply_review_answers should be removed");
+
+        // All 26 expected tools should be present
+        let expected = [
+            "search_knowledge", "get_entity", "list_entities", "list_repositories",
+            "get_perspective", "create_document", "update_document", "delete_document",
+            "bulk_create_documents", "search_content", "get_review_queue", "answer_questions",
+            "check_repository", "scan_repository", "init_repository", "workflow",
+            "organize_analyze", "organize", "get_deferred_items", "get_authoring_guide",
+            "embeddings_export", "embeddings_import", "embeddings_status",
+            "get_link_suggestions", "store_links", "get_fact_pairs",
+        ];
+        for name in &expected {
+            assert!(names.contains(name), "missing tool: {name}");
+        }
 
         // Verify tools with required params have inputSchema
         for tool in tools {
@@ -652,21 +625,16 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        for name in ["check_repository", "scan_repository"] {
-            let tool = tools.iter().find(|t| t["name"] == name).unwrap();
-            let desc = tool["description"].as_str().unwrap();
-            assert!(
-                desc.contains("WILL return"),
-                "{name} description should say paging WILL happen"
-            );
-            assert!(
-                desc.contains("MUST"),
-                "{name} description should use MUST for continuation"
-            );
-            assert!(
-                !desc.contains("may return partial"),
-                "{name} description should not use weak 'may return' language"
-            );
-        }
+        // Only scan_repository still uses paging
+        let tool = tools.iter().find(|t| t["name"] == "scan_repository").unwrap();
+        let desc = tool["description"].as_str().unwrap();
+        assert!(
+            desc.contains("WILL return"),
+            "scan_repository description should say paging WILL happen"
+        );
+        assert!(
+            desc.contains("MUST"),
+            "scan_repository description should use MUST for continuation"
+        );
     }
 }

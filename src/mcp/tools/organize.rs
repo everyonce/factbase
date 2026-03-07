@@ -32,23 +32,30 @@ fn resolve_repo(db: &Database, repo_id: Option<&str>) -> Result<crate::models::R
 }
 
 /// Unified organize tool dispatcher. Routes to the appropriate action based on the "action" field.
-#[instrument(name = "mcp_organize", skip(db, _embedding, llm, args, progress))]
+/// Supports: move, retype, apply. Merge and split are now agent-driven via get_entity + CRUD tools.
+#[instrument(name = "mcp_organize", skip(db, _embedding, _llm, args, _progress))]
 pub async fn organize<E: EmbeddingProvider>(
     db: &Database,
     _embedding: &E,
-    llm: Option<&dyn LlmProvider>,
+    _llm: Option<&dyn LlmProvider>,
     args: &Value,
-    progress: &ProgressReporter,
+    _progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let action = get_str_arg_required(args, "action")?;
     match action.as_str() {
-        "merge" => organize_merge(db, llm, args, progress).await,
-        "split" => organize_split(db, llm, args, progress).await,
+        "merge" => Ok(serde_json::json!({
+            "error": "The 'merge' action has been removed from the organize tool. Use get_entity to read both documents, plan the merge yourself, then use update_document and delete_document to execute it.",
+            "migration": "Agent-driven merge: get_entity(doc1) + get_entity(doc2) → plan → update_document(keep) + delete_document(remove)"
+        })),
+        "split" => Ok(serde_json::json!({
+            "error": "The 'split' action has been removed from the organize tool. Use get_entity to read the document, plan the split yourself, then use create_document and update_document to execute it.",
+            "migration": "Agent-driven split: get_entity(doc) → plan → create_document(new) + update_document(original)"
+        })),
         "move" => organize_move(db, args),
         "retype" => organize_retype(db, args),
         "apply" => organize_apply(db, args),
         _ => Err(FactbaseError::parse(format!(
-            "Unknown organize action: '{action}'. Expected: merge, split, move, retype, apply"
+            "Unknown organize action: '{action}'. Expected: move, retype, apply"
         ))),
     }
 }
@@ -109,7 +116,6 @@ async fn get_duplicate_entries<E: EmbeddingProvider>(
 
 /// Analyze repository for reorganization opportunities (merge, split, misplaced, duplicates).
 /// Supports focus="duplicates" or focus="structure" for targeted analysis.
-/// Supports time-boxing via `time_budget_secs` and cursor-based resumption via `analyzed_doc_ids`.
 #[instrument(name = "mcp_organize_analyze", skip(db, embedding, args, progress))]
 pub async fn organize_analyze<E: EmbeddingProvider>(
     db: &Database,
@@ -121,49 +127,15 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     let focus = get_str_arg(args, "focus").map(String::from);
     let rid = repo_id.as_deref();
 
-    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
-    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
-
-    let _analyzed_doc_ids: std::collections::HashSet<String> = args
-        .get("analyzed_doc_ids")
-        .and_then(Value::as_array)
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .unwrap_or_default();
-
-    // Decode resume token OR fall back to legacy completed_phases arg
-    let resume_data = get_str_arg(args, "resume")
-        .and_then(crate::mcp::tools::helpers::decode_resume_token);
-    let completed_phases: std::collections::HashSet<String> = resume_data.as_ref()
-        .and_then(|v| v.get("completed_phases").and_then(Value::as_array))
-        .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        .or_else(|| {
-            // Legacy: read completed_phases directly from args
-            args.get("completed_phases")
-                .and_then(Value::as_array)
-                .map(|arr| arr.iter().filter_map(Value::as_str).map(String::from).collect())
-        })
-        .unwrap_or_default();
-
-    // Count total docs for progress reporting
-    let all_docs = crate::organize::detect::collect_active_documents(db, rid)?;
-    let total_docs = all_docs.len();
-    drop(all_docs);
-
     // Focused duplicate-only mode
     if focus.as_deref() == Some("duplicates") {
         let (dup_json, stale_json) = get_duplicate_entries(db, embedding, rid, progress).await?;
-        let mut result = serde_json::json!({
+        return Ok(serde_json::json!({
             "duplicates": dup_json,
             "stale": stale_json,
             "duplicate_count": dup_json.len(),
             "stale_count": stale_json.len(),
-            "progress": { "processed": total_docs, "total": total_docs },
-        });
-        // Duplicates focus runs to completion (embedding-heavy, not easily interruptible)
-        crate::mcp::tools::helpers::apply_time_budget_progress(
-            &mut result, total_docs, total_docs, "organize_analyze", time_budget.is_some(), None,
-        );
-        return Ok(result);
+        }));
     }
 
     // Focused structure-only mode (misplaced detection)
@@ -174,7 +146,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
             let rid2 = rid.map(String::from);
             run_blocking(move || detect_misplaced(&db2, rid2.as_deref(), &p)).await?
         };
-        let mut result = serde_json::json!({
+        return Ok(serde_json::json!({
             "misplaced_candidates": misplaced_candidates.iter().map(|c| {
                 serde_json::json!({
                     "doc_id": c.doc_id,
@@ -186,83 +158,47 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
                 })
             }).collect::<Vec<_>>(),
             "total_suggestions": misplaced_candidates.len(),
-            "progress": { "processed": total_docs, "total": total_docs },
-        });
-        crate::mcp::tools::helpers::apply_time_budget_progress(
-            &mut result, total_docs, total_docs, "organize_analyze", time_budget.is_some(), None,
-        );
-        return Ok(result);
+        }));
     }
 
-    // Default mode: run all 4 phases with deadline checks between them
-    let deadline_hit = |d: &Option<std::time::Instant>| d.is_some_and(|dl| std::time::Instant::now() > dl);
-
+    // Default mode: run all phases
     let merge_threshold = args.get("merge_threshold").and_then(|v| v.as_f64()).unwrap_or(0.95) as f32;
     let split_threshold = args.get("split_threshold").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
 
-    let mut merge_candidates = Vec::new();
-    let mut split_candidates = Vec::new();
-    let mut misplaced_candidates = Vec::new();
-    let mut duplicate_entries = Vec::new();
-    let mut stale_entries = Vec::new();
-    let mut ghost_files = Vec::new();
-    let mut phases_done: Vec<String> = completed_phases.iter().cloned().collect();
-    let phase_names = ["ghost_files", "merge", "split", "misplaced", "duplicates"];
-
-    if !completed_phases.contains("ghost_files") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 1/5: Ghost files");
-        ghost_files = {
-            let db2 = db.clone();
-            let p = progress.clone();
-            let rid2 = rid.map(String::from);
-            run_blocking(move || detect_ghost_files(&db2, rid2.as_deref(), &p)).await?
-        };
-        phases_done.push("ghost_files".into());
-    }
-
-    if !completed_phases.contains("merge") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 2/5: Merge candidates");
-        merge_candidates = {
-            let db2 = db.clone();
-            let p = progress.clone();
-            let rid2 = rid.map(String::from);
-            run_blocking(move || detect_merge_candidates(&db2, merge_threshold, rid2.as_deref(), &p)).await?
-        };
-        phases_done.push("merge".into());
-    }
-
-    if !completed_phases.contains("split") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 3/5: Split candidates");
-        split_candidates = detect_split_candidates(db, embedding, split_threshold, rid, progress).await?;
-        phases_done.push("split".into());
-    }
-
-    if !completed_phases.contains("misplaced") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 4/5: Misplaced documents");
-        misplaced_candidates = {
-            let db2 = db.clone();
-            let p = progress.clone();
-            let rid2 = rid.map(String::from);
-            run_blocking(move || detect_misplaced(&db2, rid2.as_deref(), &p)).await?
-        };
-        phases_done.push("misplaced".into());
-    }
-
-    if !completed_phases.contains("duplicates") && !deadline_hit(&deadline) {
-        progress.phase("Analysis 5/5: Duplicate entries");
-        duplicate_entries = detect_duplicate_entries(db, embedding, rid, progress).await?;
+    progress.phase("Analysis 1/5: Ghost files");
+    let ghost_files = {
         let db2 = db.clone();
-        let dups = duplicate_entries.clone();
-        stale_entries = run_blocking(move || assess_staleness(&dups, &db2)).await?;
-        phases_done.push("duplicates".into());
-    }
+        let p = progress.clone();
+        let rid2 = rid.map(String::from);
+        run_blocking(move || detect_ghost_files(&db2, rid2.as_deref(), &p)).await?
+    };
 
-    let phases_completed_now = phases_done.len();
-    let total_phases = phase_names.len();
-    // Map phase progress to doc-level progress for the standard helper
-    let processed = total_docs * phases_completed_now / total_phases.max(1);
+    progress.phase("Analysis 2/5: Merge candidates");
+    let merge_candidates = {
+        let db2 = db.clone();
+        let p = progress.clone();
+        let rid2 = rid.map(String::from);
+        run_blocking(move || detect_merge_candidates(&db2, merge_threshold, rid2.as_deref(), &p)).await?
+    };
 
-    let mut result = serde_json::json!({
+    progress.phase("Analysis 3/5: Split candidates");
+    let split_candidates = detect_split_candidates(db, embedding, split_threshold, rid, progress).await?;
+
+    progress.phase("Analysis 4/5: Misplaced documents");
+    let misplaced_candidates = {
+        let db2 = db.clone();
+        let p = progress.clone();
+        let rid2 = rid.map(String::from);
+        run_blocking(move || detect_misplaced(&db2, rid2.as_deref(), &p)).await?
+    };
+
+    progress.phase("Analysis 5/5: Duplicate entries");
+    let duplicate_entries = detect_duplicate_entries(db, embedding, rid, progress).await?;
+    let db2 = db.clone();
+    let dups = duplicate_entries.clone();
+    let stale_entries = run_blocking(move || assess_staleness(&dups, &db2)).await?;
+
+    Ok(serde_json::json!({
         "ghost_files": ghost_files.iter().map(|g| serde_json::json!({
             "doc_id": g.doc_id,
             "title": g.title,
@@ -302,27 +238,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
         "stale_entries": stale_entries.len(),
         "ghost_file_count": ghost_files.len(),
         "total_suggestions": ghost_files.len() + merge_candidates.len() + split_candidates.len() + misplaced_candidates.len() + duplicate_entries.len() + stale_entries.len(),
-    });
-
-    let all_done = phases_completed_now >= total_phases;
-    let resume_token = if !all_done && time_budget.is_some() {
-        Some(crate::mcp::tools::helpers::encode_resume_token(
-            &serde_json::json!({"completed_phases": phases_done}),
-        ))
-    } else {
-        None
-    };
-    crate::mcp::tools::helpers::apply_time_budget_progress(
-        &mut result, processed, total_docs, "organize_analyze",
-        time_budget.is_some() && !all_done, resume_token.as_deref(),
-    );
-
-    // Legacy: also include completed_phases for backward compat
-    if !all_done && time_budget.is_some() {
-        result["completed_phases"] = serde_json::to_value(&phases_done).unwrap_or_default();
-    }
-
-    Ok(result)
+    }))
 }
 
 /// Merge two documents into one with fact-level accounting.
@@ -663,100 +579,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_organize_analyze_with_expired_deadline_returns_progress() {
+    async fn test_organize_analyze_runs_all_phases() {
         let (db, _tmp) = setup_test_db_with_doc("aaa111", "Test Doc");
         let embedding = crate::embedding::test_helpers::MockEmbedding::new(4);
         let progress = ProgressReporter::Silent;
 
-        // Use time_budget_secs=5 — won't actually expire for this tiny dataset,
-        // but verifies the plumbing is wired up.
         let args = serde_json::json!({
             "repo": "test",
-            "time_budget_secs": 5,
         });
 
         let result = organize_analyze(&db, &embedding, &args, &progress)
             .await
             .unwrap();
 
-        // Should complete all phases for a single doc
+        // Should complete all phases
         assert!(result.get("merge_candidates").is_some());
         assert!(result.get("split_candidates").is_some());
         assert!(result.get("misplaced_candidates").is_some());
-        // completed_phases should NOT be present when all phases finished
-        assert!(result.get("completed_phases").is_none());
-    }
-
-    #[tokio::test]
-    async fn test_organize_analyze_cursor_resumes_from_completed_phases() {
-        let (db, _tmp) = setup_test_db_with_doc("bbb222", "Resume Doc");
-        let embedding = crate::embedding::test_helpers::MockEmbedding::new(4);
-        let progress = ProgressReporter::Silent;
-
-        // Simulate resumption via legacy completed_phases arg
-        let args = serde_json::json!({
-            "repo": "test",
-            "completed_phases": ["merge", "split"],
-            "time_budget_secs": 30,
-        });
-
-        let result = organize_analyze(&db, &embedding, &args, &progress)
-            .await
-            .unwrap();
-
-        // Should still produce results (misplaced + duplicates ran)
-        assert!(result.get("misplaced_candidates").is_some());
-        // merge_candidates should be empty since we skipped that phase
-        assert_eq!(result["merge_candidates"].as_array().unwrap().len(), 0);
-        assert_eq!(result["split_candidates"].as_array().unwrap().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_organize_analyze_resume_token_resumes_from_completed_phases() {
-        let (db, _tmp) = setup_test_db_with_doc("eee555", "Resume Token Doc");
-        let embedding = crate::embedding::test_helpers::MockEmbedding::new(4);
-        let progress = ProgressReporter::Silent;
-
-        // Simulate resumption via resume token
-        let token = crate::mcp::tools::helpers::encode_resume_token(
-            &serde_json::json!({"completed_phases": ["ghost_files", "merge", "split"]}),
-        );
-        let args = serde_json::json!({
-            "repo": "test",
-            "resume": token,
-            "time_budget_secs": 30,
-        });
-
-        let result = organize_analyze(&db, &embedding, &args, &progress)
-            .await
-            .unwrap();
-
-        // Should still produce results (misplaced + duplicates ran)
-        assert!(result.get("misplaced_candidates").is_some());
-        // Skipped phases should be empty
-        assert_eq!(result["merge_candidates"].as_array().unwrap().len(), 0);
-        assert_eq!(result["split_candidates"].as_array().unwrap().len(), 0);
-        assert_eq!(result["ghost_files"].as_array().unwrap().len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_organize_analyze_progress_reported() {
-        let (db, _tmp) = setup_test_db_with_doc("ccc333", "Progress Doc");
-        let embedding = crate::embedding::test_helpers::MockEmbedding::new(4);
-        let progress = ProgressReporter::Silent;
-
-        let args = serde_json::json!({
-            "repo": "test",
-            "time_budget_secs": 30,
-        });
-
-        let result = organize_analyze(&db, &embedding, &args, &progress)
-            .await
-            .unwrap();
-
-        // All phases complete → no continue field
+        // No paging fields
         assert!(result.get("continue").is_none());
-        assert!(result.get("total_suggestions").is_some());
+        assert!(result.get("resume").is_none());
+        assert!(result.get("completed_phases").is_none());
     }
 
     #[tokio::test]
@@ -774,24 +617,20 @@ mod tests {
             .await
             .unwrap();
 
-        // Structure focus returns misplaced_candidates
         assert!(result.get("misplaced_candidates").is_some());
-        // Should NOT have merge/split/duplicate fields
         assert!(result.get("merge_candidates").is_none());
         assert!(result.get("split_candidates").is_none());
     }
 
     #[test]
-    fn test_organize_analyze_schema_mentions_time_budget() {
+    fn test_organize_analyze_schema_no_paging() {
         let result = crate::mcp::tools::schema::tools_list();
         let tools = result["tools"].as_array().unwrap();
         let analyze = tools.iter().find(|s| s["name"] == "organize_analyze").unwrap();
         let props = &analyze["inputSchema"]["properties"];
-        assert!(props.get("time_budget_secs").is_some());
-        assert!(props.get("resume").is_some());
-        // Legacy fields still present for backward compat
-        assert!(props.get("completed_phases").is_some());
-        assert!(props.get("analyzed_doc_ids").is_some());
+        // No paging params
+        assert!(props.get("time_budget_secs").is_none());
+        assert!(props.get("resume").is_none());
     }
 
     #[test]
