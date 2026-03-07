@@ -3,7 +3,6 @@
 use chrono::NaiveDate;
 
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::patterns::{
     add_or_update_reviewed_marker, FACT_LINE_REGEX, REVIEWED_MARKER_REGEX, REVIEW_QUEUE_MARKER,
     SOURCE_DEF_REGEX,
@@ -92,9 +91,8 @@ pub fn build_rewrite_prompt(
     )
 }
 
-/// Apply changes to a document section using LLM
+/// Apply changes to a document section
 pub async fn apply_changes_to_section(
-    llm: &dyn LlmProvider,
     section: &str,
     instructions: &[InterpretedAnswer],
 ) -> Result<String, FactbaseError> {
@@ -122,32 +120,8 @@ pub async fn apply_changes_to_section(
         return apply_deletes_without_llm(section, &active_instructions);
     }
 
-    // Build and send prompt to LLM
-    let changes = format_changes_for_llm(instructions);
-    let prompts_config = crate::Config::load(None).unwrap_or_default().prompts;
-    let prompt = build_rewrite_prompt(section, &changes, &prompts_config);
-
-    let response = llm.complete(&prompt).await?;
-    let rewritten = response.trim().to_string();
-
-    // Validate response
-    if rewritten.is_empty() {
-        return Err(FactbaseError::ollama(
-            "LLM returned empty response".to_string(),
-        ));
-    }
-
-    // Validate the rewrite before accepting it
-    let validation_errors = super::validate::validate_rewrite(section, &rewritten);
-    if !validation_errors.is_empty() {
-        let details: Vec<String> = validation_errors.iter().map(|e| e.detail.clone()).collect();
-        return Err(FactbaseError::internal(format!(
-            "LLM rewrite failed validation (keeping original): {}",
-            details.join("; ")
-        )));
-    }
-
-    Ok(rewritten)
+    // For non-delete changes that previously needed LLM, return error
+    Err(FactbaseError::internal("LLM-based rewrite removed. Use update_document to apply complex changes."))
 }
 
 /// Apply delete instructions without LLM

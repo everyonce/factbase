@@ -18,7 +18,7 @@
 //! - [`interpret_answer`] - Interpret an answer to determine change instruction
 //! - [`format_changes_for_llm`] - Format instructions for LLM prompt
 //! - [`build_rewrite_prompt`] - Build LLM prompt for section rewriting
-//! - [`apply_changes_to_section`] - Apply changes using LLM
+//! - [`apply_changes_to_section`] - Apply changes to a section (deletes only; complex changes return error)
 //! - [`identify_affected_section`] - Find document section affected by questions
 //! - [`replace_section`] - Replace section in document content
 //! - [`remove_processed_questions`] - Remove processed questions from review queue

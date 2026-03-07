@@ -3,7 +3,6 @@
 use crate::answer_processor::apply_all::{apply_all_review_answers, ApplyConfig, ApplyStatus};
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::llm::LlmProvider;
 use crate::mcp::tools::{get_bool_arg, get_str_arg, resolve_repo_filter};
 use crate::processor::parse_review_queue;
 use crate::progress::ProgressReporter;
@@ -20,18 +19,16 @@ fn get_doc_id_arg(args: &Value) -> Option<String> {
     })
 }
 
-/// Apply answered review questions, rewriting document content via LLM.
+/// Apply answered review questions, rewriting document content.
 ///
 /// This is the MCP equivalent of `factbase review --apply`.
-#[instrument(name = "mcp_apply_review_answers", skip(db, llm, args, progress))]
+#[instrument(name = "mcp_apply_review_answers", skip(db, _llm, args, progress))]
 pub async fn apply_review_answers(
     db: &Database,
-    llm: Option<&dyn LlmProvider>,
+    _llm: Option<&dyn crate::llm::LlmProvider>,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let llm = llm
-        .ok_or_else(|| FactbaseError::internal("LLM provider required for apply_review_answers"))?;
 
     let doc_id_owned = get_doc_id_arg(args);
     let doc_id_filter = doc_id_owned.as_deref();
@@ -49,7 +46,7 @@ pub async fn apply_review_answers(
         acquire_write_guard: true,
     };
 
-    let result = apply_all_review_answers(db, llm, &config, progress).await?;
+    let result = apply_all_review_answers(db, &config, progress).await?;
 
     let documents: Vec<Value> = result
         .documents
