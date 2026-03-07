@@ -380,10 +380,17 @@ pub async fn check_all_documents(
         let has_dup_sections = has_duplicate_review_sections(&pruned_content);
         let disk_missing_marker = !content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
             && doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
-        let needs_write = count > 0 || pruned_count > 0 || has_dup_sections || disk_missing_marker;
+        // Disk has marker but no questions while DB has unanswered questions
+        let disk_empty_review = content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
+            && existing_unanswered == 0
+            && {
+                let db_qs = parse_review_queue(&doc.content).unwrap_or_default();
+                db_qs.iter().any(|q| !q.answered)
+            };
+        let needs_write = count > 0 || pruned_count > 0 || has_dup_sections || disk_missing_marker || disk_empty_review;
         if needs_write && !config.dry_run {
-            // If the disk file lost its marker but DB has it, recover the review section
-            let base_content = if disk_missing_marker && count == 0 && pruned_count == 0 {
+            // If the disk file lost its marker or questions but DB has them, recover
+            let base_content = if (disk_missing_marker || disk_empty_review) && count == 0 && pruned_count == 0 {
                 let (recovered, _) = crate::processor::recover_review_section(&pruned_content, &doc.content);
                 recovered
             } else {
@@ -1046,5 +1053,69 @@ mod tests {
         // The disk file should now have the review marker
         let after = std::fs::read_to_string(&md_path).unwrap();
         assert!(after.contains("<!-- factbase:review -->"), "Disk file should have marker after check, got:\n{after}");
+    }
+
+    /// When the disk file has a review marker but no questions, and the DB has
+    /// unanswered questions, check_all_documents should sync them to the file.
+    #[tokio::test]
+    async fn test_check_syncs_db_questions_to_empty_review_section() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let md_path = repo_dir.path().join("test-doc.md");
+
+        // Disk file: has review marker but NO questions.
+        // All facts have temporal tags + sources so generators produce nothing new.
+        let disk_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: Source A, 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n";
+        std::fs::write(&md_path, disk_content).unwrap();
+
+        let repo = crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // DB content: has review marker WITH unanswered questions
+        let db_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: Source A, 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Source [^1] was scraped over 180 days ago\n  > \n";
+        let doc = Document {
+            id: "fff".to_string(),
+            title: "Test".to_string(),
+            content: db_content.to_string(),
+            file_path: "test-doc.md".to_string(),
+            repo_id: "test-repo".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let _output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+
+        // The disk file should now have the DB questions
+        let after = std::fs::read_to_string(&md_path).unwrap();
+        assert!(
+            after.contains("Source [^1] was scraped over 180 days ago"),
+            "Disk file should have DB questions synced, got:\n{after}"
+        );
+        // Verify the marker is still present
+        assert!(after.contains("<!-- factbase:review -->"));
+        // Verify body content is preserved
+        assert!(after.contains("Fact one @t[=2024-01]"));
     }
 }

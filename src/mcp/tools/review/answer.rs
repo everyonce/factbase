@@ -138,15 +138,13 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
     let mut content = fs::read_to_string(&file_path)?;
 
-    // If the disk file lacks the review marker, recover it from DB content
+    // Recover review section from DB if disk is missing marker or questions
     let marker = "<!-- factbase:review -->";
-    if !content.contains(marker) {
-        let (recovered, changed) =
-            crate::processor::recover_review_section(&content, &doc.content);
-        if changed {
-            content = recovered;
-            fs::write(&file_path, &content)?;
-        }
+    let (recovered, changed) =
+        crate::processor::recover_review_section(&content, &doc.content);
+    if changed {
+        content = recovered;
+        fs::write(&file_path, &content)?;
     }
 
     // Parse the review queue
@@ -324,15 +322,12 @@ pub fn bulk_answer_questions(
         }
         let mut disk_content = fs::read_to_string(&file_path)?;
 
-        // If the disk file lacks the review marker, recover it from DB content
-        let marker = "<!-- factbase:review -->";
-        if !disk_content.contains(marker) {
-            let (recovered, changed) =
-                crate::processor::recover_review_section(&disk_content, &doc.content);
-            if changed {
-                disk_content = recovered;
-                fs::write(&file_path, &disk_content)?;
-            }
+        // Recover review section from DB if disk is missing marker or questions
+        let (recovered, changed) =
+            crate::processor::recover_review_section(&disk_content, &doc.content);
+        if changed {
+            disk_content = recovered;
+            fs::write(&file_path, &disk_content)?;
         }
 
         let questions = parse_review_queue(&disk_content).ok_or_else(|| {
