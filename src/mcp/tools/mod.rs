@@ -25,6 +25,7 @@ mod document;
 mod embeddings;
 mod entity;
 mod helpers;
+mod links;
 mod organize;
 mod repository;
 mod review;
@@ -45,6 +46,7 @@ pub use authoring::get_authoring_guide;
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
 pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_tool};
 pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
+pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
 pub use repository::{init_repository, scan_repository};
 pub use review::{
@@ -259,6 +261,8 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "embeddings_export" => blocking_tool!(db, args, embeddings_export),
                 "embeddings_import" => blocking_tool!(db, args, embeddings_import),
                 "embeddings_status" => blocking_tool!(db, embeddings_status_tool),
+                "get_link_suggestions" => get_link_suggestions(db, embedding, &args).await?,
+                "store_links" => blocking_tool!(db, args, store_links),
                 _ => {
                     return Ok(Some(McpResponse::error(
                         -32602,
@@ -402,6 +406,8 @@ mod tests {
             "embeddings_export",
             "embeddings_import",
             "embeddings_status",
+            "get_link_suggestions",
+            "store_links",
         ]
         .iter()
         .map(|s| s.to_string())

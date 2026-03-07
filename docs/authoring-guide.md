@@ -115,6 +115,16 @@ The LLM scans documents to find mentions of other entities. To maximize detectio
    ```
    Use the filename stem (lowercase-with-hyphens) rather than the hex document ID. Readable names make cross-references understandable without looking up IDs. The `factbase check` command flags hex-ID cross-refs and suggests the readable alternative.
 
+5. **Links block** - Add a `Links:` line at the bottom of the document (after footnotes) to declare explicit cross-references using hex document IDs:
+   ```markdown
+   ---
+   [^1]: Source one
+   [^2]: Source two
+
+   Links: [[abc123]] [[def456]] [[ghi789]]
+   ```
+   The `Links:` block is managed by the `store_links` MCP tool. You can also add it manually. During scan, these IDs are detected as links just like inline `[[id]]` references.
+
 ## Recommended Document Templates
 
 ### Person

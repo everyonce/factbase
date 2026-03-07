@@ -193,6 +193,65 @@ impl Database {
         Ok(result)
     }
 
+    /// Gets outgoing link count for each document in a repository.
+    ///
+    /// Returns (doc_id, title, outgoing_link_count) for all non-deleted documents.
+    pub fn get_document_link_counts(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<Vec<(String, String, usize)>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let sql = match repo_id {
+            Some(_) => {
+                "SELECT d.id, d.title, COUNT(dl.target_id) as link_count
+                 FROM documents d
+                 LEFT JOIN document_links dl ON d.id = dl.source_id
+                 WHERE d.is_deleted = FALSE AND d.repo_id = ?1
+                 GROUP BY d.id, d.title"
+            }
+            None => {
+                "SELECT d.id, d.title, COUNT(dl.target_id) as link_count
+                 FROM documents d
+                 LEFT JOIN document_links dl ON d.id = dl.source_id
+                 WHERE d.is_deleted = FALSE
+                 GROUP BY d.id, d.title"
+            }
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let mut results = Vec::new();
+        let mut rows = match repo_id {
+            Some(r) => stmt.query([r])?,
+            None => stmt.query([])?,
+        };
+        while let Some(row) = rows.next()? {
+            let count: i64 = row.get(2)?;
+            results.push((row.get(0)?, row.get(1)?, count as usize));
+        }
+        Ok(results)
+    }
+
+    /// Adds links from a source document to target documents without replacing existing links.
+    ///
+    /// Unlike `update_links` which replaces all links, this appends new links.
+    /// Returns the number of links actually inserted (skips existing).
+    pub fn add_links(
+        &self,
+        source_id: &str,
+        target_ids: &[&str],
+    ) -> Result<usize, FactbaseError> {
+        let conn = self.get_conn()?;
+        let now = Utc::now().to_rfc3339();
+        let mut added = 0;
+        for target_id in target_ids {
+            let result = conn.execute(
+                "INSERT OR IGNORE INTO document_links (source_id, target_id, context, created_at) VALUES (?1, ?2, '', ?3)",
+                rusqlite::params![source_id, target_id, now],
+            )?;
+            added += result;
+        }
+        Ok(added)
+    }
+
     /// Returns true if any links exist for documents in the given repository.
     ///
     /// Used to detect empty link tables (e.g., migrated/copied KBs) so that

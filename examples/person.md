@@ -39,3 +39,5 @@
 [^8]: Forbes 40 Under 40 list, 2022-10-01
 [^9]: TEDx event page, 2021-04-20
 [^10]: HealthAI press release, 2023-03-15
+
+Links: [[c0m4p5]]

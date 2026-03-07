@@ -58,6 +58,8 @@ pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing e
 
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
+pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call get_link_suggestions to find documents with few links that are embedding-similar to other documents.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n   - store_links writes `[[id]]` references into the file's Links: block and updates the database.\n4. Record: links_added, documents_modified";
+
 pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links before: X | Links after: X | Gained: +X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Entities Created\n- List each: name, type, why it matters to the KB's connectivity\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
 
 // --- Resolve workflow ---
@@ -391,9 +393,9 @@ pub async fn bootstrap(
 fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
     let ctx = perspective_context(perspective);
     let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
-    // Steps: 1=scan, 2=embeddings, 3=questions, 4=cross_validate (if enabled), 5=discover, 6=organize, 7=summary
+    // Steps: 1=scan, 2=embeddings, 3=questions, 4=cross_validate (if enabled), 5=discover, 6=organize, 7=links, 8=summary
     // When cross_validate is false, step 4 auto-skips to 5.
-    let total = if do_cv { 7 } else { 6 };
+    let total = if do_cv { 8 } else { 7 };
     match step {
         1 => serde_json::json!({
             "workflow": "update",
@@ -445,18 +447,25 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "instruction": resolve(wf, "update.discover", DEFAULT_UPDATE_DISCOVER_INSTRUCTION, &[]),
             "next_tool": "check_repository",
             "suggested_args": {"mode": "discover"},
-            "when_done": format!("Call workflow with workflow='update', step=6")
+            "when_done": "Call workflow with workflow='update', step=6"
         }),
         6 => serde_json::json!({
             "workflow": "update",
             "step": 6, "total_steps": total,
             "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
             "next_tool": "organize_analyze",
-            "when_done": format!("Call workflow with workflow='update', step=7")
+            "when_done": "Call workflow with workflow='update', step=7"
         }),
         7 => serde_json::json!({
             "workflow": "update",
             "step": 7, "total_steps": total,
+            "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
+            "next_tool": "get_link_suggestions",
+            "when_done": format!("Call workflow with workflow='update', step=8")
+        }),
+        8 => serde_json::json!({
+            "workflow": "update",
+            "step": 8, "total_steps": total,
             "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
             "complete": true
         }),
@@ -2289,13 +2298,13 @@ mod tests {
     #[test]
     fn test_update_total_steps_with_cross_validate() {
         let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf());
-        assert_eq!(step["total_steps"], 7);
+        assert_eq!(step["total_steps"], 8);
     }
 
     #[test]
     fn test_update_total_steps_without_cross_validate() {
         let step = update_step(1, &serde_json::json!({}), &None, &wf());
-        assert_eq!(step["total_steps"], 6);
+        assert_eq!(step["total_steps"], 7);
     }
 
     #[test]
