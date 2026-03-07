@@ -104,12 +104,13 @@ pub use patterns::{
     FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER,
 };
 pub use processor::{
-    append_links_to_content, append_review_questions, calculate_fact_stats,
+    append_links_to_content, append_referenced_by_to_content, append_review_questions,
+    calculate_fact_stats,
     calculate_recency_boost, chunk_document,
     content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
     merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
     overlaps_point, overlaps_range,
-    parse_links_block, parse_review_queue, prune_stale_questions,
+    parse_links_block, parse_referenced_by_block, parse_review_queue, prune_stale_questions,
     parse_source_definitions, parse_source_references, parse_temporal_tags, validate_temporal_tags,
     DocumentProcessor,
 };

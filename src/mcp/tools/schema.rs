@@ -360,7 +360,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "store_links",
-                "description": "Store links by writing [[id]] references into document files. Appends to the Links: block at the bottom of each file (creates it if missing). Also updates the database.",
+                "description": "Store links by writing [[id]] references into document files. Writes `References:` to source files and `Referenced by:` to target files. Only the forward direction (source→target) is added to the database.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
