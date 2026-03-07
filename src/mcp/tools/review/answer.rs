@@ -136,7 +136,18 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
             file_path.display()
         )));
     }
-    let content = fs::read_to_string(&file_path)?;
+    let mut content = fs::read_to_string(&file_path)?;
+
+    // If the disk file lacks the review marker, recover it from DB content
+    let marker = "<!-- factbase:review -->";
+    if !content.contains(marker) {
+        let (recovered, changed) =
+            crate::processor::recover_review_section(&content, &doc.content);
+        if changed {
+            content = recovered;
+            fs::write(&file_path, &content)?;
+        }
+    }
 
     // Parse the review queue
     let questions = parse_review_queue(&content).ok_or_else(|| {
@@ -164,7 +175,6 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
 
     // Find and modify the question in the document content
-    let marker = "<!-- factbase:review -->";
     let marker_pos = content
         .find(marker)
         .ok_or_else(|| FactbaseError::internal("Review Queue marker not found"))?;
@@ -312,7 +322,18 @@ pub fn bulk_answer_questions(
                 file_path.display()
             )));
         }
-        let disk_content = fs::read_to_string(&file_path)?;
+        let mut disk_content = fs::read_to_string(&file_path)?;
+
+        // If the disk file lacks the review marker, recover it from DB content
+        let marker = "<!-- factbase:review -->";
+        if !disk_content.contains(marker) {
+            let (recovered, changed) =
+                crate::processor::recover_review_section(&disk_content, &doc.content);
+            if changed {
+                disk_content = recovered;
+                fs::write(&file_path, &disk_content)?;
+            }
+        }
 
         let questions = parse_review_queue(&disk_content).ok_or_else(|| {
             FactbaseError::not_found(format!(
@@ -776,5 +797,56 @@ Some footer text.
         assert!(!questions[0].answered, "deferred question must not be answered");
         assert!(questions[0].is_deferred());
         assert!(questions[0].answer.as_ref().unwrap().contains("searched web"));
+    }
+
+    #[test]
+    fn test_answer_question_recovers_missing_marker() {
+        // Disk file has no review marker, but DB content does.
+        // answer_question should recover the review section from DB.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let doc_file = repo_dir.join("test.md");
+
+        // Disk file: no review marker
+        let disk_content = "<!-- factbase:abc123 -->\n# Test Entity\n\n- Some fact\n";
+        std::fs::write(&doc_file, disk_content).unwrap();
+
+        // DB content: has review marker with a question
+        let db_content = "<!-- factbase:abc123 -->\n# Test Entity\n\n- Some fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Line 4: Source is old\n  > \n";
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test Entity".into(),
+            content: db_content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "doc_id": "abc123",
+            "question_index": 0,
+            "answer": "@t[~2024] confirmed"
+        });
+        let result = answer_question(&db, &args).unwrap();
+        assert_eq!(result["success"], true);
+
+        // Verify the disk file now has the marker
+        let updated = std::fs::read_to_string(&doc_file).unwrap();
+        assert!(updated.contains("<!-- factbase:review -->"));
     }
 }

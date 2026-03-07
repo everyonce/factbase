@@ -378,9 +378,18 @@ pub async fn check_all_documents(
 
         let count = questions.len();
         let has_dup_sections = has_duplicate_review_sections(&pruned_content);
-        let needs_write = count > 0 || pruned_count > 0 || has_dup_sections;
+        let disk_missing_marker = !content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
+            && doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
+        let needs_write = count > 0 || pruned_count > 0 || has_dup_sections || disk_missing_marker;
         if needs_write && !config.dry_run {
-            let updated = append_review_questions(&pruned_content, &questions);
+            // If the disk file lost its marker but DB has it, recover the review section
+            let base_content = if disk_missing_marker && count == 0 && pruned_count == 0 {
+                let (recovered, _) = crate::processor::recover_review_section(&pruned_content, &doc.content);
+                recovered
+            } else {
+                pruned_content.clone()
+            };
+            let updated = append_review_questions(&base_content, &questions);
             let path = abs_path.unwrap_or_else(|| PathBuf::from(&doc.file_path));
             if path.exists() {
                 std::fs::write(&path, &updated)?;
@@ -981,5 +990,61 @@ mod tests {
         assert_eq!(heading_count, 1, "After second check: still one heading, got:\n{after_second}");
         let marker_count = after_second.matches("<!-- factbase:review -->").count();
         assert_eq!(marker_count, 1, "After second check: still one marker");
+    }
+
+    /// When the disk file loses its review marker but the DB content still has it,
+    /// check_all_documents should recover the review section.
+    #[tokio::test]
+    async fn test_check_recovers_missing_marker_from_db() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let md_path = repo_dir.path().join("test-doc.md");
+
+        // Disk file: no review marker
+        let disk_content = "<!-- factbase:eee -->\n# Test\n\n- Fact without temporal tag\n";
+        std::fs::write(&md_path, disk_content).unwrap();
+
+        let repo = crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // DB content: has review marker with existing questions
+        let db_content = "<!-- factbase:eee -->\n# Test\n\n- Fact without temporal tag\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` No temporal tags\n  > \n";
+        let doc = Document {
+            id: "eee".to_string(),
+            title: "Test".to_string(),
+            content: db_content.to_string(),
+            file_path: "test-doc.md".to_string(),
+            repo_id: "test-repo".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        let _output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+
+        // The disk file should now have the review marker
+        let after = std::fs::read_to_string(&md_path).unwrap();
+        assert!(after.contains("<!-- factbase:review -->"), "Disk file should have marker after check, got:\n{after}");
     }
 }
