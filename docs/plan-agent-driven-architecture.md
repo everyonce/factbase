@@ -183,34 +183,34 @@ Rewrite workflows for the data-retrieval model. Clean up tool surface.
 ### Tasks
 
 #### Tool consolidation
-- [ ] Remove `generate_questions` tool — fold into `check_repository` with optional `doc_id` parameter
-- [ ] Simplify `check_repository` — single mode (rule-based quality checks), remove mode parameter
-- [ ] Simplify `organize` — keep move/retype/apply only, remove merge/split modes
-- [ ] Remove paging/resume infrastructure from tools that no longer need it (check, organize_analyze, discover)
+- [x] Remove `generate_questions` tool — fold into `check_repository` with optional `doc_id` parameter
+- [x] Simplify `check_repository` — single mode (rule-based quality checks), remove mode parameter
+- [x] Simplify `organize` — keep move/retype/apply only, remove merge/split modes
+- [x] Remove paging/resume infrastructure from tools that no longer need it (check, organize_analyze, discover)
 
 #### Workflow rewrite
-- [ ] Rewrite `update` workflow:
+- [x] Rewrite `update` workflow:
   1. scan (paged for embeddings only)
   2. check quality (one call, rule-based)
   3. review link suggestions (get_link_suggestions → confirm → store_links)
   4. review fact pairs (get_fact_pairs → classify → answer_questions)
   5. organize analyze (one call, heuristic)
   6. summary
-- [ ] Rewrite `resolve` workflow:
+- [x] Rewrite `resolve` workflow:
   1. get review queue
   2. agent answers questions (research + reasoning)
   3. agent rewrites documents via update_document
   4. verify
-- [ ] Rewrite `improve` workflow — remove apply_review_answers step, agent rewrites directly
-- [ ] Rewrite `ingest` workflow — remove inbox LLM processing reference
-- [ ] Rewrite `enrich` workflow — simplify, remove paging references
-- [ ] Rewrite `setup` workflow — remove fact embedding paging step
-- [ ] Remove all "⚠️ PAGING" warning blocks from workflow prompts
-- [ ] Update FORMAT_RULES constant if needed
+- [x] Rewrite `improve` workflow — remove apply_review_answers step, agent rewrites directly
+- [x] Rewrite `ingest` workflow — remove inbox LLM processing reference
+- [x] Rewrite `enrich` workflow — simplify, remove paging references
+- [x] Rewrite `setup` workflow — remove fact embedding paging step
+- [x] Remove all "⚠️ PAGING" warning blocks from workflow prompts
+- [x] Update FORMAT_RULES constant if needed
 
 #### Update tool schemas
-- [ ] Update `schema.rs` to reflect removed/modified tools
-- [ ] Update tool count in docs and comments
+- [x] Update `schema.rs` to reflect removed/modified tools
+- [x] Update tool count in docs and comments
 
 ---
 

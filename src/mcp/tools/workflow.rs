@@ -39,27 +39,22 @@ pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\
 
 pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
 
-pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n2. If scan reports fact_embeddings_needed > 0, call check_repository with mode='embeddings' and time_budget_secs=120.\n   ⚠️ PAGING: Same as above — call again with resume token until complete.\n3. Call check_repository with mode='questions' and time_budget_secs=120 to see initial quality.\n   ⚠️ PAGING: Same as above — it WILL return `continue: true` with a resume token.\n   You MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n\nReport what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
+pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n2. Call check_repository to run quality checks and see initial issues.\n3. Report what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
 
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes and detect cross-entity links.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct, fact_embeddings_needed\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation\n4. Note fact_embeddings_needed — if > 0, the next step will generate them.{ctx}";
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes and detect cross-entity links.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_EMBEDDINGS_INSTRUCTION: &str = "Generate fact-level embeddings for cross-document validation.\n\nIf the previous scan step reported fact_embeddings_needed = 0, skip this step and proceed to the next.\n\n1. Call check_repository with mode='embeddings' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   You MUST call it again passing the resume token until `continue` is no longer in the response.\n   Do NOT stop early, do NOT skip ahead, and do NOT report partial results.\n\n2. Record: fact_embeddings_generated";
-
-pub(crate) const DEFAULT_UPDATE_QUESTIONS_INSTRUCTION: &str = "Run per-document quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository with mode='questions' and time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for non-trivial repositories.\n   You MUST call it again passing the resume token until `continue` is no longer in the response.\n   Do NOT stop early, do NOT skip ahead, and do NOT report partial results.\n\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
 
 pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call get_fact_pairs to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call answer_questions with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
-pub(crate) const DEFAULT_UPDATE_DISCOVER_INSTRUCTION: &str = "Discover missing entities and extract domain vocabulary.\n\n1. Call check_repository with mode='discover'. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Look at suggested_entities — these are important actors that appear across documents but don't have their own page yet\n\nIF suggested_entities count > 0:\n  3. For EACH entity with high or medium confidence:\n     - Call create_document with the suggested name, type, and a skeleton body\n     - If the entity is external to your domain (e.g. a well-known product, standard, or organization you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. Reference entities are available for linking and search but skipped by quality checks.\n     - Body: \"# {name}\\n\\nType: {type}\\n\\nReferenced in: {doc IDs that mention it}\"\n  4. After creating ALL entities, call scan_repository again. If the response includes `continue: true`, call it again until complete.\n     - New entities = new titles for the link detector to find\n  5. Record links_detected as LINKS_AFTER\n  6. Calculate: LINKS_GAINED = LINKS_AFTER - LINKS_BEFORE\nELSE:\n  3. LINKS_AFTER = LINKS_BEFORE, LINKS_GAINED = 0\n\nVOCABULARY EXTRACTION:\n  7. Scan documents for undefined acronyms, abbreviations, and domain-specific terms that would benefit from a glossary definition.\n     - Use search_content or list_entities to review document content\n     - Look for uppercase acronyms (e.g., API, HCLS, BCE), technical jargon, and domain-specific terms\n     - Check existing definitions/ documents to avoid duplicates\n  8. For each new term found, either:\n     - Add it to an existing definitions/ document, OR\n     - Create a new definitions/ document if none exists\n     - Include: term, brief definition, and which documents reference it";
-
-
-pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze. If the response includes `continue: true`, call it again with the resume token until complete.\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
-
 pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call get_link_suggestions to find documents with few links that are embedding-similar to other documents.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n   - store_links writes `[[id]]` references into the file's Links: block and updates the database.\n4. Record: links_added, documents_modified";
 
-pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links before: X | Links after: X | Gained: +X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Entities Created\n- List each: name, type, why it matters to the KB's connectivity\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
+pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
+
+pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate, precision) to work in batches.{ctx}{deferred_note}";
@@ -78,9 +73,9 @@ pub(crate) const VARIANT_RESEARCH_BATCH_INTRO: &str = "You are resolving review 
 
 pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call get_entity with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one answer_questions call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call scan_repository or check_repository.\n\nAfter answering all groups, call workflow with workflow='resolve', step=2 for the next batch. Do NOT skip ahead to step 3.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answered questions to the actual document content. Call apply_review_answers to rewrite documents based on your answers. If the response includes `continue: true`, call it again until complete. Use dry_run=true first to preview, then without dry_run to apply.";
+pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers by rewriting the documents directly.\n\nFor each document you answered questions about:\n1. Call get_entity to read the current content\n2. Apply your answers: insert @t[...] tags, add source footnotes, resolve conflicts, etc.\n3. Call update_document with the modified content\n\nThis gives you full control over the edits — no LLM intermediary.";
 
-pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call generate_questions with dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
+pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call check_repository with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
 
 // --- Ingest workflow ---
 pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call search_knowledge with a relevant query. Also try list_entities to browse by type.{ctx}";
@@ -89,25 +84,25 @@ pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}'
 
 pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use create_document for new entities, update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it using create_document\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.{fields}{format_rules}";
 
-pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify your work. Call generate_questions with dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
+pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify your work. Call check_repository with doc_id and dry_run=true on each document you created or modified. Review any questions that come up — they indicate quality issues you can fix now.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.";
 
 // --- Enrich workflow ---
 pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list (sorted by attention_score, highest first). Reference entities are excluded — they exist for linking, not enrichment.\nPick the top 3-5 entities that need work. You will enrich them ONE AT A TIME — fully completing each before moving to the next.\n\nCall get_entity on the first entity to begin.{ctx}";
 
 pub(crate) const DEFAULT_ENRICH_GAPS_INSTRUCTION: &str = "Score this document before researching:\n\n1. Temporal: X of Y fact lines have @t tags = Z%\n2. Sources: X of Y fact lines have [^N] citations = Z%\n3. Missing fields: [list any required by perspective]{fields}\n4. Review questions: X unanswered\n5. Gaps: list ALL areas where you could add substantive facts — sections that are thin, topics mentioned but not developed, missing context or history\n\nResearch the LOWEST coverage area first, then continue through all gaps.";
 
-pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research and update THIS document. Work through ALL gaps you identified — don't stop at 3-5.\n\nFor each gap:\n1. Search specifically: \"{entity name} {fact}\" — targeted beats broad\n2. Read the full page, not just snippets\n3. Every new fact MUST have BOTH @t[YYYY] AND [^N] citation — no exceptions\n4. Mention related KB entities by exact title in prose (enables link detection)\n\nKeep going until you've exhausted your research for this document. More well-sourced facts = better.\n\nCall update_document with the enriched content. Then verify: call generate_questions with dry_run=true.\n\nRecord: facts added, sources added, @t tags added, issues from verify.\n\n⚠️ REPEAT for the next document:\n1. Call get_entity on the next entity from your list\n2. Score it (same as step 2)\n3. Research + update + verify (same as this step)\nContinue until all documents are done.\n\nRules:\n- Preserve ALL existing content — add, don't replace\n- Resolve review questions when your research provides answers\n- Create documents for significant missing entities{ctx}{format_rules}";
+pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research and update THIS document. Work through ALL gaps you identified — don't stop at 3-5.\n\nFor each gap:\n1. Search specifically: \"{entity name} {fact}\" — targeted beats broad\n2. Read the full page, not just snippets\n3. Every new fact MUST have BOTH @t[YYYY] AND [^N] citation — no exceptions\n4. Mention related KB entities by exact title in prose (enables link detection)\n\nKeep going until you've exhausted your research for this document. More well-sourced facts = better.\n\nCall update_document with the enriched content. Then verify: call check_repository with doc_id and dry_run=true.\n\nRecord: facts added, sources added, @t tags added, issues from verify.\n\n⚠️ REPEAT for the next document:\n1. Call get_entity on the next entity from your list\n2. Score it (same as step 2)\n3. Research + update + verify (same as this step)\nContinue until all documents are done.\n\nRules:\n- Preserve ALL existing content — add, don't replace\n- Resolve review questions when your research provides answers\n- Create documents for significant missing entities{ctx}{format_rules}";
 
 pub(crate) const DEFAULT_ENRICH_VERIFY_INSTRUCTION: &str = "Report totals across all documents enriched:\n\n| Document | +Facts | +Sources | +@t | Issues |\n|----------|--------|----------|-----|--------|\n| ... | ... | ... | ... | ... |\n\nTotals: X facts, X sources, X @t tags added. X questions resolved. X new issues.\nAssessment: biggest improvement, remaining gaps, recommended next step.";
 
 // --- Improve workflow ---
 pub(crate) const DEFAULT_IMPROVE_CLEANUP_INSTRUCTION: &str = "Read the document and fix any issues{doc_hint}. Call get_entity with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call update_document to fix them. If the document looks clean, move to the next step.{ctx}";
 
-pub(crate) const DEFAULT_IMPROVE_RESOLVE_INSTRUCTION: &str = "Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- precision: Replace vague qualifier with a specific value or measurement, e.g. 'heavy losses' → '~500 casualties'\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, call apply_review_answers with doc_id to apply changes to the document. If the response includes `continue: true`, call it again until complete.{ctx}";
+pub(crate) const DEFAULT_IMPROVE_RESOLVE_INSTRUCTION: &str = "Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- precision: Replace vague qualifier with a specific value or measurement, e.g. 'heavy losses' → '~500 casualties'\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, apply your changes directly: call get_entity to read the document, apply the edits (insert @t tags, add footnotes, etc.), then call update_document with the modified content.{ctx}";
 
 pub(crate) const DEFAULT_IMPROVE_ENRICH_INSTRUCTION: &str = "Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Use available research tools for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run scan_repository afterward to re-index{ctx}";
 
-pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call generate_questions with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
+pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call check_repository with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -360,9 +355,8 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
 fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
     let ctx = perspective_context(perspective);
     let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
-    // Steps: 1=scan, 2=embeddings, 3=questions, 4=cross_validate (if enabled), 5=discover, 6=organize, 7=links, 8=summary
-    // When cross_validate is false, step 4 auto-skips to 5.
-    let total = if do_cv { 8 } else { 7 };
+    // Steps: 1=scan, 2=check, 3=links, 4=cross_validate (if enabled), 5=organize, 6=summary
+    let total = if do_cv { 6 } else { 5 };
     match step {
         1 => serde_json::json!({
             "workflow": "update",
@@ -374,17 +368,15 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": resolve(wf, "update.embeddings", DEFAULT_UPDATE_EMBEDDINGS_INSTRUCTION, &[]),
+            "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
             "next_tool": "check_repository",
-            "suggested_args": {"mode": "embeddings"},
             "when_done": "Call workflow with workflow='update', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "update.questions", DEFAULT_UPDATE_QUESTIONS_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
-            "suggested_args": {"mode": "questions", "dry_run": false},
+            "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
+            "next_tool": "get_link_suggestions",
             "when_done": "Call workflow with workflow='update', step=4"
         }),
         4 => {
@@ -397,41 +389,37 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                     "when_done": "Call workflow with workflow='update', step=5"
                 })
             } else {
-                // Skip cross-validation, advance to discover
+                // Skip cross-validation, advance to organize
                 serde_json::json!({
                     "workflow": "update",
                     "step": 4, "total_steps": total,
-                    "instruction": "Cross-validation skipped (cross_validate=false). Proceeding to entity discovery.",
-                    "skip": true,
-                    "when_done": "Call workflow with workflow='update', step=5"
+                    "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
+                    "next_tool": "organize_analyze",
+                    "when_done": format!("Call workflow with workflow='update', step={}", total)
                 })
             }
         }
-        5 => serde_json::json!({
-            "workflow": "update",
-            "step": 5, "total_steps": total,
-            "instruction": resolve(wf, "update.discover", DEFAULT_UPDATE_DISCOVER_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
-            "suggested_args": {"mode": "discover"},
-            "when_done": "Call workflow with workflow='update', step=6"
-        }),
-        6 => serde_json::json!({
+        5 => {
+            if do_cv {
+                serde_json::json!({
+                    "workflow": "update",
+                    "step": 5, "total_steps": total,
+                    "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
+                    "next_tool": "organize_analyze",
+                    "when_done": "Call workflow with workflow='update', step=6"
+                })
+            } else {
+                serde_json::json!({
+                    "workflow": "update",
+                    "step": 5, "total_steps": total,
+                    "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
+                    "complete": true
+                })
+            }
+        }
+        6 if do_cv => serde_json::json!({
             "workflow": "update",
             "step": 6, "total_steps": total,
-            "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
-            "next_tool": "organize_analyze",
-            "when_done": "Call workflow with workflow='update', step=7"
-        }),
-        7 => serde_json::json!({
-            "workflow": "update",
-            "step": 7, "total_steps": total,
-            "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
-            "next_tool": "get_link_suggestions",
-            "when_done": format!("Call workflow with workflow='update', step=8")
-        }),
-        8 => serde_json::json!({
-            "workflow": "update",
-            "step": 8, "total_steps": total,
             "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
             "complete": true
         }),
@@ -507,15 +495,14 @@ fn resolve_step(
             "workflow": "resolve",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "resolve.apply", DEFAULT_RESOLVE_APPLY_INSTRUCTION, &[]),
-            "next_tool": "apply_review_answers",
-            "suggested_args": {"dry_run": false},
+            "next_tool": "get_entity",
             "when_done": "Call workflow with workflow='resolve', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "resolve",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "resolve.verify", DEFAULT_RESOLVE_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "generate_questions",
+            "next_tool": "check_repository",
             "suggested_args": {"dry_run": true},
             "complete": true
         }),
@@ -844,7 +831,7 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "workflow": "ingest",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "ingest.verify", DEFAULT_INGEST_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "generate_questions",
+            "next_tool": "check_repository",
             "suggested_args": {"dry_run": true},
             "complete": true
         }),
@@ -963,7 +950,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
             "workflow": "enrich",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "enrich.verify", DEFAULT_ENRICH_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "generate_questions",
+            "next_tool": "check_repository",
             "suggested_args": {"dry_run": true},
             "complete": true
         }),
@@ -1096,7 +1083,7 @@ fn improve_step(
                 "doc_id": doc_arg,
                 "skipped_steps": skipped,
                 "instruction": resolve(wf, "improve.check", DEFAULT_IMPROVE_CHECK_INSTRUCTION, &[("doc_hint", &doc_hint), ("compare_note", compare_note)]),
-                "next_tool": "generate_questions",
+                "next_tool": "check_repository",
                 "suggested_args": {"doc_id": doc_arg, "dry_run": true},
                 "complete": true
             })
@@ -1340,7 +1327,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = improve_step(4, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "check");
-        assert_eq!(step["next_tool"], "generate_questions");
+        assert_eq!(step["next_tool"], "check_repository");
         assert!(step["complete"].as_bool().unwrap());
     }
 
@@ -1536,7 +1523,6 @@ mod tests {
         let step = update_step(1, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("LINKS_BEFORE"), "update step 1 should mention LINKS_BEFORE");
-        assert!(instruction.contains("fact_embeddings_needed"), "should mention fact_embeddings_needed");
         assert!(instruction.contains("scan_repository"), "should call scan_repository");
     }
 
@@ -2000,55 +1986,35 @@ mod tests {
 
     #[test]
     fn test_check_repository_workflow_texts_mention_resume_token() {
-        // Workflow instructions that tell agents to loop on check_repository
-        // should mention resume tokens.
+        // Only scan_repository workflow text should mention resume tokens now
         let setup = setup_step(5, &serde_json::json!({}), &wf());
-        let update_cv = update_step(3, &serde_json::json!({"cross_validate": true}), &None, &wf());
-
-        for (name, step) in [("setup.scan", setup), ("update.cross_validate", update_cv)] {
-            let instruction = step["instruction"].as_str().unwrap();
-            assert!(
-                instruction.contains("resume"),
-                "{name} workflow should mention resume token"
-            );
-        }
-    }
-
-    #[test]
-    fn test_check_repository_schema_mentions_resume() {
-        let tools = crate::mcp::tools::schema::tools_list();
-        let tools_arr = tools["tools"].as_array().unwrap();
-        let check = tools_arr.iter().find(|t| t["name"] == "check_repository").unwrap();
-        let desc = check["description"].as_str().unwrap();
+        let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(
-            desc.contains("resume"),
-            "check_repository schema description should mention resume token"
-        );
-        assert!(
-            desc.contains("embeddings"),
-            "check_repository schema description should mention embeddings"
+            setup_instr.contains("resume"),
+            "setup.scan should mention resume token for scan_repository"
         );
     }
 
     #[test]
-    fn test_check_repository_schema_deep_check_not_discouraging() {
+    fn test_check_repository_schema_no_resume() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
         let check = tools_arr.iter().find(|t| t["name"] == "check_repository").unwrap();
-        let props = &check["inputSchema"]["properties"]["deep_check"];
-        let desc = props["description"].as_str().unwrap();
-        assert!(!desc.contains("significantly slower"), "deep_check description should not discourage usage with 'significantly slower'");
+        let props = check["inputSchema"]["properties"].as_object().unwrap();
+        assert!(!props.contains_key("resume"), "check_repository should not have resume param");
+        assert!(!props.contains_key("time_budget_secs"), "check_repository should not have time_budget_secs param");
+        assert!(!props.contains_key("mode"), "check_repository should not have mode param");
     }
 
     #[test]
-    fn test_scan_repository_schema_mentions_fact_embeddings() {
+    fn test_scan_repository_schema_mentions_embeddings() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
         let scan = tools_arr.iter().find(|t| t["name"] == "scan_repository").unwrap();
         let desc = scan["description"].as_str().unwrap();
         assert!(
-            desc.contains("mode='embeddings'"),
-            "scan_repository schema description should reference check_repository mode='embeddings' for fact embeddings"
+            desc.contains("embeddings"),
+            "scan_repository schema description should mention embeddings"
         );
     }
 
@@ -2063,17 +2029,8 @@ mod tests {
     }
 
     #[test]
-    fn test_workflow_texts_mention_fact_embeddings() {
-        let setup = setup_step(5, &serde_json::json!({}), &wf());
-        let update_emb = update_step(2, &serde_json::json!({}), &None, &wf());
+    fn test_workflow_texts_mention_fact_pairs() {
         let update_cv = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
-
-        let setup_instr = setup["instruction"].as_str().unwrap();
-        assert!(setup_instr.contains("fact_embeddings_needed") || setup_instr.contains("fact embeddings"), "setup.scan should mention fact embeddings");
-
-        let emb_instr = update_emb["instruction"].as_str().unwrap();
-        assert!(emb_instr.contains("fact-level embeddings") || emb_instr.contains("fact embeddings"), "update.embeddings should mention fact embeddings");
-
         let cv_instr = update_cv["instruction"].as_str().unwrap();
         assert!(cv_instr.contains("fact comparison") || cv_instr.contains("fact pairs"), "update.cross_validate should mention facts");
     }
@@ -2082,34 +2039,26 @@ mod tests {
     fn test_workflow_texts_mention_time_budget_secs() {
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
-        let update_questions = update_step(3, &serde_json::json!({}), &None, &wf());
 
         let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(setup_instr.contains("time_budget_secs=120"), "setup.scan should specify time_budget_secs");
-        assert!(setup_instr.contains("Do NOT stop early"), "setup.scan should warn against stopping early");
 
         let scan_instr = update_scan["instruction"].as_str().unwrap();
         assert!(scan_instr.contains("time_budget_secs=120"), "update.scan should specify time_budget_secs");
         assert!(scan_instr.contains("Do NOT stop early"), "update.scan should warn against stopping early");
-
-        let q_instr = update_questions["instruction"].as_str().unwrap();
-        assert!(q_instr.contains("time_budget_secs=120"), "update.questions should specify time_budget_secs");
-        assert!(q_instr.contains("Do NOT stop early"), "update.questions should warn against stopping early");
     }
 
     #[test]
     fn test_paging_instructions_use_mandatory_language() {
+        // Only scan steps should have paging language
         let setup = setup_step(5, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
-        let update_questions = update_step(3, &serde_json::json!({}), &None, &wf());
 
-        // All should use "WILL return" (not "may return" or "If")
         for (name, instr) in [
             ("setup.scan", setup["instruction"].as_str().unwrap()),
             ("update.scan", update_scan["instruction"].as_str().unwrap()),
-            ("update.questions", update_questions["instruction"].as_str().unwrap()),
         ] {
-            assert!(instr.contains("WILL return"), "{name} should say paging WILL happen, not 'may' or 'if'");
+            assert!(instr.contains("WILL return"), "{name} should say paging WILL happen");
             assert!(instr.contains("MUST"), "{name} should use MUST language for continuation");
         }
     }
@@ -2127,12 +2076,10 @@ mod tests {
     }
 
     #[test]
-    fn test_update_questions_step_uses_mode() {
-        let step = update_step(3, &serde_json::json!({}), &None, &wf());
+    fn test_update_check_step() {
+        let step = update_step(2, &serde_json::json!({}), &None, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("mode='questions'"), "step 3 must instruct mode='questions'");
-        let suggested = &step["suggested_args"];
-        assert_eq!(suggested["mode"], "questions");
+        assert!(instr.contains("check_repository"), "step 2 must instruct check_repository");
     }
 
     #[test]
@@ -2140,42 +2087,35 @@ mod tests {
         let step = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.contains("get_fact_pairs"), "step 4 with cross_validate=true must instruct get_fact_pairs");
-        assert!(step.get("skip").is_none(), "should not skip when cross_validate=true");
     }
 
     #[test]
     fn test_update_cross_validate_step_skipped_when_disabled() {
+        // Without cross_validate, step 4 is organize
         let step = update_step(4, &serde_json::json!({}), &None, &wf());
-        assert_eq!(step["skip"], true, "step 4 without cross_validate should skip");
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("organize_analyze"), "step 4 without cross_validate should be organize");
     }
 
     #[test]
-    fn test_update_discover_step() {
-        let step = update_step(5, &serde_json::json!({}), &None, &wf());
+    fn test_update_links_step() {
+        let step = update_step(3, &serde_json::json!({}), &None, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("mode='discover'"), "step 5 must instruct mode='discover'");
+        assert!(instr.contains("get_link_suggestions"), "step 3 must instruct get_link_suggestions");
     }
 
     #[test]
     fn test_update_total_steps_with_cross_validate() {
         let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf());
-        assert_eq!(step["total_steps"], 8);
+        assert_eq!(step["total_steps"], 6);
     }
 
     #[test]
     fn test_update_total_steps_without_cross_validate() {
         let step = update_step(1, &serde_json::json!({}), &None, &wf());
-        assert_eq!(step["total_steps"], 7);
+        assert_eq!(step["total_steps"], 5);
     }
 
-    #[test]
-    fn test_update_embeddings_step() {
-        let step = update_step(2, &serde_json::json!({}), &None, &wf());
-        let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("mode='embeddings'"), "step 2 must instruct mode='embeddings'");
-        let suggested = &step["suggested_args"];
-        assert_eq!(suggested["mode"], "embeddings");
-    }
 
     #[test]
     fn test_resolve_intro_requires_evidence() {

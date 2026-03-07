@@ -7,16 +7,16 @@
 //! - `queue` - Review queue retrieval (`get_review_queue`)
 //! - `answer` - Question answering (`answer_question`, `bulk_answer_questions`)
 //! - `generate` - Question generation (`generate_questions`)
-//! - `apply` - Apply answered questions to documents (`apply_review_answers`)
+//! - `check` - Repository-wide quality checks (`check_repository`)
 //!
 //! # Public API
 //!
-//! All 5 public functions are re-exported from this module:
+//! All public functions are re-exported from this module:
 //! - `get_review_queue` - Get pending review questions
 //! - `answer_question` - Answer a single question
 //! - `bulk_answer_questions` - Answer multiple questions atomically
-//! - `generate_questions` - Generate review questions for a document
-//! - `apply_review_answers` - Apply answered questions to document content
+//! - `generate_questions` - Generate review questions for a document (internal, used by check_repository)
+//! - `check_repository` - Run rule-based quality checks
 
 pub(crate) mod answer;
 mod apply;
@@ -25,7 +25,6 @@ mod check;
 mod queue;
 
 pub use answer::{answer_question, bulk_answer_questions};
-pub use apply::apply_review_answers;
 pub use generate::generate_questions;
 pub use check::check_repository;
 pub use queue::{get_deferred_items, get_review_queue};
