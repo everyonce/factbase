@@ -548,6 +548,49 @@ pub fn append_review_questions(content: &str, questions: &[ReviewQuestion]) -> S
     normalize_review_section(&result)
 }
 
+/// Ensure content contains the review marker section.
+/// If the marker is missing, appends a blank review section.
+/// Returns the (possibly modified) content and whether it was changed.
+pub fn ensure_review_section(content: &str) -> (String, bool) {
+    if content.contains(REVIEW_QUEUE_MARKER) {
+        return (content.to_string(), false);
+    }
+    let mut result = content.to_string();
+    if !result.ends_with('\n') {
+        result.push('\n');
+    }
+    result.push_str(&format!(
+        "\n{}\n## Review Queue\n",
+        REVIEW_QUEUE_MARKER
+    ));
+    (result, true)
+}
+
+/// Recover the review section from DB content into disk content.
+/// If disk content lacks the marker but db_content has it, extracts the
+/// review section (marker + everything after) from db_content and appends
+/// it to disk content. Returns the merged content and whether it changed.
+pub fn recover_review_section(disk_content: &str, db_content: &str) -> (String, bool) {
+    if disk_content.contains(REVIEW_QUEUE_MARKER) {
+        return (disk_content.to_string(), false);
+    }
+    // Try to recover from DB content
+    if let Some(marker_pos) = db_content.find(REVIEW_QUEUE_MARKER) {
+        // Find the start of the review section (look for --- or ## Review Queue before marker)
+        let before_marker = &db_content[..marker_pos];
+        let section_start = find_review_section_start(before_marker);
+        let review_section = &db_content[section_start..];
+        let mut result = disk_content.to_string();
+        if !result.ends_with('\n') {
+            result.push('\n');
+        }
+        result.push_str(review_section);
+        return (result, true);
+    }
+    // Neither has the marker — add a blank one
+    ensure_review_section(disk_content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1081,5 +1124,61 @@ Line 3
         let result = merge_duplicate_review_sections(content);
         let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
         assert_eq!(heading_count, 1, "Should merge duplicate headings, got:\n{result}");
+    }
+
+    #[test]
+    fn test_ensure_review_section_already_present() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n## Review Queue\n";
+        let (result, changed) = ensure_review_section(content);
+        assert!(!changed);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_ensure_review_section_missing() {
+        let content = "# Doc\n\nSome content\n";
+        let (result, changed) = ensure_review_section(content);
+        assert!(changed);
+        assert!(result.contains(REVIEW_QUEUE_MARKER));
+        assert!(result.contains("## Review Queue"));
+        assert!(result.starts_with("# Doc\n\nSome content\n"));
+    }
+
+    #[test]
+    fn test_ensure_review_section_no_trailing_newline() {
+        let content = "# Doc\n\nSome content";
+        let (result, changed) = ensure_review_section(content);
+        assert!(changed);
+        assert!(result.contains(REVIEW_QUEUE_MARKER));
+    }
+
+    #[test]
+    fn test_recover_review_section_disk_has_marker() {
+        let disk = "# Doc\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` q1\n  > \n";
+        let db = "# Doc\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` q1\n  > \n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(!changed);
+        assert_eq!(result, disk);
+    }
+
+    #[test]
+    fn test_recover_review_section_from_db() {
+        let disk = "# Doc\n\nSome content\n";
+        let db = "# Doc\n\nSome content\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When was this?\n  > \n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(changed);
+        assert!(result.contains(REVIEW_QUEUE_MARKER));
+        assert!(result.contains("When was this?"));
+        assert!(result.starts_with("# Doc\n\nSome content\n"));
+    }
+
+    #[test]
+    fn test_recover_review_section_neither_has_marker() {
+        let disk = "# Doc\n\nContent\n";
+        let db = "# Doc\n\nContent\n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(changed);
+        assert!(result.contains(REVIEW_QUEUE_MARKER));
+        assert!(result.contains("## Review Queue"));
     }
 }
