@@ -199,22 +199,22 @@ impl Database {
     pub fn get_document_link_counts(
         &self,
         repo_id: Option<&str>,
-    ) -> Result<Vec<(String, String, usize)>, FactbaseError> {
+    ) -> Result<Vec<(String, String, String, usize)>, FactbaseError> {
         let conn = self.get_conn()?;
         let sql = match repo_id {
             Some(_) => {
-                "SELECT d.id, d.title, COUNT(dl.target_id) as link_count
+                "SELECT d.id, d.title, COALESCE(d.doc_type, ''), COUNT(dl.target_id) as link_count
                  FROM documents d
                  LEFT JOIN document_links dl ON d.id = dl.source_id
                  WHERE d.is_deleted = FALSE AND d.repo_id = ?1
-                 GROUP BY d.id, d.title"
+                 GROUP BY d.id, d.title, d.doc_type"
             }
             None => {
-                "SELECT d.id, d.title, COUNT(dl.target_id) as link_count
+                "SELECT d.id, d.title, COALESCE(d.doc_type, ''), COUNT(dl.target_id) as link_count
                  FROM documents d
                  LEFT JOIN document_links dl ON d.id = dl.source_id
                  WHERE d.is_deleted = FALSE
-                 GROUP BY d.id, d.title"
+                 GROUP BY d.id, d.title, d.doc_type"
             }
         };
         let mut stmt = conn.prepare(sql)?;
@@ -224,8 +224,8 @@ impl Database {
             None => stmt.query([])?,
         };
         while let Some(row) = rows.next()? {
-            let count: i64 = row.get(2)?;
-            results.push((row.get(0)?, row.get(1)?, count as usize));
+            let count: i64 = row.get(3)?;
+            results.push((row.get(0)?, row.get(1)?, row.get(2)?, count as usize));
         }
         Ok(results)
     }

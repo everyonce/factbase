@@ -345,13 +345,14 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "get_link_suggestions",
-                "description": "Get link suggestions: documents with few links paired with embedding-similar candidates not yet linked. Use this after scanning to discover missing cross-references.",
+                "description": "Get link suggestions: documents paired with embedding-similar candidates not yet linked. Supports type filters for cross-type discovery (e.g., find projects related to a person) or same-type discovery. Use this after scanning to discover missing cross-references.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
                         "min_similarity": { "type": "number", "description": "Minimum embedding similarity for candidates (default: 0.6)" },
-                        "max_existing_links": { "type": "integer", "description": "Only suggest for documents with at most this many links (default: 2)" },
+                        "include_types": { "type": "array", "items": { "type": "string" }, "description": "Only suggest candidates of these types (e.g., [\"project\",\"customer\"])" },
+                        "exclude_types": { "type": "array", "items": { "type": "string" }, "description": "Exclude candidates of these types (e.g., [\"person\"] to avoid same-type noise)" },
                         "limit": { "type": "integer", "description": "Max suggestions to return (default: 50)" }
                     }
                 }

@@ -10,7 +10,21 @@ use serde_json::Value;
 
 use super::helpers::{get_str_arg, get_u64_arg, resolve_repo_filter, run_blocking};
 
-/// Get link suggestions: documents with few links paired with embedding-similar candidates.
+/// Parse a JSON string array argument.
+fn get_str_array_arg(args: &Value, key: &str) -> Vec<String> {
+    args.get(key)
+        .and_then(Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(Value::as_str)
+                .map(|s| s.to_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Get link suggestions: documents paired with embedding-similar candidates not yet linked.
+/// Supports type filters to control which candidate types are suggested.
 pub async fn get_link_suggestions<E: EmbeddingProvider>(
     db: &Database,
     embedding: &E,
@@ -21,28 +35,28 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
         .get("min_similarity")
         .and_then(Value::as_f64)
         .unwrap_or(0.6) as f32;
-    let max_existing_links = get_u64_arg(args, "max_existing_links", 2) as usize;
     let limit = get_u64_arg(args, "limit", 50) as usize;
+    let include_types = get_str_array_arg(args, "include_types");
+    let exclude_types = get_str_array_arg(args, "exclude_types");
 
-    // Get link counts for all docs
+    // Get all docs with link counts and types
     let db2 = db.clone();
     let repo2 = repo.clone();
-    let link_counts = run_blocking(move || {
+    let all_docs = run_blocking(move || {
         db2.get_document_link_counts(repo2.as_deref())
     })
     .await?;
 
-    // Filter to docs with few links
-    let candidates: Vec<&(String, String, usize)> = link_counts
+    // Build type lookup map
+    let type_map: HashMap<String, String> = all_docs
         .iter()
-        .filter(|(_, _, count)| *count <= max_existing_links)
+        .map(|(id, _, doc_type, _)| (id.clone(), doc_type.clone()))
         .collect();
 
-    // For each candidate, find similar documents not already linked
     let mut suggestions = Vec::new();
-    let _ = embedding; // embedding provider available but we use DB-level similarity
+    let _ = embedding;
 
-    for (doc_id, doc_title, link_count) in &candidates {
+    for (doc_id, doc_title, doc_type, link_count) in &all_docs {
         if suggestions.len() >= limit {
             break;
         }
@@ -56,7 +70,7 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
         .await
         {
             Ok(s) => s,
-            Err(_) => continue, // skip if no embedding exists
+            Err(_) => continue,
         };
 
         if similar.is_empty() {
@@ -73,13 +87,27 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
 
         let unlinked: Vec<Value> = similar
             .into_iter()
-            .filter(|(sid, _, _)| !existing_links.contains(sid))
+            .filter(|(sid, _, _)| {
+                if existing_links.contains(sid) {
+                    return false;
+                }
+                let candidate_type = type_map.get(sid).map(|s| s.to_lowercase()).unwrap_or_default();
+                if !include_types.is_empty() && !include_types.contains(&candidate_type) {
+                    return false;
+                }
+                if !exclude_types.is_empty() && exclude_types.contains(&candidate_type) {
+                    return false;
+                }
+                true
+            })
             .take(5)
             .map(|(id, title, sim)| {
                 let rounded = (sim * 1000.0_f32).round() / 1000.0_f32;
+                let ctype = type_map.get(&id).cloned().unwrap_or_default();
                 serde_json::json!({
                     "id": id,
                     "title": title,
+                    "type": ctype,
                     "similarity": rounded
                 })
             })
@@ -89,14 +117,14 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
             suggestions.push(serde_json::json!({
                 "doc_id": doc_id,
                 "doc_title": doc_title,
+                "doc_type": doc_type,
                 "link_count": link_count,
                 "candidates": unlinked
             }));
         }
     }
 
-    // Compute stats
-    let docs_analyzed = candidates.len();
+    let docs_analyzed = all_docs.len();
     let avg_similarity = if suggestions.is_empty() {
         0.0
     } else {
@@ -206,7 +234,7 @@ mod tests {
         let counts = db.get_document_link_counts(Some("test-repo")).unwrap();
         assert_eq!(counts.len(), 2);
         // All should have 0 links
-        for (_, _, count) in &counts {
+        for (_, _, _, count) in &counts {
             assert_eq!(*count, 0);
         }
     }
@@ -233,10 +261,24 @@ mod tests {
         .unwrap();
 
         let counts = db.get_document_link_counts(Some("test-repo")).unwrap();
-        let doc1_count = counts.iter().find(|(id, _, _)| id == "doc1").unwrap().2;
-        let doc2_count = counts.iter().find(|(id, _, _)| id == "doc2").unwrap().2;
+        let doc1_count = counts.iter().find(|(id, _, _, _)| id == "doc1").unwrap().3;
+        let doc2_count = counts.iter().find(|(id, _, _, _)| id == "doc2").unwrap().3;
         assert_eq!(doc1_count, 1);
         assert_eq!(doc2_count, 0);
+    }
+
+    #[test]
+    fn test_get_document_link_counts_returns_doc_type() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        let mut doc = test_doc("doc1", "Doc 1");
+        doc.doc_type = Some("person".to_string());
+        db.upsert_document(&doc).unwrap();
+
+        let counts = db.get_document_link_counts(Some("test-repo")).unwrap();
+        assert_eq!(counts.len(), 1);
+        assert_eq!(counts[0].2, "person");
     }
 
     #[test]
@@ -367,5 +409,52 @@ mod tests {
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("[[abc123]]"));
         assert!(content.contains("[[def456]]"));
+    }
+
+    #[test]
+    fn test_get_str_array_arg_present() {
+        let args = serde_json::json!({"types": ["person", "Project"]});
+        let result = get_str_array_arg(&args, "types");
+        assert_eq!(result, vec!["person", "project"]); // lowercased
+    }
+
+    #[test]
+    fn test_get_str_array_arg_missing() {
+        let args = serde_json::json!({});
+        let result = get_str_array_arg(&args, "types");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_str_array_arg_empty() {
+        let args = serde_json::json!({"types": []});
+        let result = get_str_array_arg(&args, "types");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_schema_has_type_filters() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let tool = tools_arr
+            .iter()
+            .find(|t| t["name"] == "get_link_suggestions")
+            .unwrap();
+        let props = &tool["inputSchema"]["properties"];
+        assert!(props.get("include_types").is_some(), "should have include_types");
+        assert!(props.get("exclude_types").is_some(), "should have exclude_types");
+        assert!(props.get("max_existing_links").is_none(), "should NOT have max_existing_links");
+    }
+
+    #[test]
+    fn test_ingest_workflow_has_links_step() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        let args = serde_json::json!({"workflow": "ingest", "step": 5, "topic": "test"});
+        let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("get_link_suggestions"), "ingest step 5 should mention get_link_suggestions");
+        assert!(result["complete"].as_bool().unwrap_or(false), "ingest step 5 should be complete");
     }
 }
