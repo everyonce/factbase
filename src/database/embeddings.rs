@@ -254,6 +254,33 @@ impl Database {
         }
     }
 
+    /// Get the declared embedding dimension from the table schema SQL.
+    ///
+    /// Parses `FLOAT[N]` from the CREATE statement in sqlite_master.
+    /// This works even when the table is empty (unlike probing actual data).
+    pub fn get_schema_embedding_dimension(&self) -> Result<Option<usize>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let sql: Option<String> = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='document_embeddings'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+        if let Some(sql) = sql {
+            // Parse FLOAT[N] from the schema
+            if let Some(start) = sql.find("FLOAT[") {
+                let rest = &sql[start + 6..];
+                if let Some(end) = rest.find(']') {
+                    if let Ok(dim) = rest[..end].parse::<usize>() {
+                        return Ok(Some(dim));
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// Get embedding metadata value by key.
     pub fn get_embedding_meta(&self, key: &str) -> Result<Option<String>, FactbaseError> {
         let conn = self.get_conn()?;
@@ -502,6 +529,25 @@ mod tests {
             .get_embedding_dimension()
             .expect("get_embedding_dimension should succeed");
         assert_eq!(dim, Some(1024));
+    }
+
+    #[test]
+    fn test_get_schema_embedding_dimension() {
+        let (db, _tmp) = test_db();
+
+        // Default schema creates 1024-dim tables
+        let dim = db
+            .get_schema_embedding_dimension()
+            .expect("get_schema_embedding_dimension should succeed");
+        assert_eq!(dim, Some(1024));
+
+        // After rebuild with different dimension
+        db.rebuild_embedding_tables(384)
+            .expect("rebuild should succeed");
+        let dim = db
+            .get_schema_embedding_dimension()
+            .expect("get_schema_embedding_dimension should succeed");
+        assert_eq!(dim, Some(384));
     }
 
     #[test]

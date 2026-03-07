@@ -69,7 +69,7 @@ pub async fn scan_repository(
             }
         }
     } else {
-        let actual_table_dim = db.get_embedding_dimension()?;
+        let actual_table_dim = db.get_schema_embedding_dimension()?;
         if actual_table_dim.is_some() && actual_table_dim != Some(provider_dim) {
             db.rebuild_embedding_tables(provider_dim)?;
         }

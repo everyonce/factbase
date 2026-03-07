@@ -146,7 +146,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         }
     } else {
         // First scan or empty DB — record metadata and ensure tables match
-        let actual_table_dim = db.get_embedding_dimension()?;
+        let actual_table_dim = db.get_schema_embedding_dimension()?;
         if actual_table_dim.is_some() && actual_table_dim != Some(provider_dim) {
             // Table exists with different dimension (e.g., default 1024 but provider is 384)
             if !quiet {
