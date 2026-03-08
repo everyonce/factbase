@@ -1094,7 +1094,7 @@ fn resolve_step2_batch(
     let instruction_value = if is_first_batch {
         Value::String(instruction)
     } else {
-        Value::String("Continue answering. Same rules as batch 1.".to_string())
+        Value::String("Continue answering. DO NOT STOP — call step=2 immediately after answering this batch. Do not summarize or report progress between batches.".to_string())
     };
 
     let mut result = serde_json::json!({
@@ -2454,8 +2454,8 @@ mod tests {
         insert_test_doc(&db, "slm001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.len() < 100, "subsequent batch instruction should be short: {instr}");
-        assert!(instr.contains("batch 1"), "should reference batch 1: {instr}");
+        assert!(instr.len() < 200, "subsequent batch instruction should be short: {instr}");
+        assert!(instr.contains("DO NOT STOP"), "should include DO NOT STOP: {instr}");
     }
 
     #[test]
