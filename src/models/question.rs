@@ -101,6 +101,16 @@ impl ReviewQuestion {
         !self.answered && self.answer.is_some()
     }
 
+    /// Returns true if this question has a believed answer (confidence=believed).
+    /// Believed answers are stored as deferred with a "believed: " prefix.
+    pub fn is_believed(&self) -> bool {
+        self.is_deferred()
+            && self
+                .answer
+                .as_deref()
+                .is_some_and(|a| a.starts_with("believed: "))
+    }
+
     /// Returns a JSON representation of the base question fields.
     pub fn to_json(&self) -> Value {
         serde_json::json!({
@@ -266,5 +276,29 @@ mod tests {
     fn test_is_deferred_unanswered_no_answer() {
         let q = ReviewQuestion::new(QuestionType::Temporal, None, "When?".to_string());
         assert!(!q.is_deferred());
+    }
+
+    #[test]
+    fn test_is_believed_with_believed_prefix() {
+        let mut q = ReviewQuestion::new(QuestionType::Stale, None, "Stale fact".to_string());
+        q.answer = Some("believed: Still accurate per Wikipedia".to_string());
+        assert!(q.is_believed());
+        assert!(q.is_deferred()); // believed is a subset of deferred
+    }
+
+    #[test]
+    fn test_is_believed_false_for_regular_defer() {
+        let mut q = ReviewQuestion::new(QuestionType::Stale, None, "Stale fact".to_string());
+        q.answer = Some("defer: could not find source".to_string());
+        assert!(!q.is_believed());
+        assert!(q.is_deferred());
+    }
+
+    #[test]
+    fn test_is_believed_false_for_answered() {
+        let mut q = ReviewQuestion::new(QuestionType::Stale, None, "Stale fact".to_string());
+        q.answered = true;
+        q.answer = Some("believed: answer".to_string());
+        assert!(!q.is_believed()); // answered overrides believed
     }
 }

@@ -160,11 +160,14 @@ pub fn prune_stale_questions(
     let (before_marker, after_marker) = content.split_at(marker_pos);
     let queue_content = &after_marker[REVIEW_QUEUE_MARKER.len()..];
 
+    let lines: Vec<&str> = queue_content.lines().collect();
     let mut result_lines: Vec<&str> = Vec::new();
     let mut skip_answer = false;
     let mut pruned = 0usize;
+    let mut i = 0;
 
-    for line in queue_content.lines() {
+    while i < lines.len() {
+        let line = lines[i];
         let trimmed = line.trim_start();
         let is_question = trimmed.starts_with("- [");
 
@@ -172,8 +175,23 @@ pub fn prune_stale_questions(
             let is_answered = trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]");
             let is_cross_check = trimmed.contains("Cross-check");
 
-            // Keep answered questions, cross-check questions (when no LLM), and valid questions
+            // Check if this unchecked question has a blockquote answer (deferred/believed)
+            let has_answer = !is_answered && {
+                let mut j = i + 1;
+                // Skip empty lines between question and potential blockquote
+                while j < lines.len() && lines[j].trim().is_empty() {
+                    j += 1;
+                }
+                // A real answer is a blockquote with non-empty content after '>'
+                j < lines.len() && {
+                    let t = lines[j].trim();
+                    t.starts_with('>') && t.len() > 1 && !t[1..].trim().is_empty()
+                }
+            };
+
+            // Keep: answered, deferred (has blockquote answer), cross-check, or valid description
             if is_answered
+                || has_answer
                 || (!had_deep_check && is_cross_check)
                 || question_description_matches(trimmed, valid_descriptions)
             {
@@ -184,11 +202,13 @@ pub fn prune_stale_questions(
                 pruned += 1;
             }
         } else if skip_answer && trimmed.starts_with('>') {
+            i += 1;
             continue;
         } else {
             result_lines.push(line);
             skip_answer = false;
         }
+        i += 1;
     }
 
     if pruned == 0 {
@@ -1006,6 +1026,26 @@ Line 3
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
         assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_prune_preserves_deferred_question_with_answer() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[stale]` Old fact is stale\n> believed: Still accurate per Wikipedia\n";
+        let valid = HashSet::new(); // not in valid set, but has a deferred answer
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(result.contains("Old fact is stale"), "Deferred question should be preserved");
+        assert!(result.contains("believed: Still accurate"), "Believed answer should be preserved");
+    }
+
+    #[test]
+    fn test_prune_preserves_deferred_question_with_defer_note() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` When was this true?\n> defer: could not find source\n";
+        let valid = HashSet::new();
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(result.contains("When was this true?"), "Deferred question should be preserved");
+        assert!(result.contains("defer: could not find source"), "Defer note should be preserved");
     }
 
     #[test]
