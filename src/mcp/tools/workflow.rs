@@ -1091,27 +1091,39 @@ fn resolve_step2_batch(
 
     let pct = if total_questions > 0 { (resolved_so_far * 100) / total_questions } else { 0 };
 
+    // Slim subsequent batches: only send full instruction/patterns/conflicts on first batch
+    let instruction_value = if is_first_batch {
+        Value::String(instruction)
+    } else {
+        Value::String("Continue answering. Same rules as batch 1.".to_string())
+    };
+
     let mut result = serde_json::json!({
         "workflow": "resolve",
         "step": 2, "total_steps": total_steps,
-        "instruction": instruction,
+        "instruction": instruction_value,
         "next_tool": "answer_questions",
         "variant": variant,
         "variant_source": variant_source,
         "type_filter": active_filter,
         "type_distribution": type_dist_json,
         "continue": true,
-        "conflict_patterns": {
+        "batch": batch_value,
+        "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
+        "completion_gate": format!("{resolved_so_far}/{total_questions} ({pct}%). Call step=2 for next batch."),
+        "when_done": "Call workflow with workflow='resolve', step=2"
+    });
+
+    // Only include conflict_patterns when first batch or batch contains conflict questions
+    let batch_has_conflicts = batch.iter().any(|q| q["type"].as_str() == Some("conflict"));
+    if is_first_batch || batch_has_conflicts {
+        result.as_object_mut().unwrap().insert("conflict_patterns".to_string(), serde_json::json!({
             "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
             "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
             "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
             "unknown": "No recognized pattern — investigate which fact is current."
-        },
-        "batch": batch_value,
-        "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
-        "completion_gate": format!("Resolved {resolved_so_far} of {total_questions} ({pct}%). {remaining} questions remain. Call workflow with workflow='resolve', step=2 for the next batch. If you must stop, commit progress and resume with workflow(workflow='resolve') — the DB tracks answered questions."),
-        "when_done": "Call workflow with workflow='resolve', step=2"
-    });
+        }));
+    }
 
     if is_first_batch {
         let mut intro = resolve(
@@ -1151,7 +1163,7 @@ fn resolve_step2_batch(
             .insert("continuation_guidance".to_string(), Value::String(guidance));
     }
 
-    if !patterns.is_empty() {
+    if is_first_batch && !patterns.is_empty() {
         result
             .as_object_mut()
             .unwrap()
@@ -2436,6 +2448,99 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_step2_subsequent_batch_slim_instruction() {
+        let (db, _tmp) = test_db();
+        // One answered + one unanswered → resolved_so_far > 0 → subsequent batch
+        let content = "<!-- factbase:slm001 -->\n# Slim Test\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[missing]` Unanswered (line 5)\n";
+        insert_test_doc(&db, "slm001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.len() < 100, "subsequent batch instruction should be short: {instr}");
+        assert!(instr.contains("batch 1"), "should reference batch 1: {instr}");
+    }
+
+    #[test]
+    fn test_resolve_step2_first_batch_full_instruction() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "ful001", &["temporal"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.len() > 100, "first batch instruction should be full: len={}", instr.len());
+    }
+
+    #[test]
+    fn test_resolve_step2_subsequent_batch_no_patterns() {
+        let (db, _tmp) = test_db();
+        // Create 5 identical weak-source questions + 1 answered to make it a subsequent batch
+        for i in 0..5 {
+            let id = format!("snp{:03}", i);
+            let content = format!(
+                "<!-- factbase:{id} -->\n# Doc {id}\n\n- Fact [^1]\n\n---\n[^1]: Phonetool lookup\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Citation [^1] \"Phonetool lookup\" is not specific enough to verify (line 4)\n"
+            );
+            insert_test_doc(&db, &id, &content);
+        }
+        // Add an answered question to make resolved_so_far > 0
+        let ans = "<!-- factbase:snpans -->\n# Answered\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Done (line 4)\n  > @t[2024]\n";
+        insert_test_doc(&db, "snpans", ans);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("patterns_detected").is_none(), "subsequent batch should omit patterns_detected");
+    }
+
+    #[test]
+    fn test_resolve_step2_conflict_patterns_omitted_when_no_conflicts() {
+        let (db, _tmp) = test_db();
+        // Only temporal questions, no conflicts — and subsequent batch
+        let content = "<!-- factbase:ncf001 -->\n# No Conflict\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[temporal]` Unanswered (line 5)\n";
+        insert_test_doc(&db, "ncf001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("conflict_patterns").is_none(), "no conflicts in batch → omit conflict_patterns");
+    }
+
+    #[test]
+    fn test_resolve_step2_conflict_patterns_present_when_batch_has_conflicts() {
+        let (db, _tmp) = test_db();
+        // Subsequent batch with a conflict question
+        let content = "<!-- factbase:ycf001 -->\n# Has Conflict\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[conflict]` Two facts overlap (line 5)\n";
+        insert_test_doc(&db, "ycf001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("conflict_patterns").is_some(), "batch with conflicts should include conflict_patterns");
+    }
+
+    #[test]
+    fn test_resolve_step2_first_batch_has_all_fields() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "all001", &["temporal", "conflict", "missing", "stale", "weak-source"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        // First batch should have everything
+        assert!(step.get("intro").is_some(), "first batch should have intro");
+        assert!(step.get("conflict_patterns").is_some(), "first batch should have conflict_patterns");
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.len() > 100, "first batch should have full instruction");
+    }
+
+    #[test]
+    fn test_resolve_step2_slim_batch_smaller_than_first() {
+        let (db, _tmp) = test_db();
+        // First batch: all questions unanswered
+        insert_doc_with_questions(&db, "sz1001", &["temporal", "stale"]);
+        let first = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let first_json = serde_json::to_string(&first).unwrap();
+
+        // Subsequent batch: one answered
+        let (db2, _tmp2) = test_db();
+        let content = "<!-- factbase:sz2001 -->\n# Slim\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Done (line 4)\n  > @t[2024]\n- [ ] `@q[stale]` Stale (line 5)\n";
+        insert_test_doc(&db2, "sz2001", content);
+        let second = resolve_step(2, &serde_json::json!({}), &None, 0, &db2, &wf());
+        let second_json = serde_json::to_string(&second).unwrap();
+
+        assert!(
+            second_json.len() < first_json.len(),
+            "subsequent batch ({} bytes) should be smaller than first ({} bytes)",
+            second_json.len(), first_json.len()
+        );
+    }
+
+    #[test]
     fn test_resolve_step2_batch_size_limits_questions() {
         let (db, _tmp) = test_db();
         // Insert 70 questions across seven docs (more than RESOLVE_BATCH_SIZE=50)
@@ -2612,9 +2717,9 @@ mod tests {
         insert_doc_with_questions(&db, "gate01", &["temporal", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
-        assert!(gate.contains("2 questions remain"));
-        assert!(gate.contains("Resolved 0 of 2 (0%)"));
-        assert!(gate.contains("resume"));
+        assert!(gate.contains("0/2"), "gate should have compact counts: {gate}");
+        assert!(gate.contains("0%"), "gate should have percentage: {gate}");
+        assert!(gate.contains("step=2"), "gate should tell agent to call step=2: {gate}");
     }
 
     #[test]
