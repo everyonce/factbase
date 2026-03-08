@@ -140,7 +140,7 @@ fn extract_context(content: &str, start: usize, end: usize) -> String {
         .map(|p| p + 1)
         .unwrap_or(0);
     let ctx_end = content[end..]
-        .find(|c: char| c == '\n' || c == '.')
+        .find(['\n', '.'])
         .map(|p| end + p + 1)
         .unwrap_or(content.len());
     content[ctx_start..ctx_end.min(content.len())]

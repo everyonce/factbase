@@ -50,29 +50,6 @@ fn check_common(text: &str, errors: &mut Vec<ValidationError>) {
     check_footnote_definitions(text, errors);
 }
 
-/// Validate an LLM-rewritten section against the original.
-///
-/// Returns a list of validation errors (empty = valid).
-pub fn validate_rewrite(original: &str, rewritten: &str) -> Vec<ValidationError> {
-    let mut errors = Vec::new();
-
-    // Check for dramatic content loss (>50% line reduction)
-    let orig_lines = content_line_count(original);
-    let new_lines = content_line_count(rewritten);
-    if orig_lines > 2 && new_lines < orig_lines / 2 {
-        errors.push(ValidationError {
-            kind: ValidationErrorKind::ContentLoss,
-            detail: format!(
-                "Content lines dropped from {} to {} (>50% loss)",
-                orig_lines, new_lines
-            ),
-        });
-    }
-
-    check_common(rewritten, &mut errors);
-    errors
-}
-
 /// Validate a full document before writing to disk.
 ///
 /// Compares new content against original to catch corruption.
@@ -142,15 +119,6 @@ fn extract_header_id(content: &str) -> Option<String> {
         .map(|cap| cap[1].to_string())
 }
 
-fn content_line_count(text: &str) -> usize {
-    text.lines()
-        .filter(|l| {
-            let t = l.trim();
-            !t.is_empty() && !t.starts_with("<!--")
-        })
-        .count()
-}
-
 fn count_fact_lines(content: &str) -> usize {
     // Only count fact lines in the document body, excluding the review queue
     // section. Review queue items (e.g. `- [x] @q[temporal] ...`) match the
@@ -199,78 +167,6 @@ fn check_footnote_definitions(text: &str, errors: &mut Vec<ValidationError>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ==================== validate_rewrite tests ====================
-
-    #[test]
-    fn test_valid_rewrite_passes() {
-        let original = "## Career\n- VP at Acme @t[2020..2023]\n- CTO at BigCo @t[2023..]\n";
-        let rewritten =
-            "## Career\n- VP at Acme @t[2020..2023-06]\n- CTO at BigCo @t[2023..]\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
-    }
-
-    #[test]
-    fn test_rewrite_content_loss_detected() {
-        let original =
-            "## Career\n- Fact 1\n- Fact 2\n- Fact 3\n- Fact 4\n- Fact 5\n- Fact 6\n";
-        let rewritten = "## Career\n- Fact 1\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss));
-    }
-
-    #[test]
-    fn test_rewrite_meta_text_detected() {
-        let original = "## Career\n- VP at Acme\n";
-        let rewritten = "## Career\n- VP at Acme\n```json\n{\"instruction\": \"update\"}\n```\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::MetaTextDetected));
-    }
-
-    #[test]
-    fn test_rewrite_classification_label_detected() {
-        let original = "## Career\n- VP at Acme\n";
-        let rewritten = "CLASSIFICATION: correction\n## Career\n- VP at Acme @t[2020..2023]\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::MetaTextDetected));
-    }
-
-    #[test]
-    fn test_rewrite_malformed_footnote_detected() {
-        let original = "## Career\n- VP at Acme\n";
-        let rewritten = "## Career\n- VP at Acme\n[^1] This is not a proper definition\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(
-            errors.iter().any(|e| e.kind == ValidationErrorKind::MalformedFootnote),
-            "Expected malformed footnote error, got: {:?}",
-            errors
-        );
-    }
-
-    #[test]
-    fn test_rewrite_wellformed_footnote_passes() {
-        let original = "## Career\n- VP at Acme [^1]\n";
-        let rewritten = "## Career\n- VP at Acme [^1]\n[^1]: LinkedIn profile\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(
-            !errors.iter().any(|e| e.kind == ValidationErrorKind::MalformedFootnote),
-            "Well-formed footnote should pass: {:?}",
-            errors
-        );
-    }
-
-    #[test]
-    fn test_small_section_no_false_positive_content_loss() {
-        let original = "## Notes\n- One fact\n";
-        let rewritten = "## Notes\n- Updated fact\n";
-        let errors = validate_rewrite(original, rewritten);
-        assert!(
-            !errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
-            "Small sections should not trigger content loss: {:?}",
-            errors
-        );
-    }
 
     // ==================== validate_document tests ====================
 

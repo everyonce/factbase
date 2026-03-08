@@ -571,7 +571,7 @@ fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
 
     // Load ALL documents (not just has_review_queue=TRUE)
     let mut all_docs = Vec::new();
-    for (repo_id, _) in &repo_paths {
+    for repo_id in repo_paths.keys() {
         if let Ok(docs) = db.get_documents_for_repo(repo_id) {
             all_docs.extend(docs.into_values().filter(|d| !d.is_deleted));
         }
@@ -597,16 +597,7 @@ fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
 /// Compute unanswered question type distribution from the review queue.
 fn compute_type_distribution(db: &Database) -> Vec<(QuestionType, usize)> {
     let docs = load_review_docs_from_disk(db);
-    let mut counts: HashMap<QuestionType, usize> = HashMap::new();
-    for doc in &docs {
-        if let Some(questions) = parse_review_queue(&doc.content) {
-            for q in &questions {
-                if !q.answered && !q.is_believed() && !q.is_deferred() {
-                    *counts.entry(q.question_type.clone()).or_insert(0) += 1;
-                }
-            }
-        }
-    }
+    let (counts, _) = crate::mcp::tools::review::count_question_types(&docs);
     let mut sorted: Vec<_> = counts.into_iter().collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1));
     sorted
@@ -722,7 +713,7 @@ fn resolve_step2_batch(
                     }
 
                     // Count type distribution (before type filter)
-                    *type_distribution.entry(q.question_type.clone()).or_insert(0) += 1;
+                    *type_distribution.entry(q.question_type).or_insert(0) += 1;
 
                     // Apply type filter
                     if !type_filter.is_empty() && !type_filter.contains(&q.question_type) {

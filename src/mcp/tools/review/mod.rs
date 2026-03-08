@@ -30,8 +30,10 @@ pub use queue::{get_deferred_items, get_review_queue};
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::models::ReviewQuestion;
+use crate::models::{Document, QuestionType, ReviewQuestion};
+use crate::processor::parse_review_queue;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Unified answer tool: dispatches to single or bulk based on args.
 pub fn answer_questions(
@@ -63,4 +65,30 @@ pub(crate) fn format_question_json(q: &ReviewQuestion, doc_context: Option<(&str
         obj.insert("answer".to_string(), serde_json::json!(q.answer));
     }
     json
+}
+
+/// Counts unanswered question types and believed questions across documents.
+///
+/// Returns `(type_counts, believed_count)` where `type_counts` maps question type
+/// to the number of truly unanswered questions (excluding deferred and believed).
+pub(crate) fn count_question_types(docs: &[Document]) -> (HashMap<QuestionType, usize>, usize) {
+    let mut counts: HashMap<QuestionType, usize> = HashMap::new();
+    let mut believed = 0usize;
+    for doc in docs {
+        if let Some(questions) = parse_review_queue(&doc.content) {
+            for q in &questions {
+                if q.answered {
+                    continue;
+                }
+                if q.is_deferred() {
+                    if q.is_believed() {
+                        believed += 1;
+                    }
+                    continue;
+                }
+                *counts.entry(q.question_type).or_insert(0) += 1;
+            }
+        }
+    }
+    (counts, believed)
 }

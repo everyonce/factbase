@@ -8,8 +8,8 @@ use crate::patterns::pad_negative_year;
 /// Returns None if valid, Some(error_message) if invalid.
 pub fn validate_date(date: &str) -> Option<String> {
     let date = pad_negative_year(date);
-    let (is_negative, rest) = if date.starts_with('-') {
-        (true, &date[1..])
+    let (is_negative, rest) = if let Some(stripped) = date.strip_prefix('-') {
+        (true, stripped)
     } else {
         (false, date.as_str())
     };

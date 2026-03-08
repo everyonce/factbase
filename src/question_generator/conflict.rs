@@ -98,8 +98,8 @@ pub fn classify_conflict_pattern(
 /// Approximate month count between two normalized date strings.
 fn months_between(a: &str, b: &str) -> i32 {
     let parse = |d: &str| -> (i32, i32) {
-        let (neg, rest) = if d.starts_with('-') {
-            (true, &d[1..])
+        let (neg, rest) = if let Some(stripped) = d.strip_prefix('-') {
+            (true, stripped)
         } else {
             (false, d)
         };
@@ -452,8 +452,8 @@ fn dates_within_one_month(date_a: &str, date_b: &str) -> bool {
     }
     // Parse year-month from the normalized dates
     let parse = |d: &str| -> Option<(i32, i32)> {
-        let (neg, rest) = if d.starts_with('-') {
-            (true, &d[1..])
+        let (neg, rest) = if let Some(stripped) = d.strip_prefix('-') {
+            (true, stripped)
         } else {
             (false, d)
         };

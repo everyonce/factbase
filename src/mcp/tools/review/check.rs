@@ -140,21 +140,11 @@ async fn check_questions(
     let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
 
     // Build question type breakdown — only truly unanswered (exclude believed/deferred)
-    let mut type_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut believed_count: usize = 0;
-    for doc in &all_docs {
-        if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
-            for q in &questions {
-                if q.answered || q.is_deferred() {
-                    if q.is_believed() {
-                        believed_count += 1;
-                    }
-                    continue;
-                }
-                *type_counts.entry(q.question_type.as_str().to_string()).or_insert(0) += 1;
-            }
-        }
-    }
+    let (type_counts_raw, believed_count) = super::count_question_types(&all_docs);
+    let type_counts: std::collections::HashMap<String, usize> = type_counts_raw
+        .into_iter()
+        .map(|(qt, c)| (qt.as_str().to_string(), c))
+        .collect();
 
     let details: Vec<Value> = results.iter()
         .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)

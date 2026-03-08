@@ -271,8 +271,8 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // When content includes a # Title line and no explicit title param was given,
     // extract the title from the content so it isn't silently reverted to the stale DB value.
-    let extracted_title = if new_title.is_none() && new_content.is_some() {
-        crate::patterns::extract_heading_title(new_content.unwrap())
+    let extracted_title = if new_title.is_none() {
+        new_content.and_then(crate::patterns::extract_heading_title)
     } else {
         None
     };

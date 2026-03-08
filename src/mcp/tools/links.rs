@@ -216,7 +216,7 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
         std::fs::write(file_path, &updated_content)?;
 
         // Update DB links (forward direction only)
-        let target_refs: Vec<&str> = new_ids.iter().copied().collect();
+        let target_refs: Vec<&str> = new_ids.to_vec();
         let db_added = db.add_links(source_id, &target_refs)?;
         added += db_added;
         documents_modified += 1;
