@@ -71,6 +71,8 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
         fs::write(&perspective_path, factbase::PERSPECTIVE_TEMPLATE)?;
     }
 
+    factbase::ensure_gitignore(&path)?;
+
     let config = Config::default();
     let db = config.open_database(&db_path)?;
 
@@ -278,6 +280,59 @@ mod tests {
         let db = Database::new(&tmp.path().join(".factbase/factbase.db")).unwrap();
         let repos = db.list_repositories().unwrap();
         assert_eq!(repos.len(), 1);
+    }
+
+    #[test]
+    fn test_init_creates_gitignore() {
+        let tmp = TempDir::new().unwrap();
+        let args = InitArgs {
+            path: tmp.path().to_path_buf(),
+            name: None,
+            id: None,
+            json: false,
+            config: false,
+        };
+        cmd_init(args).unwrap();
+        let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".factbase/"));
+        assert!(content.contains(".fastembed_cache/"));
+    }
+
+    #[test]
+    fn test_init_appends_to_existing_gitignore() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join(".gitignore"), "node_modules/\n").unwrap();
+        let args = InitArgs {
+            path: tmp.path().to_path_buf(),
+            name: None,
+            id: None,
+            json: false,
+            config: false,
+        };
+        cmd_init(args).unwrap();
+        let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.contains("node_modules/"));
+        assert!(content.contains(".factbase/"));
+        assert!(content.contains(".fastembed_cache/"));
+    }
+
+    #[test]
+    fn test_init_skips_existing_gitignore_entries() {
+        let tmp = TempDir::new().unwrap();
+        fs::write(tmp.path().join(".gitignore"), ".factbase/\n").unwrap();
+        let args = InitArgs {
+            path: tmp.path().to_path_buf(),
+            name: None,
+            id: None,
+            json: false,
+            config: false,
+        };
+        cmd_init(args).unwrap();
+        let content = fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        // .factbase/ should appear only once
+        assert_eq!(content.matches(".factbase/").count(), 1);
+        // .fastembed_cache/ should be appended
+        assert!(content.contains(".fastembed_cache/"));
     }
 
     #[test]

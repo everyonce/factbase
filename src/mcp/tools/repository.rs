@@ -231,6 +231,8 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         let _ = std::fs::write(&perspective_path, crate::models::PERSPECTIVE_TEMPLATE);
     }
 
+    let gitignore_added = crate::ensure_gitignore(&abs_path).unwrap_or_default();
+
     let repo = crate::models::Repository {
         id: repo_id.to_string(),
         name: repo_name.to_string(),
@@ -273,6 +275,9 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
     if perspective_created {
         created_items.push("perspective.yaml");
+    }
+    if !gitignore_added.is_empty() {
+        created_items.push(".gitignore");
     }
 
     info!(

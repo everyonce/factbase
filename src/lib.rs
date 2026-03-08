@@ -52,6 +52,42 @@ pub mod web;
 /// Default repository ID used when no explicit ID is provided.
 pub const DEFAULT_REPO_ID: &str = "default";
 
+/// Entries that should be in .gitignore for any factbase repository.
+const GITIGNORE_ENTRIES: &[&str] = &[".factbase/", ".fastembed_cache/"];
+
+/// Ensure `.gitignore` in `repo_root` contains factbase entries.
+/// Creates the file if missing; appends missing entries if it exists.
+/// Returns the list of entries that were added (empty if all already present).
+pub fn ensure_gitignore(repo_root: &std::path::Path) -> std::io::Result<Vec<&'static str>> {
+    let path = repo_root.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let lines: std::collections::HashSet<&str> = existing.lines().map(|l| l.trim()).collect();
+    let missing: Vec<&str> = GITIGNORE_ENTRIES
+        .iter()
+        .copied()
+        .filter(|e| !lines.contains(e))
+        .collect();
+    if missing.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut append = String::new();
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        append.push('\n');
+    }
+    for entry in &missing {
+        append.push_str(entry);
+        append.push('\n');
+    }
+    if existing.is_empty() {
+        std::fs::write(&path, append)?;
+    } else {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path)?;
+        f.write_all(append.as_bytes())?;
+    }
+    Ok(missing)
+}
+
 /// Boxed future type alias for async trait methods (no async-trait crate).
 pub(crate) type BoxFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
@@ -132,3 +168,65 @@ pub use shutdown::init_shutdown_handler;
 pub use watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
 #[cfg(feature = "web")]
 pub use web::start_web_server;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_ensure_gitignore_creates_new_file() {
+        let tmp = TempDir::new().unwrap();
+        let added = ensure_gitignore(tmp.path()).unwrap();
+        assert_eq!(added, vec![".factbase/", ".fastembed_cache/"]);
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert_eq!(content, ".factbase/\n.fastembed_cache/\n");
+    }
+
+    #[test]
+    fn test_ensure_gitignore_appends_missing() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "dist/\n").unwrap();
+        let added = ensure_gitignore(tmp.path()).unwrap();
+        assert_eq!(added, vec![".factbase/", ".fastembed_cache/"]);
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.starts_with("dist/\n"));
+        assert!(content.contains(".factbase/\n"));
+    }
+
+    #[test]
+    fn test_ensure_gitignore_skips_existing() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), ".factbase/\n.fastembed_cache/\n").unwrap();
+        let added = ensure_gitignore(tmp.path()).unwrap();
+        assert!(added.is_empty());
+    }
+
+    #[test]
+    fn test_ensure_gitignore_partial_existing() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), ".factbase/\n").unwrap();
+        let added = ensure_gitignore(tmp.path()).unwrap();
+        assert_eq!(added, vec![".fastembed_cache/"]);
+    }
+
+    #[test]
+    fn test_ensure_gitignore_no_trailing_newline() {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "dist/").unwrap();
+        ensure_gitignore(tmp.path()).unwrap();
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        // Should add newline before appending
+        assert!(content.starts_with("dist/\n"));
+    }
+
+    #[test]
+    fn test_ensure_gitignore_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        ensure_gitignore(tmp.path()).unwrap();
+        let added = ensure_gitignore(tmp.path()).unwrap();
+        assert!(added.is_empty());
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert_eq!(content.matches(".factbase/").count(), 1);
+    }
+}
