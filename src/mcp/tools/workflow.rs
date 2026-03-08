@@ -434,7 +434,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
 }
 
 /// Batch size for resolve step 2 question batching.
-const RESOLVE_BATCH_SIZE: usize = 15;
+const RESOLVE_BATCH_SIZE: usize = 50;
 
 /// Priority ordering for question types within a batch.
 /// Lower number = higher priority (processed first).
@@ -1950,14 +1950,15 @@ mod tests {
     #[test]
     fn test_resolve_step2_batch_size_limits_questions() {
         let (db, _tmp) = test_db();
-        // Insert 20 questions across two docs (more than RESOLVE_BATCH_SIZE=15)
+        // Insert 70 questions across seven docs (more than RESOLVE_BATCH_SIZE=50)
         let types_10: Vec<&str> = vec!["temporal"; 10];
-        insert_doc_with_questions(&db, "big001", &types_10);
-        insert_doc_with_questions(&db, "big002", &types_10);
+        for i in 0..7 {
+            insert_doc_with_questions(&db, &format!("big{:03}", i), &types_10);
+        }
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
         assert_eq!(batch["questions"].as_array().unwrap().len(), RESOLVE_BATCH_SIZE);
-        assert_eq!(batch["questions_remaining"], 20);
+        assert_eq!(batch["questions_remaining"], 70);
         assert_eq!(batch["total_batches_estimate"], 2);
         assert!(step["when_done"].as_str().unwrap().contains("step=2"));
     }
