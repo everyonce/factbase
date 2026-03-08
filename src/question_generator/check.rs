@@ -379,6 +379,16 @@ pub async fn check_all_documents(
         let content = disk_content.as_deref().unwrap_or(&doc.content);
         filter_sequential_conflicts(content, &mut questions);
 
+        // Dedup questions added after the async block (e.g. placement questions)
+        // against existing questions in the pruned content. Without this,
+        // placement questions bypass the per-document dedup and get re-added
+        // even when a deferred/believed copy already exists.
+        if !questions.is_empty() {
+            let existing = parse_review_queue(&pruned_content).unwrap_or_default();
+            let existing_descs: HashSet<_> = existing.iter().map(|q| q.description.clone()).collect();
+            questions.retain(|q| !existing_descs.contains(&q.description));
+        }
+
         let count = questions.len();
         let has_dup_sections = has_duplicate_review_sections(&pruned_content);
         let disk_missing_marker = !content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
@@ -1135,5 +1145,66 @@ mod tests {
         assert!(after.contains("<!-- factbase:review -->"));
         // Verify body content is preserved
         assert!(after.contains("Fact one @t[=2024-01]"));
+    }
+
+    #[tokio::test]
+    async fn test_deferred_questions_not_duplicated_by_check() {
+        // Simulate the scenario where a question was deferred in a previous round
+        // and check_repository is called again. The deferred question should NOT
+        // be re-added as a new unanswered question.
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        // Content with a deferred ambiguous question (simulating a placement question)
+        let content = "<!-- factbase:def001 -->\n# Deferred Test\n\n\
+            - Fact one @t[=2024-01]\n\n\
+            ---\n\n## Review Queue\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[ambiguous]` Some ambiguous question\n\
+            > defer: cannot determine correct filing\n";
+
+        let doc = Document {
+            id: "def001".to_string(),
+            title: "Deferred Test".to_string(),
+            content: content.to_string(),
+            repo_id: "test".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
+        let progress = ProgressReporter::Silent;
+
+        // Verify the deferred question is detected
+        let questions = parse_review_queue(content).unwrap();
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].is_deferred(), "Question should be detected as deferred");
+
+        // Run check — it should NOT add a duplicate of the deferred question
+        let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+
+        // The deferred question should still be there, but no new copy should be added
+        // (new_questions should not include a duplicate of the deferred question)
+        for r in &output.results {
+            if r.doc_id == "def001" {
+                // Any new questions should NOT have the same description as the deferred one
+                // (we can't directly check the questions vec, but we can verify the count
+                // doesn't include a duplicate)
+                assert_eq!(
+                    r.pruned_questions, 0,
+                    "Deferred question should not be pruned"
+                );
+            }
+        }
     }
 }

@@ -2413,6 +2413,42 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_step2_deferred_not_re_served_across_batches() {
+        let (db, _tmp) = test_db();
+        // Simulate: one deferred + one unanswered
+        let content = "<!-- factbase:dfc01 -->\n# Defer Cycle\n\n- Fact\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[ambiguous]` Filed under X but links point to Y\n\
+            > defer: cannot determine correct filing\n\
+            - [ ] `@q[temporal]` Truly unanswered\n";
+        insert_test_doc(&db, "dfc01", content);
+
+        // First batch: should get only the unanswered question
+        let step1 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch1 = &step1["batch"];
+        assert_eq!(batch1["resolved_deferred"], 1);
+        assert_eq!(batch1["questions_remaining"], 1);
+        let qs = batch1["questions"].as_array().unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0]["type"], "temporal");
+
+        // Simulate deferring the remaining question too
+        let updated = "<!-- factbase:dfc01 -->\n# Defer Cycle\n\n- Fact\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[ambiguous]` Filed under X but links point to Y\n\
+            > defer: cannot determine correct filing\n\
+            - [ ] `@q[temporal]` Truly unanswered\n\
+            > defer: no source available\n";
+        db.update_document_content("dfc01", updated, "hash2").unwrap();
+
+        // Second batch: both are now deferred, should be all_resolved
+        let step2 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step2["all_resolved"], true, "no infinite loop: deferred answers not re-served");
+        assert_eq!(step2["batch"]["resolved_deferred"], 2);
+        assert_eq!(step2["batch"]["questions_remaining"], 0);
+    }
+
+    #[test]
     fn test_resolve_answer_instruction_prohibits_scan_check() {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
         assert!(instr.contains("Do NOT call scan_repository or check_repository"), "answer instruction must prohibit scan/check");
