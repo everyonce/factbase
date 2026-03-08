@@ -116,29 +116,8 @@ impl Database {
         new_hash: &str,
     ) -> Result<(), FactbaseError> {
         let conn = self.get_conn()?;
-        let compressed;
-        let content_to_store: &str = if self.compression {
-            compressed = super::super::B64.encode(super::super::compress_content(content));
-            &compressed
-        } else {
-            content
-        };
-        let word_count = crate::models::word_count(content) as i64;
-        let has_review_queue = content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
         conn.execute_batch("BEGIN")?;
-        let result = (|| -> Result<(), FactbaseError> {
-            conn.execute(
-                "UPDATE documents SET content = ?1, file_hash = ?2, word_count = ?3, has_review_queue = ?4 WHERE id = ?5 AND is_deleted = FALSE",
-                rusqlite::params![content_to_store, new_hash, word_count, has_review_queue, id],
-            )?;
-            // Keep FTS5 index in sync
-            conn.execute("DELETE FROM document_content_fts WHERE doc_id = ?1", [id])?;
-            conn.execute(
-                "INSERT INTO document_content_fts (doc_id, content) VALUES (?1, ?2)",
-                rusqlite::params![id, content],
-            )?;
-            Ok(())
-        })();
+        let result = self.update_document_content_on_conn(&conn, id, content, new_hash);
         match result {
             Ok(()) => {
                 conn.execute_batch("COMMIT")?;
@@ -149,6 +128,39 @@ impl Database {
                 Err(e)
             }
         }
+    }
+
+    /// Update document content on an existing connection (no transaction management).
+    ///
+    /// Use this inside [`Database::with_transaction`] to batch multiple content
+    /// updates atomically.
+    pub fn update_document_content_on_conn(
+        &self,
+        conn: &rusqlite::Connection,
+        id: &str,
+        content: &str,
+        new_hash: &str,
+    ) -> Result<(), FactbaseError> {
+        let compressed;
+        let content_to_store: &str = if self.compression {
+            compressed = super::super::B64.encode(super::super::compress_content(content));
+            &compressed
+        } else {
+            content
+        };
+        let word_count = crate::models::word_count(content) as i64;
+        let has_review_queue = content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
+        conn.execute(
+            "UPDATE documents SET content = ?1, file_hash = ?2, word_count = ?3, has_review_queue = ?4 WHERE id = ?5 AND is_deleted = FALSE",
+            rusqlite::params![content_to_store, new_hash, word_count, has_review_queue, id],
+        )?;
+        // Keep FTS5 index in sync
+        conn.execute("DELETE FROM document_content_fts WHERE doc_id = ?1", [id])?;
+        conn.execute(
+            "INSERT INTO document_content_fts (doc_id, content) VALUES (?1, ?2)",
+            rusqlite::params![id, content],
+        )?;
+        Ok(())
     }
 
     /// Update only the file hash for a document (used by scan --verify --fix)
