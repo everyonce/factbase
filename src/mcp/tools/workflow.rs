@@ -39,6 +39,8 @@ const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n*
 // Use {placeholder} syntax for dynamic parts; resolved via config overrides.
 // ---------------------------------------------------------------------------
 
+const SUBAGENT_FANOUT_HINT: &str = "\n\n💡 PARALLELISM: If you can spawn sub-agents or parallel workers, consider delegating by question type. Check the type_distribution field from step 1 for counts, then fan out:\n- Worker 1: workflow(workflow='resolve', step=2, question_type='weak-source')\n- Worker 2: workflow(workflow='resolve', step=2, question_type='temporal')\n- Worker 3: workflow(workflow='resolve', step=2, question_type='ambiguous')\nEach worker processes its type independently. Merge results when all complete. This is optional — serial processing works fine.";
+
 // --- Setup workflow ---
 pub(crate) const DEFAULT_SETUP_INIT_INSTRUCTION: &str = "Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)";
 
@@ -508,16 +510,27 @@ fn resolve_step(
         String::new()
     };
     match step {
-        1 => serde_json::json!({
-            "workflow": "resolve",
-            "step": 1, "total_steps": total,
-            "instruction": resolve(wf, "resolve.queue", DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
-            "next_tool": "get_review_queue",
-            "suggested_args": {"include_context": true},
-            "policy": {"stale_days": stale},
-            "deferred_count": deferred,
-            "when_done": "Call workflow with workflow='resolve', step=2"
-        }),
+        1 => {
+            let type_dist = compute_type_distribution(db);
+            let total_unanswered: usize = type_dist.iter().map(|(_, c)| c).sum();
+            let type_dist_json: Value = type_dist
+                .iter()
+                .map(|(qt, count)| serde_json::json!({"type": qt.to_string(), "count": count}))
+                .collect::<Vec<_>>()
+                .into();
+            serde_json::json!({
+                "workflow": "resolve",
+                "step": 1, "total_steps": total,
+                "instruction": resolve(wf, "resolve.queue", DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
+                "next_tool": "get_review_queue",
+                "suggested_args": {"include_context": true},
+                "policy": {"stale_days": stale},
+                "deferred_count": deferred,
+                "total_unanswered": total_unanswered,
+                "type_distribution": type_dist_json,
+                "when_done": "Call workflow with workflow='resolve', step=2"
+            })
+        },
         2 => resolve_step2_batch(args, perspective, db, wf),
         3 => serde_json::json!({
             "workflow": "resolve",
@@ -540,6 +553,24 @@ fn resolve_step(
             "instruction": "Workflow complete. All review questions have been processed."
         }),
     }
+}
+
+/// Compute unanswered question type distribution from the review queue.
+fn compute_type_distribution(db: &Database) -> Vec<(QuestionType, usize)> {
+    let docs = db.get_documents_with_review_queue(None).unwrap_or_default();
+    let mut counts: HashMap<QuestionType, usize> = HashMap::new();
+    for doc in &docs {
+        if let Some(questions) = parse_review_queue(&doc.content) {
+            for q in &questions {
+                if !q.answered && !q.is_believed() && !q.is_deferred() {
+                    *counts.entry(q.question_type.clone()).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+    let mut sorted: Vec<_> = counts.into_iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    sorted
 }
 
 /// Load glossary terms from all repositories.
@@ -849,12 +880,13 @@ fn resolve_step2_batch(
     });
 
     if is_first_batch {
-        let intro = resolve(
+        let mut intro = resolve(
             wf,
             "resolve.answer_intro",
             intro_default,
             &[("stale", &stale.to_string()), ("ctx", &ctx)],
         );
+        intro.push_str(SUBAGENT_FANOUT_HINT);
         result
             .as_object_mut()
             .unwrap()
@@ -1379,6 +1411,43 @@ mod tests {
         let instruction = step["instruction"].as_str().unwrap();
         assert!(!instruction.contains("deferred"));
         assert_eq!(step["deferred_count"], 0);
+    }
+
+    #[test]
+    fn test_resolve_step1_includes_type_distribution() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:td001 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source (line 4)\n- [ ] `@q[temporal]` Missing date (line 4)\n- [ ] `@q[stale]` Another old source (line 4)\n";
+        insert_test_doc(&db, "td001", content);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let dist = step["type_distribution"].as_array().unwrap();
+        assert!(!dist.is_empty(), "type_distribution should be populated");
+        assert_eq!(step["total_unanswered"], 3);
+        // stale should have count 2
+        let stale_entry = dist.iter().find(|e| e["type"] == "stale").unwrap();
+        assert_eq!(stale_entry["count"], 2);
+        let temporal_entry = dist.iter().find(|e| e["type"] == "temporal").unwrap();
+        assert_eq!(temporal_entry["count"], 1);
+    }
+
+    #[test]
+    fn test_resolve_step1_empty_queue_type_distribution() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let dist = step["type_distribution"].as_array().unwrap();
+        assert!(dist.is_empty());
+        assert_eq!(step["total_unanswered"], 0);
+    }
+
+    #[test]
+    fn test_resolve_step2_intro_includes_fanout_hint() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:fan001 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source (line 4)\n";
+        insert_test_doc(&db, "fan001", content);
+        let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf());
+        let intro = step["intro"].as_str().unwrap();
+        assert!(intro.contains("PARALLELISM"), "intro should contain fan-out hint");
+        assert!(intro.contains("question_type="), "hint should show question_type param");
+        assert!(intro.contains("optional"), "hint should clarify it's optional");
     }
 
     #[test]
