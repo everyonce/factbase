@@ -462,6 +462,88 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
 /// Batch size for resolve step 2 question batching.
 const RESOLVE_BATCH_SIZE: usize = 50;
 
+/// Minimum group size to surface as a repetitive pattern.
+const PATTERN_MIN_COUNT: usize = 4;
+
+/// Normalize a question description by replacing variable parts with placeholders.
+/// This groups questions that follow the same template (e.g., same weak-source wording
+/// across hundreds of documents differing only in footnote number and source text).
+fn normalize_question_text(desc: &str) -> String {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static RE_FOOTNOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\^(\d+)\]").unwrap());
+    static RE_QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]+""#).unwrap());
+    static RE_DATE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\b\d{4}(?:-\d{2}(?:-\d{2})?)?\b").unwrap());
+    static RE_TEMPORAL: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"@t\[[^\]]+\]").unwrap());
+    static RE_LINE_REF: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\(line \d+\)").unwrap());
+
+    let s = RE_FOOTNOTE.replace_all(desc, "[^_]");
+    let s = RE_QUOTED.replace_all(&s, "\"_\"");
+    let s = RE_TEMPORAL.replace_all(&s, "@t[_]");
+    let s = RE_DATE.replace_all(&s, "_DATE_");
+    let s = RE_LINE_REF.replace_all(&s, "(line _)");
+    s.into_owned()
+}
+
+/// Detect repetitive question patterns from a list of unanswered question JSON values.
+/// Returns a JSON array of patterns where count_total > PATTERN_MIN_COUNT.
+fn detect_question_patterns(all_questions: &[Value], batch: &[Value]) -> Vec<Value> {
+    // Group all questions by (type, normalized description)
+    let mut totals: HashMap<(String, String), (usize, String)> = HashMap::new();
+    for q in all_questions {
+        let qtype = q["type"].as_str().unwrap_or("").to_string();
+        let desc = q["description"].as_str().unwrap_or("");
+        let key = (qtype, normalize_question_text(desc));
+        totals
+            .entry(key)
+            .and_modify(|(c, _)| *c += 1)
+            .or_insert((1, desc.to_string()));
+    }
+
+    // Count per-batch occurrences for patterns that exceed threshold
+    let mut batch_counts: HashMap<(String, String), usize> = HashMap::new();
+    for q in batch {
+        let qtype = q["type"].as_str().unwrap_or("").to_string();
+        let desc = q["description"].as_str().unwrap_or("");
+        let key = (qtype, normalize_question_text(desc));
+        *batch_counts.entry(key).or_insert(0) += 1;
+    }
+
+    let mut patterns: Vec<Value> = totals
+        .iter()
+        .filter(|(_, (count, _))| *count >= PATTERN_MIN_COUNT)
+        .map(|((qtype, normalized), (count_total, example))| {
+            let count_in_batch = batch_counts
+                .get(&(qtype.clone(), normalized.clone()))
+                .copied()
+                .unwrap_or(0);
+            serde_json::json!({
+                "pattern": normalized,
+                "question_type": qtype,
+                "count_in_batch": count_in_batch,
+                "count_total": count_total,
+                "example": example,
+                "suggestion": format!(
+                    "These {} questions all follow the same pattern. \
+                     Consider applying a consistent answer to all of them.",
+                    count_total
+                ),
+            })
+        })
+        .collect();
+
+    // Sort by count descending for readability
+    patterns.sort_by(|a, b| {
+        b["count_total"]
+            .as_u64()
+            .cmp(&a["count_total"].as_u64())
+    });
+    patterns
+}
+
 /// Priority ordering for question types within a batch.
 /// Lower number = higher priority (processed first).
 fn question_type_priority(qt: &QuestionType) -> u8 {
@@ -909,7 +991,9 @@ fn resolve_step2_batch(
     let total_questions = resolved_so_far + remaining;
     let batch_number = (resolved_so_far / batch_size) + 1;
     let total_batches_estimate = total_questions.div_ceil(batch_size);
-    let batch: Vec<Value> = unanswered.into_iter().take(batch_size).collect();
+    let batch: Vec<Value> = unanswered[..batch_size.min(unanswered.len())].to_vec();
+    let patterns = detect_question_patterns(&unanswered, &batch);
+    drop(unanswered);
 
     // Select instruction based on variant
     let (answer_default, intro_default) = match variant {
@@ -1035,6 +1119,13 @@ fn resolve_step2_batch(
             .as_object_mut()
             .unwrap()
             .insert("continuation_guidance".to_string(), Value::String(guidance));
+    }
+
+    if !patterns.is_empty() {
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("patterns_detected".to_string(), Value::Array(patterns));
     }
 
     result
@@ -2295,6 +2386,117 @@ mod tests {
         assert_eq!(batch["questions_remaining"], 70);
         assert_eq!(batch["total_batches_estimate"], 2);
         assert!(step["when_done"].as_str().unwrap().contains("step=2"));
+    }
+
+    #[test]
+    fn test_normalize_question_text_strips_footnotes() {
+        assert_eq!(
+            normalize_question_text(r#"Citation [^1] "source" is weak"#),
+            normalize_question_text(r#"Citation [^42] "source" is weak"#),
+        );
+    }
+
+    #[test]
+    fn test_normalize_question_text_strips_quoted_strings() {
+        let a = normalize_question_text(r#"Citation [^1] "Phonetool lookup" is not specific"#);
+        let b = normalize_question_text(r#"Citation [^1] "LinkedIn profile" is not specific"#);
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_normalize_question_text_strips_dates() {
+        let a = normalize_question_text("source from 2023-06-15 may be outdated");
+        let b = normalize_question_text("source from 2024-01-01 may be outdated");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_normalize_question_text_strips_temporal_tags() {
+        let a = normalize_question_text("has @t[~2023-01] which may be outdated");
+        let b = normalize_question_text("has @t[~2024-06] which may be outdated");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_normalize_question_text_strips_line_refs() {
+        let a = normalize_question_text("Missing source (line 4)");
+        let b = normalize_question_text("Missing source (line 99)");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn test_detect_question_patterns_surfaces_repetitive() {
+        let questions: Vec<Value> = (0..10)
+            .map(|i| serde_json::json!({
+                "type": "weak-source",
+                "description": format!(r#"Citation [^{i}] "source {i}" is not specific enough"#),
+            }))
+            .collect();
+        let batch = questions[..5].to_vec();
+        let patterns = detect_question_patterns(&questions, &batch);
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0]["count_total"], 10);
+        assert_eq!(patterns[0]["count_in_batch"], 5);
+        assert_eq!(patterns[0]["question_type"], "weak-source");
+    }
+
+    #[test]
+    fn test_detect_question_patterns_ignores_small_groups() {
+        let questions: Vec<Value> = (0..3)
+            .map(|i| serde_json::json!({
+                "type": "temporal",
+                "description": format!("Missing date (line {i})"),
+            }))
+            .collect();
+        let patterns = detect_question_patterns(&questions, &questions);
+        assert!(patterns.is_empty(), "groups of 3 or fewer should not be surfaced");
+    }
+
+    #[test]
+    fn test_detect_question_patterns_multiple_groups() {
+        let mut questions: Vec<Value> = (0..5)
+            .map(|i| serde_json::json!({
+                "type": "weak-source",
+                "description": format!(r#"Citation [^{i}] "src" is not specific"#),
+            }))
+            .collect();
+        questions.extend((0..6).map(|i| serde_json::json!({
+            "type": "stale",
+            "description": format!(r#""fact {i}" - source from 2020-01-01 may be outdated"#),
+        })));
+        let patterns = detect_question_patterns(&questions, &questions);
+        assert_eq!(patterns.len(), 2);
+        // Sorted by count descending
+        assert_eq!(patterns[0]["count_total"], 6);
+        assert_eq!(patterns[1]["count_total"], 5);
+    }
+
+    #[test]
+    fn test_resolve_step2_includes_patterns_detected() {
+        let (db, _tmp) = test_db();
+        // Insert 5 docs each with the same weak-source question pattern
+        for i in 0..5 {
+            let id = format!("pat{:03}", i);
+            let content = format!(
+                "<!-- factbase:{id} -->\n# Doc {id}\n\n- Fact [^1]\n\n---\n[^1]: Phonetool lookup\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Citation [^1] \"Phonetool lookup\" is not specific enough to verify (line 4)\n"
+            );
+            insert_test_doc(&db, &id, &content);
+        }
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let patterns = step["patterns_detected"].as_array().unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0]["count_total"], 5);
+        assert_eq!(patterns[0]["count_in_batch"], 5);
+        assert_eq!(patterns[0]["question_type"], "weak-source");
+        assert!(patterns[0]["suggestion"].as_str().unwrap().contains("5"));
+    }
+
+    #[test]
+    fn test_resolve_step2_no_patterns_when_few_questions() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "few001", &["temporal", "stale"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("patterns_detected").is_none(), "should not include patterns_detected when no patterns");
     }
 
     #[test]
