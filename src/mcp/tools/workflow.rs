@@ -666,6 +666,82 @@ fn auto_dismiss_question(db: &Database, doc_id: &str, question_index: usize) -> 
 /// Reads the actual review queue from the DB, collects unanswered questions,
 /// sorts them (grouped by document, then by type priority), and returns the
 /// next batch. The agent just answers what it sees and calls step 2 again.
+/// Build directive continuation guidance based on queue size and type distribution.
+fn build_continuation_guidance(
+    remaining: usize,
+    resolved_so_far: usize,
+    batch_size: usize,
+    type_distribution: &HashMap<QuestionType, usize>,
+    type_filter: &[QuestionType],
+) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    // Check if the currently-filtered type is fully cleared
+    if !type_filter.is_empty() {
+        let filtered_remaining: usize = type_filter
+            .iter()
+            .filter_map(|t| type_distribution.get(t))
+            .sum();
+        if filtered_remaining == 0 {
+            // Find next type with remaining questions
+            let active_filter_str = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+            let mut others: Vec<_> = type_distribution
+                .iter()
+                .filter(|(qt, c)| **c > 0 && !type_filter.contains(qt))
+                .collect();
+            others.sort_by(|a, b| b.1.cmp(a.1));
+            if let Some((next_type, next_count)) = others.first() {
+                parts.push(format!(
+                    "✅ {active_filter_str}: 0 remaining. Move to next type: {next_type} ({next_count} remaining). Call step=2 question_type={next_type}."
+                ));
+            }
+        }
+    }
+
+    // Check if only weak-source remains
+    let non_weak: usize = type_distribution
+        .iter()
+        .filter(|(qt, _)| **qt != QuestionType::WeakSource)
+        .map(|(_, c)| c)
+        .sum();
+    let weak_count = type_distribution.get(&QuestionType::WeakSource).copied().unwrap_or(0);
+    if non_weak == 0 && weak_count > 0 {
+        parts.push(format!(
+            "Only weak-source remains ({weak_count}). These follow repetitive patterns — maintain a consistent answer format to maximize throughput."
+        ));
+    }
+
+    // Directive language scaled by remaining count
+    if remaining > 500 {
+        let batches_left = remaining.div_ceil(batch_size);
+        let filter_hint = if type_filter.is_empty() {
+            String::new()
+        } else {
+            let f = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+            format!(" with question_type={f}")
+        };
+        parts.push(format!(
+            "⚡ {remaining} questions remain. Keep calling step=2{filter_hint}. You have cleared {resolved_so_far} so far — maintain momentum. ~{batches_left} batches remaining at {batch_size}/batch. Process as many as your context allows."
+        ));
+    } else if remaining > 100 {
+        let filter_hint = if type_filter.is_empty() {
+            String::new()
+        } else {
+            let f = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+            format!(" with question_type={f}")
+        };
+        parts.push(format!(
+            "⚡ {remaining} questions remain. Keep calling step=2{filter_hint}. You have cleared {resolved_so_far} so far — maintain momentum."
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" "))
+    }
+}
+
 fn resolve_step2_batch(
     args: &Value,
     perspective: &Option<Perspective>,
@@ -946,6 +1022,19 @@ fn resolve_step2_batch(
             .as_object_mut()
             .unwrap()
             .insert("glossary_auto_resolved".to_string(), serde_json::json!(glossary_auto_resolved));
+    }
+
+    if let Some(guidance) = build_continuation_guidance(
+        remaining,
+        resolved_so_far,
+        batch_size,
+        &type_distribution,
+        &type_filter,
+    ) {
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("continuation_guidance".to_string(), Value::String(guidance));
     }
 
     result
@@ -3149,5 +3238,83 @@ mod tests {
         let ws = dist.iter().find(|(qt, _)| *qt == QuestionType::WeakSource);
         assert!(ws.is_some(), "should find weak-source from disk");
         assert_eq!(ws.unwrap().1, 1);
+    }
+
+    #[test]
+    fn test_continuation_guidance_none_for_small_queue() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::Temporal, 5);
+        let result = build_continuation_guidance(5, 10, 50, &dist, &[]);
+        assert!(result.is_none(), "small queues should not produce guidance");
+    }
+
+    #[test]
+    fn test_continuation_guidance_momentum_over_100() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::Temporal, 150);
+        let result = build_continuation_guidance(150, 50, 50, &dist, &[]).unwrap();
+        assert!(result.contains("⚡"), "should have lightning emoji");
+        assert!(result.contains("150"), "should mention remaining count");
+        assert!(result.contains("cleared 50"), "should mention progress");
+        assert!(result.contains("momentum"), "should urge momentum");
+        // Should NOT have batch estimate (that's >500 only)
+        assert!(!result.contains("batches remaining"), "should not have batch estimate under 500");
+    }
+
+    #[test]
+    fn test_continuation_guidance_batches_over_500() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::WeakSource, 4421);
+        let filter = vec![QuestionType::WeakSource];
+        let result = build_continuation_guidance(4421, 79, 50, &dist, &filter).unwrap();
+        assert!(result.contains("⚡"), "should have lightning emoji");
+        assert!(result.contains("4421"), "should mention remaining count");
+        assert!(result.contains("batches remaining"), "should have batch estimate");
+        assert!(result.contains("question_type=weak-source"), "should include filter hint");
+    }
+
+    #[test]
+    fn test_continuation_guidance_type_cleared_suggests_next() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::Temporal, 0);
+        dist.insert(QuestionType::Ambiguous, 25);
+        let filter = vec![QuestionType::Temporal];
+        // remaining=25 is the ambiguous count (temporal is cleared, agent sees ambiguous next)
+        let result = build_continuation_guidance(25, 30, 50, &dist, &filter).unwrap();
+        assert!(result.contains("✅"), "should have checkmark");
+        assert!(result.contains("temporal: 0 remaining"), "should note cleared type");
+        assert!(result.contains("ambiguous"), "should suggest next type");
+        assert!(result.contains("25 remaining"), "should show next type count");
+    }
+
+    #[test]
+    fn test_continuation_guidance_only_weak_source_remains() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::WeakSource, 200);
+        let result = build_continuation_guidance(200, 100, 50, &dist, &[]).unwrap();
+        assert!(result.contains("Only weak-source remains"), "should note only weak-source left");
+        assert!(result.contains("repetitive patterns"), "should mention patterns");
+    }
+
+    #[test]
+    fn test_continuation_guidance_in_step2_response() {
+        let (db, _tmp) = test_db();
+        // Insert >100 questions to trigger guidance
+        let types_10: Vec<&str> = vec!["temporal"; 10];
+        for i in 0..11 {
+            insert_doc_with_questions(&db, &format!("cg{:03}", i), &types_10);
+        }
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("continuation_guidance").is_some(), "should have continuation_guidance for large queue");
+        let guidance = step["continuation_guidance"].as_str().unwrap();
+        assert!(guidance.contains("⚡"), "guidance should be directive");
+    }
+
+    #[test]
+    fn test_continuation_guidance_absent_for_small_step2() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "sm001", &["temporal", "missing"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("continuation_guidance").is_none(), "small queue should not have continuation_guidance");
     }
 }
