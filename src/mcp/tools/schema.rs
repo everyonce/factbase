@@ -77,7 +77,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "create_document",
-                "description": "Create a new document. Call get_authoring_guide first if unsure about format.",
+                "description": "Create a new document. Call get_authoring_guide first if unsure about format.\n\nFor guided multi-step research and document creation, prefer workflow(workflow='ingest', topic='...') instead.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -115,7 +115,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "bulk_create_documents",
-                "description": "Create multiple documents atomically (max 100).",
+                "description": "Create multiple documents atomically (max 100). Use this only when you already have all content prepared.\n\nFor guided research-to-document creation, prefer workflow(workflow='ingest', topic='...'). The ingest workflow handles research, creation, quality checks, and link discovery.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -223,7 +223,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "init_repository",
-                "description": "Initialize a new factbase repository at a directory path. Creates .factbase/ and registers it.\n\nTriggers: 'add this folder to factbase', 'initialize factbase at /path', 'set up a new knowledge base'",
+                "description": "Initialize a new factbase repository at a directory path. Creates .factbase/ and registers it.\n\nFor guided setup including perspective configuration and initial documents, prefer workflow(workflow='setup', path='...') instead.\n\nTriggers: 'add this folder to factbase', 'initialize factbase at /path', 'set up a new knowledge base'",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -236,7 +236,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "workflow",
-                "description": "Run a guided factbase workflow. Each step tells you exactly what to do and which tool to call next.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nCall again with the next step number to advance.",
+                "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'populate KB from a source file' or 'create documents from [data]' or 'bootstrap with data' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nCall again with the next step number to advance.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -637,6 +637,44 @@ mod tests {
         assert!(
             desc.contains("MUST"),
             "scan_repository description should use MUST for continuation"
+        );
+    }
+
+    #[test]
+    fn test_raw_tools_nudge_toward_workflows() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().expect("tools array");
+
+        let cases = [
+            ("create_document", "workflow"),
+            ("bulk_create_documents", "workflow"),
+            ("init_repository", "workflow"),
+        ];
+        for (tool_name, keyword) in &cases {
+            let tool = tools.iter().find(|t| t["name"] == *tool_name)
+                .unwrap_or_else(|| panic!("tool {tool_name} not found"));
+            let desc = tool["description"].as_str().unwrap();
+            assert!(
+                desc.contains(keyword),
+                "{tool_name} description should mention '{keyword}' to nudge toward workflows"
+            );
+        }
+    }
+
+    #[test]
+    fn test_workflow_description_is_recommended() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().expect("tools array");
+
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(
+            desc.contains("RECOMMENDED"),
+            "workflow description should be marked as RECOMMENDED entry point"
+        );
+        assert!(
+            desc.contains("populate KB from a source file"),
+            "workflow description should cover source-file-to-KB use case"
         );
     }
 }
