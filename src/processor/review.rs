@@ -1260,4 +1260,13 @@ Line 3
         assert!(!changed);
         assert_eq!(result, disk);
     }
+
+    #[test]
+    fn test_parse_review_queue_weak_source() {
+        let content = "<!-- factbase:ws001 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Line 4: Vague citation\n  > \n- [ ] `@q[weak-source]` Line 5: Missing URL\n  > \n";
+        let questions = parse_review_queue(content).unwrap();
+        assert_eq!(questions.len(), 2);
+        assert_eq!(questions[0].question_type, QuestionType::WeakSource);
+        assert_eq!(questions[1].question_type, QuestionType::WeakSource);
+    }
 }

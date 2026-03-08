@@ -197,13 +197,13 @@ pub(crate) static YEAR_REGEX: LazyLock<Regex> =
 
 /// Review question regex - matches: `- [ ] `@q\[type\]` description` or `- \[x\] `@q\[type\]` description`
 pub(crate) static REVIEW_QUESTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^-\s+\[([ xX])\]\s+`@q\[(\w+)\]`\s+(.+)$")
+    Regex::new(r"^-\s+\[([ xX])\]\s+`@q\[([\w-]+)\]`\s+(.+)$")
         .expect("review question regex should be valid")
 });
 
 /// Inline `@q[type]` marker (backtick-wrapped or bare) — for detecting orphaned markers outside review section.
 pub(crate) static INLINE_QUESTION_MARKER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\s*`?@q\[\w+\]`?").expect("inline question marker regex should be valid")
+    Regex::new(r"\s*`?@q\[[\w-]+\]`?").expect("inline question marker regex should be valid")
 });
 
 /// Regex to extract quoted text from questions.
@@ -646,6 +646,15 @@ mod tests {
         assert_eq!(caps.get(1).unwrap().as_str(), " ");
         assert_eq!(caps.get(2).unwrap().as_str(), "temporal");
         assert_eq!(caps.get(3).unwrap().as_str(), "Line 5: description");
+    }
+
+    #[test]
+    fn test_review_question_regex_hyphenated_type() {
+        let caps = REVIEW_QUESTION_REGEX
+            .captures("- [ ] `@q[weak-source]` Line 3: Vague citation")
+            .unwrap();
+        assert_eq!(caps.get(2).unwrap().as_str(), "weak-source");
+        assert_eq!(caps.get(3).unwrap().as_str(), "Line 3: Vague citation");
     }
 
     // Date normalization tests
