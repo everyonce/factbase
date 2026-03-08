@@ -13,7 +13,7 @@ use crate::models::{Perspective, QuestionType};
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
 use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective, resolve_repo_filter};
@@ -162,7 +162,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure. Provide domain='mycology' (or any domain) and get instructions for generating suggested document types, folder structure, templates, and perspective. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
                 {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
                 {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
-                {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (stale, temporal, etc.)."},
+                {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (e.g. 'stale' or 'temporal,ambiguous'). Response includes type_distribution so you can decide which types to target."},
                 {"name": "ingest", "description": "Research a topic and create/update factbase documents"},
                 {"name": "enrich", "description": "Find and fill gaps in existing documents"},
                 {"name": "improve", "description": "Improve a single document end-to-end: cleanup, resolve questions, enrich, then quality check. Requires doc_id."}
@@ -608,9 +608,14 @@ fn resolve_step2_batch(
         "default"
     };
 
-    // Optional question_type filter
-    let type_filter: Option<QuestionType> = get_str_arg(args, "question_type")
-        .and_then(|s| s.parse::<QuestionType>().ok());
+    // Optional question_type filter (comma-separated)
+    let type_filter: Vec<QuestionType> = get_str_arg(args, "question_type")
+        .map(|s| {
+            s.split(',')
+                .filter_map(|t| t.trim().parse::<QuestionType>().ok())
+                .collect()
+        })
+        .unwrap_or_default();
 
     // Collect all questions from the review queue
     let docs = db.get_documents_with_review_queue(None).unwrap_or_else(|_| Vec::new());
@@ -618,6 +623,7 @@ fn resolve_step2_batch(
     let mut resolved_verified: usize = 0;
     let mut resolved_believed: usize = 0;
     let mut resolved_deferred: usize = 0;
+    let mut type_distribution: HashMap<QuestionType, usize> = HashMap::new();
 
     // Load glossary terms to auto-dismiss acronym questions already covered
     let glossary_terms = load_all_glossary_terms(db);
@@ -645,11 +651,12 @@ fn resolve_step2_batch(
                         }
                     }
 
+                    // Count type distribution (before type filter)
+                    *type_distribution.entry(q.question_type.clone()).or_insert(0) += 1;
+
                     // Apply type filter
-                    if let Some(ref filter) = type_filter {
-                        if &q.question_type != filter {
-                            continue;
-                        }
+                    if !type_filter.is_empty() && !type_filter.contains(&q.question_type) {
+                        continue;
                     }
                     let mut qjson = format_question_json(q, Some((&doc.id, &doc.title)));
                     if let Some(obj) = qjson.as_object_mut() {
@@ -697,6 +704,22 @@ fn resolve_step2_batch(
 
     let remaining = unanswered.len();
 
+    // Build type distribution summary (sorted by count descending)
+    let mut type_dist_vec: Vec<_> = type_distribution.iter().collect();
+    type_dist_vec.sort_by(|a, b| b.1.cmp(a.1));
+    let type_dist_json: Value = type_dist_vec
+        .iter()
+        .map(|(qt, count)| serde_json::json!({"type": qt.to_string(), "count": count}))
+        .collect::<Vec<_>>()
+        .into();
+
+    // Include active filter in response
+    let active_filter: Value = if type_filter.is_empty() {
+        Value::Null
+    } else {
+        type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().into()
+    };
+
     // If no unanswered questions remain, advance to step 3
     if remaining == 0 {
         let mut result = serde_json::json!({
@@ -706,6 +729,8 @@ fn resolve_step2_batch(
             "all_resolved": true,
             "variant": variant,
             "variant_source": variant_source,
+            "type_filter": active_filter,
+            "type_distribution": type_dist_json,
             "continue": false,
             "batch": {
                 "questions": [],
@@ -808,6 +833,8 @@ fn resolve_step2_batch(
         "next_tool": "answer_questions",
         "variant": variant,
         "variant_source": variant_source,
+        "type_filter": active_filter,
+        "type_distribution": type_dist_json,
         "continue": true,
         "conflict_patterns": {
             "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
@@ -2616,6 +2643,72 @@ mod tests {
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0]["type"], "stale");
         assert!(questions[0]["evidence_guidance"].is_string());
+    }
+
+    #[test]
+    fn test_resolve_step2_comma_separated_type_filter() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "cft001", &["temporal", "stale", "missing", "ambiguous"]);
+        let args = serde_json::json!({"question_type": "stale,missing"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 2);
+        let types: Vec<&str> = questions.iter().filter_map(|q| q["type"].as_str()).collect();
+        assert!(types.contains(&"stale"));
+        assert!(types.contains(&"missing"));
+        assert!(!types.contains(&"temporal"));
+    }
+
+    #[test]
+    fn test_resolve_step2_type_distribution_included() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "tdi001", &["temporal", "temporal", "stale", "missing"]);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let dist = step["type_distribution"].as_array().unwrap();
+        assert!(!dist.is_empty());
+        // temporal should be first (count=2)
+        assert_eq!(dist[0]["type"], "temporal");
+        assert_eq!(dist[0]["count"], 2);
+    }
+
+    #[test]
+    fn test_resolve_step2_type_distribution_with_filter() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "tdf001", &["temporal", "stale", "missing"]);
+        let args = serde_json::json!({"question_type": "stale"});
+        let step = resolve_step(2, &args, &None, 0, &db, &wf());
+        // Distribution shows ALL types, not just filtered
+        let dist = step["type_distribution"].as_array().unwrap();
+        assert_eq!(dist.len(), 3);
+        // But only stale questions in the batch
+        assert_eq!(step["batch"]["questions"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_step2_type_filter_in_response() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "tfr001", &["temporal", "stale"]);
+        // With filter
+        let step = resolve_step(2, &serde_json::json!({"question_type": "stale"}), &None, 0, &db, &wf());
+        let filter = step["type_filter"].as_array().unwrap();
+        assert_eq!(filter.len(), 1);
+        assert_eq!(filter[0], "stale");
+        // Without filter
+        let step2 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step2["type_filter"].is_null());
+    }
+
+    #[test]
+    fn test_resolve_step2_comma_filter_all_resolved_reflects_filter() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "cfr001", &["temporal", "stale"]);
+        // Filter for a type that has no questions
+        let step = resolve_step(2, &serde_json::json!({"question_type": "conflict"}), &None, 0, &db, &wf());
+        assert_eq!(step["all_resolved"], true);
+        assert_eq!(step["batch"]["questions_remaining"], 0);
+        // But type_distribution still shows the real types
+        let dist = step["type_distribution"].as_array().unwrap();
+        assert_eq!(dist.len(), 2);
     }
 
     #[test]
