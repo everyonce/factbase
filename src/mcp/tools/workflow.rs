@@ -842,6 +842,18 @@ fn build_continuation_guidance(
         parts.push("⚠️ Agents commonly quit too early. Unless your runtime is forcing you to stop, keep calling step 2. The DB tracks your progress — nothing is lost if you eventually hit a limit.".to_string());
     }
 
+    // Context management hint — runtime-agnostic advice for long sessions
+    if resolved_so_far > batch_size * 8 && remaining > batch_size * 2 {
+        parts.push(
+            "💡 CONTEXT MANAGEMENT: If your context is getting full, you can safely compact/summarize your earlier work. \
+            Your progress is saved in the DB — answered questions never reappear. You only need to retain: \
+            (1) call workflow(workflow='resolve', step=2) to get the next batch, \
+            (2) answer each question with doc_id, question_index, answer, confidence. \
+            Everything else (earlier batches, analysis, commentary) can be discarded."
+                .to_string(),
+        );
+    }
+
     if parts.is_empty() {
         None
     } else {
