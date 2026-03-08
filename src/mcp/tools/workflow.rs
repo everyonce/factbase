@@ -39,7 +39,33 @@ const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n*
 // Use {placeholder} syntax for dynamic parts; resolved via config overrides.
 // ---------------------------------------------------------------------------
 
-const SUBAGENT_FANOUT_HINT: &str = "\n\n💡 PARALLELISM: If you can spawn sub-agents or parallel workers, consider delegating by question type. Check the type_distribution field from step 1 for counts, then fan out:\n- Worker 1: workflow(workflow='resolve', step=2, question_type='weak-source')\n- Worker 2: workflow(workflow='resolve', step=2, question_type='temporal')\n- Worker 3: workflow(workflow='resolve', step=2, question_type='ambiguous')\nEach worker processes its type independently. Merge results when all complete. This is optional — serial processing works fine.";
+/// Build the sub-agent fanout hint. For large queues (>200) the language is
+/// directive ("DO IT NOW"); for smaller queues it remains a strong suggestion.
+fn subagent_fanout_hint(total_questions: usize, type_dist: &[(String, usize)]) -> String {
+    let workers: String = type_dist
+        .iter()
+        .filter(|(_, c)| *c > 0)
+        .enumerate()
+        .map(|(i, (qt, _))| format!("- Worker {}: workflow(workflow='resolve', step=2, question_type='{qt}')", i + 1))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if total_questions > 200 {
+        format!(
+            "\n\n🚀 PARALLEL DISPATCH (MANDATORY for {total_questions} questions): If you can spawn sub-agents, DO IT NOW. \
+Spawn one worker per question type. This is the fastest path to clearing the queue.\n\
+{workers}\n\
+Each worker processes its type independently. Do NOT work serially — fan out immediately."
+        )
+    } else {
+        format!(
+            "\n\n🚀 PARALLEL DISPATCH: If you can spawn sub-agents, spawn one worker per question type — \
+this is significantly faster than serial processing.\n\
+{workers}\n\
+Each worker processes its type independently."
+        )
+    }
+}
 
 // --- Setup workflow ---
 pub(crate) const DEFAULT_SETUP_INIT_INSTRUCTION: &str = "Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)";
@@ -74,7 +100,7 @@ pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Process types in rec
 
 pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\nWEAK-SOURCE → use your tools to find the actual source. Update the footnote with a specific reference (URL, path, page, ISBN, RFC, channel/thread+date). If you cannot find it, change to '[^N]: UNVERIFIED — original claim: <text>'. Do not invent specific-looking citations.\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Answer the questions in this batch. Use available research tools for EVERY question. Do not answer from memory alone.\n\nFor each question: research for confirming evidence, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nIf you researched and found no confirming source, defer. This is the correct action.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain.
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANSWER questions, not analyze them. Answer from knowledge first. Only research if you genuinely cannot answer. Every tool call that is not answer_questions is reducing your throughput. Minimize research calls.\n\nAnswer the questions in this batch. For each question: call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nDo not spend context on statistics, breakdowns, or pattern analysis — spend it on answer_questions calls. Report progress by questions answered, not by patterns observed.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain.
 
 Process as many batches as you can. If you must stop (context limits, timeout), report progress honestly: answered/remaining/deferred counts. Commit your work (git add/commit) so the next session picks up where you left off — answered questions are tracked in the DB and won't reappear. Resume with workflow(workflow='resolve') to continue.{ctx}";
 
@@ -1094,7 +1120,11 @@ fn resolve_step2_batch(
             intro_default,
             &[("stale", &stale.to_string()), ("ctx", &ctx)],
         );
-        intro.push_str(SUBAGENT_FANOUT_HINT);
+        let fanout_types: Vec<(String, usize)> = type_distribution
+            .iter()
+            .map(|(qt, c)| (qt.to_string(), *c))
+            .collect();
+        intro.push_str(&subagent_fanout_hint(total_questions, &fanout_types));
         result
             .as_object_mut()
             .unwrap()
@@ -1745,9 +1775,34 @@ mod tests {
         insert_test_doc(&db, "fan001", content);
         let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf());
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("PARALLELISM"), "intro should contain fan-out hint");
+        assert!(intro.contains("PARALLEL DISPATCH"), "intro should contain fan-out hint");
         assert!(intro.contains("question_type="), "hint should show question_type param");
-        assert!(intro.contains("optional"), "hint should clarify it's optional");
+        assert!(!intro.contains("optional"), "hint should not say optional");
+    }
+
+    #[test]
+    fn test_subagent_fanout_hint_large_queue_mandatory() {
+        let types = vec![("stale".to_string(), 150), ("temporal".to_string(), 80)];
+        let hint = subagent_fanout_hint(230, &types);
+        assert!(hint.contains("MANDATORY"), "large queue should use MANDATORY language");
+        assert!(hint.contains("DO IT NOW"), "large queue should say DO IT NOW");
+        assert!(hint.contains("question_type='stale'"), "should include actual types");
+        assert!(hint.contains("question_type='temporal'"), "should include actual types");
+    }
+
+    #[test]
+    fn test_subagent_fanout_hint_small_queue_not_mandatory() {
+        let types = vec![("stale".to_string(), 5)];
+        let hint = subagent_fanout_hint(5, &types);
+        assert!(!hint.contains("MANDATORY"), "small queue should not use MANDATORY");
+        assert!(hint.contains("PARALLEL DISPATCH"), "should still suggest parallelism");
+    }
+
+    #[test]
+    fn test_resolve_answer_instruction_action_framing() {
+        assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("ANSWER questions, not analyze"));
+        assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("not answer_questions is reducing"));
+        assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("Minimize research calls"));
     }
 
     #[test]
@@ -2788,8 +2843,9 @@ mod tests {
     #[test]
     fn test_resolve_answer_instruction_requires_research() {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
-        assert!(instr.contains("available research tools"), "answer instruction must require research tools");
+        assert!(instr.contains("ANSWER questions"), "answer instruction must prioritize answering");
         assert!(instr.contains("confidence"), "answer instruction must mention confidence field");
+        assert!(instr.contains("Minimize research"), "answer instruction must discourage excessive research");
     }
 
     #[test]
