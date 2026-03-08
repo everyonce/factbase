@@ -16,6 +16,7 @@
 //! Flat key format: `workflow_name.step_name` (e.g. `improve.cleanup`, `update.scan`).
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use tracing::warn;
 
 use super::prompts::extract_placeholders;
@@ -25,8 +26,38 @@ use serde::{Deserialize, Serialize};
 /// Workflow text overrides. Keys are `workflow.step` (e.g. `improve.cleanup`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkflowsConfig {
+    /// Default resolve variant: "default", "type_evidence", or "research_batch".
+    #[serde(default)]
+    pub resolve_variant: Option<String>,
+
     #[serde(flatten)]
     pub templates: HashMap<String, String>,
+}
+
+impl WorkflowsConfig {
+    /// Merge another config on top of this one (other wins on conflicts).
+    pub fn merge(&mut self, other: &WorkflowsConfig) {
+        if other.resolve_variant.is_some() {
+            self.resolve_variant = other.resolve_variant.clone();
+        }
+        for (k, v) in &other.templates {
+            self.templates.insert(k.clone(), v.clone());
+        }
+    }
+
+    /// Load per-repo workflow prompts from `.factbase/prompts.yaml`.
+    /// Returns `None` if the file doesn't exist or can't be parsed.
+    pub fn load_repo_prompts(repo_path: &Path) -> Option<WorkflowsConfig> {
+        let path = repo_path.join(".factbase").join("prompts.yaml");
+        let content = std::fs::read_to_string(&path).ok()?;
+        match serde_yaml_ng::from_str::<WorkflowsConfig>(&content) {
+            Ok(config) => Some(config),
+            Err(e) => {
+                warn!("Failed to parse {}: {}", path.display(), e);
+                None
+            }
+        }
+    }
 }
 
 /// Valid workflow keys and their allowed placeholder variables.
@@ -224,5 +255,95 @@ workflows:
             &[("doc_hint", " for doc1")],
         );
         assert_eq!(result, "Custom enrich  for doc1");
+    }
+
+    #[test]
+    fn test_merge_templates_override() {
+        let mut base = WorkflowsConfig::default();
+        base.templates.insert("resolve.answer".into(), "base answer".into());
+        base.templates.insert("resolve.queue".into(), "base queue".into());
+
+        let mut overlay = WorkflowsConfig::default();
+        overlay.templates.insert("resolve.answer".into(), "custom answer".into());
+
+        base.merge(&overlay);
+        assert_eq!(base.templates["resolve.answer"], "custom answer");
+        assert_eq!(base.templates["resolve.queue"], "base queue");
+    }
+
+    #[test]
+    fn test_merge_resolve_variant() {
+        let mut base = WorkflowsConfig::default();
+        assert!(base.resolve_variant.is_none());
+
+        let mut overlay = WorkflowsConfig::default();
+        overlay.resolve_variant = Some("type_evidence".into());
+
+        base.merge(&overlay);
+        assert_eq!(base.resolve_variant.as_deref(), Some("type_evidence"));
+    }
+
+    #[test]
+    fn test_merge_resolve_variant_not_overwritten_by_none() {
+        let mut base = WorkflowsConfig::default();
+        base.resolve_variant = Some("research_batch".into());
+
+        let overlay = WorkflowsConfig::default(); // resolve_variant is None
+
+        base.merge(&overlay);
+        assert_eq!(base.resolve_variant.as_deref(), Some("research_batch"));
+    }
+
+    #[test]
+    fn test_resolve_variant_deserialize() {
+        let yaml = r#"
+resolve_variant: type_evidence
+resolve.answer: "Custom answer {ctx}"
+"#;
+        let config: WorkflowsConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.resolve_variant.as_deref(), Some("type_evidence"));
+        assert_eq!(config.templates.len(), 1);
+        assert!(config.templates.contains_key("resolve.answer"));
+    }
+
+    #[test]
+    fn test_resolve_variant_in_full_config() {
+        let yaml = r#"
+workflows:
+  resolve_variant: research_batch
+  resolve.answer: "Custom {ctx}"
+"#;
+        let config: crate::Config = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.workflows.resolve_variant.as_deref(), Some("research_batch"));
+        assert_eq!(config.workflows.templates.len(), 1);
+    }
+
+    #[test]
+    fn test_load_repo_prompts_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(WorkflowsConfig::load_repo_prompts(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_load_repo_prompts_valid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let factbase_dir = dir.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        std::fs::write(
+            factbase_dir.join("prompts.yaml"),
+            "resolve_variant: type_evidence\nresolve.answer: \"Custom answer\"\n",
+        ).unwrap();
+        let config = WorkflowsConfig::load_repo_prompts(dir.path()).unwrap();
+        assert_eq!(config.resolve_variant.as_deref(), Some("type_evidence"));
+        assert_eq!(config.templates["resolve.answer"], "Custom answer");
+    }
+
+    #[test]
+    fn test_load_repo_prompts_invalid_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let factbase_dir = dir.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        std::fs::write(factbase_dir.join("prompts.yaml"), "{{invalid yaml").unwrap();
+        assert!(WorkflowsConfig::load_repo_prompts(dir.path()).is_none());
     }
 }

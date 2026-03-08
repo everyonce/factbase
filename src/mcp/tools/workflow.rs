@@ -20,6 +20,17 @@ use super::helpers::{build_quality_stats, detect_weak_identification, load_persp
 use super::review::format_question_json;
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 
+/// Resolve the filesystem path for a repository (first repo if none specified).
+fn resolve_repo_path(db: &Database, repo_id: Option<&str>) -> Option<std::path::PathBuf> {
+    let repos = db.list_repositories().ok()?;
+    let repo = if let Some(id) = repo_id {
+        repos.into_iter().find(|r| r.id == id)
+    } else {
+        repos.into_iter().next()
+    };
+    repo.map(|r| r.path)
+}
+
 /// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
 const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put names, descriptions, statuses, or any other text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG (entity names): `@t[Wolfgang Amadeus Mozart]` `@t[Mount Vesuvius]`\n- ❌ WRONG (descriptions): `@t[Complex counterpoint and fugal writing]` `@t[bright red when young]`\n- ❌ WRONG (statuses): `@t[Active Production Status: Ongoing]` `@t[No significant seismic activity]`\n- ❌ WRONG (statistics): `@t[Total Produced: 650+]` `@t[Population: 12000]`\n- ❌ WRONG (vague time words): `@t[seasonal]` `@t[since ancient times]` `@t[traditional..modern]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall get_authoring_guide for the full format reference";
 
@@ -118,9 +129,16 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let step = get_u64_arg(args, "step", 1) as usize;
     let repo_resolved = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let perspective = load_perspective(db, repo_resolved.as_deref());
-    let wf_config = crate::Config::load(None)
+    let mut wf_config = crate::Config::load(None)
         .unwrap_or_default()
         .workflows;
+
+    // Merge per-repo .factbase/prompts.yaml overrides (highest priority)
+    if let Some(repo_path) = resolve_repo_path(db, repo_resolved.as_deref()) {
+        if let Some(repo_prompts) = WorkflowsConfig::load_repo_prompts(&repo_path) {
+            wf_config.merge(&repo_prompts);
+        }
+    }
 
     match workflow.as_str() {
         "update" => Ok(update_step(step, args, &perspective, &wf_config)),
@@ -578,7 +596,17 @@ fn resolve_step2_batch(
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
     let total_steps = 4;
-    let variant = get_str_arg(args, "variant").unwrap_or("baseline");
+    let variant = get_str_arg(args, "variant")
+        .unwrap_or_else(|| wf.resolve_variant.as_deref().unwrap_or("baseline"));
+
+    // Track where the variant came from for A/B testing comparison
+    let variant_source = if get_str_arg(args, "variant").is_some() {
+        "arg"
+    } else if wf.resolve_variant.is_some() {
+        "config"
+    } else {
+        "default"
+    };
 
     // Optional question_type filter
     let type_filter: Option<QuestionType> = get_str_arg(args, "question_type")
@@ -678,6 +706,8 @@ fn resolve_step2_batch(
             "step": 2, "total_steps": total_steps,
             "instruction": "✅ All review questions have been resolved. No more batches remain. You may now proceed to step 3 to apply your answers.",
             "all_resolved": true,
+            "variant": variant,
+            "variant_source": variant_source,
             "continue": false,
             "batch": {
                 "questions": [],
@@ -779,6 +809,7 @@ fn resolve_step2_batch(
         "instruction": instruction,
         "next_tool": "answer_questions",
         "variant": variant,
+        "variant_source": variant_source,
         "continue": true,
         "conflict_patterns": {
             "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
@@ -2558,5 +2589,80 @@ mod tests {
         let batch = &step["batch"];
         // Location question should NOT be auto-resolved
         assert_eq!(batch["questions_remaining"], 1, "non-acronym question should remain");
+    }
+
+    #[test]
+    fn test_resolve_step2_variant_from_config() {
+        let (db, _tmp) = test_db();
+        let mut wf_config = WorkflowsConfig::default();
+        wf_config.resolve_variant = Some("type_evidence".into());
+
+        // No variant in args — should use config
+        let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf_config);
+        assert_eq!(step["variant"], "type_evidence");
+        assert_eq!(step["variant_source"], "config");
+    }
+
+    #[test]
+    fn test_resolve_step2_variant_arg_overrides_config() {
+        let (db, _tmp) = test_db();
+        let mut wf_config = WorkflowsConfig::default();
+        wf_config.resolve_variant = Some("type_evidence".into());
+
+        // Explicit arg overrides config
+        let step = resolve_step2_batch(
+            &serde_json::json!({"variant": "research_batch"}),
+            &None, &db, &wf_config,
+        );
+        assert_eq!(step["variant"], "research_batch");
+        assert_eq!(step["variant_source"], "arg");
+    }
+
+    #[test]
+    fn test_resolve_step2_variant_default_when_no_config() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf());
+        assert_eq!(step["variant"], "baseline");
+        assert_eq!(step["variant_source"], "default");
+    }
+
+    #[test]
+    fn test_resolve_step2_custom_prompt_override() {
+        let (db, _tmp) = test_db();
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+
+        // Insert a doc with a question so we get a real batch
+        let doc_content = "<!-- factbase:cst001 -->\n# Entity\n\n- Some fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Source is old\n";
+        db.upsert_document(&Document {
+            id: "cst001".to_string(),
+            content: doc_content.to_string(),
+            title: "Entity".to_string(),
+            file_path: "cst001.md".to_string(),
+            ..Document::test_default()
+        }).unwrap();
+
+        let mut wf_config = WorkflowsConfig::default();
+        wf_config.templates.insert("resolve.answer".into(), "CUSTOM INSTRUCTION {ctx}".into());
+
+        let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf_config);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.starts_with("CUSTOM INSTRUCTION"), "should use custom prompt override");
+    }
+
+    #[test]
+    fn test_merge_repo_prompts_overrides_global() {
+        let mut global = WorkflowsConfig::default();
+        global.templates.insert("resolve.answer".into(), "global answer".into());
+        global.resolve_variant = Some("baseline".into());
+
+        let mut repo = WorkflowsConfig::default();
+        repo.templates.insert("resolve.answer".into(), "repo answer".into());
+        repo.resolve_variant = Some("type_evidence".into());
+
+        global.merge(&repo);
+        assert_eq!(global.templates["resolve.answer"], "repo answer");
+        assert_eq!(global.resolve_variant.as_deref(), Some("type_evidence"));
     }
 }
