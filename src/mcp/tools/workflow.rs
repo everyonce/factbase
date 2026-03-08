@@ -2360,6 +2360,59 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_step2_all_resolved_when_only_believed_remain() {
+        let (db, _tmp) = test_db();
+        // All questions are believed — none truly unanswered
+        let content = "<!-- factbase:bonly1 -->\n# Only Believed\n\n- Fact\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[stale]` Stale fact\n\
+            > believed: Still accurate per Wikipedia\n\
+            - [ ] `@q[temporal]` When was this true?\n\
+            > believed: Circa 2020 based on context\n";
+        insert_test_doc(&db, "bonly1", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["all_resolved"], true, "should be all_resolved when only believed remain");
+        assert_eq!(step["continue"], false);
+        assert_eq!(step["batch"]["resolved_believed"], 2);
+        assert_eq!(step["batch"]["questions_remaining"], 0);
+    }
+
+    #[test]
+    fn test_resolve_step2_believed_not_re_served_across_batches() {
+        let (db, _tmp) = test_db();
+        // Simulate: one believed + one unanswered
+        let content = "<!-- factbase:cyc01 -->\n# Cycle Test\n\n- Fact\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[stale]` Already believed\n\
+            > believed: Confirmed via search\n\
+            - [ ] `@q[temporal]` Truly unanswered\n";
+        insert_test_doc(&db, "cyc01", content);
+
+        // First batch: should get only the unanswered question
+        let step1 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch1 = &step1["batch"];
+        assert_eq!(batch1["questions_remaining"], 1);
+        let qs = batch1["questions"].as_array().unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0]["type"], "temporal");
+
+        // Simulate answering with believed — update DB content
+        let updated = "<!-- factbase:cyc01 -->\n# Cycle Test\n\n- Fact\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[stale]` Already believed\n\
+            > believed: Confirmed via search\n\
+            - [ ] `@q[temporal]` Truly unanswered\n\
+            > believed: Circa 2020\n";
+        db.update_document_content("cyc01", updated, "hash2").unwrap();
+
+        // Second batch: both are now believed, should be all_resolved
+        let step2 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step2["all_resolved"], true, "no infinite loop: believed answers not re-served");
+        assert_eq!(step2["batch"]["resolved_believed"], 2);
+        assert_eq!(step2["batch"]["questions_remaining"], 0);
+    }
+
+    #[test]
     fn test_resolve_answer_instruction_prohibits_scan_check() {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
         assert!(instr.contains("Do NOT call scan_repository or check_repository"), "answer instruction must prohibit scan/check");
