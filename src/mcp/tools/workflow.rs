@@ -9,7 +9,7 @@
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::models::{Perspective, QuestionType};
+use crate::models::{Document, Perspective, QuestionType};
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
 use serde_json::Value;
@@ -555,9 +555,48 @@ fn resolve_step(
     }
 }
 
+/// Load all documents with their disk content (preferred) or DB content (fallback),
+/// filtered to only those that have a review queue section.
+///
+/// The `has_review_queue` DB flag can be stale when files are edited externally or
+/// when check_repository writes questions to disk but the DB update is lost.
+/// Reading from disk ensures the resolve workflow sees the filesystem truth.
+fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
+    // Build repo_id → repo_path map
+    let repos = db.list_repositories().unwrap_or_default();
+    let repo_paths: HashMap<String, std::path::PathBuf> = repos
+        .into_iter()
+        .map(|r| (r.id.clone(), r.path))
+        .collect();
+
+    // Load ALL documents (not just has_review_queue=TRUE)
+    let mut all_docs = Vec::new();
+    for (repo_id, _) in &repo_paths {
+        if let Ok(docs) = db.get_documents_for_repo(repo_id) {
+            all_docs.extend(docs.into_values().filter(|d| !d.is_deleted));
+        }
+    }
+
+    // For each document, prefer disk content; keep only those with review queues
+    all_docs
+        .into_iter()
+        .filter_map(|mut doc| {
+            let abs_path = repo_paths.get(&doc.repo_id).map(|rp| rp.join(&doc.file_path));
+            if let Some(disk) = abs_path.and_then(|p| std::fs::read_to_string(p).ok()) {
+                doc.content = disk;
+            }
+            if doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
+                Some(doc)
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Compute unanswered question type distribution from the review queue.
 fn compute_type_distribution(db: &Database) -> Vec<(QuestionType, usize)> {
-    let docs = db.get_documents_with_review_queue(None).unwrap_or_default();
+    let docs = load_review_docs_from_disk(db);
     let mut counts: HashMap<QuestionType, usize> = HashMap::new();
     for doc in &docs {
         if let Some(questions) = parse_review_queue(&doc.content) {
@@ -648,8 +687,8 @@ fn resolve_step2_batch(
         })
         .unwrap_or_default();
 
-    // Collect all questions from the review queue
-    let docs = db.get_documents_with_review_queue(None).unwrap_or_else(|_| Vec::new());
+    // Collect all questions from the review queue (prefer disk content)
+    let docs = load_review_docs_from_disk(db);
     let mut unanswered: Vec<Value> = Vec::new();
     let mut resolved_verified: usize = 0;
     let mut resolved_believed: usize = 0;
@@ -2933,5 +2972,109 @@ mod tests {
         global.merge(&repo);
         assert_eq!(global.templates["resolve.answer"], "repo answer");
         assert_eq!(global.resolve_variant.as_deref(), Some("type_evidence"));
+    }
+
+    #[test]
+    fn test_load_review_docs_from_disk_prefers_disk_content() {
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+
+        let (db, tmp) = test_db();
+        let repo_path = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        test_repo_in_db(&db, "test-repo", &repo_path);
+
+        // DB content has NO review queue
+        let db_content = "<!-- factbase:dsk001 -->\n# Disk Test\n\n- Fact\n";
+        db.upsert_document(&Document {
+            id: "dsk001".to_string(),
+            content: db_content.to_string(),
+            title: "Disk Test".to_string(),
+            file_path: "dsk001.md".to_string(),
+            ..Document::test_default()
+        }).unwrap();
+
+        // Disk file HAS review queue with weak-source questions
+        let disk_content = "<!-- factbase:dsk001 -->\n# Disk Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Line 4: Citation needed\n";
+        std::fs::write(repo_path.join("dsk001.md"), disk_content).unwrap();
+
+        let docs = load_review_docs_from_disk(&db);
+        assert_eq!(docs.len(), 1, "should find the doc via disk content");
+        assert!(docs[0].content.contains("@q[weak-source]"), "should use disk content");
+    }
+
+    #[test]
+    fn test_load_review_docs_from_disk_falls_back_to_db() {
+        let (db, _tmp) = test_db();
+        // DB content HAS review queue, but no disk file exists
+        let content = "<!-- factbase:fb001 -->\n# Fallback\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source\n";
+        insert_test_doc(&db, "fb001", content);
+
+        let docs = load_review_docs_from_disk(&db);
+        assert_eq!(docs.len(), 1, "should find the doc via DB content fallback");
+        assert!(docs[0].content.contains("@q[stale]"));
+    }
+
+    #[test]
+    fn test_resolve_step2_finds_disk_only_questions() {
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+
+        let (db, tmp) = test_db();
+        let repo_path = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        test_repo_in_db(&db, "test-repo", &repo_path);
+
+        // DB content has NO review queue (has_review_queue = FALSE)
+        let db_content = "<!-- factbase:dsk002 -->\n# Disk Only\n\n- Fact\n";
+        db.upsert_document(&Document {
+            id: "dsk002".to_string(),
+            content: db_content.to_string(),
+            title: "Disk Only".to_string(),
+            file_path: "dsk002.md".to_string(),
+            ..Document::test_default()
+        }).unwrap();
+
+        // Disk file has weak-source questions
+        let disk_content = "<!-- factbase:dsk002 -->\n# Disk Only\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Line 4: Vague citation\n- [ ] `@q[weak-source]` Line 5: Missing URL\n";
+        std::fs::write(repo_path.join("dsk002.md"), disk_content).unwrap();
+
+        // Type filter for weak-source should find the questions from disk
+        let step = resolve_step(2, &serde_json::json!({"question_type": "weak-source"}), &None, 0, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 2, "should find weak-source questions from disk");
+        assert_eq!(questions[0]["type"], "weak-source");
+    }
+
+    #[test]
+    fn test_compute_type_distribution_reads_disk() {
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+
+        let (db, tmp) = test_db();
+        let repo_path = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo_path).unwrap();
+        test_repo_in_db(&db, "test-repo", &repo_path);
+
+        // DB content has NO review queue
+        db.upsert_document(&Document {
+            id: "dist01".to_string(),
+            content: "<!-- factbase:dist01 -->\n# Dist\n\n- Fact\n".to_string(),
+            title: "Dist".to_string(),
+            file_path: "dist01.md".to_string(),
+            ..Document::test_default()
+        }).unwrap();
+
+        // Disk file has questions
+        std::fs::write(
+            repo_path.join("dist01.md"),
+            "<!-- factbase:dist01 -->\n# Dist\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Vague\n- [ ] `@q[temporal]` Missing date\n",
+        ).unwrap();
+
+        let dist = compute_type_distribution(&db);
+        assert_eq!(dist.len(), 2);
+        let ws = dist.iter().find(|(qt, _)| *qt == QuestionType::WeakSource);
+        assert!(ws.is_some(), "should find weak-source from disk");
+        assert_eq!(ws.unwrap().1, 1);
     }
 }
