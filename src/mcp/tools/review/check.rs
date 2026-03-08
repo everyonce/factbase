@@ -139,14 +139,19 @@ async fn check_questions(
     let total_suppressed: usize = results.iter().map(|r| r.suppressed_by_review).sum();
     let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
 
-    // Build question type breakdown by parsing generated questions from documents
+    // Build question type breakdown — only truly unanswered (exclude believed/deferred)
     let mut type_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut believed_count: usize = 0;
     for doc in &all_docs {
         if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
             for q in &questions {
-                if !q.answered {
-                    *type_counts.entry(q.question_type.as_str().to_string()).or_insert(0) += 1;
+                if q.answered || q.is_deferred() {
+                    if q.is_believed() {
+                        believed_count += 1;
+                    }
+                    continue;
                 }
+                *type_counts.entry(q.question_type.as_str().to_string()).or_insert(0) += 1;
             }
         }
     }
@@ -191,6 +196,7 @@ async fn check_questions(
         "skipped_reviewed": total_skipped,
         "suppressed_by_prior_answers": total_suppressed,
         "deferred_count": deferred_count,
+        "believed_count": believed_count,
         "questions_by_type": type_counts,
         "citations_specific": citations_specific,
         "citations_vague": citations_vague,
