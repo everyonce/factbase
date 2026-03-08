@@ -245,16 +245,16 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     // Count markdown files for the status report
     let md_count = std::fs::read_dir(&abs_path)
         .ok()
-        .map(|entries| {
+        .map(|_| {
             fn count_md(dir: &std::path::Path) -> usize {
                 std::fs::read_dir(dir)
                     .ok()
                     .map(|entries| {
                         entries.filter_map(|e| e.ok()).map(|e| {
                             let p = e.path();
-                            if p.is_dir() && p.file_name().map_or(false, |n| !n.to_string_lossy().starts_with('.')) {
+                            if p.is_dir() && p.file_name().is_some_and(|n| !n.to_string_lossy().starts_with('.')) {
                                 count_md(&p)
-                            } else if p.extension().map_or(false, |ext| ext == "md") {
+                            } else if p.extension().is_some_and(|ext| ext == "md") {
                                 1
                             } else {
                                 0

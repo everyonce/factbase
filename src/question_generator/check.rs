@@ -463,11 +463,11 @@ pub async fn extract_vocabulary(
 /// Check if a document path is in an archive folder.
 /// Matches paths containing `/archive/` or starting with `archive/`.
 /// Run folder placement check and merge questions into all_results.
-fn run_placement_check<'a>(
+fn run_placement_check(
     docs: &[Document],
     db: &Database,
     all_results: &mut Vec<(
-        &&'a Document,
+        &&Document,
         Vec<ReviewQuestion>,
         String,
         usize,

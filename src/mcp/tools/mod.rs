@@ -229,8 +229,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 "workflow" => {
                     // Bootstrap is now sync (no LLM); other workflows are also sync
                     let is_bootstrap = args.get("workflow")
-                        .and_then(|v| v.as_str())
-                        .map_or(false, |w| w == "bootstrap");
+                        .and_then(|v| v.as_str()) == Some("bootstrap");
                     if is_bootstrap {
                         workflow::bootstrap(&args)?
                     } else {

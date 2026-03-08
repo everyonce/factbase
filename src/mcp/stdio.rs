@@ -144,7 +144,7 @@ fn is_broken_pipe(e: &anyhow::Error) -> bool {
     e.chain().any(|cause| {
         cause
             .downcast_ref::<io::Error>()
-            .map_or(false, |io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
+            .is_some_and(|io_err| io_err.kind() == io::ErrorKind::BrokenPipe)
     })
 }
 

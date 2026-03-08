@@ -378,15 +378,13 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
 
         // Cross-document fact validation has been moved to the agent via get_fact_pairs tool.
         // Vocabulary extraction has been moved to the agent via the discover workflow step.
-        if !args.no_questions {
-        if args.deep_check {
-            if is_table_format && !args.quiet {
+        if !args.no_questions
+        && args.deep_check
+            && is_table_format && !args.quiet {
                 println!("  Cross-document validation is now agent-driven via get_fact_pairs tool.");
                 println!("  Vocabulary extraction is now agent-driven via the discover workflow step.");
                 println!("  Use `factbase serve` + MCP agent for these features.");
-            }
-        }
-        } // end --no-questions guard
+            } // end --no-questions guard
 
         if is_table_format && !type_counts.is_empty() {
             println!("  Type distribution:");

@@ -63,7 +63,7 @@ async fn generate_questions_single(
 ) -> Result<Value, FactbaseError> {
 
     // Get the document
-    let doc = db.require_document(&doc_id)?;
+    let doc = db.require_document(doc_id)?;
 
     // Skip deleted documents
     if doc.is_deleted {
@@ -155,14 +155,14 @@ async fn generate_questions_single(
         let updated_content = append_review_questions(content, &questions_to_add);
         fs::write(&file_path, &updated_content)?;
         let new_hash = content_hash(&updated_content);
-        db.update_document_content(&doc_id, &updated_content, &new_hash)?;
+        db.update_document_content(doc_id, &updated_content, &new_hash)?;
     } else if !dry_run && has_duplicate_review_sections(content) {
         // Clean up duplicate review sections even when no new questions
         let updated_content = crate::processor::merge_duplicate_review_sections(content);
         if updated_content != content {
             fs::write(&file_path, &updated_content)?;
             let new_hash = content_hash(&updated_content);
-            db.update_document_content(&doc_id, &updated_content, &new_hash)?;
+            db.update_document_content(doc_id, &updated_content, &new_hash)?;
         }
     }
 

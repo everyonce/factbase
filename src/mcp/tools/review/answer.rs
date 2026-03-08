@@ -12,12 +12,6 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
 
-/// Modifies a question in the review queue content.
-///
-/// When `defer` is false, marks the question as answered by changing `[ ]` to `[x]`.
-/// When `defer` is true, keeps `[ ]` unchecked but writes the note as a blockquote,
-/// so the question remains unanswered but carries context for the next reviewer.
-
 /// Resolve confidence from args: "believed" answers are stored as deferred.
 /// Returns (is_defer, answer_text) after applying confidence logic.
 fn resolve_confidence(answer: &str, confidence: Option<&str>) -> Result<(bool, String), FactbaseError> {

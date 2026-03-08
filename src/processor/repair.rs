@@ -132,14 +132,14 @@ fn repair_duplicate_footnote_defs(lines: &mut Vec<String>, result: &mut RepairRe
     for (i, line) in lines.iter().enumerate() {
         if let Some(cap) = SOURCE_DEF_REGEX.captures(line) {
             let num: u32 = cap[1].parse().unwrap_or(0);
-            if seen.contains_key(&num) {
+            if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(num) {
+                e.insert(i);
+            } else {
                 to_remove.push(i);
                 result.fixes += 1;
                 result
                     .descriptions
                     .push(format!("Removed duplicate footnote [^{num}] definition"));
-            } else {
-                seen.insert(num, i);
             }
         }
     }
