@@ -70,7 +70,7 @@ pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowle
 pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
 
 // --- Resolve workflow ---
-pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Get the review queue to see what needs fixing. Call get_review_queue with include_context=true. If there are many questions, filter by type (stale, conflict, missing, temporal, ambiguous, duplicate, precision) to work in batches.{ctx}{deferred_note}";
+pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Process types in recommended_order (fewest questions first = quick wins). Start with: workflow resolve step=2 question_type=<first_type>. Clear each type completely before moving to the next. Skip types with 0 questions.{ctx}{deferred_note}";
 
 pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\nWEAK-SOURCE → use your tools to find the actual source. Update the footnote with a specific reference (URL, path, page, ISBN, RFC, channel/thread+date). If you cannot find it, change to '[^N]: UNVERIFIED — original claim: <text>'. Do not invent specific-looking citations.\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.{ctx}";
 
@@ -164,7 +164,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure. Provide domain='mycology' (or any domain) and get instructions for generating suggested document types, folder structure, templates, and perspective. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
                 {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
                 {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
-                {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (e.g. 'stale' or 'temporal,ambiguous'). Response includes type_distribution so you can decide which types to target."},
+                {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (e.g. 'stale' or 'temporal,ambiguous'). Response includes type_distribution and recommended_order (fewest questions first for quick wins). Process types in recommended_order for best results."},
                 {"name": "ingest", "description": "Research a topic and create/update factbase documents"},
                 {"name": "enrich", "description": "Find and fill gaps in existing documents"},
                 {"name": "improve", "description": "Improve a single document end-to-end: cleanup, resolve questions, enrich, then quality check. Requires doc_id."}
@@ -518,17 +518,24 @@ fn resolve_step(
                 .map(|(qt, count)| serde_json::json!({"type": qt.to_string(), "count": count}))
                 .collect::<Vec<_>>()
                 .into();
+            let rec_order = recommended_resolve_order(&type_dist);
+            let suggested = if let Some(first) = rec_order.first() {
+                serde_json::json!({"question_type": first})
+            } else {
+                serde_json::json!({})
+            };
             serde_json::json!({
                 "workflow": "resolve",
                 "step": 1, "total_steps": total,
                 "instruction": resolve(wf, "resolve.queue", DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
-                "next_tool": "get_review_queue",
-                "suggested_args": {"include_context": true},
+                "next_tool": "workflow",
+                "suggested_args": suggested,
                 "policy": {"stale_days": stale},
                 "deferred_count": deferred,
                 "total_unanswered": total_unanswered,
                 "type_distribution": type_dist_json,
-                "when_done": "Call workflow with workflow='resolve', step=2"
+                "recommended_order": rec_order,
+                "when_done": "Call workflow with workflow='resolve', step=2, question_type=<next_type>"
             })
         },
         2 => resolve_step2_batch(args, perspective, db, wf),
@@ -601,6 +608,17 @@ fn compute_type_distribution(db: &Database) -> Vec<(QuestionType, usize)> {
     let mut sorted: Vec<_> = counts.into_iter().collect();
     sorted.sort_by(|a, b| b.1.cmp(&a.1));
     sorted
+}
+
+/// Compute recommended type processing order: fewest questions first (quick wins),
+/// with difficulty as tiebreaker for equal counts.
+fn recommended_resolve_order(dist: &[(QuestionType, usize)]) -> Vec<String> {
+    let mut with_questions: Vec<_> = dist.iter().filter(|(_, c)| *c > 0).collect();
+    with_questions.sort_by(|a, b| {
+        a.1.cmp(&b.1)
+            .then_with(|| question_type_priority(&a.0).cmp(&question_type_priority(&b.0)))
+    });
+    with_questions.iter().map(|(qt, _)| qt.to_string()).collect()
 }
 
 /// Load glossary terms from all repositories.
@@ -1466,6 +1484,70 @@ mod tests {
         let dist = step["type_distribution"].as_array().unwrap();
         assert!(dist.is_empty());
         assert_eq!(step["total_unanswered"], 0);
+    }
+
+    #[test]
+    fn test_resolve_step1_recommended_order_fewest_first() {
+        let (db, _tmp) = test_db();
+        // 2 stale + 1 temporal → temporal (1) should come before stale (2)
+        let content = "<!-- factbase:ro001 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source (line 4)\n- [ ] `@q[temporal]` Missing date (line 4)\n- [ ] `@q[stale]` Another old source (line 4)\n";
+        insert_test_doc(&db, "ro001", content);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let order = step["recommended_order"].as_array().unwrap();
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], "temporal"); // 1 question
+        assert_eq!(order[1], "stale");    // 2 questions
+    }
+
+    #[test]
+    fn test_resolve_step1_recommended_order_empty_queue() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let order = step["recommended_order"].as_array().unwrap();
+        assert!(order.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_step1_recommended_order_difficulty_tiebreaker() {
+        let (db, _tmp) = test_db();
+        // 1 temporal + 1 ambiguous → same count, temporal has lower difficulty priority
+        let content = "<!-- factbase:ro002 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Missing date (line 4)\n- [ ] `@q[ambiguous]` Unclear meaning (line 4)\n";
+        insert_test_doc(&db, "ro002", content);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let order = step["recommended_order"].as_array().unwrap();
+        assert_eq!(order.len(), 2);
+        assert_eq!(order[0], "temporal");  // priority 0
+        assert_eq!(order[1], "ambiguous"); // priority 4
+    }
+
+    #[test]
+    fn test_resolve_step1_suggested_args_has_first_type() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:ro003 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old (line 4)\n- [ ] `@q[stale]` Old2 (line 4)\n- [ ] `@q[temporal]` Missing (line 4)\n";
+        insert_test_doc(&db, "ro003", content);
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let suggested = &step["suggested_args"];
+        assert_eq!(suggested["question_type"], "temporal");
+    }
+
+    #[test]
+    fn test_resolve_step1_next_tool_is_workflow() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["next_tool"], "workflow");
+    }
+
+    #[test]
+    fn test_recommended_resolve_order_excludes_zero_counts() {
+        // Unit test for the ordering function directly
+        use crate::QuestionType;
+        let dist = vec![
+            (QuestionType::Stale, 5),
+            (QuestionType::Temporal, 0),
+            (QuestionType::Ambiguous, 3),
+        ];
+        let order = recommended_resolve_order(&dist);
+        assert_eq!(order, vec!["ambiguous", "stale"]);
     }
 
     #[test]
