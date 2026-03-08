@@ -100,23 +100,17 @@ pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Process types in rec
 
 pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\nWEAK-SOURCE → use your tools to find the actual source. Update the footnote with a specific reference (URL, path, page, ISBN, RFC, channel/thread+date). If you cannot find it, change to '[^N]: UNVERIFIED — original claim: <text>'. Do not invent specific-looking citations.\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANSWER questions, not analyze them. Answer from knowledge first. Only research if you genuinely cannot answer. Every tool call that is not answer_questions is reducing your throughput. Minimize research calls.\n\nAnswer the questions in this batch. For each question: call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nDo not spend context on statistics, breakdowns, or pattern analysis — spend it on answer_questions calls. Report progress by questions answered, not by patterns observed.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain.
-
-Process as many batches as you can. If you must stop (context limits, timeout), report progress honestly: answered/remaining/deferred counts. Commit your work (git add/commit) so the next session picks up where you left off — answered questions are tracked in the DB and won't reappear. Resume with workflow(workflow='resolve') to continue.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANSWER questions, not analyze them. Answer from knowledge first. Only research if you genuinely cannot answer. Every tool call that is not answer_questions is reducing your throughput. Minimize research calls.\n\nAnswer the questions in this batch. For each question: call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nDo not spend context on statistics, breakdowns, or pattern analysis — spend it on answer_questions calls.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context. Just call step=2 immediately.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to (actual context limit error, timeout). If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
 
 // --- Variant A: Type-specific evidence standards ---
 pub(crate) const VARIANT_TYPE_EVIDENCE_INTRO: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT — varies by question type:\n\nSTALE: Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nTEMPORAL: Search for the specific event date. Cite a URL with the date.\n→ Format: \"@t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n\nAMBIGUOUS: Check the KB first (get_entity, read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.\n→ KB has answer: \"Clarified per [doc_id]: [definition]\"\n→ External: \"Clarified per [source] ([URL]): [definition]\"\n\nCONFLICT: Read BOTH referenced documents (get_entity). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.\n→ Both valid: \"Not a conflict: [reason] per [source]\"\n→ One supersedes: \"[correct fact] per [source], supersedes [old fact]\"\n→ Unresolvable: \"defer: [analysis of both sides with sources]\"\n\nPRECISION: Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.\n→ Found: \"[specific value] per [source] ([URL])\"\n→ Not found: \"defer: searched for specific value, no authoritative source found\"\n\nMISSING: Find a source citation for the unsourced fact.\n→ \"Source: [name] ([URL]), [date]\"\n\nDUPLICATE: Identify the canonical entry.\n→ \"Duplicate of [doc_id], remove from here\"\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nEXAMPLES:\n✅ GOOD: \"@t[1942-06-04..1942-06-07] per Wikipedia (https://en.wikipedia.org/wiki/Battle_of_Midway); verified 2026-03-01\"\n✅ GOOD defer: \"defer: Searched 'entity role 2026' — no results confirming current status\"\n❌ BAD: \"Well-known historical fact\" (no source)\n\nCan't find a source? → defer. This is the correct action.{ctx}";
 
-pub(crate) const VARIANT_TYPE_EVIDENCE_ANSWER: &str = "Answer the questions in this batch. Each question has an `evidence_guidance` field with type-specific research instructions — follow them.\n\nFor each question: follow the evidence_guidance, research, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed'\n- Researched and found nothing? → 'defer: researched [what], found [nothing]'\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain.
-
-Process as many batches as you can. If you must stop, report progress honestly: answered/remaining/deferred counts. Commit your work (git add/commit) and resume with workflow(workflow='resolve') — answered questions are tracked in the DB and won't reappear.{ctx}";
+pub(crate) const VARIANT_TYPE_EVIDENCE_ANSWER: &str = "Answer the questions in this batch. Each question has an `evidence_guidance` field with type-specific research instructions — follow them.\n\nFor each question: follow the evidence_guidance, research, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed'\n- Researched and found nothing? → 'defer: researched [what], found [nothing]'\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
 
 // --- Variant B: Research-then-batch ---
 pub(crate) const VARIANT_RESEARCH_BATCH_INTRO: &str = "You are resolving review questions using a research-first approach. Questions are grouped by document. For each document group:\n\nPHASE 1 — RESEARCH: Call get_entity to read the full document. Then do ONE comprehensive search covering all its questions. Gather all evidence before answering anything.\n\nPHASE 2 — ANSWER: Answer ALL questions for that document in one answer_questions call, citing the research from Phase 1.\n\nThis reduces redundant searches — multiple questions about the same document/topic share research.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source. If you cannot find evidence, DEFER.\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nANSWER FORMAT BY TYPE:\nTEMPORAL → \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\nSTALE → \"Still accurate per [source] ([reference]), verified [date]\" or \"Updated: [new info] per [source]\"\nCONFLICT → Read [pattern:...] tag. Both valid: \"Not a conflict: [reason]\". One wrong: cite source.\nMISSING → \"Source: [name] ([reference]), [date]\"\nAMBIGUOUS → clarify with KB context or external source\nPRECISION → replace vague term with specific value per source\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't find a source? → defer. This is the correct action.{ctx}";
 
-pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call get_entity with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one answer_questions call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call scan_repository or check_repository.\n\n⚠️ CONTINUATION: After answering all groups, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain.
-
-Process as many batches as you can. If you must stop, report progress honestly: answered/remaining/deferred counts. Commit your work (git add/commit) and resume with workflow(workflow='resolve') — answered questions are tracked in the DB and won't reappear.{ctx}";
+pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call get_entity with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one answer_questions call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call scan_repository or check_repository.\n\n⚠️ CONTINUATION: After answering all groups, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
 
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers by rewriting the documents directly.\n\nFor each document you answered questions about:\n1. Call get_entity to read the current content\n2. Apply your answers: insert @t[...] tags, add source footnotes, resolve conflicts, etc.\n3. Call update_document with the modified content\n\nThis gives you full control over the edits — no LLM intermediary.";
 
@@ -819,7 +813,7 @@ fn build_continuation_guidance(
         ));
     }
 
-    // Directive language scaled by remaining count
+    // Assertive continuation directive — agents quit too early without strong language
     if remaining > 500 {
         let batches_left = remaining.div_ceil(batch_size);
         let filter_hint = if type_filter.is_empty() {
@@ -829,7 +823,7 @@ fn build_continuation_guidance(
             format!(" with question_type={f}")
         };
         parts.push(format!(
-            "⚡ {remaining} questions remain. Keep calling step=2{filter_hint}. You have cleared {resolved_so_far} so far — maintain momentum. ~{batches_left} batches remaining at {batch_size}/batch. Process as many as your context allows."
+            "⚠️ DO NOT STOP. {remaining} questions remain (~{batches_left} batches). Call step=2{filter_hint} immediately. You have cleared {resolved_so_far} — the DB tracks your progress, nothing is lost. Only stop if your runtime forces you to."
         ));
     } else if remaining > 100 {
         let filter_hint = if type_filter.is_empty() {
@@ -839,8 +833,13 @@ fn build_continuation_guidance(
             format!(" with question_type={f}")
         };
         parts.push(format!(
-            "⚡ {remaining} questions remain. Keep calling step=2{filter_hint}. You have cleared {resolved_so_far} so far — maintain momentum."
+            "⚠️ DO NOT STOP. {remaining} questions remain. Call step=2{filter_hint} immediately. You have cleared {resolved_so_far} — keep going. Only stop if your runtime forces you to."
         ));
+    }
+
+    // Always add anti-early-stopping directive when there are remaining questions
+    if remaining > 0 {
+        parts.push("⚠️ Agents commonly quit too early. Unless your runtime is forcing you to stop, keep calling step 2. The DB tracks your progress — nothing is lost if you eventually hit a limit.".to_string());
     }
 
     if parts.is_empty() {
@@ -1110,8 +1109,8 @@ fn resolve_step2_batch(
         "continue": true,
         "batch": batch_value,
         "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
-        "completion_gate": format!("{resolved_so_far}/{total_questions} ({pct}%). Call step=2 for next batch."),
-        "when_done": "Call workflow with workflow='resolve', step=2"
+        "completion_gate": format!("DO NOT STOP. {resolved_so_far}/{total_questions} resolved ({pct}%). Call workflow resolve step=2 for the next batch. You have processed {batch_number} batch(es) — most models can handle 15+. Only stop if you receive an actual context limit error."),
+        "when_done": "DO NOT STOP. Call workflow with workflow='resolve', step=2 immediately."
     });
 
     // Only include conflict_patterns when first batch or batch contains conflict questions
@@ -2717,9 +2716,10 @@ mod tests {
         insert_doc_with_questions(&db, "gate01", &["temporal", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
+        assert!(gate.contains("DO NOT STOP"), "gate should be directive: {gate}");
         assert!(gate.contains("0/2"), "gate should have compact counts: {gate}");
-        assert!(gate.contains("0%"), "gate should have percentage: {gate}");
         assert!(gate.contains("step=2"), "gate should tell agent to call step=2: {gate}");
+        assert!(gate.contains("batch(es)"), "gate should mention batches processed: {gate}");
     }
 
     #[test]
@@ -2742,13 +2742,13 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_step2_answer_instruction_allows_partial_completion() {
+    fn test_resolve_step2_answer_instruction_discourages_early_stopping() {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "skip01", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("If you must stop"));
-        assert!(instr.contains("report progress honestly"));
+        assert!(instr.contains("DO NOT STOP"), "instruction should be assertive: {instr}");
+        assert!(!instr.contains("report progress honestly"), "should not encourage progress reporting: {instr}");
     }
 
     #[test]
@@ -3612,11 +3612,15 @@ mod tests {
     }
 
     #[test]
-    fn test_continuation_guidance_none_for_small_queue() {
+    fn test_continuation_guidance_small_queue_has_anti_early_stop() {
         let mut dist = HashMap::new();
         dist.insert(QuestionType::Temporal, 5);
         let result = build_continuation_guidance(5, 10, 50, &dist, &[]);
-        assert!(result.is_none(), "small queues should not produce guidance");
+        // Small queues still get the anti-early-stopping directive
+        let guidance = result.unwrap();
+        assert!(guidance.contains("quit too early"), "should warn about early stopping even for small queues");
+        // But should NOT have the >100 or >500 directive
+        assert!(!guidance.contains("DO NOT STOP"), "should not have strong directive for small queue");
     }
 
     #[test]
@@ -3624,12 +3628,12 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert(QuestionType::Temporal, 150);
         let result = build_continuation_guidance(150, 50, 50, &dist, &[]).unwrap();
-        assert!(result.contains("⚡"), "should have lightning emoji");
+        assert!(result.contains("DO NOT STOP"), "should have directive language");
         assert!(result.contains("150"), "should mention remaining count");
         assert!(result.contains("cleared 50"), "should mention progress");
-        assert!(result.contains("momentum"), "should urge momentum");
+        assert!(result.contains("quit too early"), "should warn about early stopping");
         // Should NOT have batch estimate (that's >500 only)
-        assert!(!result.contains("batches remaining"), "should not have batch estimate under 500");
+        assert!(!result.contains("batches)"), "should not have batch estimate under 500");
     }
 
     #[test]
@@ -3638,10 +3642,11 @@ mod tests {
         dist.insert(QuestionType::WeakSource, 4421);
         let filter = vec![QuestionType::WeakSource];
         let result = build_continuation_guidance(4421, 79, 50, &dist, &filter).unwrap();
-        assert!(result.contains("⚡"), "should have lightning emoji");
+        assert!(result.contains("DO NOT STOP"), "should have directive language");
         assert!(result.contains("4421"), "should mention remaining count");
-        assert!(result.contains("batches remaining"), "should have batch estimate");
+        assert!(result.contains("batches)"), "should have batch estimate");
         assert!(result.contains("question_type=weak-source"), "should include filter hint");
+        assert!(result.contains("quit too early"), "should warn about early stopping");
     }
 
     #[test]
@@ -3678,14 +3683,39 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         assert!(step.get("continuation_guidance").is_some(), "should have continuation_guidance for large queue");
         let guidance = step["continuation_guidance"].as_str().unwrap();
-        assert!(guidance.contains("⚡"), "guidance should be directive");
+        assert!(guidance.contains("DO NOT STOP"), "guidance should be directive");
     }
 
     #[test]
-    fn test_continuation_guidance_absent_for_small_step2() {
+    fn test_continuation_guidance_present_for_small_step2() {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "sm001", &["temporal", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("continuation_guidance").is_none(), "small queue should not have continuation_guidance");
+        // Even small queues get anti-early-stopping guidance now
+        let guidance = step.get("continuation_guidance");
+        assert!(guidance.is_some(), "should have continuation_guidance even for small queue");
+        let text = guidance.unwrap().as_str().unwrap();
+        assert!(text.contains("quit too early"), "should warn about early stopping");
+    }
+
+    #[test]
+    fn test_resolve_no_hardcoded_token_or_model_references() {
+        let (db, _tmp) = test_db();
+        // Insert enough questions to trigger all guidance paths
+        let types_10: Vec<&str> = vec!["temporal"; 10];
+        for i in 0..60 {
+            insert_doc_with_questions(&db, &format!("tok{:03}", i), &types_10);
+        }
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let json_str = serde_json::to_string(&step).unwrap().to_lowercase();
+        // Must not reference specific token counts or model context sizes
+        assert!(!json_str.contains("token"), "should not reference tokens: found in response");
+        assert!(!json_str.contains("context window"), "should not reference context window");
+        assert!(!json_str.contains("context size"), "should not reference context sizes");
+        assert!(!json_str.contains("128k"), "should not reference specific context sizes");
+        assert!(!json_str.contains("200k"), "should not reference specific context sizes");
+        assert!(!json_str.contains("gpt"), "should not reference specific models");
+        assert!(!json_str.contains("claude"), "should not reference specific models");
+        assert!(!json_str.contains("sonnet"), "should not reference specific models");
     }
 }
