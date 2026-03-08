@@ -39,6 +39,29 @@ fn resolve_confidence(answer: &str, confidence: Option<&str>) -> Result<(bool, S
         _ => Ok((false, answer.to_string())),
     }
 }
+
+/// Counts review queue questions into unanswered/deferred/believed buckets.
+/// Matches the classification logic used by get_review_queue.
+fn count_queue_questions(
+    questions: &[crate::models::ReviewQuestion],
+    unanswered: &mut usize,
+    deferred: &mut usize,
+    believed: &mut usize,
+) {
+    for q in questions {
+        if q.answered {
+            // skip — already applied
+        } else if q.is_deferred() {
+            if q.is_believed() {
+                *believed += 1;
+            }
+            *deferred += 1;
+        } else {
+            *unanswered += 1;
+        }
+    }
+}
+
 pub(crate) fn modify_question_in_queue(
     queue_content: &str,
     question_index: usize,
@@ -450,21 +473,28 @@ pub fn bulk_answer_questions(
         Ok(())
     })?;
 
-    // Count remaining unanswered questions across all docs
+    // Count remaining unanswered questions across all docs.
+    // Use pending_writes content for docs modified in this batch (guaranteed fresh),
+    // fall back to DB content for the rest.
     let mut remaining_unanswered = 0usize;
     let mut total_deferred = 0usize;
+    let mut total_believed = 0usize;
+    let written_ids: std::collections::HashSet<&str> =
+        pending_writes.iter().map(|(id, _, _)| id.as_str()).collect();
+    // Count from freshly-written content
+    for (_, _, content) in &pending_writes {
+        if let Some(questions) = parse_review_queue(content) {
+            count_queue_questions(&questions, &mut remaining_unanswered, &mut total_deferred, &mut total_believed);
+        }
+    }
+    // Count from DB for docs not in this batch
     let docs_with_queues = db.get_documents_with_review_queue(None).unwrap_or_default();
     for doc in &docs_with_queues {
+        if written_ids.contains(doc.id.as_str()) {
+            continue; // already counted from pending_writes
+        }
         if let Some(questions) = parse_review_queue(&doc.content) {
-            for q in &questions {
-                if q.answered {
-                    // skip
-                } else if q.is_deferred() {
-                    total_deferred += 1;
-                } else {
-                    remaining_unanswered += 1;
-                }
-            }
+            count_queue_questions(&questions, &mut remaining_unanswered, &mut total_deferred, &mut total_believed);
         }
     }
 
@@ -476,6 +506,7 @@ pub fn bulk_answer_questions(
         "results": results,
         "remaining_unanswered": remaining_unanswered,
         "remaining_deferred": total_deferred,
+        "remaining_believed": total_believed,
         "message": format!("Answered {} question(s), skipped {} already-answered. {} unanswered remain. Run `factbase review --apply` to process.", answered, skipped, remaining_unanswered)
     }))
 }
@@ -1023,5 +1054,58 @@ Some footer text.
         assert!(doc_a.content.contains("[x]"), "Doc A should have answered question in DB");
         let doc_b = db.get_document("bbb222").unwrap().unwrap();
         assert!(doc_b.content.contains("[x]"), "Doc B should have answered question in DB");
+    }
+
+    #[test]
+    fn test_bulk_answer_believed_excluded_from_remaining_unanswered() {
+        // Believed answers should NOT be counted as unanswered in remaining_unanswered.
+        // They should appear in remaining_deferred and remaining_believed instead.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        // Two docs, each with one question
+        let content_a = "<!-- factbase:aaa111 -->\n# Doc A\n\n- Fact A\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n";
+        let content_b = "<!-- factbase:bbb222 -->\n# Doc B\n\n- Fact B\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` Line 4: Source?\n";
+        std::fs::write(repo_dir.join("a.md"), content_a).unwrap();
+        std::fs::write(repo_dir.join("b.md"), content_b).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        for (id, path, content) in [("aaa111", "a.md", content_a), ("bbb222", "b.md", content_b)] {
+            let doc = crate::models::Document {
+                id: id.into(),
+                repo_id: "r1".into(),
+                file_path: path.into(),
+                title: format!("Doc {id}"),
+                content: content.into(),
+                ..crate::models::Document::test_default()
+            };
+            db.upsert_document(&doc).unwrap();
+        }
+
+        // Answer doc A with believed confidence — should be deferred, not unanswered
+        let args = serde_json::json!({
+            "answers": [
+                {"doc_id": "aaa111", "question_index": 0, "answer": "Around 2020", "confidence": "believed"}
+            ]
+        });
+        let result = bulk_answer_questions(&db, &args, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["answered"], 1);
+        // Doc B still has 1 unanswered; Doc A is now believed/deferred
+        assert_eq!(result["remaining_unanswered"], 1, "believed should not count as unanswered");
+        assert_eq!(result["remaining_deferred"], 1, "believed should count as deferred");
+        assert_eq!(result["remaining_believed"], 1, "believed should be tracked separately");
     }
 }
