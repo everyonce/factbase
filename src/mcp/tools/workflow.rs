@@ -52,14 +52,14 @@ fn subagent_fanout_hint(total_questions: usize, type_dist: &[(String, usize)]) -
 
     if total_questions > 200 {
         format!(
-            "\n\n🚀 PARALLEL DISPATCH (MANDATORY for {total_questions} questions): If you can spawn sub-agents, DO IT NOW. \
+            "\n\n🚀 PARALLEL DISPATCH (MANDATORY for {total_questions} questions): If you have a use_subagent or delegate tool, USE IT NOW to spawn parallel workers. \
 Spawn one worker per question type. This is the fastest path to clearing the queue.\n\
 {workers}\n\
 Each worker processes its type independently. Do NOT work serially — fan out immediately."
         )
     } else {
         format!(
-            "\n\n🚀 PARALLEL DISPATCH: If you can spawn sub-agents, spawn one worker per question type — \
+            "\n\n🚀 PARALLEL DISPATCH: If you have a use_subagent or delegate tool, spawn one worker per question type — \
 this is significantly faster than serial processing.\n\
 {workers}\n\
 Each worker processes its type independently."
@@ -1785,7 +1785,7 @@ mod tests {
         let types = vec![("stale".to_string(), 150), ("temporal".to_string(), 80)];
         let hint = subagent_fanout_hint(230, &types);
         assert!(hint.contains("MANDATORY"), "large queue should use MANDATORY language");
-        assert!(hint.contains("DO IT NOW"), "large queue should say DO IT NOW");
+        assert!(hint.contains("USE IT NOW"), "large queue should say USE IT NOW");
         assert!(hint.contains("question_type='stale'"), "should include actual types");
         assert!(hint.contains("question_type='temporal'"), "should include actual types");
     }
