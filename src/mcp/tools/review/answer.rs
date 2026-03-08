@@ -165,11 +165,18 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     let question = &questions[question_index];
 
-    // Check if already answered (deferred questions can be re-answered or re-deferred)
+    // Idempotent: if already answered, skip silently
     if question.answered {
-        return Err(FactbaseError::parse(format!(
-            "Question {question_index} is already answered"
-        )));
+        let type_str = question.question_type.as_str();
+        return Ok(serde_json::json!({
+            "success": true,
+            "doc_id": doc_id,
+            "question_index": question_index,
+            "question_type": type_str,
+            "description": question.description,
+            "skipped": true,
+            "message": "Question already answered — skipped."
+        }));
     }
 
     // Find and modify the question in the document content
@@ -239,11 +246,11 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 /// - Maximum 50 answers per call
 ///
 /// # Returns
-/// JSON with `success`, `answered` count, `results` array, and `message`.
+/// JSON with `success`, `answered` count, `skipped` count, `results` array, and `message`.
 ///
 /// # Errors
 /// - `FactbaseError::NotFound` if any document doesn't exist
-/// - `FactbaseError::Parse` if any question already answered or index invalid
+/// - `FactbaseError::Parse` if any question index is invalid
 #[instrument(name = "mcp_bulk_answer_questions", skip(db, args, progress))]
 pub fn bulk_answer_questions(
     db: &Database,
@@ -264,6 +271,7 @@ pub fn bulk_answer_questions(
         return Ok(serde_json::json!({
             "success": true,
             "answered": 0,
+            "skipped": 0,
             "message": "No answers to process"
         }));
     }
@@ -336,7 +344,7 @@ pub fn bulk_answer_questions(
             ))
         })?;
 
-        // Validate all question indices
+        // Validate question indices; skip already-answered (idempotent)
         for (question_index, _, _) in answers_for_doc {
             if *question_index >= questions.len() {
                 return Err(FactbaseError::parse(format!(
@@ -346,18 +354,15 @@ pub fn bulk_answer_questions(
                     questions.len()
                 )));
             }
-            if questions[*question_index].answered {
-                return Err(FactbaseError::parse(format!(
-                    "Question {question_index} in document {doc_id} is already answered"
-                )));
-            }
         }
 
         doc_disk_content.insert(doc_id.clone(), (file_path, disk_content));
     }
 
-    // Now apply all changes
+    // Phase 1: Compute all new file contents in memory (no side effects)
+    let mut pending_writes: Vec<(String, PathBuf, String)> = Vec::new(); // (doc_id, path, new_content)
     let mut results: Vec<Value> = Vec::new();
+    let mut skipped = 0usize;
     let total_docs = by_doc.len();
     for (i, (doc_id, answers_for_doc)) in by_doc.iter().enumerate() {
         let (file_path, disk_content) = doc_disk_content
@@ -374,14 +379,33 @@ pub fn bulk_answer_questions(
             ),
         );
 
+        // Determine which questions are already answered so we can skip them
+        let questions = parse_review_queue(disk_content).unwrap_or_default();
+        let mut actionable: Vec<(usize, String, Option<String>)> = Vec::new();
+        for (question_index, answer_text, confidence) in answers_for_doc {
+            if *question_index < questions.len() && questions[*question_index].answered {
+                skipped += 1;
+                results.push(serde_json::json!({
+                    "doc_id": doc_id,
+                    "question_index": question_index,
+                    "skipped": true
+                }));
+            } else {
+                actionable.push((*question_index, answer_text.clone(), confidence.clone()));
+            }
+        }
+
+        if actionable.is_empty() {
+            continue;
+        }
+
         // Sort answers by question index in descending order to avoid index shifting
-        let mut sorted_answers = answers_for_doc.clone();
-        sorted_answers.sort_by(|a, b| b.0.cmp(&a.0));
+        actionable.sort_by(|a, b| b.0.cmp(&a.0));
 
         let mut content = disk_content.clone();
         let marker = "<!-- factbase:review -->";
 
-        for (question_index, answer_text, confidence) in &sorted_answers {
+        for (question_index, answer_text, confidence) in &actionable {
             let marker_pos = content
                 .find(marker)
                 .ok_or_else(|| FactbaseError::internal("Review Queue marker not found"))?;
@@ -391,7 +415,6 @@ pub fn bulk_answer_questions(
 
             let (defer, text) = resolve_confidence(answer_text, confidence.as_deref())?;
 
-            // Use the extracted helper
             let modified_queue =
                 modify_question_in_queue(queue_content, *question_index, &text, defer)
                     .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
@@ -399,14 +422,12 @@ pub fn bulk_answer_questions(
             content = format!("{before_marker}{marker}{modified_queue}");
         }
 
-        // Write to file
-        fs::write(file_path, &content)?;
-
-        // Sync updated content back to database
-        let new_hash = content_hash(&content);
-        db.update_document_content(doc_id, &content, &new_hash)?;
+        pending_writes.push((doc_id.clone(), file_path.clone(), content));
 
         for (question_index, answer_text, _) in answers_for_doc {
+            if *question_index < questions.len() && questions[*question_index].answered {
+                continue; // already counted as skipped above
+            }
             results.push(serde_json::json!({
                 "doc_id": doc_id,
                 "question_index": question_index,
@@ -414,6 +435,20 @@ pub fn bulk_answer_questions(
             }));
         }
     }
+
+    // Phase 2: Write all files to disk (filesystem is source of truth)
+    for (_, file_path, content) in &pending_writes {
+        fs::write(file_path, content)?;
+    }
+
+    // Phase 3: Update all DB records in a single transaction
+    db.with_transaction(|conn| {
+        for (doc_id, _, content) in &pending_writes {
+            let new_hash = content_hash(content);
+            db.update_document_content_on_conn(conn, doc_id, content, &new_hash)?;
+        }
+        Ok(())
+    })?;
 
     // Count remaining unanswered questions across all docs
     let mut remaining_unanswered = 0usize;
@@ -433,13 +468,15 @@ pub fn bulk_answer_questions(
         }
     }
 
+    let answered = results.iter().filter(|r| r.get("skipped").is_none()).count();
     Ok(serde_json::json!({
         "success": true,
-        "answered": results.len(),
+        "answered": answered,
+        "skipped": skipped,
         "results": results,
         "remaining_unanswered": remaining_unanswered,
         "remaining_deferred": total_deferred,
-        "message": format!("Answered {} question(s). {} unanswered remain. Run `factbase review --apply` to process.", results.len(), remaining_unanswered)
+        "message": format!("Answered {} question(s), skipped {} already-answered. {} unanswered remain. Run `factbase review --apply` to process.", answered, skipped, remaining_unanswered)
     }))
 }
 
@@ -843,5 +880,148 @@ Some footer text.
         // Verify the disk file now has the marker
         let updated = std::fs::read_to_string(&doc_file).unwrap();
         assert!(updated.contains("<!-- factbase:review -->"));
+    }
+
+    #[test]
+    fn test_answer_question_idempotent_already_answered() {
+        // Answering an already-answered question should return success with skipped=true
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let doc_file = repo_dir.join("test.md");
+
+        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [x] `@q[stale]` Line 4: Source is old\n  > Already answered\n";
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "doc_id": "abc123",
+            "question_index": 0,
+            "answer": "New answer"
+        });
+        let result = answer_question(&db, &args).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["skipped"], true);
+    }
+
+    #[test]
+    fn test_bulk_answer_skips_already_answered() {
+        // Bulk answering should skip already-answered questions instead of erroring
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let doc_file = repo_dir.join("test.md");
+
+        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [x] `@q[stale]` Line 4: Already done\n  > Previous answer\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "answers": [
+                {"doc_id": "abc123", "question_index": 0, "answer": "Retry answer"},
+                {"doc_id": "abc123", "question_index": 1, "answer": "@t[2020]"}
+            ]
+        });
+        let result = bulk_answer_questions(&db, &args, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["answered"], 1);
+        assert_eq!(result["skipped"], 1);
+    }
+
+    #[test]
+    fn test_bulk_answer_atomic_db_commit() {
+        // All DB updates should happen in a single transaction.
+        // Verify by checking that after a successful bulk answer,
+        // all documents are updated in the DB.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+
+        let content_a = "<!-- factbase:aaa111 -->\n# Doc A\n\n- Fact A\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
+        let content_b = "<!-- factbase:bbb222 -->\n# Doc B\n\n- Fact B\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` Line 4: Source?\n  > \n";
+        std::fs::write(repo_dir.join("a.md"), content_a).unwrap();
+        std::fs::write(repo_dir.join("b.md"), content_b).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        for (id, path, content) in [("aaa111", "a.md", content_a), ("bbb222", "b.md", content_b)] {
+            let doc = crate::models::Document {
+                id: id.into(),
+                repo_id: "r1".into(),
+                file_path: path.into(),
+                title: format!("Doc {id}"),
+                content: content.into(),
+                ..crate::models::Document::test_default()
+            };
+            db.upsert_document(&doc).unwrap();
+        }
+
+        let args = serde_json::json!({
+            "answers": [
+                {"doc_id": "aaa111", "question_index": 0, "answer": "@t[2020]"},
+                {"doc_id": "bbb222", "question_index": 0, "answer": "LinkedIn"}
+            ]
+        });
+        let result = bulk_answer_questions(&db, &args, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["answered"], 2);
+
+        // Both documents should be updated in DB
+        let doc_a = db.get_document("aaa111").unwrap().unwrap();
+        assert!(doc_a.content.contains("[x]"), "Doc A should have answered question in DB");
+        let doc_b = db.get_document("bbb222").unwrap().unwrap();
+        assert!(doc_b.content.contains("[x]"), "Doc B should have answered question in DB");
     }
 }
