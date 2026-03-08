@@ -628,12 +628,10 @@ fn resolve_step2_batch(
             for (idx, q) in questions.iter().enumerate() {
                 if q.answered {
                     resolved_verified += 1;
+                } else if q.is_believed() {
+                    resolved_believed += 1;
                 } else if q.is_deferred() {
-                    if q.answer.as_deref().map_or(false, |a| a.starts_with("believed: ")) {
-                        resolved_believed += 1;
-                    } else {
-                        resolved_deferred += 1;
-                    }
+                    resolved_deferred += 1;
                 } else {
                     // Auto-dismiss ambiguous acronym questions covered by glossary
                     if q.question_type == QuestionType::Ambiguous {
@@ -2339,6 +2337,26 @@ mod tests {
         assert_eq!(batch["resolved_verified"], 0);
         assert_eq!(batch["resolved_believed"], 0);
         assert_eq!(batch["resolved_deferred"], 0);
+    }
+
+    #[test]
+    fn test_resolve_step2_excludes_believed_from_batch() {
+        let (db, _tmp) = test_db();
+        // Insert a doc with one believed answer and one unanswered question
+        let content = "<!-- factbase:bel001 -->\n# Believed Test\n\n- Fact\n\n\
+            <!-- factbase:review -->\n\
+            - [ ] `@q[stale]` Old fact is stale\n\
+            > believed: Still accurate per Wikipedia\n\
+            - [ ] `@q[temporal]` When was this true?\n";
+        insert_test_doc(&db, "bel001", content);
+        let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let batch = &step["batch"];
+        // Believed question should be counted but not in the batch
+        assert_eq!(batch["resolved_believed"], 1);
+        assert_eq!(batch["questions_remaining"], 1);
+        let questions = batch["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 1, "Only unanswered question should be in batch, got: {questions:?}");
+        assert_eq!(questions[0]["type"], "temporal");
     }
 
     #[test]
