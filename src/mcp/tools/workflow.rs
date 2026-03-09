@@ -118,6 +118,8 @@ pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers b
 
 pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call check_repository with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
 
+pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run scan_repository to re-index all documents, then run check_repository (without dry_run) to prune answered questions from files and detect any new issues. Do NOT resolve new questions — just report them.";
+
 // --- Ingest workflow ---
 pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call search_knowledge with a relevant query. Also try list_entities to browse by type.{ctx}";
 
@@ -186,7 +188,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure. Provide domain='mycology' (or any domain) and get instructions for generating suggested document types, folder structure, templates, and perspective. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
                 {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
                 {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
-                {"name": "resolve", "description": "Answer existing review queue questions using external sources. Does NOT scan or check — use 'update' for that. Optionally pass question_type to filter by type (e.g. 'stale' or 'temporal,ambiguous'). Response includes type_distribution and recommended_order (fewest questions first for quick wins). Process types in recommended_order for best results."},
+                {"name": "resolve", "description": "Answer existing review queue questions using external sources, apply changes, then clean up. Includes a cleanup scan that prunes answered questions from files so they end in a clean state. Optionally pass question_type to filter by type (e.g. 'stale' or 'temporal,ambiguous'). Response includes type_distribution and recommended_order (fewest questions first for quick wins). Process types in recommended_order for best results."},
                 {"name": "ingest", "description": "Research a topic or process source data into factbase documents. Handles search, research, bulk creation, quality checks, and link discovery."},
                 {"name": "enrich", "description": "Find and fill gaps in existing documents"},
                 {"name": "improve", "description": "Improve a single document end-to-end: cleanup, resolve questions, enrich, then quality check. Requires doc_id."}
@@ -680,7 +682,7 @@ fn resolve_step(
 ) -> Value {
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
-    let total = 4;
+    let total = 6;
     let deferred_note = if deferred > 0 {
         format!("\n\nYou have {deferred} deferred item(s) that need human attention. Call get_deferred_items first to review them before proceeding with new questions.")
     } else {
@@ -730,8 +732,28 @@ fn resolve_step(
             "instruction": resolve(wf, "resolve.verify", DEFAULT_RESOLVE_VERIFY_INSTRUCTION, &[]),
             "next_tool": "check_repository",
             "suggested_args": {"dry_run": true},
-            "complete": true
+            "when_done": "Call workflow with workflow='resolve', step=5"
         }),
+        5 => serde_json::json!({
+            "workflow": "resolve",
+            "step": 5, "total_steps": total,
+            "instruction": resolve(wf, "resolve.cleanup", DEFAULT_RESOLVE_CLEANUP_INSTRUCTION, &[]),
+            "next_tool": "scan_repository",
+            "when_done": "After scan completes, call check_repository (without dry_run) to prune answered questions and detect new issues. Then call workflow with workflow='resolve', step=6"
+        }),
+        6 => {
+            let type_dist = compute_type_distribution(db);
+            let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
+            let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
+            serde_json::json!({
+                "workflow": "resolve",
+                "step": 6, "total_steps": total,
+                "instruction": "Resolve workflow complete. Report the final state of the knowledge base.",
+                "remaining_questions": remaining,
+                "deferred_questions": new_deferred,
+                "complete": true
+            })
+        },
         _ => serde_json::json!({
             "workflow": "resolve",
             "complete": true,
@@ -3347,14 +3369,14 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_workflow_list_description_mentions_no_scan() {
+    fn test_resolve_workflow_list_description_mentions_cleanup() {
         let (db, _tmp) = test_db();
         let args = serde_json::json!({"workflow": "list"});
         let result = workflow(&db, &args).unwrap();
         let workflows = result["workflows"].as_array().unwrap();
         let resolve_wf = workflows.iter().find(|w| w["name"] == "resolve").unwrap();
         let desc = resolve_wf["description"].as_str().unwrap();
-        assert!(desc.contains("Does NOT scan or check"), "resolve description should clarify no scan/check");
+        assert!(desc.contains("clean"), "resolve description should mention cleanup");
     }
 
     // --- resolve variant tests ---
@@ -4069,5 +4091,50 @@ mod tests {
         let gate = step["completion_gate"].as_str().unwrap();
         assert!(gate.contains("checkpoint"), "completion_gate should reference checkpoint file");
         assert!(gate.contains("DO NOT"), "completion_gate should tell agent not to stop");
+    }
+
+    #[test]
+    fn test_resolve_has_6_steps() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["total_steps"], 6);
+    }
+
+    #[test]
+    fn test_resolve_step4_verify_not_complete() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("complete").is_none(), "step 4 should not be complete");
+        assert_eq!(step["next_tool"], "check_repository");
+        assert!(step["when_done"].as_str().unwrap().contains("step=5"));
+    }
+
+    #[test]
+    fn test_resolve_step5_cleanup_scan() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["next_tool"], "scan_repository");
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("scan_repository"), "cleanup step should mention scan");
+        assert!(instr.contains("check_repository"), "cleanup step should mention check");
+        assert!(step.get("complete").is_none(), "step 5 should not be complete");
+    }
+
+    #[test]
+    fn test_resolve_step6_reports_final_state() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["complete"], true);
+        assert!(step.get("remaining_questions").is_some());
+        assert!(step.get("deferred_questions").is_some());
+    }
+
+    #[test]
+    fn test_resolve_step6_counts_remaining_questions() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "fin001", &["temporal", "stale"]);
+        let step = resolve_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["remaining_questions"], 2);
+        assert_eq!(step["deferred_questions"], 0);
     }
 }

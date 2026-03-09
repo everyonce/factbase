@@ -89,7 +89,7 @@ pub fn generate_questions_for_content(
 /// Generate questions and prune stale ones from the document content.
 ///
 /// Returns `(new_questions, pruned_content, pruned_count)`.
-/// `pruned_content` has stale unanswered questions removed.
+/// `pruned_content` has stale unanswered and answered ([x]) questions removed.
 pub fn generate_and_prune(
     content: &str,
     doc_type: Option<&str>,
@@ -112,14 +112,12 @@ pub fn generate_and_prune(
     let valid_descriptions: HashSet<_> =
         all_generated.iter().map(|q| q.description.clone()).collect();
 
-    // Count existing unanswered before pruning
-    let existing_unanswered = parse_review_queue(content)
-        .unwrap_or_default()
-        .iter()
-        .filter(|q| !q.answered)
-        .count();
+    // Count existing questions before pruning
+    let existing = parse_review_queue(content).unwrap_or_default();
+    let existing_unanswered = existing.iter().filter(|q| !q.answered).count();
+    let existing_answered = existing.iter().filter(|q| q.answered).count();
 
-    // Prune stale questions (no cross-check in CLI path without --cross-check)
+    // Prune stale unanswered and answered ([x]) questions
     let pruned_content = prune_stale_questions(content, &valid_descriptions, false);
 
     let remaining_unanswered = parse_review_queue(&pruned_content)
@@ -127,7 +125,7 @@ pub fn generate_and_prune(
         .iter()
         .filter(|q| !q.answered)
         .count();
-    let pruned_count = existing_unanswered - remaining_unanswered;
+    let pruned_count = (existing_unanswered - remaining_unanswered) + existing_answered;
 
     // Dedup against remaining questions
     let new_questions = filter_existing_questions(&pruned_content, all_generated);
