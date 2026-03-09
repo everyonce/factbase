@@ -209,7 +209,7 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "scan_repository",
-                "description": "Re-index documents, generate document and fact embeddings, and detect entity links. Use this when the user says 'scan the factbase' or 'rescan'. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
+                "description": "Re-index documents, generate document and fact embeddings. Use this when the user says 'scan the factbase' or 'rescan'. Does NOT detect links — call detect_links separately after scanning. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
@@ -217,6 +217,18 @@ pub fn tools_list() -> Value {
                         "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings even if content is unchanged (default: false). When true, time_budget_secs is ignored to prevent infinite restart loops." },
                         "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation — index documents into DB without calling embedding provider (default: false). Useful when importing pre-computed embeddings." },
                         "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Ignored when force_reindex is true. Operation returns progress and asks to be called again if budget is exceeded." },
+                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
+                    }
+                }
+            },
+            {
+                "name": "detect_links",
+                "description": "Detect cross-document links via title string matching. Run this after scan_repository to find entity references across documents. Idempotent — running twice produces the same result. This tool is time-boxed and WILL return `continue: true` with a resume token for large repositories — you MUST call again passing the resume token to complete.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "repo": { "type": "string", "description": "Repository ID (optional, uses first repo if omitted)" },
+                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
                         "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
                     }
                 }
@@ -404,7 +416,7 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
 
-        assert_eq!(tools.len(), 26, "should have 26 tools");
+        assert_eq!(tools.len(), 27, "should have 27 tools");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search_knowledge"));
@@ -413,6 +425,7 @@ mod tests {
         assert!(names.contains(&"answer_questions"));
         assert!(names.contains(&"check_repository"));
         assert!(names.contains(&"scan_repository"));
+        assert!(names.contains(&"detect_links"));
         assert!(names.contains(&"init_repository"));
         assert!(names.contains(&"list_entities"));
         assert!(names.contains(&"list_repositories"));
@@ -627,17 +640,19 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        // Only scan_repository still uses paging
-        let tool = tools.iter().find(|t| t["name"] == "scan_repository").unwrap();
-        let desc = tool["description"].as_str().unwrap();
-        assert!(
-            desc.contains("WILL return"),
-            "scan_repository description should say paging WILL happen"
-        );
-        assert!(
-            desc.contains("MUST"),
-            "scan_repository description should use MUST for continuation"
-        );
+        // scan_repository and detect_links use paging
+        for tool_name in &["scan_repository", "detect_links"] {
+            let tool = tools.iter().find(|t| t["name"] == *tool_name).unwrap();
+            let desc = tool["description"].as_str().unwrap();
+            assert!(
+                desc.contains("WILL return"),
+                "{tool_name} description should say paging WILL happen"
+            );
+            assert!(
+                desc.contains("MUST"),
+                "{tool_name} description should use MUST for continuation"
+            );
+        }
     }
 
     #[test]

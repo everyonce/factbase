@@ -22,6 +22,10 @@ pub struct LinkPhaseInput<'a> {
     pub force_relink: bool,
     pub link_batch_size: usize,
     pub progress: &'a ProgressReporter,
+    /// Optional deadline for time-boxed operation
+    pub deadline: Option<std::time::Instant>,
+    /// Number of documents to skip (for resume after interruption)
+    pub doc_offset: usize,
 }
 
 /// Output from the link detection phase
@@ -30,6 +34,8 @@ pub struct LinkPhaseOutput {
     pub link_detection_ms: u64,
     pub docs_link_detected: usize,
     pub interrupted: bool,
+    /// Number of documents processed (for resume)
+    pub doc_offset: usize,
 }
 
 /// Run the link detection phase
@@ -45,6 +51,7 @@ pub async fn run_link_detection_phase(
             link_detection_ms: 0,
             docs_link_detected: 0,
             interrupted: false,
+            doc_offset: 0,
         });
     }
 
@@ -123,15 +130,38 @@ pub async fn run_link_detection_phase(
         OptionalProgress::none()
     };
 
+    // Apply doc_offset for resume — skip already-processed docs
+    let docs_to_scan = if input.doc_offset > 0 && input.doc_offset < docs_to_scan.len() {
+        docs_to_scan[input.doc_offset..].to_vec()
+    } else {
+        docs_to_scan
+    };
+    let mut total_docs_processed = input.doc_offset;
+
     // Process in batches
     for (batch_idx, chunk) in docs_to_scan.chunks(link_batch_size).enumerate() {
+        // Check deadline before starting a new batch
+        if let Some(deadline) = input.deadline {
+            if std::time::Instant::now() > deadline {
+                link_pb.finish_and_clear();
+                return Ok(LinkPhaseOutput {
+                    links_detected,
+                    link_detection_ms: link_detection_start.elapsed().as_millis() as u64,
+                    docs_link_detected: total_docs_processed - input.doc_offset,
+                    interrupted: true,
+                    doc_offset: total_docs_processed,
+                });
+            }
+        }
+
         if crate::shutdown::is_shutdown_requested() {
             link_pb.finish_and_clear();
             return Ok(LinkPhaseOutput {
                 links_detected,
                 link_detection_ms: link_detection_start.elapsed().as_millis() as u64,
-                docs_link_detected: batch_idx * link_batch_size,
+                docs_link_detected: total_docs_processed - input.doc_offset,
                 interrupted: true,
+                doc_offset: total_docs_processed,
             });
         }
 
@@ -164,6 +194,8 @@ pub async fn run_link_detection_phase(
                 input.db.update_links(id, links)?;
             }
         }
+
+        total_docs_processed += chunk.len();
     }
 
     link_pb.finish_and_clear();
@@ -180,7 +212,8 @@ pub async fn run_link_detection_phase(
     Ok(LinkPhaseOutput {
         links_detected,
         link_detection_ms: link_detection_start.elapsed().as_millis() as u64,
-        docs_link_detected: docs_to_scan.len(),
+        docs_link_detected: total_docs_processed - input.doc_offset,
         interrupted: false,
+        doc_offset: total_docs_processed,
     })
 }

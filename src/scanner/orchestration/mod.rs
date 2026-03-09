@@ -2,7 +2,7 @@
 
 mod embedding;
 pub mod facts;
-mod links;
+pub mod links;
 mod results;
 
 use std::collections::HashSet;
@@ -555,6 +555,8 @@ pub async fn full_scan(
         force_relink: ctx.opts.force_relink,
         link_batch_size: ctx.opts.link_batch_size,
         progress: ctx.progress,
+        deadline: None,
+        doc_offset: 0,
     })
     .await?;
 

@@ -47,7 +47,7 @@ pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_too
 pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
 pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
-pub use repository::{init_repository, scan_repository};
+pub use repository::{detect_links, init_repository, scan_repository};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions,
     generate_questions, get_deferred_items, get_review_queue, check_repository,
@@ -201,6 +201,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                 }
                 "check_repository" => check_repository(db, embedding, &args, &reporter).await?,
                 "scan_repository" => scan_repository(db, embedding, &args, &reporter).await?,
+                "detect_links" => detect_links(db, &args, &reporter).await?,
                 "init_repository" => blocking_tool!(db, args, init_repository),
                 "get_duplicate_entries" => {
                     organize_analyze(db, embedding, &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}), &reporter).await?
@@ -379,6 +380,7 @@ mod tests {
             "answer_questions",
             "check_repository",
             "scan_repository",
+            "detect_links",
             "init_repository",
             "get_authoring_guide",
             "workflow",
@@ -725,8 +727,8 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        // Only scan_repository still has time_budget_secs (paged for embeddings)
-        let scaling_tools = ["scan_repository"];
+        // Only scan_repository and detect_links have time_budget_secs (paged)
+        let scaling_tools = ["scan_repository", "detect_links"];
         for tool_name in &scaling_tools {
             let tool = tools
                 .iter()
