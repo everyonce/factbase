@@ -873,7 +873,16 @@ fn write_resolve_checkpoint(
     last_batch_size: usize,
     last_batch_types: &[String],
 ) -> Option<String> {
-    let repo_path = resolve_repo_path(db, repo)?;
+    let repo_path = match resolve_repo_path(db, repo) {
+        Some(p) => {
+            eprintln!("[checkpoint] repo_path={}", p.display());
+            p
+        }
+        None => {
+            eprintln!("[checkpoint] resolve_repo_path returned None");
+            return None;
+        }
+    };
     let factbase_dir = repo_path.join(".factbase");
     std::fs::create_dir_all(&factbase_dir).ok()?;
     let checkpoint_path = factbase_dir.join("resolve-checkpoint.json");
@@ -897,7 +906,13 @@ fn write_resolve_checkpoint(
         "timestamp": chrono::Utc::now().to_rfc3339(),
     });
 
-    std::fs::write(&checkpoint_path, serde_json::to_string_pretty(&checkpoint).ok()?).ok()?;
+    match std::fs::write(&checkpoint_path, serde_json::to_string_pretty(&checkpoint).unwrap_or_default()) {
+        Ok(_) => eprintln!("[checkpoint] wrote {}", checkpoint_path.display()),
+        Err(e) => {
+            eprintln!("[checkpoint] write failed: {} path={}", e, checkpoint_path.display());
+            return None;
+        }
+    }
     Some(".factbase/resolve-checkpoint.json".to_string())
 }
 
@@ -1143,10 +1158,10 @@ fn resolve_step2_batch(
     };
 
     // Write checkpoint to disk — progress lives on disk, not in the response
-    let repo_filter = get_str_arg(args, "repo");
+    // Pass None to use default repo lookup (avoids name-vs-id mismatch when agent passes repo name)
     let checkpoint_file = write_resolve_checkpoint(
         db,
-        repo_filter,
+        None,
         resolved_so_far,
         remaining,
         total_questions,
