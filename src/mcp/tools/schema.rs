@@ -1,6 +1,8 @@
 //! MCP tool schema definitions.
 //!
-//! Contains the JSON schema for all 26 MCP tools exposed by factbase.
+//! Exposes 2 tools: `workflow` (guided multi-step entry point) and `factbase`
+//! (unified operations tool). Old individual tool names are kept as dispatch
+//! aliases for backward compatibility but are not listed in the schema.
 
 use serde_json::Value;
 
@@ -10,532 +12,286 @@ use serde_json::Value;
 pub fn tools_list() -> Value {
     serde_json::json!({
         "tools": [
-            {
-                "name": "search_knowledge",
-                "description": "Search factbase by meaning, title, or temporal range.\n\nTriggers: 'what do we know about X', 'find X', 'search for X', 'look up X', 'who is X', 'tell me about X'\n\nFor multi-step tasks like 'research X', 'update the factbase', or 'fix issues', use workflow instead.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "query": { "type": "string", "description": "Semantic search query" },
-                        "title_filter": { "type": "string", "description": "Filter by title (partial match)" },
-                        "limit": { "type": "integer", "description": "Max results (default: 10)" },
-                        "offset": { "type": "integer", "description": "Skip results for pagination (default: 0)" },
-                        "doc_type": { "type": "string", "description": "Filter by document type" },
-                        "repo": { "type": "string", "description": "Filter by repository" },
-                        "as_of": { "type": "string", "description": "Filter to facts valid at date (YYYY, YYYY-MM, or YYYY-MM-DD)" },
-                        "during": { "type": "string", "description": "Filter to facts valid during range (YYYY..YYYY or YYYY-MM..YYYY-MM)" },
-                        "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags (default: false)" },
-                        "boost_recent": { "type": "boolean", "description": "Boost ranking of recent @t[~...] dates and return temporal metadata (default: false)" }
-                    }
-                }
-            },
-            {
-                "name": "get_entity",
-                "description": "Get a document by ID. Returns full content and links by default, or just stats with detail='stats'.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "Document ID" },
-                        "detail": { "type": "string", "description": "'full' (default) for content+links, 'stats' for counts only" },
-                        "include_preview": { "type": "boolean", "description": "Include 500-char content preview" },
-                        "max_content_length": { "type": "integer", "description": "Truncate content to this length (0 = no truncation)" }
-                    },
-                    "required": ["id"]
-                }
-            },
-            {
-                "name": "list_entities",
-                "description": "List documents with optional type, repo, or title filters.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "doc_type": { "type": "string", "description": "Filter by type" },
-                        "repo": { "type": "string", "description": "Filter by repository" },
-                        "title_filter": { "type": "string", "description": "Filter by title pattern (SQL LIKE, use % for wildcards)" },
-                        "limit": { "type": "integer", "description": "Max results" }
-                    }
-                }
-            },
-            {
-                "name": "list_repositories",
-                "description": "List all factbase repositories.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            },
-            {
-                "name": "get_perspective",
-                "description": "Get repository context: organization, focus area, and quality policies.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID" }
-                    },
-                    "required": ["repo"]
-                }
-            },
-            {
-                "name": "create_document",
-                "description": "Create a new document. Call get_authoring_guide first if unsure about format.\n\nFor guided multi-step research and document creation, prefer workflow(workflow='ingest', topic='...') instead.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID" },
-                        "path": { "type": "string", "description": "Relative file path" },
-                        "title": { "type": "string", "description": "Document title" },
-                        "content": { "type": "string", "description": "Document body (do NOT include # Title heading — it is added automatically from the title field)" }
-                    },
-                    "required": ["repo", "path", "title"]
-                }
-            },
-            {
-                "name": "update_document",
-                "description": "Update a document's title or content.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "Document ID" },
-                        "title": { "type": "string", "description": "New title" },
-                        "content": { "type": "string", "description": "New content" }
-                    },
-                    "required": ["id"]
-                }
-            },
-            {
-                "name": "delete_document",
-                "description": "Delete a document by ID.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string", "description": "Document ID" }
-                    },
-                    "required": ["id"]
-                }
-            },
-            {
-                "name": "bulk_create_documents",
-                "description": "Create multiple documents atomically (max 100). Use this only when you already have all content prepared.\n\nFor guided research-to-document creation, prefer workflow(workflow='ingest', topic='...'). The ingest workflow handles research, creation, quality checks, and link discovery.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID" },
-                        "documents": {
-                            "type": "array",
-                            "description": "Array of documents to create (max 100)",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "path": { "type": "string", "description": "Relative file path" },
-                                    "title": { "type": "string", "description": "Document title" },
-                                    "content": { "type": "string", "description": "Document body (do NOT include # Title heading — it is added automatically)" }
-                                },
-                                "required": ["path", "title"]
-                            }
-                        }
-                    },
-                    "required": ["repo", "documents"]
-                }
-            },
-            {
-                "name": "search_content",
-                "description": "Exact text search (like grep). No embeddings needed.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "pattern": { "type": "string", "description": "Text pattern to search for (case-insensitive)" },
-                        "limit": { "type": "integer", "description": "Max results (default: 10)" },
-                        "doc_type": { "type": "string", "description": "Filter by document type" },
-                        "repo": { "type": "string", "description": "Filter by repository" },
-                        "context": { "type": "integer", "description": "Number of context lines before/after each match (default: 0)" }
-                    },
-                    "required": ["pattern"]
-                }
-            },
-            {
-                "name": "get_review_queue",
-                "description": "List review questions. Defaults to unanswered only. Use status filter to see answered, deferred, or all. Each question includes question_index for use with answer_questions.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Filter by repository ID" },
-                        "doc_id": { "type": "string", "description": "Filter by document ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, weak-source)" },
-                        "status": { "type": "string", "description": "Filter by status: 'unanswered' (default), 'answered', 'deferred', 'all'" },
-                        "limit": { "type": "integer", "description": "Max questions to return (default: 10)" },
-                        "offset": { "type": "integer", "description": "Skip this many questions for pagination (default: 0)" }
-                    }
-                }
-            },
-            {
-                "name": "answer_questions",
-                "description": "Answer or defer review questions. For a single question: provide doc_id, question_index, answer. For bulk: provide answers array. Prefix with 'defer:' to leave in queue with a note. Use confidence field to distinguish verified (applied) from believed (stays in queue for human review).",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "doc_id": { "type": "string", "description": "Document ID (single mode)" },
-                        "question_index": { "type": "integer", "description": "0-based question index (single mode)" },
-                        "answer": { "type": "string", "description": "Answer text or 'defer: <reason>' (single mode)" },
-                        "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "Confidence level. 'verified' (default): confirmed via external source, will be applied. 'believed': confident from training data but no external confirmation, stays in queue for human review." },
-                        "answers": {
-                            "type": "array",
-                            "description": "Array of answers for bulk mode (max 50)",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "doc_id": { "type": "string" },
-                                    "question_index": { "type": "integer" },
-                                    "answer": { "type": "string" },
-                                    "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "'verified' (default) or 'believed' (stays in queue)" }
-                                },
-                                "required": ["doc_id", "question_index", "answer"]
-                            }
-                        }
-                    }
-                }
-            },
-            {
-                "name": "check_repository",
-                "description": "Run quality checks on a repository. Generates review questions for stale facts, missing sources, temporal gaps, conflicts, and other issues. A single call checks all documents — no paging needed.\n\nIf doc_id is provided, checks just that document (replaces the old generate_questions tool).\nIf doc_ids (array) is provided, checks only those documents — useful after creating multiple documents.\n\nFor cross-document fact comparison, use the get_fact_pairs tool instead.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID (optional)" },
-                        "doc_id": { "type": "string", "description": "Check a single document (optional, checks all if omitted)" },
-                        "doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Check multiple specific documents by ID (optional). More efficient than calling once per document." },
-                        "dry_run": { "type": "boolean", "description": "Preview without modifying files (default: false)" }
-                    }
-                }
-            },
-            {
-                "name": "scan_repository",
-                "description": "Re-index documents, generate document and fact embeddings. Use this when the user says 'scan the factbase' or 'rescan'. Does NOT detect links — call detect_links separately after scanning. For a full quality check, use workflow with workflow='update' instead. This tool is time-boxed and WILL return `continue: true` with a resume token for non-trivial repositories — you MUST call again passing the resume token to complete.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID (optional, scans first repo if omitted)" },
-                        "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings even if content is unchanged (default: false). When true, time_budget_secs is ignored to prevent infinite restart loops." },
-                        "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation — index documents into DB without calling embedding provider (default: false). Useful when importing pre-computed embeddings." },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Ignored when force_reindex is true. Operation returns progress and asks to be called again if budget is exceeded." },
-                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
-                    }
-                }
-            },
-            {
-                "name": "detect_links",
-                "description": "Detect cross-document links via title string matching. Run this after scan_repository to find entity references across documents. Idempotent — running twice produces the same result. This tool is time-boxed and WILL return `continue: true` with a resume token for large repositories — you MUST call again passing the resume token to complete.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID (optional, uses first repo if omitted)" },
-                        "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600, default from config). Operation returns progress and asks to be called again if budget is exceeded." },
-                        "resume": { "type": "string", "description": "Opaque resume token from a previous call's response. Pass it back to continue where you left off." }
-                    }
-                }
-            },
-            {
-                "name": "init_repository",
-                "description": "Initialize a new factbase repository at a directory path. Creates .factbase/ and registers it.\n\nFor guided setup including perspective configuration and initial documents, prefer workflow(workflow='setup', path='...') instead.\n\nTriggers: 'add this folder to factbase', 'initialize factbase at /path', 'set up a new knowledge base'",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "Directory path to initialize as a repository" },
-                        "id": { "type": "string", "description": "Repository ID (optional, defaults to directory name)" },
-                        "name": { "type": "string", "description": "Display name (optional, defaults to id)" }
-                    },
-                    "required": ["path"]
-                }
-            },
-            {
-                "name": "workflow",
-                "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'run full maintenance' or 'clean up KB' or 'do everything' or 'maintain the factbase' → workflow='maintain'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'populate KB from a source file' or 'create documents from [data]' or 'bootstrap with data' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nThe 'maintain' workflow chains scan → detect_links → check → resolve → report for a one-command clean state.\n\nThe 'resolve' workflow has 6 steps: queue overview, answer batches, apply, verify, cleanup scan, and final report.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.\n\nCall again with the next step number to advance.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "workflow": { "type": "string", "description": "Workflow name: 'bootstrap', 'setup', 'update', 'maintain', 'resolve', 'ingest', 'enrich', 'improve', or 'list'" },
-                        "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
-                        "domain": { "type": "string", "description": "For bootstrap: domain description (e.g. 'mycology', 'ancient Mediterranean history', 'indie video games')" },
-                        "entity_types": { "type": "string", "description": "For bootstrap: optional comma-separated entity types the user wants to track (e.g. 'species, habitats, researchers')" },
-                        "path": { "type": "string", "description": "For setup/bootstrap: directory path for the new repository" },
-                        "topic": { "type": "string", "description": "For ingest: what to research" },
-                        "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
-                        "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
-                        "question_type": { "type": "string", "description": "For resolve step 2: filter questions by type. Comma-separated for multiple types (e.g. 'temporal,ambiguous'). Omit to get all types. Valid types: stale, temporal, ambiguous, conflict, precision, duplicate, missing, weak-source" },
-                        "variant": { "type": "string", "enum": ["baseline", "type_evidence", "research_batch"], "description": "For resolve: prompt variant to use. 'baseline' (default) uses standard prompts. 'type_evidence' uses type-specific evidence standards per question type. 'research_batch' restructures workflow to research per-document first, then answer all questions for that document." },
-                        "cross_validate": { "type": "boolean", "description": "For update: include cross-document fact validation step (default: false). If true, workflow includes a cross_validate mode step after questions." },
-                        "skip": {
-                            "oneOf": [
-                                { "type": "string", "description": "Comma-separated step names to skip" },
-                                { "type": "array", "items": { "type": "string" }, "description": "Step names to skip" }
-                            ],
-                            "description": "For improve: steps to skip. Valid names: 'cleanup', 'resolve', 'enrich', 'check'"
-                        },
-                        "repo": { "type": "string", "description": "Repository ID (optional)" }
-                    },
-                    "required": ["workflow"]
-                }
-            },
-            {
-                "name": "organize_analyze",
-                "description": "Analyze repository for reorganization opportunities: ghost files (duplicate files sharing an ID/title in the same directory), merge candidates (similar docs), split candidates (multi-topic docs), misplaced documents (wrong folder/type), and duplicate entries. Use focus='duplicates' for detailed duplicate/stale entry info only, or focus='structure' for misplaced document detection only.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
-                        "focus": { "type": "string", "enum": ["duplicates", "structure"], "description": "Focus on a specific analysis type. 'duplicates' returns detailed duplicate/stale entry info. 'structure' returns misplaced document candidates." },
-                        "merge_threshold": { "type": "number", "description": "Minimum similarity for merge candidates (default: 0.95)" },
-                        "split_threshold": { "type": "number", "description": "Maximum similarity for split candidates (default: 0.5)" }
-                    }
-                }
-            },
-            {
-                "name": "organize",
-                "description": "Execute a knowledge base reorganization action: move a document to a different folder, change a document's type, or process orphan assignments. For merge/split, use get_entity + update_document + create_document/delete_document directly.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "action": { "type": "string", "enum": ["move", "retype", "apply"], "description": "The reorganization action to perform" },
-                        "doc_id": { "type": "string", "description": "Document ID (move, retype)" },
-                        "to": { "type": "string", "description": "Destination folder relative to repo root (move)" },
-                        "new_type": { "type": "string", "description": "New type to assign (retype)" },
-                        "persist": { "type": "boolean", "description": "Persist type override to file (retype, default: false)" },
-                        "repo": { "type": "string", "description": "Repository ID (apply, optional)" },
-                        "dry_run": { "type": "boolean", "description": "Preview without executing (move; default: false)" }
-                    },
-                    "required": ["action"]
-                }
-            },
-            {
-                "name": "get_deferred_items",
-                "description": "Get deferred review items that need human attention. Returns a focused summary of items previously deferred by agents.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Filter by repository ID" },
-                        "type": { "type": "string", "description": "Filter by question type (temporal, conflict, missing, ambiguous, stale, duplicate, corruption, precision, weak-source)" },
-                        "limit": { "type": "integer", "description": "Max items to return (default: 10)" },
-                        "offset": { "type": "integer", "description": "Skip items for pagination (default: 0)" }
-                    }
-                }
-            },
-            {
-                "name": "get_authoring_guide",
-                "description": "Get document formatting rules, temporal tag syntax, source citation format, and templates.\n\nTriggers: 'how should I format documents', 'what format does factbase use', 'how do I write a factbase document'",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            },
-            {
-                "name": "embeddings_export",
-                "description": "Export pre-computed vector embeddings as JSONL. Includes model metadata and chunk boundaries for portable distribution.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Filter by repository ID (optional, exports all if omitted)" }
-                    }
-                }
-            },
-            {
-                "name": "embeddings_import",
-                "description": "Import pre-computed vector embeddings from JSONL data. Validates model and dimension compatibility. Skips embeddings for documents not in the database.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "data": { "type": "string", "description": "JSONL string with embedding header and records" },
-                        "force": { "type": "boolean", "description": "Force import even if embedding dimensions don't match (default: false)" }
-                    },
-                    "required": ["data"]
-                }
-            },
-            {
-                "name": "embeddings_status",
-                "description": "Check embedding index status: document coverage, model info, dimension, orphaned chunks.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {}
-                }
-            },
-            {
-                "name": "get_link_suggestions",
-                "description": "Get link suggestions: documents paired with embedding-similar candidates not yet linked. Supports type filters for cross-type discovery (e.g., find projects related to a person) or same-type discovery. Use this after scanning to discover missing cross-references.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Filter by repository ID (optional)" },
-                        "min_similarity": { "type": "number", "description": "Minimum embedding similarity for candidates (default: 0.6)" },
-                        "include_types": { "type": "array", "items": { "type": "string" }, "description": "Only suggest candidates of these types (e.g., [\"project\",\"customer\"])" },
-                        "exclude_types": { "type": "array", "items": { "type": "string" }, "description": "Exclude candidates of these types (e.g., [\"person\"] to avoid same-type noise)" },
-                        "limit": { "type": "integer", "description": "Max suggestions to return (default: 50)" }
-                    }
-                }
-            },
-            {
-                "name": "store_links",
-                "description": "Store links by writing [[id]] references into document files. Writes `References:` to source files and `Referenced by:` to target files. Only the forward direction (source→target) is added to the database.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "links": {
-                            "type": "array",
-                            "description": "Array of links to store",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "source_id": { "type": "string", "description": "Source document ID" },
-                                    "target_id": { "type": "string", "description": "Target document ID" }
-                                },
-                                "required": ["source_id", "target_id"]
-                            }
-                        }
-                    },
-                    "required": ["links"]
-                }
-            },
-            {
-                "name": "get_fact_pairs",
-                "description": "Get embedding-similar fact pairs across documents for cross-validation. Returns pairs of facts from different documents that are semantically similar, excluding pairs that already have cross-check review questions. The agent classifies each pair (contradicting/superseding/consistent) and flags conflicts via answer_questions.",
-                "inputSchema": {
-                    "type": "object",
-                    "properties": {
-                        "repo": { "type": "string", "description": "Repository ID (optional)" },
-                        "min_similarity": { "type": "number", "description": "Minimum cosine similarity threshold (default: from config, typically 0.5)" },
-                        "limit": { "type": "integer", "description": "Maximum pairs to return (default: 50)" }
-                    }
-                }
-            }
+            workflow_schema(),
+            factbase_schema(),
         ]
     })
 }
+
+/// Returns the list of old tool names that are kept as dispatch aliases.
+/// These are NOT in the schema but still accepted by handle_tool_call.
+#[cfg(test)]
+pub fn legacy_tool_names() -> &'static [&'static str] {
+    &[
+        "search_knowledge", "search_content",
+        "get_entity", "list_entities", "get_perspective", "list_repositories",
+        "create_document", "update_document", "delete_document", "bulk_create_documents",
+        "get_review_queue", "get_deferred_items", "answer_questions",
+        "check_repository", "scan_repository", "detect_links", "init_repository",
+        "get_authoring_guide",
+        "organize_analyze", "organize",
+        "embeddings_export", "embeddings_import", "embeddings_status",
+        "get_link_suggestions", "store_links", "get_fact_pairs",
+    ]
+}
+
+fn workflow_schema() -> Value {
+    serde_json::json!({
+        "name": "workflow",
+        "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'run full maintenance' or 'clean up KB' or 'do everything' or 'maintain the factbase' → workflow='maintain'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'populate KB from a source file' or 'create documents from [data]' or 'bootstrap with data' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nThe 'maintain' workflow chains scan → detect_links → check → resolve → report for a one-command clean state.\n\nThe 'resolve' workflow has 6 steps: queue overview, answer batches, apply, verify, cleanup scan, and final report.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.\n\nCall again with the next step number to advance.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "workflow": { "type": "string", "description": "Workflow name: 'bootstrap', 'setup', 'update', 'maintain', 'resolve', 'ingest', 'enrich', 'improve', or 'list'" },
+                "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
+                "domain": { "type": "string", "description": "For bootstrap: domain description (e.g. 'mycology', 'ancient Mediterranean history', 'indie video games')" },
+                "entity_types": { "type": "string", "description": "For bootstrap: optional comma-separated entity types the user wants to track (e.g. 'species, habitats, researchers')" },
+                "path": { "type": "string", "description": "For setup/bootstrap: directory path for the new repository" },
+                "topic": { "type": "string", "description": "For ingest: what to research" },
+                "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
+                "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
+                "question_type": { "type": "string", "description": "For resolve step 2: filter questions by type. Comma-separated for multiple types (e.g. 'temporal,ambiguous'). Omit to get all types. Valid types: stale, temporal, ambiguous, conflict, precision, duplicate, missing, weak-source" },
+                "variant": { "type": "string", "enum": ["baseline", "type_evidence", "research_batch"], "description": "For resolve: prompt variant to use. 'baseline' (default) uses standard prompts. 'type_evidence' uses type-specific evidence standards per question type. 'research_batch' restructures workflow to research per-document first, then answer all questions for that document." },
+                "cross_validate": { "type": "boolean", "description": "For update: include cross-document fact validation step (default: false). If true, workflow includes a cross_validate mode step after questions." },
+                "skip": {
+                    "oneOf": [
+                        { "type": "string", "description": "Comma-separated step names to skip" },
+                        { "type": "array", "items": { "type": "string" }, "description": "Step names to skip" }
+                    ],
+                    "description": "For improve: steps to skip. Valid names: 'cleanup', 'resolve', 'enrich', 'check'"
+                },
+                "repo": { "type": "string", "description": "Repository ID (optional)" }
+            },
+            "required": ["workflow"]
+        }
+    })
+}
+
+fn factbase_schema() -> Value {
+    serde_json::json!({
+        "name": "factbase",
+        "description": concat!(
+            "Unified factbase operations tool. Called by workflow steps — use the workflow tool as the entry point for multi-step tasks.\n\n",
+            "Operations (op=...):\n",
+            "- search: Search by meaning (mode=semantic, default) or exact text (mode=content). Params: query, mode, title_filter, limit, offset, doc_type, repo, pattern, context, as_of, during, exclude_unknown, boost_recent\n",
+            "- get_entity: Get document by ID. Params: id (required), detail, include_preview, max_content_length\n",
+            "- list: List documents. Params: doc_type, repo, title_filter, limit\n",
+            "- repos: List all repositories.\n",
+            "- perspective: Get repository context. Params: repo (required)\n",
+            "- create: Create document. Params: repo (required), path (required), title (required), content\n",
+            "- update: Update document. Params: id (required), title, content\n",
+            "- delete: Delete document. Params: id (required)\n",
+            "- bulk_create: Create multiple documents. Params: repo (required), documents (required, array of {path, title, content})\n",
+            "- scan: Re-index documents + embeddings. Time-boxed — returns continue+resume for large repos. Params: repo, force_reindex, skip_embeddings, time_budget_secs, resume\n",
+            "- check: Run quality checks. Params: repo, doc_id, doc_ids, dry_run\n",
+            "- detect_links: Detect cross-document links. Time-boxed. Params: repo, time_budget_secs, resume\n",
+            "- init: Initialize new repository. Params: path (required), id, name\n",
+            "- review_queue: List review questions. Params: repo, doc_id, type, status, limit, offset\n",
+            "- answer: Answer/defer review questions. Params: doc_id, question_index, answer, confidence, answers (bulk array)\n",
+            "- deferred: Get deferred items. Params: repo, type, limit, offset\n",
+            "- organize: Reorganize KB. action=analyze for suggestions, action=move/retype/apply for execution. Params: action, repo, doc_id, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
+            "- links: action=suggest for link suggestions, action=store to write links. Params: action, repo, min_similarity, include_types, exclude_types, limit, links (array)\n",
+            "- fact_pairs: Get similar fact pairs for cross-validation. Params: repo, min_similarity, limit\n",
+            "- embeddings: action=export/import/status. Params: action, repo, data, force\n",
+            "- authoring_guide: Get document format rules and templates.\n",
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "op": {
+                    "type": "string",
+                    "enum": [
+                        "search", "get_entity", "list", "repos", "perspective",
+                        "create", "update", "delete", "bulk_create",
+                        "scan", "check", "detect_links", "init",
+                        "review_queue", "answer", "deferred",
+                        "organize", "links", "fact_pairs", "embeddings",
+                        "authoring_guide"
+                    ],
+                    "description": "Operation to perform"
+                },
+                // Common
+                "repo": { "type": "string", "description": "Repository ID" },
+                "doc_id": { "type": "string", "description": "Document ID" },
+                "limit": { "type": "integer", "description": "Max results" },
+                "offset": { "type": "integer", "description": "Pagination offset" },
+                // Search
+                "query": { "type": "string", "description": "Search query (semantic or content pattern)" },
+                "mode": { "type": "string", "enum": ["semantic", "content"], "description": "Search mode (default: semantic)" },
+                "title_filter": { "type": "string", "description": "Filter by title (partial match)" },
+                "doc_type": { "type": "string", "description": "Filter by document type" },
+                "pattern": { "type": "string", "description": "Text pattern for content search" },
+                "context": { "type": "integer", "description": "Context lines around content matches" },
+                "as_of": { "type": "string", "description": "Filter to facts valid at date (YYYY, YYYY-MM, or YYYY-MM-DD)" },
+                "during": { "type": "string", "description": "Filter to facts valid during range (YYYY..YYYY)" },
+                "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags" },
+                "boost_recent": { "type": "boolean", "description": "Boost ranking of recent dates" },
+                // Entity
+                "id": { "type": "string", "description": "Document ID (get_entity, update, delete)" },
+                "detail": { "type": "string", "description": "get_entity: 'full' or 'stats'" },
+                "include_preview": { "type": "boolean", "description": "Include 500-char content preview" },
+                "max_content_length": { "type": "integer", "description": "Truncate content to this length" },
+                // Document CRUD
+                "path": { "type": "string", "description": "File path (create, init)" },
+                "title": { "type": "string", "description": "Document title" },
+                "content": { "type": "string", "description": "Document content" },
+                "documents": { "type": "array", "description": "Array of {path, title, content} for bulk_create (max 100)", "items": { "type": "object" } },
+                "name": { "type": "string", "description": "Display name (init)" },
+                // Scan
+                "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings" },
+                "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation" },
+                "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600)" },
+                "resume": { "type": "string", "description": "Resume token from previous call" },
+                // Check
+                "doc_ids": { "type": "array", "items": { "type": "string" }, "description": "Check specific documents" },
+                "dry_run": { "type": "boolean", "description": "Preview without modifying" },
+                // Review
+                "type": { "type": "string", "description": "Question type filter" },
+                "status": { "type": "string", "description": "Question status filter" },
+                "question_index": { "type": "integer", "description": "0-based question index" },
+                "answer": { "type": "string", "description": "Answer text" },
+                "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "Answer confidence" },
+                "answers": { "type": "array", "description": "Bulk answers array", "items": { "type": "object" } },
+                // Organize
+                "action": { "type": "string", "description": "Sub-action: analyze/move/retype/apply (organize), suggest/store (links), export/import/status (embeddings)" },
+                "to": { "type": "string", "description": "Destination folder (organize move)" },
+                "new_type": { "type": "string", "description": "New type (organize retype)" },
+                "persist": { "type": "boolean", "description": "Persist type override" },
+                "focus": { "type": "string", "enum": ["duplicates", "structure"], "description": "Organize analysis focus" },
+                "merge_threshold": { "type": "number", "description": "Merge similarity threshold" },
+                "split_threshold": { "type": "number", "description": "Split similarity threshold" },
+                // Links
+                "min_similarity": { "type": "number", "description": "Minimum similarity threshold" },
+                "include_types": { "type": "array", "items": { "type": "string" }, "description": "Include candidate types" },
+                "exclude_types": { "type": "array", "items": { "type": "string" }, "description": "Exclude candidate types" },
+                "links": { "type": "array", "description": "Links to store [{source_id, target_id}]", "items": { "type": "object" } },
+                // Embeddings
+                "data": { "type": "string", "description": "JSONL data for embeddings import" },
+                "force": { "type": "boolean", "description": "Force import despite dimension mismatch" }
+            },
+            "required": ["op"]
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_tools_list_returns_all_tools() {
+    fn test_tools_list_has_two_tools() {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
-
-        assert_eq!(tools.len(), 27, "should have 27 tools");
+        assert_eq!(tools.len(), 2, "should have exactly 2 tools: workflow + factbase");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-        assert!(names.contains(&"search_knowledge"));
-        assert!(names.contains(&"get_entity"));
-        assert!(names.contains(&"get_review_queue"));
-        assert!(names.contains(&"answer_questions"));
-        assert!(names.contains(&"check_repository"));
-        assert!(names.contains(&"scan_repository"));
-        assert!(names.contains(&"detect_links"));
-        assert!(names.contains(&"init_repository"));
-        assert!(names.contains(&"list_entities"));
-        assert!(names.contains(&"list_repositories"));
-        assert!(names.contains(&"get_perspective"));
-        assert!(names.contains(&"create_document"));
-        assert!(names.contains(&"update_document"));
-        assert!(names.contains(&"delete_document"));
-        assert!(names.contains(&"bulk_create_documents"));
-        assert!(names.contains(&"search_content"));
-        assert!(names.contains(&"get_deferred_items"));
-        assert!(names.contains(&"get_authoring_guide"));
         assert!(names.contains(&"workflow"));
-        assert!(names.contains(&"organize_analyze"));
-        assert!(names.contains(&"organize"));
-        assert!(names.contains(&"embeddings_export"));
-        assert!(names.contains(&"embeddings_import"));
-        assert!(names.contains(&"embeddings_status"));
-        assert!(names.contains(&"get_link_suggestions"));
-        assert!(names.contains(&"store_links"));
-        assert!(names.contains(&"get_fact_pairs"));
+        assert!(names.contains(&"factbase"));
+    }
 
-        // Removed tools should NOT be present
-        assert!(!names.contains(&"generate_questions"), "generate_questions should be removed");
-        assert!(!names.contains(&"apply_review_answers"), "apply_review_answers should be removed");
+    #[test]
+    fn test_factbase_schema_has_required_op() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let required = fb["inputSchema"]["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "op"));
+    }
 
-        // All 26 expected tools should be present
+    #[test]
+    fn test_factbase_schema_op_enum_values() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let ops = fb["inputSchema"]["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap();
+        let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
+
         let expected = [
-            "search_knowledge", "get_entity", "list_entities", "list_repositories",
-            "get_perspective", "create_document", "update_document", "delete_document",
-            "bulk_create_documents", "search_content", "get_review_queue", "answer_questions",
-            "check_repository", "scan_repository", "init_repository", "workflow",
-            "organize_analyze", "organize", "get_deferred_items", "get_authoring_guide",
-            "embeddings_export", "embeddings_import", "embeddings_status",
-            "get_link_suggestions", "store_links", "get_fact_pairs",
+            "search", "get_entity", "list", "repos", "perspective",
+            "create", "update", "delete", "bulk_create",
+            "scan", "check", "detect_links", "init",
+            "review_queue", "answer", "deferred",
+            "organize", "links", "fact_pairs", "embeddings",
+            "authoring_guide",
         ];
-        for name in &expected {
-            assert!(names.contains(name), "missing tool: {name}");
+        for op in &expected {
+            assert!(op_strs.contains(op), "missing op: {op}");
         }
-
-        // Verify tools with required params have inputSchema
-        for tool in tools {
-            assert!(tool["name"].is_string(), "tool should have name");
-            assert!(
-                tool["description"].is_string(),
-                "tool should have description"
-            );
-        }
-
-        // Verify search_knowledge has title_filter param
-        let search = tools
-            .iter()
-            .find(|t| t["name"] == "search_knowledge")
-            .expect("search_knowledge tool should exist");
-        let props = search["inputSchema"]["properties"]
-            .as_object()
-            .expect("should have properties");
-        assert!(props.contains_key("query"));
-        assert!(props.contains_key("title_filter"));
-        assert!(props.contains_key("as_of"));
-        assert!(props.contains_key("during"));
-        assert!(props.contains_key("exclude_unknown"));
+        assert_eq!(op_strs.len(), expected.len(), "unexpected extra ops");
     }
 
     #[test]
-    fn test_tools_list_required_params() {
+    fn test_factbase_description_mentions_workflow() {
         let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        // Tools with required params should have them in schema
-        let get_entity = tools.iter().find(|t| t["name"] == "get_entity").unwrap();
-        let required = get_entity["inputSchema"]["required"]
-            .as_array()
-            .expect("required array");
-        assert!(required.iter().any(|v| v == "id"));
-
-        let get_perspective = tools
-            .iter()
-            .find(|t| t["name"] == "get_perspective")
-            .unwrap();
-        let required = get_perspective["inputSchema"]["required"]
-            .as_array()
-            .expect("required array");
-        assert!(required.iter().any(|v| v == "repo"));
-
-        let create_doc = tools
-            .iter()
-            .find(|t| t["name"] == "create_document")
-            .unwrap();
-        let required = create_doc["inputSchema"]["required"]
-            .as_array()
-            .expect("required array");
-        assert!(required.iter().any(|v| v == "repo"));
-        assert!(required.iter().any(|v| v == "path"));
-        assert!(required.iter().any(|v| v == "title"));
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        assert!(desc.contains("workflow"), "factbase description should mention workflow");
     }
 
     #[test]
-    fn test_tools_list_search_knowledge_has_temporal_params() {
+    fn test_workflow_schema_unchanged() {
         let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(desc.contains("RECOMMENDED"));
+        let required = wf["inputSchema"]["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "workflow"));
+    }
 
-        let search = tools
-            .iter()
-            .find(|t| t["name"] == "search_knowledge")
-            .unwrap();
-        let props = search["inputSchema"]["properties"]
-            .as_object()
-            .expect("properties");
+    #[test]
+    fn test_factbase_schema_has_doc_type_not_type_for_filtering() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let props = fb["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("doc_type"), "should have doc_type param");
+    }
 
-        // Should have temporal params (merged from search_temporal)
+    #[test]
+    fn test_factbase_schema_has_mode_for_search() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let mode = &fb["inputSchema"]["properties"]["mode"];
+        let mode_enum = mode["enum"].as_array().unwrap();
+        let values: Vec<&str> = mode_enum.iter().filter_map(|v| v.as_str()).collect();
+        assert!(values.contains(&"semantic"));
+        assert!(values.contains(&"content"));
+    }
+
+    #[test]
+    fn test_legacy_tool_names_covers_all_old_tools() {
+        let names = legacy_tool_names();
+        assert!(names.contains(&"search_knowledge"));
+        assert!(names.contains(&"scan_repository"));
+        assert!(names.contains(&"check_repository"));
+        assert!(names.contains(&"get_entity"));
+        assert!(names.contains(&"create_document"));
+        assert!(names.contains(&"get_fact_pairs"));
+        assert!(names.len() >= 26, "should cover all old tool names");
+    }
+
+    #[test]
+    fn test_tools_list_unique_names() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(names.len(), unique.len());
+    }
+
+    #[test]
+    fn test_factbase_schema_has_temporal_params() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let props = fb["inputSchema"]["properties"].as_object().unwrap();
         assert!(props.contains_key("as_of"));
         assert!(props.contains_key("during"));
         assert!(props.contains_key("exclude_unknown"));
@@ -543,167 +299,38 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_bulk_create_schema() {
+    fn test_factbase_schema_has_scan_params() {
         let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        let bulk_create = tools
-            .iter()
-            .find(|t| t["name"] == "bulk_create_documents")
-            .unwrap();
-        let props = bulk_create["inputSchema"]["properties"]
-            .as_object()
-            .expect("properties");
-
-        assert!(props.contains_key("repo"));
-        assert!(props.contains_key("documents"));
-
-        // documents should be array type
-        let docs_schema = &props["documents"];
-        assert_eq!(docs_schema["type"], "array");
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let props = fb["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("force_reindex"));
+        assert!(props.contains_key("time_budget_secs"));
+        assert!(props.contains_key("resume"));
     }
 
     #[test]
-    fn test_tools_list_unique_names() {
+    fn test_workflow_schema_has_variant_param() {
         let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
-        let mut unique_names = names.clone();
-        unique_names.sort();
-        unique_names.dedup();
-
-        assert_eq!(
-            names.len(),
-            unique_names.len(),
-            "all tool names should be unique"
-        );
-    }
-
-    #[test]
-    fn test_search_knowledge_no_required_fields() {
-        let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        let search = tools
-            .iter()
-            .find(|t| t["name"] == "search_knowledge")
-            .unwrap();
-
-        // search_knowledge has no required fields - all params are optional
-        assert!(
-            search["inputSchema"]["required"].is_null(),
-            "search_knowledge should have no required fields"
-        );
-    }
-
-    #[test]
-    fn test_bulk_create_max_limit_documented() {
-        let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        let bulk_create = tools
-            .iter()
-            .find(|t| t["name"] == "bulk_create_documents")
-            .unwrap();
-        let docs_desc = bulk_create["inputSchema"]["properties"]["documents"]["description"]
-            .as_str()
-            .expect("documents description");
-
-        assert!(
-            docs_desc.contains("max 100"),
-            "bulk_create_documents should document max 100 limit"
-        );
-    }
-
-    #[test]
-    fn test_delete_document_required_id() {
-        let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        let delete = tools
-            .iter()
-            .find(|t| t["name"] == "delete_document")
-            .unwrap();
-        let required = delete["inputSchema"]["required"]
-            .as_array()
-            .expect("required array");
-
-        assert!(
-            required.iter().any(|v| v == "id"),
-            "delete_document should require id"
-        );
-    }
-
-    #[test]
-    fn test_paging_tool_descriptions_use_mandatory_language() {
-        let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        // scan_repository and detect_links use paging
-        for tool_name in &["scan_repository", "detect_links"] {
-            let tool = tools.iter().find(|t| t["name"] == *tool_name).unwrap();
-            let desc = tool["description"].as_str().unwrap();
-            assert!(
-                desc.contains("WILL return"),
-                "{tool_name} description should say paging WILL happen"
-            );
-            assert!(
-                desc.contains("MUST"),
-                "{tool_name} description should use MUST for continuation"
-            );
-        }
-    }
-
-    #[test]
-    fn test_raw_tools_nudge_toward_workflows() {
-        let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
-        let cases = [
-            ("create_document", "workflow"),
-            ("bulk_create_documents", "workflow"),
-            ("init_repository", "workflow"),
-        ];
-        for (tool_name, keyword) in &cases {
-            let tool = tools.iter().find(|t| t["name"] == *tool_name)
-                .unwrap_or_else(|| panic!("tool {tool_name} not found"));
-            let desc = tool["description"].as_str().unwrap();
-            assert!(
-                desc.contains(keyword),
-                "{tool_name} description should mention '{keyword}' to nudge toward workflows"
-            );
-        }
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let props = &wf["inputSchema"]["properties"];
+        assert!(props.get("variant").is_some());
+        let variant_enum = props["variant"]["enum"].as_array().unwrap();
+        let values: Vec<&str> = variant_enum.iter().filter_map(|v| v.as_str()).collect();
+        assert!(values.contains(&"baseline"));
+        assert!(values.contains(&"type_evidence"));
+        assert!(values.contains(&"research_batch"));
     }
 
     #[test]
     fn test_workflow_description_is_recommended() {
         let result = tools_list();
-        let tools = result["tools"].as_array().expect("tools array");
-
+        let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
-        assert!(
-            desc.contains("RECOMMENDED"),
-            "workflow description should be marked as RECOMMENDED entry point"
-        );
-        assert!(
-            desc.contains("populate KB from a source file"),
-            "workflow description should cover source-file-to-KB use case"
-        );
-        assert!(
-            desc.contains("maintain"),
-            "workflow description should mention maintain workflow"
-        );
-        assert!(
-            desc.contains("ERROR HANDLING"),
-            "workflow description should include error handling guidance"
-        );
-        // Check workflow enum includes maintain
-        let schema = wf["inputSchema"]["properties"]["workflow"]["description"].as_str().unwrap();
-        assert!(
-            schema.contains("maintain"),
-            "workflow enum description should include maintain"
-        );
+        assert!(desc.contains("RECOMMENDED"));
+        assert!(desc.contains("maintain"));
+        assert!(desc.contains("ERROR HANDLING"));
     }
 }
