@@ -486,14 +486,10 @@ mod tests {
     fn test_schema_has_type_filters() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
-        let tool = tools_arr
-            .iter()
-            .find(|t| t["name"] == "get_link_suggestions")
-            .unwrap();
-        let props = &tool["inputSchema"]["properties"];
-        assert!(props.get("include_types").is_some(), "should have include_types");
-        assert!(props.get("exclude_types").is_some(), "should have exclude_types");
-        assert!(props.get("max_existing_links").is_none(), "should NOT have max_existing_links");
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let props = fb["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("include_types"), "should have include_types");
+        assert!(props.contains_key("exclude_types"), "should have exclude_types");
     }
 
     #[test]
@@ -504,7 +500,7 @@ mod tests {
         let args = serde_json::json!({"workflow": "ingest", "step": 5, "topic": "test"});
         let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("get_link_suggestions"), "ingest step 5 should mention get_link_suggestions");
+        assert!(instr.contains("factbase(op='links')"), "ingest step 5 should mention factbase(op='links')");
         assert!(result["complete"].as_bool().unwrap_or(false), "ingest step 5 should be complete");
     }
 }

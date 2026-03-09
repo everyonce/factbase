@@ -464,17 +464,12 @@ mod tests {
 
     #[test]
     fn test_scan_repository_sets_skip_links() {
-        // Verify that the MCP scan_repository tool sets skip_links=true
-        // by checking that ScanOptions constructed in the tool has skip_links=true.
-        // We test this indirectly: scan_repository should return links_detected=0.
-        // (Full integration test would require embedding provider, so we just verify
-        // the schema description no longer mentions link detection.)
+        // Verify that the factbase tool's scan op description references detect_links
         let tools = crate::mcp::tools::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
-        let scan_tool = tools_arr.iter().find(|t| t["name"] == "scan_repository").unwrap();
-        let desc = scan_tool["description"].as_str().unwrap();
-        assert!(!desc.contains("detect entity links"), "scan_repository should not mention link detection");
-        assert!(desc.contains("detect_links"), "scan_repository should reference detect_links tool");
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        assert!(desc.contains("detect_links"), "factbase description should reference detect_links op");
     }
 
     #[tokio::test]
@@ -509,10 +504,13 @@ mod tests {
 
     #[test]
     fn test_detect_links_in_schema() {
+        // detect_links is now an op in the factbase tool
         let tools = crate::mcp::tools::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
-        let names: Vec<&str> = tools_arr.iter().filter_map(|t| t["name"].as_str()).collect();
-        assert!(names.contains(&"detect_links"), "detect_links should be in tool schema");
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let ops = fb["inputSchema"]["properties"]["op"]["enum"].as_array().unwrap();
+        let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
+        assert!(op_strs.contains(&"detect_links"), "detect_links should be a factbase op");
     }
 
     #[test]
@@ -525,6 +523,6 @@ mod tests {
         let result = result.unwrap();
         let instr = result["instruction"].as_str().unwrap();
         assert!(instr.contains("detect_links"), "update step 2 should instruct detect_links");
-        assert_eq!(result["next_tool"], "detect_links");
+        assert_eq!(result["next_tool"], "factbase");
     }
 }

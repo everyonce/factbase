@@ -32,7 +32,7 @@ fn resolve_repo_path(db: &Database, repo_id: Option<&str>) -> Option<std::path::
 }
 
 /// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
-const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put names, descriptions, statuses, or any other text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG (entity names): `@t[Wolfgang Amadeus Mozart]` `@t[Mount Vesuvius]`\n- ❌ WRONG (descriptions): `@t[Complex counterpoint and fugal writing]` `@t[bright red when young]`\n- ❌ WRONG (statuses): `@t[Active Production Status: Ongoing]` `@t[No significant seismic activity]`\n- ❌ WRONG (statistics): `@t[Total Produced: 650+]` `@t[Population: 12000]`\n- ❌ WRONG (vague time words): `@t[seasonal]` `@t[since ancient times]` `@t[traditional..modern]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall get_authoring_guide for the full format reference";
+const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put names, descriptions, statuses, or any other text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG (entity names): `@t[Wolfgang Amadeus Mozart]` `@t[Mount Vesuvius]`\n- ❌ WRONG (descriptions): `@t[Complex counterpoint and fugal writing]` `@t[bright red when young]`\n- ❌ WRONG (statuses): `@t[Active Production Status: Ongoing]` `@t[No significant seismic activity]`\n- ❌ WRONG (statistics): `@t[Total Produced: 650+]` `@t[Population: 12000]`\n- ❌ WRONG (vague time words): `@t[seasonal]` `@t[since ancient times]` `@t[traditional..modern]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall factbase(op='authoring_guide') for the full format reference";
 
 // ---------------------------------------------------------------------------
 // Default instruction templates for each workflow step.
@@ -68,7 +68,7 @@ Each worker processes its type independently."
 }
 
 // --- Setup workflow ---
-pub(crate) const DEFAULT_SETUP_INIT_INSTRUCTION: &str = "Initialize a new factbase repository at '{path}'. Call init_repository with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)";
+pub(crate) const DEFAULT_SETUP_INIT_INSTRUCTION: &str = "Initialize a new factbase repository at '{path}'. Call factbase(op='init') with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)";
 
 pub(crate) const DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION: &str = "Configure the repository's perspective. Write the file `{path}/perspective.yaml` with YAML content like this:\n\n```yaml\nfocus: \"What this knowledge base is about\"\norganization: \"Who maintains it (optional)\"\nallowed_types:\n  - type1\n  - type2\n  - type3\nreview:\n  stale_days: 180\n  required_fields:\n    type1: [field1, field2]\n    type2: [field1, field2]\n```\n\nIf you ran bootstrap first, use the perspective values it suggested. Otherwise choose values appropriate for the domain.\n\n⚠️ This MUST be valid YAML written to `perspective.yaml` (not .md, not .json). The file goes in the repository root, not in .factbase/.\n\nAlso plan the folder structure — each allowed_type becomes a top-level folder. Documents are placed in type folders (e.g., `species/amanita-muscaria.md`).\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=3)";
 
@@ -76,78 +76,78 @@ pub(crate) const DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION: &str = "✅ perspective.
 
 pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\n\n⚠️ NEXT: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again to re-validate.";
 
-pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using create_document.\n\nIMPORTANT: First call get_authoring_guide to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
+pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using factbase(op='create').\n\nIMPORTANT: First call factbase(op='authoring_guide') to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
 
-pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call scan_repository with time_budget_secs=120 to generate document embeddings and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n2. Call check_repository to run quality checks and see initial issues.\n3. Report what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
+pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call factbase(op='scan') with time_budget_secs=120 to generate document embeddings and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n2. Call factbase(op='check') to run quality checks and see initial issues.\n3. Report what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
 
-pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
+pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run factbase(op='scan') afterward to re-index.";
 
 // --- Update workflow ---
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
 
-pub(crate) const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call detect_links with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE — you'll compare after link suggestions{ctx}";
+pub(crate) const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE — you'll compare after link suggestions{ctx}";
 
-pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call get_fact_pairs to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call answer_questions with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
+pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call factbase(op='fact_pairs') to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call factbase(op='answer') with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
-pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call get_link_suggestions TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type (e.g., exclude_types=[\"person\"] if reviewing people docs) with min_similarity=0.5. This finds connections between different entity types.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7. This finds related entities of the same kind.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs.\n   - store_links writes `References:` to source files and `Referenced by:` to target files, and updates the database.\n4. Record: links_added, documents_modified";
+pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call factbase(op='links') TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type (e.g., exclude_types=[\"person\"] if reviewing people docs) with min_similarity=0.5. This finds connections between different entity types.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7. This finds related entities of the same kind.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs.\n   - factbase(op='links', action='store') writes `References:` to source files and `Referenced by:` to target files, and updates the database.\n4. Record: links_added, documents_modified";
 
-pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call organize_analyze (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
+pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call factbase(op='organize', action='analyze') (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
 pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
 
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Process types in recommended_order (fewest questions first = quick wins). Start with: workflow resolve step=2 question_type=<first_type>. Clear each type completely before moving to the next. Skip types with 0 questions.{ctx}{deferred_note}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call get_entity on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\nWEAK-SOURCE → use your tools to find the actual source. Update the footnote with a specific reference (URL, path, page, ISBN, RFC, channel/thread+date). If you cannot find it, change to '[^N]: UNVERIFIED — original claim: <text>'. Do not invent specific-looking citations.\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.\n\n⚠️ ERROR HANDLING: If you get an IO/body error from answer_questions, your response was too large. Reduce the number of answers per call (split into smaller groups) and retry.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call factbase(op='get_entity') on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\nWEAK-SOURCE → use your tools to find the actual source. Update the footnote with a specific reference (URL, path, page, ISBN, RFC, channel/thread+date). If you cannot find it, change to '[^N]: UNVERIFIED — original claim: <text>'. Do not invent specific-looking citations.\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.\n\n⚠️ ERROR HANDLING: If you get an IO/body error from factbase(op='answer'), your response was too large. Reduce the number of answers per call (split into smaller groups) and retry.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANSWER questions, not analyze them. Answer from knowledge first. Only research if you genuinely cannot answer. Every tool call that is not answer_questions is reducing your throughput. Minimize research calls.\n\nAnswer the questions in this batch. For each question: call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nDo not spend context on statistics, breakdowns, or pattern analysis — spend it on answer_questions calls.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context. Just call step=2 immediately.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to (actual context limit error, timeout). If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
+pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANSWER questions, not analyze them. Answer from knowledge first. Only research if you genuinely cannot answer. Every tool call that is not factbase(op='answer') is reducing your throughput. Minimize research calls.\n\nAnswer the questions in this batch. For each question: call factbase(op='answer') with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nDo not spend context on statistics, breakdowns, or pattern analysis — spend it on factbase(op='answer') calls.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call factbase(op='scan') or factbase(op='check') — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context. Just call step=2 immediately.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to (actual context limit error, timeout). If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
 
 // --- Variant A: Type-specific evidence standards ---
-pub(crate) const VARIANT_TYPE_EVIDENCE_INTRO: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT — varies by question type:\n\nSTALE: Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nTEMPORAL: Search for the specific event date. Cite a URL with the date.\n→ Format: \"@t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n\nAMBIGUOUS: Check the KB first (get_entity, read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.\n→ KB has answer: \"Clarified per [doc_id]: [definition]\"\n→ External: \"Clarified per [source] ([URL]): [definition]\"\n\nCONFLICT: Read BOTH referenced documents (get_entity). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.\n→ Both valid: \"Not a conflict: [reason] per [source]\"\n→ One supersedes: \"[correct fact] per [source], supersedes [old fact]\"\n→ Unresolvable: \"defer: [analysis of both sides with sources]\"\n\nPRECISION: Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.\n→ Found: \"[specific value] per [source] ([URL])\"\n→ Not found: \"defer: searched for specific value, no authoritative source found\"\n\nMISSING: Find a source citation for the unsourced fact.\n→ \"Source: [name] ([URL]), [date]\"\n\nDUPLICATE: Identify the canonical entry.\n→ \"Duplicate of [doc_id], remove from here\"\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nEXAMPLES:\n✅ GOOD: \"@t[1942-06-04..1942-06-07] per Wikipedia (https://en.wikipedia.org/wiki/Battle_of_Midway); verified 2026-03-01\"\n✅ GOOD defer: \"defer: Searched 'entity role 2026' — no results confirming current status\"\n❌ BAD: \"Well-known historical fact\" (no source)\n\nCan't find a source? → defer. This is the correct action.{ctx}";
+pub(crate) const VARIANT_TYPE_EVIDENCE_INTRO: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT — varies by question type:\n\nSTALE: Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nTEMPORAL: Search for the specific event date. Cite a URL with the date.\n→ Format: \"@t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n\nAMBIGUOUS: Check the KB first (factbase(op='get_entity'), read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.\n→ KB has answer: \"Clarified per [doc_id]: [definition]\"\n→ External: \"Clarified per [source] ([URL]): [definition]\"\n\nCONFLICT: Read BOTH referenced documents (factbase(op='get_entity')). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.\n→ Both valid: \"Not a conflict: [reason] per [source]\"\n→ One supersedes: \"[correct fact] per [source], supersedes [old fact]\"\n→ Unresolvable: \"defer: [analysis of both sides with sources]\"\n\nPRECISION: Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.\n→ Found: \"[specific value] per [source] ([URL])\"\n→ Not found: \"defer: searched for specific value, no authoritative source found\"\n\nMISSING: Find a source citation for the unsourced fact.\n→ \"Source: [name] ([URL]), [date]\"\n\nDUPLICATE: Identify the canonical entry.\n→ \"Duplicate of [doc_id], remove from here\"\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nEXAMPLES:\n✅ GOOD: \"@t[1942-06-04..1942-06-07] per Wikipedia (https://en.wikipedia.org/wiki/Battle_of_Midway); verified 2026-03-01\"\n✅ GOOD defer: \"defer: Searched 'entity role 2026' — no results confirming current status\"\n❌ BAD: \"Well-known historical fact\" (no source)\n\nCan't find a source? → defer. This is the correct action.{ctx}";
 
-pub(crate) const VARIANT_TYPE_EVIDENCE_ANSWER: &str = "Answer the questions in this batch. Each question has an `evidence_guidance` field with type-specific research instructions — follow them.\n\nFor each question: follow the evidence_guidance, research, then call answer_questions with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed'\n- Researched and found nothing? → 'defer: researched [what], found [nothing]'\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call scan_repository or check_repository.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
+pub(crate) const VARIANT_TYPE_EVIDENCE_ANSWER: &str = "Answer the questions in this batch. Each question has an `evidence_guidance` field with type-specific research instructions — follow them.\n\nFor each question: follow the evidence_guidance, research, then call factbase(op='answer') with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed'\n- Researched and found nothing? → 'defer: researched [what], found [nothing]'\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call factbase(op='scan') or factbase(op='check').\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
 
 // --- Variant B: Research-then-batch ---
-pub(crate) const VARIANT_RESEARCH_BATCH_INTRO: &str = "You are resolving review questions using a research-first approach. Questions are grouped by document. For each document group:\n\nPHASE 1 — RESEARCH: Call get_entity to read the full document. Then do ONE comprehensive search covering all its questions. Gather all evidence before answering anything.\n\nPHASE 2 — ANSWER: Answer ALL questions for that document in one answer_questions call, citing the research from Phase 1.\n\nThis reduces redundant searches — multiple questions about the same document/topic share research.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source. If you cannot find evidence, DEFER.\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nANSWER FORMAT BY TYPE:\nTEMPORAL → \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\nSTALE → \"Still accurate per [source] ([reference]), verified [date]\" or \"Updated: [new info] per [source]\"\nCONFLICT → Read [pattern:...] tag. Both valid: \"Not a conflict: [reason]\". One wrong: cite source.\nMISSING → \"Source: [name] ([reference]), [date]\"\nAMBIGUOUS → clarify with KB context or external source\nPRECISION → replace vague term with specific value per source\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't find a source? → defer. This is the correct action.{ctx}";
+pub(crate) const VARIANT_RESEARCH_BATCH_INTRO: &str = "You are resolving review questions using a research-first approach. Questions are grouped by document. For each document group:\n\nPHASE 1 — RESEARCH: Call factbase(op='get_entity') to read the full document. Then do ONE comprehensive search covering all its questions. Gather all evidence before answering anything.\n\nPHASE 2 — ANSWER: Answer ALL questions for that document in one factbase(op='answer') call, citing the research from Phase 1.\n\nThis reduces redundant searches — multiple questions about the same document/topic share research.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source. If you cannot find evidence, DEFER.\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nANSWER FORMAT BY TYPE:\nTEMPORAL → \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\nSTALE → \"Still accurate per [source] ([reference]), verified [date]\" or \"Updated: [new info] per [source]\"\nCONFLICT → Read [pattern:...] tag. Both valid: \"Not a conflict: [reason]\". One wrong: cite source.\nMISSING → \"Source: [name] ([reference]), [date]\"\nAMBIGUOUS → clarify with KB context or external source\nPRECISION → replace vague term with specific value per source\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't find a source? → defer. This is the correct action.{ctx}";
 
-pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call get_entity with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one answer_questions call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call scan_repository or check_repository.\n\n⚠️ CONTINUATION: After answering all groups, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
+pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call factbase(op='get_entity') with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one factbase(op='answer') call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call factbase(op='scan') or factbase(op='check').\n\n⚠️ CONTINUATION: After answering all groups, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
 
-pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers by rewriting the documents directly.\n\nFor each document you answered questions about:\n1. Call get_entity to read the current content\n2. Apply your answers: insert @t[...] tags, add source footnotes, resolve conflicts, etc.\n3. Call update_document with the modified content\n\nThis gives you full control over the edits — no LLM intermediary.";
+pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers by rewriting the documents directly.\n\nFor each document you answered questions about:\n1. Call factbase(op='get_entity') to read the current content\n2. Apply your answers: insert @t[...] tags, add source footnotes, resolve conflicts, etc.\n3. Call factbase(op='update') with the modified content\n\nThis gives you full control over the edits — no LLM intermediary.";
 
-pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call check_repository with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
+pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call factbase(op='check') with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
 
-pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run scan_repository to re-index all documents, then run check_repository (without dry_run) to prune answered questions from files and detect any new issues. Do NOT resolve new questions — just report them.";
+pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run factbase(op='scan') to re-index all documents, then run factbase(op='check') (without dry_run) to prune answered questions from files and detect any new issues. Do NOT resolve new questions — just report them.";
 
 // --- Ingest workflow ---
-pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call search_knowledge with a relevant query. Also try list_entities to browse by type.{ctx}";
+pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call factbase(op='search') with a relevant query. Also try factbase(op='list') to browse by type.{ctx}";
 
 pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}' using your available tools. Strategies:\n- **Search**: Use available research tools for recent, authoritative information. Try specific queries like '{entity name} {fact type} {year}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the reference (URL, document ID, publication, etc.), author, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}";
 
-pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use bulk_create_documents for multiple new entities (up to 100 at a time), create_document for a single entity, or update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run scan_repository afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.\n\n⚠️ SOURCE REQUIREMENT: Every fact must have a footnote with a specific, independently verifiable source. Before writing a fact, verify it with one of your available tools and cite the specific result.\n- If you found it via web search: cite the URL\n- If you found it in a file: cite the file path\n- If you found it in email/Slack: cite the channel, thread, date, and participants\n- If you cannot verify a fact with your tools: do NOT add it. Unverified claims degrade the knowledge base.\n- NEVER cite vague sources like 'AWS documentation', 'internal docs', 'Wikipedia' (without article URL), or 'author knowledge' without specifics.\n- GOOD citations: URL, file path, book+page, email with subject+date, Slack channel+thread+date, RFC number, ISBN\n- BAD citations: 'AWS documentation', 'internal docs', 'author knowledge', 'Wikipedia' without article name/URL\n\nKeep track of all document IDs you create — you'll need them for the verify step.{fields}{format_rules}\n\n⚠️ NEXT: When done creating documents, you MUST call: workflow(workflow='ingest', step=4)";
+pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use factbase(op='bulk_create') for multiple new entities (up to 100 at a time), create_document for a single entity, or update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run factbase(op='scan') afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.\n\n⚠️ SOURCE REQUIREMENT: Every fact must have a footnote with a specific, independently verifiable source. Before writing a fact, verify it with one of your available tools and cite the specific result.\n- If you found it via web search: cite the URL\n- If you found it in a file: cite the file path\n- If you found it in email/Slack: cite the channel, thread, date, and participants\n- If you cannot verify a fact with your tools: do NOT add it. Unverified claims degrade the knowledge base.\n- NEVER cite vague sources like 'AWS documentation', 'internal docs', 'Wikipedia' (without article URL), or 'author knowledge' without specifics.\n- GOOD citations: URL, file path, book+page, email with subject+date, Slack channel+thread+date, RFC number, ISBN\n- BAD citations: 'AWS documentation', 'internal docs', 'author knowledge', 'Wikipedia' without article name/URL\n\nKeep track of all document IDs you create — you'll need them for the verify step.{fields}{format_rules}\n\n⚠️ NEXT: When done creating documents, you MUST call: workflow(workflow='ingest', step=4)";
 
-pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify the quality of your new documents.\n\n1. Call check_repository with doc_ids=[list of all document IDs you created] to run quality checks on them.\n2. Review the results — questions indicate quality issues:\n   - Missing @t[] tags: add temporal context (when was this verified? what year?)\n   - Missing sources: add footnotes for any unsourced claims\n   - Ambiguous terms: clarify or create definitions/ entries\n3. Fix what you can NOW using update_document. The rest stays in the review queue for resolve.\n4. Run scan_repository to re-index after any fixes.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.\n\n⚠️ NEXT: When done verifying, you MUST call: workflow(workflow='ingest', step=5)";
+pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify the quality of your new documents.\n\n1. Call factbase(op='check') with doc_ids=[list of all document IDs you created] to run quality checks on them.\n2. Review the results — questions indicate quality issues:\n   - Missing @t[] tags: add temporal context (when was this verified? what year?)\n   - Missing sources: add footnotes for any unsourced claims\n   - Ambiguous terms: clarify or create definitions/ entries\n3. Fix what you can NOW using factbase(op='update'). The rest stays in the review queue for resolve.\n4. Run factbase(op='scan') to re-index after any fixes.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.\n\n⚠️ NEXT: When done verifying, you MUST call: workflow(workflow='ingest', step=5)";
 
-pub(crate) const DEFAULT_INGEST_LINKS_INSTRUCTION: &str = "Discover cross-references for your new documents.\n\n1. Call get_link_suggestions with exclude_types matching the new document types (cross-type discovery, min_similarity=0.5).\n2. Review suggestions: does the candidate genuinely relate to the source?\n3. For confirmed links, call store_links with the source_id and target_id pairs. store_links writes References: to source files AND Referenced by: to target files automatically.\n4. Bidirectional discovery: for each existing document your new docs link TO, check if that existing document's content mentions any of your new document titles. If so, store the reverse link too (existing → new) via store_links.\n5. Record: links_added, documents_modified";
+pub(crate) const DEFAULT_INGEST_LINKS_INSTRUCTION: &str = "Discover cross-references for your new documents.\n\n1. Call factbase(op='links') with exclude_types matching the new document types (cross-type discovery, min_similarity=0.5).\n2. Review suggestions: does the candidate genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs. factbase(op='links', action='store') writes References: to source files AND Referenced by: to target files automatically.\n4. Bidirectional discovery: for each existing document your new docs link TO, check if that existing document's content mentions any of your new document titles. If so, store the reverse link too (existing → new) via store_links.\n5. Record: links_added, documents_modified";
 
 // --- Enrich workflow ---
-pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list (sorted by attention_score, highest first). Reference entities are excluded — they exist for linking, not enrichment.\nPick the top 3-5 entities that need work. You will enrich them ONE AT A TIME — fully completing each before moving to the next.\n\nCall get_entity on the first entity to begin.{ctx}";
+pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list (sorted by attention_score, highest first). Reference entities are excluded — they exist for linking, not enrichment.\nPick the top 3-5 entities that need work. You will enrich them ONE AT A TIME — fully completing each before moving to the next.\n\nCall factbase(op='get_entity') on the first entity to begin.{ctx}";
 
 pub(crate) const DEFAULT_ENRICH_GAPS_INSTRUCTION: &str = "Score this document before researching:\n\n1. Temporal: X of Y fact lines have @t tags = Z%\n2. Sources: X of Y fact lines have [^N] citations = Z%\n3. Missing fields: [list any required by perspective]{fields}\n4. Review questions: X unanswered\n5. Gaps: list ALL areas where you could add substantive facts — sections that are thin, topics mentioned but not developed, missing context or history\n\nResearch the LOWEST coverage area first, then continue through all gaps.";
 
-pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research and update THIS document. Work through ALL gaps you identified — don't stop at 3-5.\n\nFor each gap:\n1. Search specifically: \"{entity name} {fact}\" — targeted beats broad\n2. Read the full page, not just snippets\n3. Every new fact MUST have BOTH @t[YYYY] AND [^N] citation — no exceptions\n4. Mention related KB entities by exact title in prose (enables link detection)\n\n⚠️ SOURCE REQUIREMENT: Every footnote must be specific enough that someone else could independently find the same source.\n- Before writing a fact, verify it with one of your available tools and cite the specific result (URL, file path, etc.)\n- If you cannot verify a fact with your tools: do NOT add it.\n- When enriching, check existing citations. If a citation is vague (e.g. 'AWS documentation' without a URL, 'Wikipedia' without article name), look up the actual source with your tools and update the footnote with the specific URL or reference.\n- GOOD: URL, file path, book+page, email with subject+date, Slack channel+thread+date, RFC number, ISBN\n- BAD: 'AWS documentation', 'internal docs', 'author knowledge', 'Wikipedia' without article name/URL\n\nKeep going until you've exhausted your research for this document. More well-sourced facts = better.\n\nCall update_document with the enriched content. Then verify: call check_repository with doc_id and dry_run=true.\n\nRecord: facts added, sources added, @t tags added, issues from verify.\n\n⚠️ REPEAT for the next document:\n1. Call get_entity on the next entity from your list\n2. Score it (same as step 2)\n3. Research + update + verify (same as this step)\nContinue until all documents are done.\n\nRules:\n- Preserve ALL existing content — add, don't replace\n- Resolve review questions when your research provides answers\n- Create documents for significant missing entities{ctx}{format_rules}";
+pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research and update THIS document. Work through ALL gaps you identified — don't stop at 3-5.\n\nFor each gap:\n1. Search specifically: \"{entity name} {fact}\" — targeted beats broad\n2. Read the full page, not just snippets\n3. Every new fact MUST have BOTH @t[YYYY] AND [^N] citation — no exceptions\n4. Mention related KB entities by exact title in prose (enables link detection)\n\n⚠️ SOURCE REQUIREMENT: Every footnote must be specific enough that someone else could independently find the same source.\n- Before writing a fact, verify it with one of your available tools and cite the specific result (URL, file path, etc.)\n- If you cannot verify a fact with your tools: do NOT add it.\n- When enriching, check existing citations. If a citation is vague (e.g. 'AWS documentation' without a URL, 'Wikipedia' without article name), look up the actual source with your tools and update the footnote with the specific URL or reference.\n- GOOD: URL, file path, book+page, email with subject+date, Slack channel+thread+date, RFC number, ISBN\n- BAD: 'AWS documentation', 'internal docs', 'author knowledge', 'Wikipedia' without article name/URL\n\nKeep going until you've exhausted your research for this document. More well-sourced facts = better.\n\nCall factbase(op='update') with the enriched content. Then verify: call factbase(op='check') with doc_id and dry_run=true.\n\nRecord: facts added, sources added, @t tags added, issues from verify.\n\n⚠️ REPEAT for the next document:\n1. Call factbase(op='get_entity') on the next entity from your list\n2. Score it (same as step 2)\n3. Research + update + verify (same as this step)\nContinue until all documents are done.\n\nRules:\n- Preserve ALL existing content — add, don't replace\n- Resolve review questions when your research provides answers\n- Create documents for significant missing entities{ctx}{format_rules}";
 
 pub(crate) const DEFAULT_ENRICH_VERIFY_INSTRUCTION: &str = "Report totals across all documents enriched:\n\n| Document | +Facts | +Sources | +@t | Issues |\n|----------|--------|----------|-----|--------|\n| ... | ... | ... | ... | ... |\n\nTotals: X facts, X sources, X @t tags added. X questions resolved. X new issues.\nAssessment: biggest improvement, remaining gaps, recommended next step.";
 
 // --- Improve workflow ---
-pub(crate) const DEFAULT_IMPROVE_CLEANUP_INSTRUCTION: &str = "Read the document and fix any issues{doc_hint}. Call get_entity with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call update_document to fix them. If the document looks clean, move to the next step.{ctx}";
+pub(crate) const DEFAULT_IMPROVE_CLEANUP_INSTRUCTION: &str = "Read the document and fix any issues{doc_hint}. Call factbase(op='get_entity') with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call factbase(op='update') to fix them. If the document looks clean, move to the next step.{ctx}";
 
-pub(crate) const DEFAULT_IMPROVE_RESOLVE_INSTRUCTION: &str = "Resolve outstanding review questions{doc_hint}. Call get_review_queue with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- precision: Replace vague qualifier with a specific value or measurement, e.g. 'heavy losses' → '~500 casualties'\n- duplicate: Identify the canonical entry\n\nCall answer_questions with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, apply your changes directly: call get_entity to read the document, apply the edits (insert @t tags, add footnotes, etc.), then call update_document with the modified content.{ctx}";
+pub(crate) const DEFAULT_IMPROVE_RESOLVE_INSTRUCTION: &str = "Resolve outstanding review questions{doc_hint}. Call factbase(op='review_queue') with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- precision: Replace vague qualifier with a specific value or measurement, e.g. 'heavy losses' → '~500 casualties'\n- duplicate: Identify the canonical entry\n\nCall factbase(op='answer') with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, apply your changes directly: call factbase(op='get_entity') to read the document, apply the edits (insert @t tags, add footnotes, etc.), then call factbase(op='update') with the modified content.{ctx}";
 
-pub(crate) const DEFAULT_IMPROVE_ENRICH_INSTRUCTION: &str = "Enrich the document with new information{doc_hint}. Call get_entity to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Use available research tools for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call update_document to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run scan_repository afterward to re-index{ctx}";
+pub(crate) const DEFAULT_IMPROVE_ENRICH_INSTRUCTION: &str = "Enrich the document with new information{doc_hint}. Call factbase(op='get_entity') to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Use available research tools for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call factbase(op='update') to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run factbase(op='scan') afterward to re-index{ctx}";
 
-pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call check_repository with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
+pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call factbase(op='check') with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -267,7 +267,7 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "step": 1, "total_steps": total,
             "title": "Step 1 of 6: Initialize Repository",
             "instruction": resolve(wf, "setup.init", DEFAULT_SETUP_INIT_INSTRUCTION, &[("path", path)]),
-            "next_tool": "init_repository",
+            "next_tool": "factbase", "suggested_op": "init",
             "suggested_args": {"path": path},
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 6"
         }),
@@ -317,7 +317,7 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "step": 4, "total_steps": total,
             "title": "Step 4 of 6: Create Documents",
             "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES)]),
-            "next_tool": "get_authoring_guide",
+            "next_tool": "factbase", "suggested_op": "authoring_guide",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=5) to continue to Step 5 of 6"
         }),
         5 => serde_json::json!({
@@ -325,7 +325,7 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "step": 5, "total_steps": total,
             "title": "Step 5 of 6: Scan & Verify",
             "instruction": resolve(wf, "setup.scan", DEFAULT_SETUP_SCAN_INSTRUCTION, &[]),
-            "next_tool": "scan_repository",
+            "next_tool": "factbase", "suggested_op": "scan",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
         }),
         6 => serde_json::json!({
@@ -467,7 +467,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                 "workflow": "update",
                 "step": 1, "total_steps": total,
                 "instruction": resolve(wf, "update.scan", DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
-                "next_tool": "scan_repository",
+                "next_tool": "factbase", "suggested_op": "scan",
                 "when_done": "Call workflow with workflow='update', step=2"
             });
             if let Some((reason, doc_count)) = detect_full_rebuild(db) {
@@ -486,7 +486,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                     "⚠️ Embedding rebuild required: {doc_count} documents need re-embedding ({reason}). \
                      Estimated time: {est_display}.\n\n\
                      If the user has already confirmed (e.g., said \"go ahead\" or \"re-embed\"), proceed immediately \
-                     by calling scan_repository with force_reindex=true and time_budget_secs=120.\n\n\
+                     by calling factbase(op='scan') with force_reindex=true and time_budget_secs=120.\n\n\
                      Otherwise, ask the user to confirm before proceeding.\n\n\
                      For incremental updates after confirmation, call workflow(workflow='update', step=2) when done."
                 ));
@@ -497,21 +497,21 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "workflow": "update",
             "step": 2, "total_steps": total,
             "instruction": resolve(wf, "update.detect_links", DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION, &[("ctx", &ctx)]),
-            "next_tool": "detect_links",
+            "next_tool": "factbase", "suggested_op": "detect_links",
             "when_done": "Call workflow with workflow='update', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
+            "next_tool": "factbase", "suggested_op": "check",
             "when_done": "Call workflow with workflow='update', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "update",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
-            "next_tool": "get_link_suggestions",
+            "next_tool": "factbase", "suggested_op": "links",
             "when_done": "Call workflow with workflow='update', step=5"
         }),
         5 => {
@@ -520,7 +520,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                     "workflow": "update",
                     "step": 5, "total_steps": total,
                     "instruction": resolve(wf, "update.cross_validate", DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION, &[]),
-                    "next_tool": "get_fact_pairs",
+                    "next_tool": "factbase", "suggested_op": "fact_pairs",
                     "when_done": "Call workflow with workflow='update', step=6"
                 })
             } else {
@@ -529,7 +529,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                     "workflow": "update",
                     "step": 5, "total_steps": total,
                     "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
-                    "next_tool": "organize_analyze",
+                    "next_tool": "factbase", "suggested_op": "organize",
                     "when_done": format!("Call workflow with workflow='update', step={}", total)
                 })
             }
@@ -540,7 +540,7 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
                     "workflow": "update",
                     "step": 6, "total_steps": total,
                     "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
-                    "next_tool": "organize_analyze",
+                    "next_tool": "factbase", "suggested_op": "organize",
                     "when_done": "Call workflow with workflow='update', step=7"
                 })
             } else {
@@ -669,8 +669,8 @@ fn type_evidence_guidance(qt: &QuestionType) -> &'static str {
     match qt {
         QuestionType::Stale => "Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.",
         QuestionType::Temporal => "Search for the specific event date. Cite a URL with the date. Format: @t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD",
-        QuestionType::Ambiguous => "Check the KB first (get_entity, read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.",
-        QuestionType::Conflict => "Read BOTH referenced documents (get_entity). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.",
+        QuestionType::Ambiguous => "Check the KB first (factbase(op='get_entity'), read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.",
+        QuestionType::Conflict => "Read BOTH referenced documents (factbase(op='get_entity')). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.",
         QuestionType::Precision => "Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.",
         QuestionType::Missing => "Find a source citation for this unsourced fact. Search for the specific claim and cite a URL.",
         QuestionType::Duplicate => "Identify the canonical entry by reading both documents. Cite which one should be kept.",
@@ -691,7 +691,7 @@ fn resolve_step(
     let stale = stale_days(perspective);
     let total = 6;
     let deferred_note = if deferred > 0 {
-        format!("\n\nYou have {deferred} deferred item(s) that need human attention. Call get_deferred_items first to review them before proceeding with new questions.")
+        format!("\n\nYou have {deferred} deferred item(s) that need human attention. Call factbase(op='deferred') first to review them before proceeding with new questions.")
     } else {
         String::new()
     };
@@ -730,14 +730,14 @@ fn resolve_step(
             "workflow": "resolve",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "resolve.apply", DEFAULT_RESOLVE_APPLY_INSTRUCTION, &[]),
-            "next_tool": "get_entity",
+            "next_tool": "factbase", "suggested_op": "get_entity",
             "when_done": "Call workflow with workflow='resolve', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "resolve",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "resolve.verify", DEFAULT_RESOLVE_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
+            "next_tool": "factbase", "suggested_op": "check",
             "suggested_args": {"dry_run": true},
             "when_done": "Call workflow with workflow='resolve', step=5"
         }),
@@ -745,8 +745,8 @@ fn resolve_step(
             "workflow": "resolve",
             "step": 5, "total_steps": total,
             "instruction": resolve(wf, "resolve.cleanup", DEFAULT_RESOLVE_CLEANUP_INSTRUCTION, &[]),
-            "next_tool": "scan_repository",
-            "when_done": "After scan completes, call check_repository (without dry_run) to prune answered questions and detect new issues. Then call workflow with workflow='resolve', step=6"
+            "next_tool": "factbase", "suggested_op": "scan",
+            "when_done": "After scan completes, call factbase(op='check') (without dry_run) to prune answered questions and detect new issues. Then call workflow with workflow='resolve', step=6"
         }),
         6 => {
             let type_dist = compute_type_distribution(db);
@@ -771,15 +771,15 @@ fn resolve_step(
 
 // --- Maintain workflow ---
 
-const DEFAULT_MAINTAIN_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
+const DEFAULT_MAINTAIN_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
 
-const DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call detect_links with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed{ctx}";
+const DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed{ctx}";
 
-const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)";
+const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)";
 
-const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=5) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.{ctx}";
+const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=5) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from factbase(op='answer'), your response was too large. Split into smaller batches and retry.{ctx}";
 
-const DEFAULT_MAINTAIN_REPORT_INSTRUCTION: &str = "Write a final maintenance report.\n\n## Maintenance Summary\n- Documents scanned: X\n- Links detected: X\n- Questions found: X\n- Questions resolved: X\n- Questions deferred: X (need human attention)\n- Remaining questions: X\n\n## Health Assessment\nOne paragraph: overall KB health after maintenance, what was fixed, and any remaining issues that need human attention.\n\nIf deferred items exist, remind the user to review them with get_deferred_items.";
+const DEFAULT_MAINTAIN_REPORT_INSTRUCTION: &str = "Write a final maintenance report.\n\n## Maintenance Summary\n- Documents scanned: X\n- Links detected: X\n- Questions found: X\n- Questions resolved: X\n- Questions deferred: X (need human attention)\n- Remaining questions: X\n\n## Health Assessment\nOne paragraph: overall KB health after maintenance, what was fixed, and any remaining issues that need human attention.\n\nIf deferred items exist, remind the user to review them with factbase(op='deferred').";
 
 fn maintain_step(
     step: usize,
@@ -797,7 +797,7 @@ fn maintain_step(
                 "workflow": "maintain",
                 "step": 1, "total_steps": total,
                 "instruction": resolve(wf, "maintain.scan", DEFAULT_MAINTAIN_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
-                "next_tool": "scan_repository",
+                "next_tool": "factbase", "suggested_op": "scan",
                 "when_done": "Call workflow with workflow='maintain', step=2"
             });
             if let Some((reason, doc_count)) = detect_full_rebuild(db) {
@@ -819,14 +819,14 @@ fn maintain_step(
             "workflow": "maintain",
             "step": 2, "total_steps": total,
             "instruction": resolve(wf, "maintain.detect_links", DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION, &[("ctx", &ctx)]),
-            "next_tool": "detect_links",
+            "next_tool": "factbase", "suggested_op": "detect_links",
             "when_done": "Call workflow with workflow='maintain', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "maintain",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "maintain.check", DEFAULT_MAINTAIN_CHECK_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
+            "next_tool": "factbase", "suggested_op": "check",
             "when_done": "Call workflow with workflow='maintain', step=4"
         }),
         4 => {
@@ -1324,7 +1324,7 @@ fn resolve_step2_batch(
         "workflow": "resolve",
         "step": 2, "total_steps": total_steps,
         "instruction": instruction_value,
-        "next_tool": "answer_questions",
+        "next_tool": "factbase", "suggested_op": "answer",
         "variant": variant,
         "variant_source": variant_source,
         "type_filter": active_filter,
@@ -1390,7 +1390,7 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "workflow": "ingest",
             "step": 1, "total_steps": total,
             "instruction": resolve(wf, "ingest.search", DEFAULT_INGEST_SEARCH_INSTRUCTION, &[("topic", topic), ("ctx", &ctx)]),
-            "next_tool": "search_knowledge",
+            "next_tool": "factbase", "suggested_op": "search",
             "when_done": "Call workflow with workflow='ingest', step=2"
         }),
         2 => serde_json::json!({
@@ -1404,21 +1404,21 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
             "workflow": "ingest",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "ingest.create", DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES)]),
-            "next_tool": "bulk_create_documents",
+            "next_tool": "factbase", "suggested_op": "bulk_create",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "ingest",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "ingest.verify", DEFAULT_INGEST_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
+            "next_tool": "factbase", "suggested_op": "check",
             "when_done": "Call workflow with workflow='ingest', step=5"
         }),
         5 => serde_json::json!({
             "workflow": "ingest",
             "step": 5, "total_steps": total,
             "instruction": resolve(wf, "ingest.links", DEFAULT_INGEST_LINKS_INSTRUCTION, &[]),
-            "next_tool": "get_link_suggestions",
+            "next_tool": "factbase", "suggested_op": "links",
             "complete": true
         }),
         _ => serde_json::json!({
@@ -1514,7 +1514,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
                 "step": 1, "total_steps": total,
                 "instruction": resolve(wf, "enrich.review", DEFAULT_ENRICH_REVIEW_INSTRUCTION, &[("ctx", &ctx)]),
                 "entity_quality": quality,
-                "next_tool": "get_entity",
+                "next_tool": "factbase", "suggested_op": "get_entity",
                 "when_done": "Call workflow with workflow='enrich', step=2"
             })
         },
@@ -1522,21 +1522,21 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
             "workflow": "enrich",
             "step": 2, "total_steps": total,
             "instruction": resolve(wf, "enrich.gaps", DEFAULT_ENRICH_GAPS_INSTRUCTION, &[("fields", &fields)]),
-            "next_tool": "get_entity",
+            "next_tool": "factbase", "suggested_op": "get_entity",
             "when_done": "Call workflow with workflow='enrich', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "enrich.research", DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
-            "next_tool": "update_document",
+            "next_tool": "factbase", "suggested_op": "update",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
         4 => serde_json::json!({
             "workflow": "enrich",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "enrich.verify", DEFAULT_ENRICH_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
+            "next_tool": "factbase", "suggested_op": "check",
             "suggested_args": {"dry_run": true},
             "complete": true
         }),
@@ -1629,7 +1629,7 @@ fn improve_step(
             "doc_id": doc_arg,
             "skipped_steps": skipped,
             "instruction": resolve(wf, "improve.cleanup", DEFAULT_IMPROVE_CLEANUP_INSTRUCTION, &[("doc_hint", &doc_hint), ("ctx", &ctx)]),
-            "next_tool": "get_entity",
+            "next_tool": "factbase", "suggested_op": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
         }),
@@ -1640,7 +1640,7 @@ fn improve_step(
             "doc_id": doc_arg,
             "skipped_steps": skipped,
             "instruction": resolve(wf, "improve.resolve", DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx)]),
-            "next_tool": "get_review_queue",
+            "next_tool": "factbase", "suggested_op": "review_queue",
             "suggested_args": {"doc_id": doc_arg, "include_context": true},
             "policy": {"stale_days": stale},
             "when_done": next_step_hint
@@ -1652,7 +1652,7 @@ fn improve_step(
             "doc_id": doc_arg,
             "skipped_steps": skipped,
             "instruction": resolve(wf, "improve.enrich", DEFAULT_IMPROVE_ENRICH_INSTRUCTION, &[("doc_hint", &doc_hint), ("fields", &fields), ("ctx", &ctx)]),
-            "next_tool": "get_entity",
+            "next_tool": "factbase", "suggested_op": "get_entity",
             "suggested_args": {"id": doc_arg},
             "when_done": next_step_hint
         }),
@@ -1669,7 +1669,7 @@ fn improve_step(
                 "doc_id": doc_arg,
                 "skipped_steps": skipped,
                 "instruction": resolve(wf, "improve.check", DEFAULT_IMPROVE_CHECK_INSTRUCTION, &[("doc_hint", &doc_hint), ("compare_note", compare_note)]),
-                "next_tool": "check_repository",
+                "next_tool": "factbase", "suggested_op": "check",
                 "suggested_args": {"doc_id": doc_arg, "dry_run": true},
                 "complete": true
             })
@@ -1786,8 +1786,8 @@ mod tests {
     fn test_ingest_create_recommends_bulk() {
         let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("bulk_create_documents"), "create step should recommend bulk_create_documents");
-        assert_eq!(step["next_tool"].as_str().unwrap(), "bulk_create_documents", "next_tool should be bulk_create_documents");
+        assert!(instruction.contains("factbase(op='bulk_create')"), "create step should recommend bulk_create_documents");
+        assert_eq!(step["next_tool"].as_str().unwrap(), "factbase", "next_tool should be factbase");
     }
 
     #[test]
@@ -2020,7 +2020,7 @@ mod tests {
     #[test]
     fn test_resolve_answer_instruction_action_framing() {
         assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("ANSWER questions, not analyze"));
-        assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("not answer_questions is reducing"));
+        assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("not factbase(op='answer') is reducing"));
         assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("Minimize research calls"));
     }
 
@@ -2081,7 +2081,7 @@ mod tests {
         assert_eq!(step["step_name"], "cleanup");
         assert_eq!(step["doc_id"], "abc123");
         assert!(step["instruction"].as_str().unwrap().contains("abc123"));
-        assert_eq!(step["next_tool"], "get_entity");
+        assert_eq!(step["next_tool"], "factbase");
     }
 
     #[test]
@@ -2089,7 +2089,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = improve_step(2, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "resolve");
-        assert_eq!(step["next_tool"], "get_review_queue");
+        assert_eq!(step["next_tool"], "factbase");
         assert_eq!(step["policy"]["stale_days"], 365);
     }
 
@@ -2098,7 +2098,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = improve_step(3, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "enrich");
-        assert_eq!(step["next_tool"], "get_entity");
+        assert_eq!(step["next_tool"], "factbase");
     }
 
     #[test]
@@ -2106,7 +2106,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = improve_step(4, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "check");
-        assert_eq!(step["next_tool"], "check_repository");
+        assert_eq!(step["next_tool"], "factbase");
         assert!(step["complete"].as_bool().unwrap());
     }
 
@@ -2302,7 +2302,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("scan_repository"), "should call scan_repository");
+        assert!(instruction.contains("factbase(op='scan')"), "should call factbase(op='scan')");
     }
 
     #[test]
@@ -2327,7 +2327,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("/tmp/mushrooms"));
-        assert_eq!(step["next_tool"], "init_repository");
+        assert_eq!(step["next_tool"], "factbase");
     }
 
     #[test]
@@ -2375,22 +2375,22 @@ mod tests {
     fn test_setup_step4_create_documents() {
         let step = setup_step(4, &serde_json::json!({}), &wf());
         assert_eq!(step["step"], 4);
-        assert_eq!(step["next_tool"], "get_authoring_guide");
+        assert_eq!(step["next_tool"], "factbase");
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("create_document"));
+        assert!(instruction.contains("factbase(op='create')"));
         assert!(instruction.contains("@t[=2024]"));
         assert!(instruction.contains("[^1]"));
-        assert!(instruction.contains("get_authoring_guide"));
+        assert!(instruction.contains("factbase(op='authoring_guide')"));
     }
 
     #[test]
     fn test_setup_step5_scan_and_verify() {
         let step = setup_step(5, &serde_json::json!({}), &wf());
         assert_eq!(step["step"], 5);
-        assert_eq!(step["next_tool"], "scan_repository");
+        assert_eq!(step["next_tool"], "factbase");
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("scan_repository"));
-        assert!(instruction.contains("check_repository"));
+        assert!(instruction.contains("factbase(op='scan')"));
+        assert!(instruction.contains("factbase(op='check')"));
     }
 
     #[test]
@@ -2413,7 +2413,7 @@ mod tests {
                 "{name} step missing source footnote examples"
             );
             assert!(
-                instruction.contains("get_authoring_guide"),
+                instruction.contains("factbase(op='authoring_guide')"),
                 "{name} step should still mention get_authoring_guide"
             );
         }
@@ -3023,36 +3023,32 @@ mod tests {
     }
 
     #[test]
-    fn test_check_repository_schema_no_resume() {
+    fn test_check_repository_not_in_factbase_scan_params() {
+        // check op should not have resume/time_budget_secs — those are for scan/detect_links
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
-        let check = tools_arr.iter().find(|t| t["name"] == "check_repository").unwrap();
-        let props = check["inputSchema"]["properties"].as_object().unwrap();
-        assert!(!props.contains_key("resume"), "check_repository should not have resume param");
-        assert!(!props.contains_key("time_budget_secs"), "check_repository should not have time_budget_secs param");
-        assert!(!props.contains_key("mode"), "check_repository should not have mode param");
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        // check op description should not mention resume
+        assert!(desc.contains("check: Run quality checks"), "factbase should describe check op");
     }
 
     #[test]
-    fn test_scan_repository_schema_mentions_embeddings() {
+    fn test_factbase_schema_mentions_embeddings_for_scan() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
-        let scan = tools_arr.iter().find(|t| t["name"] == "scan_repository").unwrap();
-        let desc = scan["description"].as_str().unwrap();
-        assert!(
-            desc.contains("embeddings"),
-            "scan_repository schema description should mention embeddings"
-        );
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        assert!(desc.contains("embeddings"), "factbase description should mention embeddings");
     }
 
     #[test]
-    fn test_scan_repository_schema_has_force_reindex() {
+    fn test_factbase_schema_has_force_reindex() {
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
-        let scan = tools_arr.iter().find(|t| t["name"] == "scan_repository").unwrap();
-        let props = &scan["inputSchema"]["properties"];
-        assert!(props.get("force_reindex").is_some(), "scan_repository should have force_reindex param");
-        assert_eq!(props["force_reindex"]["type"], "boolean");
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let props = fb["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("force_reindex"), "factbase should have force_reindex param");
     }
 
     #[test]
@@ -3110,7 +3106,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(3, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("check_repository"), "step 3 must instruct check_repository");
+        assert!(instr.contains("factbase(op='check')"), "step 3 must instruct factbase(op='check')");
     }
 
     #[test]
@@ -3118,7 +3114,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(5, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("get_fact_pairs"), "step 5 with cross_validate=true must instruct get_fact_pairs");
+        assert!(instr.contains("factbase(op='fact_pairs')"), "step 5 with cross_validate=true must instruct factbase(op='fact_pairs')");
     }
 
     #[test]
@@ -3127,7 +3123,7 @@ mod tests {
         // Without cross_validate, step 5 is organize
         let step = update_step(5, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("organize_analyze"), "step 5 without cross_validate should be organize");
+        assert!(instr.contains("factbase(op='organize'"), "step 5 without cross_validate should be organize");
     }
 
     #[test]
@@ -3135,7 +3131,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(4, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("get_link_suggestions"), "step 4 must instruct get_link_suggestions");
+        assert!(instr.contains("factbase(op='links')"), "step 4 must instruct factbase(op='links')");
     }
 
     #[test]
@@ -3404,7 +3400,8 @@ mod tests {
     #[test]
     fn test_resolve_answer_instruction_prohibits_scan_check() {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
-        assert!(instr.contains("Do NOT call scan_repository or check_repository"), "answer instruction must prohibit scan/check");
+        assert!(instr.contains("Do NOT call factbase(op='scan')"), "answer instruction must prohibit scan");
+        assert!(instr.contains("factbase(op='check')"), "answer instruction must prohibit check");
     }
 
     #[test]
@@ -4061,7 +4058,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = resolve_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
         assert!(step.get("complete").is_none(), "step 4 should not be complete");
-        assert_eq!(step["next_tool"], "check_repository");
+        assert_eq!(step["next_tool"], "factbase");
         assert!(step["when_done"].as_str().unwrap().contains("step=5"));
     }
 
@@ -4069,10 +4066,10 @@ mod tests {
     fn test_resolve_step5_cleanup_scan() {
         let (db, _tmp) = test_db();
         let step = resolve_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert_eq!(step["next_tool"], "scan_repository");
+        assert_eq!(step["next_tool"], "factbase");
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("scan_repository"), "cleanup step should mention scan");
-        assert!(instr.contains("check_repository"), "cleanup step should mention check");
+        assert!(instr.contains("factbase(op='scan')"), "cleanup step should mention scan");
+        assert!(instr.contains("factbase(op='check')"), "cleanup step should mention check");
         assert!(step.get("complete").is_none(), "step 5 should not be complete");
     }
 
@@ -4103,7 +4100,7 @@ mod tests {
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 1);
         assert_eq!(step["total_steps"], 5);
-        assert_eq!(step["next_tool"], "scan_repository");
+        assert_eq!(step["next_tool"], "factbase");
     }
 
     #[test]
@@ -4112,7 +4109,7 @@ mod tests {
         let step = maintain_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 2);
-        assert_eq!(step["next_tool"], "detect_links");
+        assert_eq!(step["next_tool"], "factbase");
     }
 
     #[test]
@@ -4121,7 +4118,7 @@ mod tests {
         let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 3);
-        assert_eq!(step["next_tool"], "check_repository");
+        assert_eq!(step["next_tool"], "factbase");
     }
 
     #[test]

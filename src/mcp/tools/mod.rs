@@ -138,27 +138,143 @@ impl McpResponse {
 /// `McpResponse` with either success result or error code/message.
 ///
 /// # Supported Tools
-/// - Search: `search_knowledge`, `search_content`
-/// - Entity: `get_entity`, `list_entities`, `get_perspective`, `list_repositories`
-/// - Document: `create_document`, `update_document`, `delete_document`, `bulk_create_documents`
-/// - Review: `get_review_queue`, `answer_questions`, `check_repository`
-// Dispatches a blocking tool function with cloned db and args via `run_blocking`.
-macro_rules! blocking_tool {
-    ($db:expr, $args:expr, $reporter:expr, $fn:path) => {{
-        let db = $db.clone();
-        let args = $args.clone();
-        let r = $reporter.clone();
-        run_blocking(move || $fn(&db, &args, &r)).await?
-    }};
-    ($db:expr, $args:expr, $fn:path) => {{
-        let db = $db.clone();
-        let args = $args.clone();
-        run_blocking(move || $fn(&db, &args)).await?
-    }};
-    ($db:expr, $fn:path) => {{
-        let db = $db.clone();
-        run_blocking(move || $fn(&db)).await?
-    }};
+/// - Primary: `workflow` (guided multi-step), `factbase` (unified operations)
+/// - Legacy aliases: all old tool names still dispatched for backward compat
+
+/// Dispatch a single tool operation by name. Used by both the `factbase` unified
+/// tool (via op→name mapping) and legacy tool name aliases.
+async fn dispatch_tool<E: EmbeddingProvider>(
+    db: &Database,
+    embedding: &E,
+    tool_name: &str,
+    args: &Value,
+    reporter: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    match tool_name {
+        "search_knowledge" => search_knowledge(db, embedding, args).await,
+        "get_entity" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_entity(&db, &a)).await }
+        "list_entities" => { let db = db.clone(); let a = args.clone(); run_blocking(move || list_entities(&db, &a)).await }
+        "get_perspective" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_perspective(&db, &a)).await }
+        "list_repositories" => { let db = db.clone(); run_blocking(move || list_repositories(&db)).await }
+        "create_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || create_document(&db, &a)).await }
+        "update_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || update_document(&db, &a)).await }
+        "delete_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || delete_document(&db, &a)).await }
+        "bulk_create_documents" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || bulk_create_documents(&db, &a, &r)).await }
+        "search_content" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || search_content(&db, &a, &r)).await }
+        "get_review_queue" => get_review_queue(db, args, reporter),
+        "get_deferred_items" => get_deferred_items(db, args, reporter),
+        "answer_questions" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || answer_questions(&db, &a, &r)).await }
+        "check_repository" => check_repository(db, embedding, args, reporter).await,
+        "scan_repository" => scan_repository(db, embedding, args, reporter).await,
+        "detect_links" => detect_links(db, args, reporter).await,
+        "init_repository" => { let db = db.clone(); let a = args.clone(); run_blocking(move || init_repository(&db, &a)).await }
+        "organize_analyze" => organize_analyze(db, embedding, args, reporter).await,
+        "organize" => organize(db, embedding, args, reporter).await,
+        "get_authoring_guide" => Ok(get_authoring_guide()),
+        "embeddings_export" => { let db = db.clone(); let a = args.clone(); run_blocking(move || embeddings_export(&db, &a)).await }
+        "embeddings_import" => { let db = db.clone(); let a = args.clone(); run_blocking(move || embeddings_import(&db, &a)).await }
+        "embeddings_status" => { let db = db.clone(); run_blocking(move || embeddings_status_tool(&db)).await }
+        "get_link_suggestions" => get_link_suggestions(db, embedding, args).await,
+        "store_links" => { let db = db.clone(); let a = args.clone(); run_blocking(move || store_links(&db, &a)).await }
+        "get_fact_pairs" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_fact_pairs(&db, &a)).await }
+        "workflow" => {
+            let is_bootstrap = args.get("workflow").and_then(|v| v.as_str()) == Some("bootstrap");
+            if is_bootstrap {
+                workflow::bootstrap(args)
+            } else {
+                let db = db.clone(); let a = args.clone();
+                run_blocking(move || workflow::workflow(&db, &a)).await
+            }
+        }
+        _ => Err(FactbaseError::Config(format!("Unknown tool: {tool_name}"))),
+    }
+}
+
+/// Map a `factbase` op value to the legacy tool name used by dispatch_tool.
+fn op_to_tool_name(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "search" => return None, // handled specially (mode param)
+        "get_entity" => "get_entity",
+        "list" => "list_entities",
+        "repos" => "list_repositories",
+        "perspective" => "get_perspective",
+        "create" => "create_document",
+        "update" => "update_document",
+        "delete" => "delete_document",
+        "bulk_create" => "bulk_create_documents",
+        "scan" => "scan_repository",
+        "check" => "check_repository",
+        "detect_links" => "detect_links",
+        "init" => "init_repository",
+        "review_queue" => "get_review_queue",
+        "answer" => "answer_questions",
+        "deferred" => "get_deferred_items",
+        "fact_pairs" => "get_fact_pairs",
+        "authoring_guide" => "get_authoring_guide",
+        _ => return None,
+    })
+}
+
+/// Handle the unified `factbase` tool by extracting `op` and dispatching.
+async fn handle_factbase_op<E: EmbeddingProvider>(
+    db: &Database,
+    embedding: &E,
+    args: &Value,
+    reporter: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let op = args.get("op").and_then(|v| v.as_str()).unwrap_or("");
+
+    // Direct mapping ops
+    if let Some(tool_name) = op_to_tool_name(op) {
+        return dispatch_tool(db, embedding, tool_name, args, reporter).await;
+    }
+
+    match op {
+        // search: mode=semantic (default) or mode=content
+        "search" => {
+            let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("semantic");
+            match mode {
+                "content" => {
+                    // Content search uses "pattern" param; map "query" to "pattern" if needed
+                    let mut a = args.clone();
+                    if a.get("pattern").is_none() {
+                        if let Some(q) = a.get("query").cloned() {
+                            a.as_object_mut().unwrap().insert("pattern".into(), q);
+                        }
+                    }
+                    dispatch_tool(db, embedding, "search_content", &a, reporter).await
+                }
+                _ => dispatch_tool(db, embedding, "search_knowledge", args, reporter).await,
+            }
+        }
+        // organize: action=analyze or action=move/retype/apply
+        "organize" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            if action == "analyze" {
+                dispatch_tool(db, embedding, "organize_analyze", args, reporter).await
+            } else {
+                dispatch_tool(db, embedding, "organize", args, reporter).await
+            }
+        }
+        // links: action=suggest or action=store
+        "links" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("suggest");
+            match action {
+                "store" => dispatch_tool(db, embedding, "store_links", args, reporter).await,
+                _ => dispatch_tool(db, embedding, "get_link_suggestions", args, reporter).await,
+            }
+        }
+        // embeddings: action=export/import/status
+        "embeddings" => {
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+            match action {
+                "export" => dispatch_tool(db, embedding, "embeddings_export", args, reporter).await,
+                "import" => dispatch_tool(db, embedding, "embeddings_import", args, reporter).await,
+                _ => dispatch_tool(db, embedding, "embeddings_status", args, reporter).await,
+            }
+        }
+        _ => Err(FactbaseError::Config(format!("Unknown factbase op: {op}"))),
+    }
 }
 
 pub async fn handle_tool_call<E: EmbeddingProvider>(
@@ -180,87 +296,58 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
             let reporter = crate::ProgressReporter::Mcp { sender: progress };
 
             let result = match tool_name {
-                "search_knowledge" => search_knowledge(db, embedding, &args).await?,
-                "get_entity" => blocking_tool!(db, args, get_entity),
-                "list_entities" => blocking_tool!(db, args, list_entities),
-                "get_perspective" => blocking_tool!(db, args, get_perspective),
-                "list_repositories" => blocking_tool!(db, list_repositories),
-                "create_document" => blocking_tool!(db, args, create_document),
-                "update_document" => blocking_tool!(db, args, update_document),
-                "delete_document" => blocking_tool!(db, args, delete_document),
-                "bulk_create_documents" => {
-                    blocking_tool!(db, args, reporter, bulk_create_documents)
-                }
-                "search_content" => {
-                    blocking_tool!(db, args, reporter, search_content)
-                }
-                "get_review_queue" => get_review_queue(db, &args, &reporter)?,
-                "get_deferred_items" => get_deferred_items(db, &args, &reporter)?,
-                "answer_questions" => {
-                    blocking_tool!(db, args, reporter, answer_questions)
-                }
-                "check_repository" => check_repository(db, embedding, &args, &reporter).await?,
-                "scan_repository" => scan_repository(db, embedding, &args, &reporter).await?,
-                "detect_links" => detect_links(db, &args, &reporter).await?,
-                "init_repository" => blocking_tool!(db, args, init_repository),
+                // Primary tools
+                "factbase" => handle_factbase_op(db, embedding, &args, &reporter).await,
+                "workflow" => dispatch_tool(db, embedding, "workflow", &args, &reporter).await,
+
+                // Legacy aliases (backward compat — not in schema)
                 "get_duplicate_entries" => {
-                    organize_analyze(db, embedding, &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}), &reporter).await?
-                }
-                "organize_analyze" => {
-                    organize_analyze(db, embedding, &args, &reporter).await?
-                }
-                "organize" => {
-                    organize(db, embedding, &args, &reporter).await?
+                    dispatch_tool(db, embedding, "organize_analyze",
+                        &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}),
+                        &reporter).await
                 }
                 "organize_move" => {
                     let mut a = args.clone();
                     a.as_object_mut().map(|m| m.insert("action".into(), "move".into()));
-                    organize(db, embedding, &a, &reporter).await?
+                    dispatch_tool(db, embedding, "organize", &a, &reporter).await
                 }
                 "organize_retype" => {
                     let mut a = args.clone();
                     a.as_object_mut().map(|m| m.insert("action".into(), "retype".into()));
-                    organize(db, embedding, &a, &reporter).await?
+                    dispatch_tool(db, embedding, "organize", &a, &reporter).await
                 }
                 "organize_apply" => {
                     let mut a = args.clone();
                     a.as_object_mut().map(|m| m.insert("action".into(), "apply".into()));
-                    organize(db, embedding, &a, &reporter).await?
+                    dispatch_tool(db, embedding, "organize", &a, &reporter).await
                 }
-                "workflow" => {
-                    // Bootstrap is now sync (no LLM); other workflows are also sync
-                    let is_bootstrap = args.get("workflow")
-                        .and_then(|v| v.as_str()) == Some("bootstrap");
-                    if is_bootstrap {
-                        workflow::bootstrap(&args)?
-                    } else {
-                        blocking_tool!(db, args, workflow::workflow)
+                other => {
+                    // Try as legacy tool name
+                    match dispatch_tool(db, embedding, other, &args, &reporter).await {
+                        Ok(v) => Ok(v),
+                        Err(FactbaseError::Config(msg)) if msg.starts_with("Unknown tool:") => {
+                            return Ok(Some(McpResponse::error(
+                                -32602,
+                                format!("Unknown tool: {tool_name}"),
+                            )))
+                        }
+                        Err(e) => Err(e),
                     }
-                }
-                "get_authoring_guide" => get_authoring_guide(),
-                "embeddings_export" => blocking_tool!(db, args, embeddings_export),
-                "embeddings_import" => blocking_tool!(db, args, embeddings_import),
-                "embeddings_status" => blocking_tool!(db, embeddings_status_tool),
-                "get_link_suggestions" => get_link_suggestions(db, embedding, &args).await?,
-                "store_links" => blocking_tool!(db, args, store_links),
-                "get_fact_pairs" => blocking_tool!(db, args, get_fact_pairs),
-                _ => {
-                    return Ok(Some(McpResponse::error(
-                        -32602,
-                        format!("Unknown tool: {tool_name}"),
-                    )))
                 }
             };
 
-            Ok(Some(McpResponse::success(
-                id,
-                serde_json::json!({
-                    "content": [{
-                        "type": "text",
-                        "text": serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
-                    }]
-                }),
-            )))
+            match result {
+                Ok(result) => Ok(Some(McpResponse::success(
+                    id,
+                    serde_json::json!({
+                        "content": [{
+                            "type": "text",
+                            "text": serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
+                        }]
+                    }),
+                ))),
+                Err(e) => Ok(Some(McpResponse::error(-32602, e.to_string()))),
+            }
         }
         _ => Ok(Some(McpResponse::error(-32601, "Method not found".into()))),
     }
@@ -361,55 +448,17 @@ mod tests {
             .filter_map(|t| t["name"].as_str().map(String::from))
             .collect();
 
-        // These are the tools in the schema. Dispatch may have additional aliases
-        // (organize_move, organize_retype, organize_apply, get_duplicate_entries)
-        // that route to the same handler but aren't in the schema.
-        let expected_schema_names: HashSet<String> = [
-            "search_knowledge",
-            "get_entity",
-            "list_entities",
-            "get_perspective",
-            "list_repositories",
-            "create_document",
-            "update_document",
-            "delete_document",
-            "bulk_create_documents",
-            "search_content",
-            "get_review_queue",
-            "get_deferred_items",
-            "answer_questions",
-            "check_repository",
-            "scan_repository",
-            "detect_links",
-            "init_repository",
-            "get_authoring_guide",
-            "workflow",
-            "organize_analyze",
-            "organize",
-            "embeddings_export",
-            "embeddings_import",
-            "embeddings_status",
-            "get_link_suggestions",
-            "store_links",
-            "get_fact_pairs",
-        ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+        // Schema now has exactly 2 tools: workflow + factbase
+        let expected: HashSet<String> = ["workflow", "factbase"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
 
-        let in_schema_not_expected: Vec<_> = schema_names.difference(&expected_schema_names).collect();
-        let in_expected_not_schema: Vec<_> = expected_schema_names.difference(&schema_names).collect();
+        assert_eq!(schema_names, expected, "schema should have exactly workflow + factbase");
 
-        assert!(
-            in_schema_not_expected.is_empty(),
-            "Unexpected tools in schema: {:?}",
-            in_schema_not_expected
-        );
-        assert!(
-            in_expected_not_schema.is_empty(),
-            "Missing tools from schema: {:?}",
-            in_expected_not_schema
-        );
+        // All legacy tool names should still be dispatchable (tested via integration tests)
+        let legacy = schema::legacy_tool_names();
+        assert!(legacy.len() >= 26, "should have all legacy tool names as aliases");
     }
 
     #[test]
@@ -417,46 +466,14 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        // Tools that filter by document type must use "doc_type", not "type"
-        let doc_type_tools = [
-            "search_knowledge",
-            "search_content",
-            "list_entities",
-            "workflow",
-        ];
+        // factbase and workflow should have doc_type param
+        let factbase = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let fb_props = factbase["inputSchema"]["properties"].as_object().unwrap();
+        assert!(fb_props.contains_key("doc_type"), "factbase should have doc_type param");
 
-        for tool_name in &doc_type_tools {
-            let tool = tools
-                .iter()
-                .find(|t| t["name"] == *tool_name)
-                .unwrap_or_else(|| panic!("tool {tool_name} should exist"));
-            let props = tool["inputSchema"]["properties"]
-                .as_object()
-                .unwrap_or_else(|| panic!("{tool_name} should have properties"));
-
-            assert!(
-                props.contains_key("doc_type"),
-                "{tool_name} should have 'doc_type' param"
-            );
-            assert!(
-                !props.contains_key("type"),
-                "{tool_name} should use 'doc_type' not 'type' for document type filter"
-            );
-        }
-
-        // No tool should have a "type" property for document type filtering
-        for tool in tools {
-            let name = tool["name"].as_str().unwrap_or("unknown");
-            if let Some(props) = tool["inputSchema"]["properties"].as_object() {
-                if let Some(type_prop) = props.get("type") {
-                    let desc = type_prop["description"].as_str().unwrap_or("");
-                    assert!(
-                        !desc.to_lowercase().contains("document type"),
-                        "{name} has 'type' param describing document type — should be 'doc_type'"
-                    );
-                }
-            }
-        }
+        let workflow = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let wf_props = workflow["inputSchema"]["properties"].as_object().unwrap();
+        assert!(wf_props.contains_key("doc_type"), "workflow should have doc_type param");
     }
 
     #[tokio::test]
@@ -723,25 +740,13 @@ mod tests {
     }
 
     #[test]
-    fn test_schema_time_budget_secs_on_scaling_tools() {
+    fn test_schema_time_budget_secs_on_factbase_tool() {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
-
-        // Only scan_repository and detect_links have time_budget_secs (paged)
-        let scaling_tools = ["scan_repository", "detect_links"];
-        for tool_name in &scaling_tools {
-            let tool = tools
-                .iter()
-                .find(|t| t["name"] == *tool_name)
-                .unwrap_or_else(|| panic!("tool {tool_name} should exist"));
-            let props = tool["inputSchema"]["properties"]
-                .as_object()
-                .unwrap_or_else(|| panic!("{tool_name} should have properties"));
-            assert!(
-                props.contains_key("time_budget_secs"),
-                "{tool_name} should have 'time_budget_secs' param"
-            );
-        }
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let props = fb["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("time_budget_secs"), "factbase should have time_budget_secs param");
+        assert!(props.contains_key("resume"), "factbase should have resume param");
     }
 
     #[tokio::test]

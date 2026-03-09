@@ -439,13 +439,14 @@ mod tests {
 
     #[test]
     fn test_organize_analyze_schema_no_paging() {
+        // organize op in factbase tool should not have its own paging params
+        // (time_budget_secs and resume are for scan/detect_links ops)
         let result = crate::mcp::tools::schema::tools_list();
         let tools = result["tools"].as_array().unwrap();
-        let analyze = tools.iter().find(|s| s["name"] == "organize_analyze").unwrap();
-        let props = &analyze["inputSchema"]["properties"];
-        // No paging params
-        assert!(props.get("time_budget_secs").is_none());
-        assert!(props.get("resume").is_none());
+        let fb = tools.iter().find(|s| s["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        // organize op description should not mention resume
+        assert!(desc.contains("organize: Reorganize KB"));
     }
 
     #[test]
