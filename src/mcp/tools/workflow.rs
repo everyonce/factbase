@@ -1289,9 +1289,7 @@ fn resolve_step2_batch(
         "continue": true,
         "batch": batch_value,
         "completion_gate": format!("{resolved_so_far}/{total_questions} resolved ({pct}%). Call workflow resolve step=2."),
-        "when_done": "Call workflow with workflow='resolve', step=2 immediately.",
-        "checkpoint_file": checkpoint_file.as_deref().unwrap_or(".factbase/resolve-checkpoint.json"),
-        "checkpoint_hint": "Progress saved to disk. Previous batch details are not needed in context."
+        "when_done": "Call workflow with workflow='resolve', step=2 immediately."
     });
 
     // Only include conflict_patterns when first batch or batch contains conflict questions
@@ -2625,7 +2623,7 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.len() < 500, "subsequent batch instruction should be compact: {instr}");
-        assert!(instr.contains("LOOP PROTOCOL"), "should include LOOP PROTOCOL: {instr}");
+        assert!(instr.contains("LOOP"), "should include LOOP: {instr}");
     }
 
     #[test]
@@ -2886,7 +2884,7 @@ mod tests {
         insert_doc_with_questions(&db, "gate01", &["temporal", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
-        assert!(gate.contains("checkpoint"), "gate should reference checkpoint: {gate}");
+        assert!(gate.contains("resolved"), "gate should have resolved count: {gate}");
         assert!(gate.contains("0/2"), "gate should have compact counts: {gate}");
         assert!(gate.contains("step=2"), "gate should tell agent to call step=2: {gate}");
     }
@@ -2896,11 +2894,10 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "prg001", &["temporal", "stale"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        // progress field removed — replaced by checkpoint_file and checkpoint_hint
+        // checkpoint fields removed from response — file still written to disk
         assert!(step.get("progress").is_none(), "progress should not be in response");
-        assert!(step["checkpoint_file"].is_string(), "should have checkpoint_file");
-        assert!(step["checkpoint_hint"].is_string(), "should have checkpoint_hint");
-        assert!(step["checkpoint_hint"].as_str().unwrap().contains("disk"), "hint should mention disk");
+        assert!(step.get("checkpoint_file").is_none(), "checkpoint_file removed from response");
+        assert!(step.get("checkpoint_hint").is_none(), "checkpoint_hint removed from response");
     }
 
     #[test]
@@ -4041,8 +4038,8 @@ mod tests {
         assert!(step.get("continue").is_some(), "continue should be in response");
         assert!(step.get("variant").is_some(), "variant should be in response");
         assert!(step.get("type_filter").is_some(), "type_filter should be in response");
-        assert!(step.get("checkpoint_file").is_some(), "checkpoint_file should be in response");
-        assert!(step.get("checkpoint_hint").is_some(), "checkpoint_hint should be in response");
+        assert!(step.get("checkpoint_file").is_none(), "checkpoint_file removed from response");
+        assert!(step.get("checkpoint_hint").is_none(), "checkpoint_hint removed from response");
     }
 
     #[test]
@@ -4054,8 +4051,8 @@ mod tests {
         // Response should not contain the removed field names
         assert!(!json_str.contains("\"progress\""), "response should not contain progress field");
         assert!(!json_str.contains("\"continuation_guidance\""), "response should not contain continuation_guidance field");
-        // But should contain checkpoint references
-        assert!(json_str.contains("checkpoint"), "response should reference checkpoint");
+        // But should still have completion_gate with progress
+        assert!(json_str.contains("completion_gate"), "response should have completion_gate");
     }
 
     #[test]
@@ -4089,8 +4086,8 @@ mod tests {
         insert_doc_with_questions(&db, "cg001", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
-        assert!(gate.contains("checkpoint"), "completion_gate should reference checkpoint file");
-        assert!(gate.contains("DO NOT"), "completion_gate should tell agent not to stop");
+        assert!(gate.contains("resolved"), "completion_gate should show resolved count");
+        assert!(gate.contains("step=2"), "completion_gate should tell agent to call step=2");
     }
 
     #[test]
