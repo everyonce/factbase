@@ -19,6 +19,9 @@ pub struct ScanResult {
     pub reindexed: usize,
     /// Number of entity links detected
     pub links_detected: usize,
+    /// Number of answered review questions pruned from files
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub questions_pruned: usize,
     /// Number of fact-level embeddings generated
     pub fact_embeddings_generated: usize,
     /// Number of documents needing fact embeddings (generated during scan_repository)
@@ -52,20 +55,24 @@ impl std::fmt::Display for ScanResult {
                 f,
                 "Indexed {} documents (embeddings skipped \u{2014} use embeddings import to load)",
                 self.total
-            )
+            )?;
         } else if self.reindexed > 0 {
             write!(
                 f,
                 "{} added, {} updated, {} reindexed, {} deleted, {} moved, {} unchanged (total: {})",
                 self.added, self.updated, self.reindexed, self.deleted, self.moved, self.unchanged, self.total
-            )
+            )?;
         } else {
             write!(
                 f,
                 "{} added, {} updated, {} deleted, {} moved, {} unchanged (total: {})",
                 self.added, self.updated, self.deleted, self.moved, self.unchanged, self.total
-            )
+            )?;
         }
+        if self.questions_pruned > 0 {
+            write!(f, ", {} answered questions pruned", self.questions_pruned)?;
+        }
+        Ok(())
     }
 }
 
@@ -236,5 +243,36 @@ mod tests {
         let s = format!("{r}");
         assert!(s.contains("Indexed 15 documents"));
         assert!(s.contains("embeddings skipped"));
+    }
+
+    #[test]
+    fn test_scan_result_display_with_questions_pruned() {
+        let r = ScanResult {
+            added: 1,
+            updated: 2,
+            deleted: 0,
+            moved: 0,
+            unchanged: 3,
+            total: 6,
+            questions_pruned: 4,
+            ..Default::default()
+        };
+        let s = format!("{r}");
+        assert!(s.contains("4 answered questions pruned"));
+    }
+
+    #[test]
+    fn test_scan_result_display_no_pruned_suffix() {
+        let r = ScanResult {
+            added: 1,
+            updated: 0,
+            deleted: 0,
+            moved: 0,
+            unchanged: 3,
+            total: 4,
+            ..Default::default()
+        };
+        let s = format!("{r}");
+        assert!(!s.contains("pruned"));
     }
 }
