@@ -777,7 +777,7 @@ const DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document l
 
 const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)";
 
-const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Follow the resolve workflow through ALL its steps (answering batches, applying, verifying, cleanup)\n3. The resolve workflow has 6 steps including cleanup scan and final report\n\n⚠️ Complete the ENTIRE resolve workflow before returning here. When resolve reports complete=true, call workflow(workflow='maintain', step=5) to continue.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.{ctx}";
+const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=5) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.{ctx}";
 
 const DEFAULT_MAINTAIN_REPORT_INSTRUCTION: &str = "Write a final maintenance report.\n\n## Maintenance Summary\n- Documents scanned: X\n- Links detected: X\n- Questions found: X\n- Questions resolved: X\n- Questions deferred: X (need human attention)\n- Remaining questions: X\n\n## Health Assessment\nOne paragraph: overall KB health after maintenance, what was fixed, and any remaining issues that need human attention.\n\nIf deferred items exist, remind the user to review them with get_deferred_items.";
 
@@ -4134,6 +4134,9 @@ mod tests {
         assert_eq!(step["next_tool"], "workflow");
         assert_eq!(step["suggested_args"]["workflow"], "resolve");
         assert_eq!(step["total_unanswered"], 2);
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("LOOP:"), "maintain resolve must include LOOP protocol: {instr}");
+        assert!(instr.contains("You do not decide when to stop"), "maintain resolve must forbid self-stopping");
     }
 
     #[test]
