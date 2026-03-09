@@ -25,6 +25,7 @@ pub(super) struct InterruptedResultParams {
     pub docs_embedded: usize,
     pub docs_link_detected: usize,
     pub fact_embeddings_generated: usize,
+    pub file_offset: usize,
 }
 
 /// Build a ScanResult for an interrupted scan
@@ -73,7 +74,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
         }),
         interrupted: true,
         embeddings_skipped: false,
-        file_offset: 0,
+        file_offset: params.file_offset,
     }
 }
 
@@ -103,6 +104,7 @@ mod tests {
             docs_embedded: 0,
             docs_link_detected: 0,
             fact_embeddings_generated: 0,
+            file_offset: 0,
         }
     }
 
@@ -177,6 +179,7 @@ mod tests {
             docs_embedded: 9,
             docs_link_detected: 11,
             fact_embeddings_generated: 42,
+            file_offset: 99,
         };
         let result = build_interrupted_result(params);
 
@@ -189,6 +192,7 @@ mod tests {
         assert_eq!(result.reindexed, 6);
         assert_eq!(result.links_detected, 7);
         assert_eq!(result.fact_embeddings_generated, 42);
+        assert_eq!(result.file_offset, 99);
         assert!(result.interrupted);
         assert!(result.duplicates.is_empty());
 
@@ -215,5 +219,15 @@ mod tests {
     fn test_interrupted_always_true() {
         let result = build_interrupted_result(default_params());
         assert!(result.interrupted);
+    }
+
+    #[test]
+    fn test_file_offset_propagated() {
+        let params = InterruptedResultParams {
+            file_offset: 42,
+            ..default_params()
+        };
+        let result = build_interrupted_result(params);
+        assert_eq!(result.file_offset, 42);
     }
 }

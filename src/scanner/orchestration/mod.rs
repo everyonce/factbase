@@ -187,6 +187,9 @@ pub async fn full_scan(
         let remaining = files.split_off(ctx.opts.file_offset);
         let total = ctx.opts.file_offset + remaining.len();
         (remaining, total)
+    } else if ctx.opts.file_offset > 0 && ctx.opts.file_offset >= files.len() {
+        // All files already processed in a previous call — skip file loop entirely
+        (Vec::new(), files.len())
     } else {
         let total = files.len();
         (files, total)
@@ -473,6 +476,7 @@ pub async fn full_scan(
                     docs_embedded: total_docs_embedded,
                     docs_link_detected: 0,
                     fact_embeddings_generated: 0,
+                    file_offset: ctx.opts.file_offset + global_idx,
                 }));
             }
             } // end else (embedding enabled)
@@ -582,6 +586,7 @@ pub async fn full_scan(
             docs_embedded,
             docs_link_detected: link_output.docs_link_detected,
             fact_embeddings_generated: 0,
+            file_offset: total_files,
         }));
     }
 
