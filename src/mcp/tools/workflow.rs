@@ -1104,7 +1104,7 @@ fn resolve_step2_batch(
     let instruction_value = if is_first_batch {
         Value::String(instruction)
     } else {
-        Value::String("Continue answering. DO NOT STOP — call step=2 immediately after answering this batch. Do not summarize or report progress between batches.".to_string())
+        Value::String("LOOP PROTOCOL: You are in an answer loop. The loop continues until this tool returns continue=false. You do NOT decide when to stop — only the tool can end the loop. After answering, call workflow(resolve, step=2). If continue=true, answer and loop. If continue=false, done. Do not break the loop. If context is full, compact and resume — retain only: call workflow(resolve, step=2), answer format.".to_string())
     };
 
     let mut result = serde_json::json!({
@@ -1119,7 +1119,7 @@ fn resolve_step2_batch(
         "continue": true,
         "batch": batch_value,
         "progress": format!("Batch {batch_number}: {resolved_so_far} answered, {remaining} remaining"),
-        "completion_gate": format!("DO NOT STOP. {resolved_so_far}/{total_questions} resolved ({pct}%). Call workflow resolve step=2 for the next batch. You have processed {batch_number} batch(es) — most models can handle 15+. Only stop if you receive an actual context limit error."),
+        "completion_gate": format!("DO NOT STOP. {resolved_so_far}/{total_questions} resolved ({pct}%). Call workflow resolve step=2 for the next batch. You have processed {batch_number} batch(es). The tool returns continue=false when done — do not stop before that."),
         "when_done": "DO NOT STOP. Call workflow with workflow='resolve', step=2 immediately."
     });
 
