@@ -30,15 +30,27 @@ pub struct WorkflowsConfig {
     #[serde(default)]
     pub resolve_variant: Option<String>,
 
+    /// Batch size for resolve step 2 (default 50, clamped to 10..=100).
+    #[serde(default)]
+    pub resolve_batch_size: Option<usize>,
+
     #[serde(flatten)]
     pub templates: HashMap<String, String>,
 }
 
 impl WorkflowsConfig {
+    /// Effective resolve batch size: configured value clamped to 10..=100, or 50.
+    pub fn resolve_batch_size(&self) -> usize {
+        self.resolve_batch_size.unwrap_or(50).clamp(10, 100)
+    }
+
     /// Merge another config on top of this one (other wins on conflicts).
     pub fn merge(&mut self, other: &WorkflowsConfig) {
         if other.resolve_variant.is_some() {
             self.resolve_variant = other.resolve_variant.clone();
+        }
+        if other.resolve_batch_size.is_some() {
+            self.resolve_batch_size = other.resolve_batch_size;
         }
         for (k, v) in &other.templates {
             self.templates.insert(k.clone(), v.clone());
@@ -345,5 +357,65 @@ workflows:
         std::fs::create_dir_all(&factbase_dir).unwrap();
         std::fs::write(factbase_dir.join("prompts.yaml"), "{{invalid yaml").unwrap();
         assert!(WorkflowsConfig::load_repo_prompts(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_resolve_batch_size_default() {
+        let config = WorkflowsConfig::default();
+        assert_eq!(config.resolve_batch_size(), 50);
+    }
+
+    #[test]
+    fn test_resolve_batch_size_configured() {
+        let mut config = WorkflowsConfig::default();
+        config.resolve_batch_size = Some(25);
+        assert_eq!(config.resolve_batch_size(), 25);
+    }
+
+    #[test]
+    fn test_resolve_batch_size_clamped_low() {
+        let mut config = WorkflowsConfig::default();
+        config.resolve_batch_size = Some(3);
+        assert_eq!(config.resolve_batch_size(), 10);
+    }
+
+    #[test]
+    fn test_resolve_batch_size_clamped_high() {
+        let mut config = WorkflowsConfig::default();
+        config.resolve_batch_size = Some(200);
+        assert_eq!(config.resolve_batch_size(), 100);
+    }
+
+    #[test]
+    fn test_resolve_batch_size_deserialize() {
+        let yaml = "resolve_batch_size: 30\n";
+        let config: WorkflowsConfig = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.resolve_batch_size(), 30);
+    }
+
+    #[test]
+    fn test_resolve_batch_size_in_full_config() {
+        let yaml = "workflows:\n  resolve_batch_size: 40\n";
+        let config: crate::Config = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(config.workflows.resolve_batch_size(), 40);
+    }
+
+    #[test]
+    fn test_merge_resolve_batch_size() {
+        let mut base = WorkflowsConfig::default();
+        base.resolve_batch_size = Some(50);
+        let mut overlay = WorkflowsConfig::default();
+        overlay.resolve_batch_size = Some(25);
+        base.merge(&overlay);
+        assert_eq!(base.resolve_batch_size(), 25);
+    }
+
+    #[test]
+    fn test_merge_resolve_batch_size_not_overwritten_by_none() {
+        let mut base = WorkflowsConfig::default();
+        base.resolve_batch_size = Some(30);
+        let overlay = WorkflowsConfig::default();
+        base.merge(&overlay);
+        assert_eq!(base.resolve_batch_size(), 30);
     }
 }
