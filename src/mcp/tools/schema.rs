@@ -248,11 +248,11 @@ pub fn tools_list() -> Value {
             },
             {
                 "name": "workflow",
-                "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'populate KB from a source file' or 'create documents from [data]' or 'bootstrap with data' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nCall again with the next step number to advance.",
+                "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'run full maintenance' or 'clean up KB' or 'do everything' or 'maintain the factbase' → workflow='maintain'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'populate KB from a source file' or 'create documents from [data]' or 'bootstrap with data' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nThe 'maintain' workflow chains scan → detect_links → check → resolve → report for a one-command clean state.\n\nThe 'resolve' workflow has 6 steps: queue overview, answer batches, apply, verify, cleanup scan, and final report.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.\n\nCall again with the next step number to advance.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "workflow": { "type": "string", "description": "Workflow name: 'bootstrap', 'setup', 'update', 'resolve', 'ingest', 'enrich', 'improve', or 'list'" },
+                        "workflow": { "type": "string", "description": "Workflow name: 'bootstrap', 'setup', 'update', 'maintain', 'resolve', 'ingest', 'enrich', 'improve', or 'list'" },
                         "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
                         "domain": { "type": "string", "description": "For bootstrap: domain description (e.g. 'mycology', 'ancient Mediterranean history', 'indie video games')" },
                         "entity_types": { "type": "string", "description": "For bootstrap: optional comma-separated entity types the user wants to track (e.g. 'species, habitats, researchers')" },
@@ -690,6 +690,20 @@ mod tests {
         assert!(
             desc.contains("populate KB from a source file"),
             "workflow description should cover source-file-to-KB use case"
+        );
+        assert!(
+            desc.contains("maintain"),
+            "workflow description should mention maintain workflow"
+        );
+        assert!(
+            desc.contains("ERROR HANDLING"),
+            "workflow description should include error handling guidance"
+        );
+        // Check workflow enum includes maintain
+        let schema = wf["inputSchema"]["properties"]["workflow"]["description"].as_str().unwrap();
+        assert!(
+            schema.contains("maintain"),
+            "workflow enum description should include maintain"
         );
     }
 }
