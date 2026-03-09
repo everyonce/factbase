@@ -148,7 +148,8 @@ pub use processor::{
     merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
     overlaps_point, overlaps_range,
     parse_links_block, parse_referenced_by_block, parse_review_queue, prune_stale_questions,
-    parse_source_definitions, parse_source_references, parse_temporal_tags, validate_temporal_tags,
+    parse_source_definitions, parse_source_references, parse_temporal_tags,
+    strip_answered_questions, validate_temporal_tags,
     DocumentProcessor,
 };
 pub use progress::{ProgressReporter, ProgressSender};

@@ -263,7 +263,23 @@ pub async fn full_scan(
                 }
             };
 
-            let hash = pre.hash.expect("hash should exist when content is Ok");
+            // Strip answered [x] questions before computing hash
+            let (content, hash) = if !ctx.opts.dry_run {
+                let (pruned, count) = crate::processor::strip_answered_questions(&content);
+                if count > 0 {
+                    fs::write(&pre.path, &pruned)?;
+                    result.questions_pruned += count;
+                    let new_hash = crate::processor::content_hash(&pruned);
+                    (pruned, new_hash)
+                } else {
+                    let hash = pre.hash.expect("hash should exist when content is Ok");
+                    (content, hash)
+                }
+            } else {
+                let hash = pre.hash.expect("hash should exist when content is Ok");
+                (content, hash)
+            };
+
             let id = if let Some(id) = pre.existing_id {
                 id
             } else if ctx.opts.dry_run {

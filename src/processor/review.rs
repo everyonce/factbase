@@ -142,6 +142,76 @@ fn extract_line_ref_and_strip(description: &str) -> (Option<usize>, String) {
 
 /// Remove unanswered questions whose trigger conditions no longer exist.
 ///
+/// Strip only answered `[x]`/`[X]` questions (and their blockquote answers)
+/// from the review queue. Returns `(pruned_content, count_removed)`.
+/// Unlike `prune_stale_questions`, this preserves ALL unanswered and deferred questions.
+pub fn strip_answered_questions(content: &str) -> (String, usize) {
+    let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
+        return (content.to_string(), 0);
+    };
+
+    let (before_marker, after_marker) = content.split_at(marker_pos);
+    let queue_content = &after_marker[REVIEW_QUEUE_MARKER.len()..];
+
+    let lines: Vec<&str> = queue_content.lines().collect();
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut skip_answer = false;
+    let mut pruned = 0usize;
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+
+        if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]") {
+            skip_answer = true;
+            pruned += 1;
+        } else if skip_answer && trimmed.starts_with('>') {
+            // skip blockquote answer of a pruned question
+        } else {
+            result_lines.push(line);
+            skip_answer = false;
+        }
+        i += 1;
+    }
+
+    if pruned == 0 {
+        return (content.to_string(), 0);
+    }
+
+    let has_questions = result_lines
+        .iter()
+        .any(|l| l.trim_start().starts_with("- ["));
+
+    let output = if has_questions {
+        format!(
+            "{}{}\n{}",
+            before_marker,
+            REVIEW_QUEUE_MARKER,
+            result_lines.join("\n")
+        )
+    } else {
+        let mut body = before_marker.to_string();
+        loop {
+            let trimmed = body.trim_end();
+            if trimmed.ends_with("## Review Queue") {
+                body = trimmed.trim_end_matches("## Review Queue").to_string();
+            } else if trimmed.ends_with("---") {
+                body = trimmed.trim_end_matches("---").to_string();
+            } else {
+                body = trimmed.to_string();
+                break;
+            }
+        }
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body
+    };
+
+    (output, pruned)
+}
+
 /// Takes the set of descriptions that the generators would produce today.
 /// Any unanswered question whose description is NOT in `valid_descriptions`
 /// is removed. Answered and deferred questions are always kept.
@@ -1286,5 +1356,68 @@ Line 3
         assert_eq!(questions.len(), 2);
         assert_eq!(questions[0].question_type, QuestionType::WeakSource);
         assert_eq!(questions[1].question_type, QuestionType::WeakSource);
+    }
+
+    // ============================================================================
+    // Strip Answered Questions Tests
+    // ============================================================================
+
+    #[test]
+    fn test_strip_answered_removes_checked() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [x] `@q[temporal]` answered question\n  > 2024\n";
+        let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 1);
+        assert!(!result.contains("answered question"));
+        assert!(!result.contains("Review Queue"));
+    }
+
+    #[test]
+    fn test_strip_answered_removes_uppercase_x() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [X] `@q[temporal]` answered question\n  > 2024\n";
+        let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 1);
+        assert!(!result.contains("answered question"));
+    }
+
+    #[test]
+    fn test_strip_answered_preserves_unanswered() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` unanswered question\n  > \n\
+                       - [x] `@q[missing]` answered one\n  > done\n";
+        let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 1);
+        assert!(result.contains("unanswered question"));
+        assert!(!result.contains("answered one"));
+    }
+
+    #[test]
+    fn test_strip_answered_preserves_deferred() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` deferred question\n  > defer: need more info\n\
+                       - [x] `@q[missing]` answered one\n  > done\n";
+        let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 1);
+        assert!(result.contains("deferred question"));
+        assert!(result.contains("defer: need more info"));
+        assert!(!result.contains("answered one"));
+    }
+
+    #[test]
+    fn test_strip_answered_noop_when_none() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` unanswered question\n  > \n";
+        let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 0);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_answered_noop_no_review_section() {
+        let content = "# Doc\n\nJust content.\n";
+        let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 0);
+        assert_eq!(result, content);
     }
 }

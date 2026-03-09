@@ -75,6 +75,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
         interrupted: true,
         embeddings_skipped: false,
         file_offset: params.file_offset,
+        questions_pruned: 0,
     }
 }
 

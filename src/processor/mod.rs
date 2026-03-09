@@ -73,7 +73,7 @@ pub use sources::{
 pub use review::{
     append_review_questions, ensure_review_section, merge_duplicate_review_sections,
     normalize_conflict_desc, normalize_review_section, parse_review_queue, prune_stale_questions,
-    recover_review_section,
+    recover_review_section, strip_answered_questions,
 };
 
 // Re-export citation quality scoring

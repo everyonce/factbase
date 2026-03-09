@@ -192,6 +192,7 @@ pub async fn scan_repository(
         "deleted": result.deleted,
         "moved": result.moved,
         "links_detected": result.links_detected,
+        "questions_pruned": result.questions_pruned,
         "fact_embeddings_generated": result.fact_embeddings_generated,
         "fact_embeddings_needed": result.fact_embeddings_needed,
         "total": result.total,
