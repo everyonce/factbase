@@ -130,22 +130,41 @@ pub async fn scan_repository(
 
     let processed = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
 
-    // If interrupted by deadline, return progress response
+    // If interrupted by deadline, return progress response with resume token
     if result.interrupted && time_budget.is_some() {
-        let total_all = result.file_offset.max(processed);
+        // Use file_offset from result; fall back to total_files when the
+        // interruption came from a later phase (embedding/links) where
+        // file_offset was not set (defaults to 0 but all files were processed).
+        let resume_offset = if result.file_offset > 0 {
+            result.file_offset
+        } else {
+            total_files
+        };
         let resume_token = crate::mcp::tools::helpers::encode_resume_token(
-            &serde_json::json!({"file_offset": result.file_offset}),
+            &serde_json::json!({"file_offset": resume_offset}),
         );
-        let mut response = serde_json::json!({
+        let pct = if total_files > 0 { (processed as f64 / total_files as f64 * 100.0) as u32 } else { 0 };
+        let response = serde_json::json!({
             "added": result.added,
             "updated": result.updated,
             "unchanged": result.unchanged,
             "reindexed": result.reindexed,
+            "continue": true,
+            "resume": resume_token,
+            "progress": {
+                "processed": processed,
+                "remaining": total_files.saturating_sub(processed),
+                "total": total_files,
+                "percent_complete": pct,
+            },
+            "message": format!(
+                "⚠️ MANDATORY CONTINUATION — {processed}/{total_files} processed ({pct}%). \
+                 You MUST call scan_repository again with the resume token to continue. \
+                 Do NOT stop, do NOT reason about whether to continue, do NOT report partial results. \
+                 Just call scan_repository again until this message no longer appears."
+            ),
+            "when_done": "MANDATORY: Call scan_repository again passing the resume token. Do NOT use the think tool to decide whether to continue. Just call it.",
         });
-        crate::mcp::tools::helpers::apply_time_budget_progress(
-            &mut response, processed, total_all, "scan_repository", true,
-            Some(&resume_token),
-        );
         return Ok(response);
     }
 

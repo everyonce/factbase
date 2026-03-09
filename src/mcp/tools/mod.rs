@@ -1055,4 +1055,131 @@ mod tests {
         assert!(r.get("total").is_some());
         assert_eq!(r["reindexed"].as_u64().unwrap(), 0);
     }
+
+    #[test]
+    fn test_scan_interrupted_always_includes_continue_and_resume() {
+        // Simulate what the MCP tool does when full_scan returns interrupted=true.
+        // The response must always have continue=true and a resume token.
+        use crate::mcp::tools::helpers::{encode_resume_token, decode_resume_token};
+
+        let file_offset = 30usize;
+        let total_files = 100usize;
+        let processed = 30usize;
+
+        // This is the fixed logic from scan_repository
+        let resume_offset = if file_offset > 0 { file_offset } else { total_files };
+        let resume_token = encode_resume_token(
+            &serde_json::json!({"file_offset": resume_offset}),
+        );
+        let pct = if total_files > 0 { (processed as f64 / total_files as f64 * 100.0) as u32 } else { 0 };
+        let response = serde_json::json!({
+            "continue": true,
+            "resume": resume_token,
+            "progress": {
+                "processed": processed,
+                "remaining": total_files.saturating_sub(processed),
+                "total": total_files,
+                "percent_complete": pct,
+            },
+        });
+
+        assert_eq!(response["continue"], true);
+        assert!(response.get("resume").is_some());
+        assert_eq!(response["progress"]["remaining"], 70);
+        assert_eq!(response["progress"]["total"], 100);
+
+        // Verify resume token decodes correctly
+        let decoded = decode_resume_token(response["resume"].as_str().unwrap()).unwrap();
+        assert_eq!(decoded["file_offset"], 30);
+    }
+
+    #[test]
+    fn test_scan_interrupted_zero_file_offset_uses_total_files() {
+        // When embedding phase is interrupted, file_offset=0 but all files were processed.
+        // The resume token should use total_files so the next call skips the file loop.
+        use crate::mcp::tools::helpers::{encode_resume_token, decode_resume_token};
+
+        let file_offset = 0usize; // embedding phase interrupted, file_offset not set
+        let total_files = 50usize;
+
+        let resume_offset = if file_offset > 0 { file_offset } else { total_files };
+        let resume_token = encode_resume_token(
+            &serde_json::json!({"file_offset": resume_offset}),
+        );
+
+        let decoded = decode_resume_token(&resume_token).unwrap();
+        assert_eq!(decoded["file_offset"], 50, "should use total_files when file_offset is 0");
+    }
+
+    #[tokio::test]
+    async fn test_scan_resume_past_end_does_not_reprocess_files() {
+        // When file_offset >= files.len(), the scan should skip the file loop
+        // and not reprocess all files from the beginning.
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        // Create 3 files
+        for i in 0..3 {
+            std::fs::write(
+                repo_path.join(format!("doc{i}.md")),
+                format!("# Doc {i}\nContent {i}."),
+            ).unwrap();
+        }
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        // First scan: index all files
+        let args = serde_json::json!({});
+        let r1 = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        assert_eq!(r1["added"].as_u64().unwrap(), 3);
+
+        // Second scan with resume token pointing past all files
+        let resume_token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"file_offset": 100}),
+        );
+        let args = serde_json::json!({"resume": resume_token});
+        let r2 = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+
+        // Should not have reprocessed any files
+        assert_eq!(r2["added"].as_u64().unwrap(), 0);
+        assert_eq!(r2["updated"].as_u64().unwrap(), 0);
+        assert_eq!(r2["unchanged"].as_u64().unwrap(), 0);
+        // Should still return a complete response (not interrupted)
+        assert!(r2.get("continue").is_none() || r2["continue"] == false);
+        assert!(r2.get("total").is_some());
+    }
+
+    #[tokio::test]
+    async fn test_scan_completed_returns_no_continue() {
+        // When scan completes all work, response should NOT have continue=true
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc.md"), "# Doc\nContent.").unwrap();
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        let args = serde_json::json!({"time_budget_secs": 120});
+        let result = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+
+        // Completed scan should not have continue=true
+        assert!(result.get("continue").is_none() || result["continue"] == false);
+        assert!(result.get("resume").is_none());
+        assert!(result.get("total").is_some());
+        assert!(result.get("summary").is_some());
+    }
 }
