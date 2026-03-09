@@ -41,7 +41,7 @@ pub struct WorkflowsConfig {
 impl WorkflowsConfig {
     /// Effective resolve batch size: configured value clamped to 10..=100, or 50.
     pub fn resolve_batch_size(&self) -> usize {
-        self.resolve_batch_size.unwrap_or(50).clamp(10, 100)
+        self.resolve_batch_size.unwrap_or(30).clamp(10, 100)
     }
 
     /// Merge another config on top of this one (other wins on conflicts).
@@ -362,7 +362,7 @@ workflows:
     #[test]
     fn test_resolve_batch_size_default() {
         let config = WorkflowsConfig::default();
-        assert_eq!(config.resolve_batch_size(), 50);
+        assert_eq!(config.resolve_batch_size(), 30);
     }
 
     #[test]
