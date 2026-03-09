@@ -3085,14 +3085,13 @@ mod tests {
 
     #[test]
     fn test_update_step1_full_rebuild_dimension_mismatch() {
-        use crate::database::tests::test_doc;
         let (db, _tmp) = test_db();
-        // Insert a document so doc_count > 0
-        db.upsert_document(&test_doc("aaa111", "Test Doc")).unwrap();
+        insert_test_doc(&db, "aaa111", "<!-- factbase:aaa111 -->\n# Test\n\n- Fact");
         // Store embedding info with a different dimension than default config
-        db.set_embedding_info("some-model", 9999).unwrap();
-        // Also store an embedding so it's not "empty embeddings"
-        db.upsert_embedding("aaa111", &vec![0.0f32; 9999]).unwrap();
+        // (no actual embedding needed — dimension check fires first)
+        let config = crate::Config::load(None).unwrap_or_default();
+        let wrong_dim = config.embedding.dimension + 100;
+        db.set_embedding_info("some-model", wrong_dim).unwrap();
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         assert_eq!(step["requires_confirmation"], true);
@@ -3104,13 +3103,13 @@ mod tests {
 
     #[test]
     fn test_update_step1_full_rebuild_model_change() {
-        use crate::database::tests::test_doc;
         let (db, _tmp) = test_db();
-        db.upsert_document(&test_doc("bbb222", "Test Doc")).unwrap();
-        // Store embedding info with matching dimension but different model
+        insert_test_doc(&db, "bbb222", "<!-- factbase:bbb222 -->\n# Test\n\n- Fact");
         let config = crate::Config::load(None).unwrap_or_default();
+        // Matching dimension but different model
         db.set_embedding_info("old-model-that-doesnt-match", config.embedding.dimension).unwrap();
-        db.upsert_embedding("bbb222", &vec![0.0f32; config.embedding.dimension]).unwrap();
+        // Insert embedding with DB schema dimension (1024)
+        db.upsert_embedding("bbb222", &vec![0.0f32; 1024]).unwrap();
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         assert_eq!(step["requires_confirmation"], true);
@@ -3120,9 +3119,8 @@ mod tests {
 
     #[test]
     fn test_update_step1_full_rebuild_empty_embeddings() {
-        use crate::database::tests::test_doc;
         let (db, _tmp) = test_db();
-        db.upsert_document(&test_doc("ccc333", "Test Doc")).unwrap();
+        insert_test_doc(&db, "ccc333", "<!-- factbase:ccc333 -->\n# Test\n\n- Fact");
         // No embeddings stored, no embedding info set
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
@@ -3133,13 +3131,12 @@ mod tests {
 
     #[test]
     fn test_update_step1_no_confirmation_for_incremental() {
-        use crate::database::tests::test_doc;
         let (db, _tmp) = test_db();
-        db.upsert_document(&test_doc("ddd444", "Test Doc")).unwrap();
-        // Store matching embedding info and an actual embedding
+        insert_test_doc(&db, "ddd444", "<!-- factbase:ddd444 -->\n# Test\n\n- Fact");
         let config = crate::Config::load(None).unwrap_or_default();
         db.set_embedding_info(&config.embedding.model, config.embedding.dimension).unwrap();
-        db.upsert_embedding("ddd444", &vec![0.0f32; config.embedding.dimension]).unwrap();
+        // Insert embedding with DB schema dimension (1024)
+        db.upsert_embedding("ddd444", &vec![0.0f32; 1024]).unwrap();
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         assert!(step.get("requires_confirmation").is_none(), "incremental update should not require confirmation");
