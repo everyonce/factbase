@@ -1,5 +1,7 @@
 //! Repository management MCP tools.
 
+use std::collections::HashSet;
+
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
@@ -11,7 +13,7 @@ use crate::{
 use serde_json::Value;
 use tracing::info;
 
-/// Scan (or rescan) the repository to index documents, generate embeddings, and detect links.
+/// Scan (or rescan) the repository to index documents, generate embeddings.
 pub async fn scan_repository(
     db: &Database,
     embedding: &dyn EmbeddingProvider,
@@ -36,6 +38,9 @@ pub async fn scan_repository(
     // Wire force_reindex from MCP args
     opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
     opts.skip_embeddings = crate::mcp::tools::helpers::get_bool_arg(args, "skip_embeddings", false);
+
+    // MCP scan_repository skips link detection — use detect_links tool separately
+    opts.skip_links = true;
 
     // Resume: skip already-processed files
     opts.file_offset = get_str_arg(args, "resume")
@@ -184,6 +189,97 @@ pub async fn scan_repository(
             None
         },
         "fact_embeddings_hint": fact_hint,
+    }))
+}
+
+/// Detect cross-document links via title string matching.
+/// Runs as a separate phase after scan_repository.
+pub async fn detect_links(
+    db: &Database,
+    args: &Value,
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    use crate::scanner::orchestration::links::{run_link_detection_phase, LinkPhaseInput};
+
+    let repo_id = crate::mcp::tools::helpers::resolve_repo_filter(db, get_str_arg(args, "repo"))?;
+
+    let repos = db.list_repositories()?;
+    let repo = if let Some(id) = repo_id {
+        repos.into_iter().find(|r| r.id == id)
+    } else {
+        repos.into_iter().next()
+    };
+    let repo = repo.ok_or_else(|| FactbaseError::NotFound("No repository found.".into()))?;
+
+    let config = Config::load(None).unwrap_or_default();
+    let link_detector = LinkDetector::new();
+
+    // Resume support
+    let doc_offset = get_str_arg(args, "resume")
+        .and_then(crate::mcp::tools::helpers::decode_resume_token)
+        .and_then(|v| v.get("doc_offset").and_then(|o| o.as_u64()))
+        .unwrap_or(0) as usize;
+
+    let time_budget = crate::mcp::tools::helpers::resolve_time_budget(args);
+    let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
+
+    let _guard = WriteGuard::try_acquire()?;
+
+    progress.log(&format!(
+        "Detecting links for repository '{}'",
+        repo.id
+    ));
+
+    let output = run_link_detection_phase(LinkPhaseInput {
+        db,
+        link_detector: &link_detector,
+        repo_id: &repo.id,
+        changed_ids: &HashSet::new(),
+        added_count: 0,
+        show_progress: false,
+        verbose: false,
+        skip_links: false,
+        force_relink: true, // always scan all docs in standalone mode
+        link_batch_size: config.processor.link_batch_size,
+        progress,
+        deadline,
+        doc_offset,
+    })
+    .await
+    .map_err(|e: anyhow::Error| FactbaseError::Internal(e.to_string()))?;
+
+    info!(
+        "Link detection complete: {} links detected across {} documents",
+        output.links_detected, output.docs_link_detected
+    );
+
+    if output.interrupted && time_budget.is_some() {
+        let resume_token = crate::mcp::tools::helpers::encode_resume_token(
+            &serde_json::json!({"doc_offset": output.doc_offset}),
+        );
+        let mut response = serde_json::json!({
+            "links_detected": output.links_detected,
+            "docs_processed": output.docs_link_detected,
+        });
+        crate::mcp::tools::helpers::apply_time_budget_progress(
+            &mut response,
+            output.doc_offset,
+            output.doc_offset + output.docs_link_detected + 1, // estimate
+            "detect_links",
+            true,
+            Some(&resume_token),
+        );
+        return Ok(response);
+    }
+
+    Ok(serde_json::json!({
+        "links_detected": output.links_detected,
+        "docs_processed": output.docs_link_detected,
+        "duration_ms": output.link_detection_ms,
+        "summary": format!(
+            "{} links detected across {} documents",
+            output.links_detected, output.docs_link_detected
+        )
     }))
 }
 
@@ -344,5 +440,71 @@ mod tests {
         let (db, _db_dir) = test_db();
         let result = init_repository(&db, &json!({"path": "/nonexistent/path/xyz"}));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_scan_repository_sets_skip_links() {
+        // Verify that the MCP scan_repository tool sets skip_links=true
+        // by checking that ScanOptions constructed in the tool has skip_links=true.
+        // We test this indirectly: scan_repository should return links_detected=0.
+        // (Full integration test would require embedding provider, so we just verify
+        // the schema description no longer mentions link detection.)
+        let tools = crate::mcp::tools::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let scan_tool = tools_arr.iter().find(|t| t["name"] == "scan_repository").unwrap();
+        let desc = scan_tool["description"].as_str().unwrap();
+        assert!(!desc.contains("detect entity links"), "scan_repository should not mention link detection");
+        assert!(desc.contains("detect_links"), "scan_repository should reference detect_links tool");
+    }
+
+    #[tokio::test]
+    async fn test_detect_links_no_repo() {
+        let (db, _db_dir) = test_db();
+        let result = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await;
+        assert!(result.is_err(), "detect_links should fail when no repo exists");
+    }
+
+    #[tokio::test]
+    async fn test_detect_links_empty_repo() {
+        let tmp = TempDir::new().unwrap();
+        let (db, _db_dir) = test_db();
+        init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
+
+        let result = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await.unwrap();
+        assert_eq!(result["links_detected"], 0);
+        assert_eq!(result["docs_processed"], 0);
+    }
+
+    #[tokio::test]
+    async fn test_detect_links_idempotent() {
+        let tmp = TempDir::new().unwrap();
+        let (db, _db_dir) = test_db();
+        init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
+
+        // Run twice — should produce same result
+        let r1 = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await.unwrap();
+        let r2 = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await.unwrap();
+        assert_eq!(r1["links_detected"], r2["links_detected"]);
+    }
+
+    #[test]
+    fn test_detect_links_in_schema() {
+        let tools = crate::mcp::tools::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools_arr.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(names.contains(&"detect_links"), "detect_links should be in tool schema");
+    }
+
+    #[test]
+    fn test_update_workflow_includes_detect_links_step() {
+        // Verify detect_links step exists in the update workflow by checking
+        // the workflow tool output at step 2
+        let (db, _tmp) = test_db();
+        let args = json!({"workflow": "update", "step": 2});
+        let result = crate::mcp::tools::workflow::workflow(&db, &args);
+        let result = result.unwrap();
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("detect_links"), "update step 2 should instruct detect_links");
+        assert_eq!(result["next_tool"], "detect_links");
     }
 }

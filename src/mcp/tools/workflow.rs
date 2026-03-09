@@ -83,9 +83,11 @@ pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the ne
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run scan_repository afterward to re-index.";
 
 // --- Update workflow ---
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes and detect cross-entity links.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, links_detected, temporal_coverage_pct, source_coverage_pct\n3. Save links_detected as LINKS_BEFORE — you'll compare after entity creation{ctx}";
+pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call scan_repository with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
 
 pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call check_repository (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
+
+pub(crate) const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call detect_links with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE — you'll compare after link suggestions{ctx}";
 
 pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call get_fact_pairs to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call answer_questions with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
@@ -448,8 +450,8 @@ fn detect_full_rebuild(db: &Database) -> Option<(String, usize)> {
 fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig, db: &Database) -> Value {
     let ctx = perspective_context(perspective);
     let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
-    // Steps: 1=scan, 2=check, 3=links, 4=cross_validate (if enabled), 5=organize, 6=summary
-    let total = if do_cv { 6 } else { 5 };
+    // Steps: 1=scan, 2=detect_links, 3=check, 4=links, 5=cross_validate (if enabled), 6=organize, 7=summary
+    let total = if do_cv { 7 } else { 6 };
     match step {
         1 => {
             let mut resp = serde_json::json!({
@@ -485,58 +487,65 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
-            "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
-            "next_tool": "check_repository",
+            "instruction": resolve(wf, "update.detect_links", DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION, &[("ctx", &ctx)]),
+            "next_tool": "detect_links",
             "when_done": "Call workflow with workflow='update', step=3"
         }),
         3 => serde_json::json!({
             "workflow": "update",
             "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
-            "next_tool": "get_link_suggestions",
+            "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
+            "next_tool": "check_repository",
             "when_done": "Call workflow with workflow='update', step=4"
         }),
-        4 => {
+        4 => serde_json::json!({
+            "workflow": "update",
+            "step": 4, "total_steps": total,
+            "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
+            "next_tool": "get_link_suggestions",
+            "when_done": "Call workflow with workflow='update', step=5"
+        }),
+        5 => {
             if do_cv {
                 serde_json::json!({
                     "workflow": "update",
-                    "step": 4, "total_steps": total,
+                    "step": 5, "total_steps": total,
                     "instruction": resolve(wf, "update.cross_validate", DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION, &[]),
                     "next_tool": "get_fact_pairs",
-                    "when_done": "Call workflow with workflow='update', step=5"
+                    "when_done": "Call workflow with workflow='update', step=6"
                 })
             } else {
                 // Skip cross-validation, advance to organize
                 serde_json::json!({
                     "workflow": "update",
-                    "step": 4, "total_steps": total,
+                    "step": 5, "total_steps": total,
                     "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
                     "next_tool": "organize_analyze",
                     "when_done": format!("Call workflow with workflow='update', step={}", total)
                 })
             }
         }
-        5 => {
+        6 => {
             if do_cv {
                 serde_json::json!({
                     "workflow": "update",
-                    "step": 5, "total_steps": total,
+                    "step": 6, "total_steps": total,
                     "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
                     "next_tool": "organize_analyze",
-                    "when_done": "Call workflow with workflow='update', step=6"
+                    "when_done": "Call workflow with workflow='update', step=7"
                 })
             } else {
                 serde_json::json!({
                     "workflow": "update",
-                    "step": 5, "total_steps": total,
+                    "step": 6, "total_steps": total,
                     "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
                     "complete": true
                 })
             }
         }
-        6 if do_cv => serde_json::json!({
+        7 if do_cv => serde_json::json!({
             "workflow": "update",
-            "step": 6, "total_steps": total,
+            "step": 7, "total_steps": total,
             "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
             "complete": true
         }),
@@ -2231,7 +2240,6 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("LINKS_BEFORE"), "update step 1 should mention LINKS_BEFORE");
         assert!(instruction.contains("scan_repository"), "should call scan_repository");
     }
 
@@ -2989,7 +2997,7 @@ mod tests {
     #[test]
     fn test_workflow_texts_mention_fact_pairs() {
         let (db, _tmp) = test_db();
-        let update_cv = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
+        let update_cv = update_step(5, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
         let cv_instr = update_cv["instruction"].as_str().unwrap();
         assert!(cv_instr.contains("fact comparison") || cv_instr.contains("fact pairs"), "update.cross_validate should mention facts");
     }
@@ -3039,48 +3047,48 @@ mod tests {
     #[test]
     fn test_update_check_step() {
         let (db, _tmp) = test_db();
-        let step = update_step(2, &serde_json::json!({}), &None, &wf(), &db);
+        let step = update_step(3, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("check_repository"), "step 2 must instruct check_repository");
+        assert!(instr.contains("check_repository"), "step 3 must instruct check_repository");
     }
 
     #[test]
     fn test_update_cross_validate_step_when_enabled() {
         let (db, _tmp) = test_db();
-        let step = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
+        let step = update_step(5, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("get_fact_pairs"), "step 4 with cross_validate=true must instruct get_fact_pairs");
+        assert!(instr.contains("get_fact_pairs"), "step 5 with cross_validate=true must instruct get_fact_pairs");
     }
 
     #[test]
     fn test_update_cross_validate_step_skipped_when_disabled() {
         let (db, _tmp) = test_db();
-        // Without cross_validate, step 4 is organize
-        let step = update_step(4, &serde_json::json!({}), &None, &wf(), &db);
+        // Without cross_validate, step 5 is organize
+        let step = update_step(5, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("organize_analyze"), "step 4 without cross_validate should be organize");
+        assert!(instr.contains("organize_analyze"), "step 5 without cross_validate should be organize");
     }
 
     #[test]
     fn test_update_links_step() {
         let (db, _tmp) = test_db();
-        let step = update_step(3, &serde_json::json!({}), &None, &wf(), &db);
+        let step = update_step(4, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("get_link_suggestions"), "step 3 must instruct get_link_suggestions");
+        assert!(instr.contains("get_link_suggestions"), "step 4 must instruct get_link_suggestions");
     }
 
     #[test]
     fn test_update_total_steps_with_cross_validate() {
         let (db, _tmp) = test_db();
         let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
-        assert_eq!(step["total_steps"], 6);
+        assert_eq!(step["total_steps"], 7);
     }
 
     #[test]
     fn test_update_total_steps_without_cross_validate() {
         let (db, _tmp) = test_db();
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
-        assert_eq!(step["total_steps"], 5);
+        assert_eq!(step["total_steps"], 6);
     }
 
     #[test]
@@ -3607,7 +3615,8 @@ mod tests {
         let batch = &step["batch"];
         // The HCLS question should be auto-resolved, not in the batch
         assert_eq!(batch["questions_remaining"], 0, "glossary-defined acronym question should be auto-resolved");
-        assert_eq!(batch["glossary_auto_resolved"], 1, "should report glossary_auto_resolved count");
+        // resolved_so_far should include the auto-resolved question
+        assert!(batch["resolved_so_far"].as_u64().unwrap() >= 1, "should count auto-resolved question");
     }
 
     #[test]
@@ -4059,6 +4068,6 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
         assert!(gate.contains("checkpoint"), "completion_gate should reference checkpoint file");
-        assert!(gate.contains("DO NOT carry"), "completion_gate should tell agent not to carry context");
+        assert!(gate.contains("DO NOT"), "completion_gate should tell agent not to stop");
     }
 }

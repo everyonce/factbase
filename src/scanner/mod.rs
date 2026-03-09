@@ -7,7 +7,7 @@
 //! - `scan_all_repositories` - scans all registered repositories
 
 mod options;
-mod orchestration;
+pub(crate) mod orchestration;
 mod progress;
 
 use glob::Pattern;
