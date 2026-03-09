@@ -960,62 +960,6 @@ fn build_continuation_guidance(
     }
 }
 
-/// Write resolve checkpoint to `.factbase/resolve-checkpoint.json` in the repo root.
-/// Returns the checkpoint file path (relative) on success.
-fn write_resolve_checkpoint(
-    db: &Database,
-    repo: Option<&str>,
-    resolved_so_far: usize,
-    remaining: usize,
-    total_questions: usize,
-    batch_number: usize,
-    type_distribution: &HashMap<QuestionType, usize>,
-    last_batch_size: usize,
-    last_batch_types: &[String],
-) -> Option<String> {
-    let repo_path = match resolve_repo_path(db, repo) {
-        Some(p) => {
-            eprintln!("[checkpoint] repo_path={}", p.display());
-            p
-        }
-        None => {
-            eprintln!("[checkpoint] resolve_repo_path returned None");
-            return None;
-        }
-    };
-    let factbase_dir = repo_path.join(".factbase");
-    std::fs::create_dir_all(&factbase_dir).ok()?;
-    let checkpoint_path = factbase_dir.join("resolve-checkpoint.json");
-
-    let type_dist_json: Value = type_distribution
-        .iter()
-        .map(|(qt, count)| serde_json::json!({"type": qt.to_string(), "count": count}))
-        .collect::<Vec<_>>()
-        .into();
-
-    let checkpoint = serde_json::json!({
-        "resolved_so_far": resolved_so_far,
-        "remaining": remaining,
-        "total_questions": total_questions,
-        "batch_number": batch_number,
-        "type_distribution": type_dist_json,
-        "last_batch_summary": {
-            "questions_answered": last_batch_size,
-            "types_in_batch": last_batch_types,
-        },
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-    });
-
-    match std::fs::write(&checkpoint_path, serde_json::to_string_pretty(&checkpoint).unwrap_or_default()) {
-        Ok(_) => eprintln!("[checkpoint] wrote {}", checkpoint_path.display()),
-        Err(e) => {
-            eprintln!("[checkpoint] write failed: {} path={}", e, checkpoint_path.display());
-            return None;
-        }
-    }
-    Some(".factbase/resolve-checkpoint.json".to_string())
-}
-
 fn resolve_step2_batch(
     args: &Value,
     perspective: &Option<Perspective>,
@@ -1248,7 +1192,7 @@ fn resolve_step2_batch(
     let pct = if total_questions > 0 { (resolved_so_far * 100) / total_questions } else { 0 };
 
     // Collect batch question types for checkpoint summary
-    let last_batch_types: Vec<String> = {
+    let _last_batch_types: Vec<String> = {
         let mut types: Vec<String> = batch.iter()
             .filter_map(|q| q["type"].as_str().map(|s| s.to_string()))
             .collect();
@@ -1257,25 +1201,11 @@ fn resolve_step2_batch(
         types
     };
 
-    // Write checkpoint to disk — progress lives on disk, not in the response
-    // Pass None to use default repo lookup (avoids name-vs-id mismatch when agent passes repo name)
-    let checkpoint_file = write_resolve_checkpoint(
-        db,
-        None,
-        resolved_so_far,
-        remaining,
-        total_questions,
-        batch_number,
-        &type_distribution,
-        batch.len(),
-        &last_batch_types,
-    );
-
     // Slim subsequent batches: only send full instruction/patterns/conflicts on first batch
     let instruction_value = if is_first_batch {
         Value::String(instruction)
     } else {
-        Value::String("LOOP: continue=true means call workflow(resolve, step=2) immediately after answering. continue=false means done. You do not decide when to stop — not context size, not your judgment. Your runtime compacts automatically. Progress is saved to disk.".to_string())
+        Value::String("LOOP: continue=true means call workflow(resolve, step=2) immediately after answering. continue=false means done. You do not decide when to stop — not context size, not your judgment. Your runtime compacts automatically.".to_string())
     };
 
     let mut result = serde_json::json!({
@@ -3951,85 +3881,19 @@ mod tests {
         assert!(!json_str.contains("sonnet"), "should not reference specific models");
     }
 
-    // --- checkpoint file tests ---
-
-    /// Helper: insert a doc with review questions into a repo at a real temp path.
-    fn insert_doc_with_questions_at_path(db: &Database, repo_path: &std::path::Path, id: &str, types: &[&str]) {
-        use crate::database::tests::test_repo_in_db;
-        use crate::models::Document;
-        test_repo_in_db(db, "test-repo", repo_path);
-        let questions: String = types
-            .iter()
-            .enumerate()
-            .map(|(i, t)| format!("- [ ] `@q[{t}]` Question {} (line {})\n", i + 1, i + 4))
-            .collect();
-        let content = format!(
-            "<!-- factbase:{id} -->\n# Doc {id}\n\n- Fact\n\n<!-- factbase:review -->\n{questions}"
-        );
-        db.upsert_document(&Document {
-            id: id.to_string(),
-            content: content.to_string(),
-            title: format!("Doc {id}"),
-            file_path: format!("{id}.md"),
-            ..Document::test_default()
-        }).unwrap();
-    }
-
-    #[test]
-    fn test_resolve_step2_writes_checkpoint_file() {
-        let (db, _tmp) = test_db();
-        let repo_dir = _tmp.path().join("myrepo");
-        std::fs::create_dir_all(&repo_dir).unwrap();
-        insert_doc_with_questions_at_path(&db, &repo_dir, "ckp001", &["temporal", "stale"]);
-        let _step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        let checkpoint_path = repo_dir.join(".factbase/resolve-checkpoint.json");
-        assert!(checkpoint_path.exists(), "checkpoint file should be created");
-        let content: Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint_path).unwrap()).unwrap();
-        assert_eq!(content["total_questions"], 2);
-        assert_eq!(content["remaining"], 2);
-        assert_eq!(content["resolved_so_far"], 0);
-        assert_eq!(content["batch_number"], 1);
-        assert!(content["type_distribution"].is_array());
-        assert!(content["last_batch_summary"].is_object());
-        assert!(content["timestamp"].is_string());
-    }
-
-    #[test]
-    fn test_resolve_step2_checkpoint_has_accurate_counts() {
-        let (db, _tmp) = test_db();
-        let repo_dir = _tmp.path().join("myrepo");
-        std::fs::create_dir_all(&repo_dir).unwrap();
-        // One answered + two unanswered
-        {
-            use crate::database::tests::test_repo_in_db;
-            use crate::models::Document;
-            test_repo_in_db(&db, "test-repo", &repo_dir);
-            let content = "<!-- factbase:ckp002 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Done (line 4)\n  > @t[2024]\n- [ ] `@q[stale]` Old (line 5)\n- [ ] `@q[missing]` No source (line 6)\n";
-            db.upsert_document(&Document {
-                id: "ckp002".to_string(),
-                content: content.to_string(),
-                title: "Test".to_string(),
-                file_path: "ckp002.md".to_string(),
-                ..Document::test_default()
-            }).unwrap();
-        }
-        let _step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        let checkpoint_path = repo_dir.join(".factbase/resolve-checkpoint.json");
-        let ckpt: Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint_path).unwrap()).unwrap();
-        assert_eq!(ckpt["resolved_so_far"], 1);
-        assert_eq!(ckpt["remaining"], 2);
-        assert_eq!(ckpt["total_questions"], 3);
-    }
+    // --- checkpoint file tests removed (checkpoint file no longer written) ---
 
     #[test]
     fn test_resolve_step2_response_has_no_removed_fields() {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "nrf001", &["temporal", "stale", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        // These fields should NOT be in the response (moved to checkpoint)
+        // These fields should NOT be in the response
         assert!(step.get("progress").is_none(), "progress should not be in response");
         assert!(step.get("type_distribution").is_none(), "type_distribution should not be in response");
         assert!(step.get("continuation_guidance").is_none(), "continuation_guidance should not be in response");
+        assert!(step.get("checkpoint_file").is_none(), "checkpoint_file should not be in response");
+        assert!(step.get("checkpoint_hint").is_none(), "checkpoint_hint should not be in response");
         // These fields SHOULD be in the response
         assert!(step.get("batch").is_some(), "batch should be in response");
         assert!(step.get("instruction").is_some(), "instruction should be in response");
@@ -4053,23 +3917,6 @@ mod tests {
         assert!(!json_str.contains("\"continuation_guidance\""), "response should not contain continuation_guidance field");
         // But should still have completion_gate with progress
         assert!(json_str.contains("completion_gate"), "response should have completion_gate");
-    }
-
-    #[test]
-    fn test_resolve_step2_checkpoint_type_distribution_accurate() {
-        let (db, _tmp) = test_db();
-        let repo_dir = _tmp.path().join("myrepo");
-        std::fs::create_dir_all(&repo_dir).unwrap();
-        insert_doc_with_questions_at_path(&db, &repo_dir, "ctd001", &["temporal", "temporal", "stale"]);
-        let _step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        let checkpoint_path = repo_dir.join(".factbase/resolve-checkpoint.json");
-        let ckpt: Value = serde_json::from_str(&std::fs::read_to_string(&checkpoint_path).unwrap()).unwrap();
-        let dist = ckpt["type_distribution"].as_array().unwrap();
-        assert!(!dist.is_empty());
-        let has_temporal = dist.iter().any(|e| e["type"] == "temporal");
-        let has_stale = dist.iter().any(|e| e["type"] == "stale");
-        assert!(has_temporal, "checkpoint should have temporal in type_distribution");
-        assert!(has_stale, "checkpoint should have stale in type_distribution");
     }
 
     #[test]
