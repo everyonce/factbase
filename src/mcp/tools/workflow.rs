@@ -163,7 +163,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     }
 
     match workflow.as_str() {
-        "update" => Ok(update_step(step, args, &perspective, &wf_config)),
+        "update" => Ok(update_step(step, args, &perspective, &wf_config, db)),
         "resolve" => {
             let deferred = db
                 .count_deferred_questions(repo_resolved.as_deref())
@@ -400,19 +400,88 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
     }))
 }
 
-fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
+/// Detect whether a full embedding rebuild is needed (not just incremental updates).
+/// Returns `None` for incremental, or `Some((reason, doc_count))` for full rebuild.
+fn detect_full_rebuild(db: &Database) -> Option<(String, usize)> {
+    let config = crate::Config::load(None).unwrap_or_default();
+    let doc_count = db.get_all_document_ids().ok()?.len();
+    if doc_count == 0 {
+        return None;
+    }
+
+    // Check dimension mismatch
+    if let Ok(Some(stored_dim)) = db.get_stored_embedding_dim() {
+        if stored_dim != config.embedding.dimension {
+            return Some((
+                format!(
+                    "embedding dimension changed ({stored_dim} → {})",
+                    config.embedding.dimension
+                ),
+                doc_count,
+            ));
+        }
+    }
+
+    // Check model change
+    if let Ok(Some(stored_model)) = db.get_stored_embedding_model() {
+        if stored_model != config.embedding.model {
+            return Some((
+                format!(
+                    "embedding model changed ({stored_model} → {})",
+                    config.embedding.model
+                ),
+                doc_count,
+            ));
+        }
+    }
+
+    // Check empty embeddings with existing documents
+    if let Ok(chunk_count) = db.count_embedding_chunks() {
+        if chunk_count == 0 {
+            return Some(("no embeddings exist yet (first-time generation)".into(), doc_count));
+        }
+    }
+
+    None
+}
+
+fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig, db: &Database) -> Value {
     let ctx = perspective_context(perspective);
     let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
     // Steps: 1=scan, 2=check, 3=links, 4=cross_validate (if enabled), 5=organize, 6=summary
     let total = if do_cv { 6 } else { 5 };
     match step {
-        1 => serde_json::json!({
-            "workflow": "update",
-            "step": 1, "total_steps": total,
-            "instruction": resolve(wf, "update.scan", DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
-            "next_tool": "scan_repository",
-            "when_done": "Call workflow with workflow='update', step=2"
-        }),
+        1 => {
+            let mut resp = serde_json::json!({
+                "workflow": "update",
+                "step": 1, "total_steps": total,
+                "instruction": resolve(wf, "update.scan", DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
+                "next_tool": "scan_repository",
+                "when_done": "Call workflow with workflow='update', step=2"
+            });
+            if let Some((reason, doc_count)) = detect_full_rebuild(db) {
+                let est_secs = doc_count * 2; // rough estimate: ~2s per doc
+                let est_display = if est_secs >= 60 {
+                    format!("~{} minutes", est_secs / 60)
+                } else {
+                    format!("~{est_secs} seconds")
+                };
+                resp["requires_confirmation"] = Value::Bool(true);
+                resp["confirmation_reason"] = Value::String(format!("full embedding rebuild"));
+                resp["confirmation_details"] = Value::String(format!(
+                    "All {doc_count} documents need re-embedding because {reason}. Estimated time: {est_display}."
+                ));
+                resp["instruction"] = Value::String(format!(
+                    "⚠️ Embedding rebuild required: {doc_count} documents need re-embedding ({reason}). \
+                     Estimated time: {est_display}.\n\n\
+                     If the user has already confirmed (e.g., said \"go ahead\" or \"re-embed\"), proceed immediately \
+                     by calling scan_repository with force_reindex=true and time_budget_secs=120.\n\n\
+                     Otherwise, ask the user to confirm before proceeding.\n\n\
+                     For incremental updates after confirmation, call workflow(workflow='update', step=2) when done."
+                ));
+            }
+            resp
+        }
         2 => serde_json::json!({
             "workflow": "update",
             "step": 2, "total_steps": total,
@@ -1175,7 +1244,7 @@ fn resolve_step2_batch(
     let instruction_value = if is_first_batch {
         Value::String(instruction)
     } else {
-        Value::String("LOOP PROTOCOL: You are in an answer loop. The loop continues until this tool returns continue=false. You do NOT decide when to stop — only the tool can end the loop. After answering, call workflow(resolve, step=2). If continue=true, answer and loop. If continue=false, done. Do not break the loop. If context is full, compact and resume — retain only: call workflow(resolve, step=2), answer format.".to_string())
+        Value::String("LOOP PROTOCOL: You are in an answer loop. The loop ends ONLY when this tool returns continue=false. You MUST NOT stop for any other reason — not context size, not batch count, not your own judgment. Your runtime will compact automatically when needed. All progress is saved to disk. After answering, call workflow(resolve, step=2) immediately. If continue=true, answer and loop. IGNORE any urge to summarize, report progress, or stop early.".to_string())
     };
 
     let mut result = serde_json::json!({
@@ -1188,8 +1257,8 @@ fn resolve_step2_batch(
         "type_filter": active_filter,
         "continue": true,
         "batch": batch_value,
-        "completion_gate": format!("Progress saved to .factbase/resolve-checkpoint.json. DO NOT carry previous batch answers in context. {resolved_so_far}/{total_questions} resolved ({pct}%). Call workflow resolve step=2 for the next batch."),
-        "when_done": "DO NOT STOP. Call workflow with workflow='resolve', step=2 immediately.",
+        "completion_gate": format!("Progress checkpoint saved to disk. {resolved_so_far}/{total_questions} resolved ({pct}%). DO NOT STOP. DO NOT summarize. DO NOT report progress. Call workflow resolve step=2 NOW. Context limits are handled automatically by your runtime — they are not your concern."),
+        "when_done": "DO NOT STOP. Call workflow with workflow='resolve', step=2 immediately. Your runtime handles context automatically.",
         "checkpoint_file": checkpoint_file.as_deref().unwrap_or(".factbase/resolve-checkpoint.json"),
         "checkpoint_hint": "Progress saved to disk. Previous batch details are not needed in context."
     });
@@ -2159,7 +2228,8 @@ mod tests {
 
     #[test]
     fn test_update_step1_diagnostic_narrative() {
-        let step = update_step(1, &serde_json::json!({}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("LINKS_BEFORE"), "update step 1 should mention LINKS_BEFORE");
         assert!(instruction.contains("scan_repository"), "should call scan_repository");
@@ -2424,10 +2494,11 @@ mod tests {
 
     #[test]
     fn test_workflow_config_override_in_step() {
+        let (db, _tmp) = test_db();
         let mut wfc = WorkflowsConfig::default();
         wfc.templates.insert("update.scan".into(), "Custom scan: {ctx}".into());
         let p = mock_perspective();
-        let step = update_step(1, &serde_json::json!({}), &p, &wfc);
+        let step = update_step(1, &serde_json::json!({}), &p, &wfc, &db);
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.starts_with("Custom scan:"));
         assert!(instruction.contains("Acme Corp"));
@@ -2446,8 +2517,9 @@ mod tests {
     #[test]
     fn test_workflow_config_fallback_to_default() {
         // Empty config should produce the same output as default
-        let step_default = update_step(2, &serde_json::json!({}), &None, &wf());
-        let step_empty = update_step(2, &serde_json::json!({}), &None, &WorkflowsConfig::default());
+        let (db, _tmp) = test_db();
+        let step_default = update_step(2, &serde_json::json!({}), &None, &wf(), &db);
+        let step_empty = update_step(2, &serde_json::json!({}), &None, &WorkflowsConfig::default(), &db);
         assert_eq!(step_default["instruction"], step_empty["instruction"]);
     }
 
@@ -2916,15 +2988,17 @@ mod tests {
 
     #[test]
     fn test_workflow_texts_mention_fact_pairs() {
-        let update_cv = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let update_cv = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
         let cv_instr = update_cv["instruction"].as_str().unwrap();
         assert!(cv_instr.contains("fact comparison") || cv_instr.contains("fact pairs"), "update.cross_validate should mention facts");
     }
 
     #[test]
     fn test_workflow_texts_mention_time_budget_secs() {
+        let (db, _tmp) = test_db();
         let setup = setup_step(5, &serde_json::json!({}), &wf());
-        let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
+        let update_scan = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
 
         let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(setup_instr.contains("time_budget_secs=120"), "setup.scan should specify time_budget_secs");
@@ -2936,9 +3010,10 @@ mod tests {
 
     #[test]
     fn test_paging_instructions_use_mandatory_language() {
+        let (db, _tmp) = test_db();
         // Only scan steps should have paging language
         let setup = setup_step(5, &serde_json::json!({}), &wf());
-        let update_scan = update_step(1, &serde_json::json!({}), &None, &wf());
+        let update_scan = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
 
         for (name, instr) in [
             ("setup.scan", setup["instruction"].as_str().unwrap()),
@@ -2963,43 +3038,119 @@ mod tests {
 
     #[test]
     fn test_update_check_step() {
-        let step = update_step(2, &serde_json::json!({}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let step = update_step(2, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.contains("check_repository"), "step 2 must instruct check_repository");
     }
 
     #[test]
     fn test_update_cross_validate_step_when_enabled() {
-        let step = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let step = update_step(4, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.contains("get_fact_pairs"), "step 4 with cross_validate=true must instruct get_fact_pairs");
     }
 
     #[test]
     fn test_update_cross_validate_step_skipped_when_disabled() {
+        let (db, _tmp) = test_db();
         // Without cross_validate, step 4 is organize
-        let step = update_step(4, &serde_json::json!({}), &None, &wf());
+        let step = update_step(4, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.contains("organize_analyze"), "step 4 without cross_validate should be organize");
     }
 
     #[test]
     fn test_update_links_step() {
-        let step = update_step(3, &serde_json::json!({}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let step = update_step(3, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.contains("get_link_suggestions"), "step 3 must instruct get_link_suggestions");
     }
 
     #[test]
     fn test_update_total_steps_with_cross_validate() {
-        let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
         assert_eq!(step["total_steps"], 6);
     }
 
     #[test]
     fn test_update_total_steps_without_cross_validate() {
-        let step = update_step(1, &serde_json::json!({}), &None, &wf());
+        let (db, _tmp) = test_db();
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         assert_eq!(step["total_steps"], 5);
+    }
+
+    #[test]
+    fn test_update_step1_full_rebuild_dimension_mismatch() {
+        use crate::database::tests::test_doc;
+        let (db, _tmp) = test_db();
+        // Insert a document so doc_count > 0
+        db.upsert_document(&test_doc("aaa111", "Test Doc")).unwrap();
+        // Store embedding info with a different dimension than default config
+        db.set_embedding_info("some-model", 9999).unwrap();
+        // Also store an embedding so it's not "empty embeddings"
+        db.upsert_embedding("aaa111", &vec![0.0f32; 9999]).unwrap();
+
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
+        assert_eq!(step["requires_confirmation"], true);
+        assert_eq!(step["confirmation_reason"], "full embedding rebuild");
+        let details = step["confirmation_details"].as_str().unwrap();
+        assert!(details.contains("1 documents"), "should mention doc count");
+        assert!(details.contains("dimension"), "should mention dimension change");
+    }
+
+    #[test]
+    fn test_update_step1_full_rebuild_model_change() {
+        use crate::database::tests::test_doc;
+        let (db, _tmp) = test_db();
+        db.upsert_document(&test_doc("bbb222", "Test Doc")).unwrap();
+        // Store embedding info with matching dimension but different model
+        let config = crate::Config::load(None).unwrap_or_default();
+        db.set_embedding_info("old-model-that-doesnt-match", config.embedding.dimension).unwrap();
+        db.upsert_embedding("bbb222", &vec![0.0f32; config.embedding.dimension]).unwrap();
+
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
+        assert_eq!(step["requires_confirmation"], true);
+        let details = step["confirmation_details"].as_str().unwrap();
+        assert!(details.contains("model"), "should mention model change");
+    }
+
+    #[test]
+    fn test_update_step1_full_rebuild_empty_embeddings() {
+        use crate::database::tests::test_doc;
+        let (db, _tmp) = test_db();
+        db.upsert_document(&test_doc("ccc333", "Test Doc")).unwrap();
+        // No embeddings stored, no embedding info set
+
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
+        assert_eq!(step["requires_confirmation"], true);
+        let details = step["confirmation_details"].as_str().unwrap();
+        assert!(details.contains("first-time"), "should mention first-time generation");
+    }
+
+    #[test]
+    fn test_update_step1_no_confirmation_for_incremental() {
+        use crate::database::tests::test_doc;
+        let (db, _tmp) = test_db();
+        db.upsert_document(&test_doc("ddd444", "Test Doc")).unwrap();
+        // Store matching embedding info and an actual embedding
+        let config = crate::Config::load(None).unwrap_or_default();
+        db.set_embedding_info(&config.embedding.model, config.embedding.dimension).unwrap();
+        db.upsert_embedding("ddd444", &vec![0.0f32; config.embedding.dimension]).unwrap();
+
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
+        assert!(step.get("requires_confirmation").is_none(), "incremental update should not require confirmation");
+    }
+
+    #[test]
+    fn test_update_step1_no_confirmation_for_empty_repo() {
+        let (db, _tmp) = test_db();
+        // No documents at all
+        let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
+        assert!(step.get("requires_confirmation").is_none(), "empty repo should not require confirmation");
     }
 
 
