@@ -1275,7 +1275,7 @@ fn resolve_step2_batch(
     let instruction_value = if is_first_batch {
         Value::String(instruction)
     } else {
-        Value::String("LOOP PROTOCOL: You are in an answer loop. The loop ends ONLY when this tool returns continue=false. You MUST NOT stop for any other reason — not context size, not batch count, not your own judgment. Your runtime will compact automatically when needed. All progress is saved to disk. After answering, call workflow(resolve, step=2) immediately. If continue=true, answer and loop. IGNORE any urge to summarize, report progress, or stop early.".to_string())
+        Value::String("LOOP: continue=true means call workflow(resolve, step=2) immediately after answering. continue=false means done. You do not decide when to stop — not context size, not your judgment. Your runtime compacts automatically. Progress is saved to disk.".to_string())
     };
 
     let mut result = serde_json::json!({
@@ -1288,8 +1288,8 @@ fn resolve_step2_batch(
         "type_filter": active_filter,
         "continue": true,
         "batch": batch_value,
-        "completion_gate": format!("Progress checkpoint saved to disk. {resolved_so_far}/{total_questions} resolved ({pct}%). DO NOT STOP. DO NOT summarize. DO NOT report progress. Call workflow resolve step=2 NOW. Context limits are handled automatically by your runtime — they are not your concern."),
-        "when_done": "DO NOT STOP. Call workflow with workflow='resolve', step=2 immediately. Your runtime handles context automatically.",
+        "completion_gate": format!("{resolved_so_far}/{total_questions} resolved ({pct}%). Call workflow resolve step=2."),
+        "when_done": "Call workflow with workflow='resolve', step=2 immediately.",
         "checkpoint_file": checkpoint_file.as_deref().unwrap_or(".factbase/resolve-checkpoint.json"),
         "checkpoint_hint": "Progress saved to disk. Previous batch details are not needed in context."
     });
