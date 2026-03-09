@@ -189,9 +189,12 @@ pub fn prune_stale_questions(
                 }
             };
 
-            // Keep: answered, deferred (has blockquote answer), cross-check, or valid description
-            if is_answered
-                || has_answer
+            // Keep: deferred (has blockquote answer), cross-check, or valid description.
+            // Answered ([x]) questions are always pruned — their answers live in the DB.
+            if is_answered {
+                skip_answer = true;
+                pruned += 1;
+            } else if has_answer
                 || (!had_deep_check && is_cross_check)
                 || question_description_matches(trimmed, valid_descriptions)
             {
@@ -984,12 +987,13 @@ Line 3
     }
 
     #[test]
-    fn test_prune_keeps_answered() {
+    fn test_prune_removes_answered() {
         let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
                        - [x] `@q[temporal]` \"Old fact\" - when was this true?\n  > 2024\n";
-        let valid = HashSet::new(); // not in valid set, but answered
+        let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(result.contains("Old fact"), "Answered question should be kept");
+        assert!(!result.contains("Old fact"), "Answered question should be pruned");
+        assert!(!result.contains("Review Queue"), "Empty review section should be removed");
     }
 
     #[test]
@@ -1046,6 +1050,20 @@ Line 3
         let result = prune_stale_questions(content, &valid, false);
         assert!(result.contains("When was this true?"), "Deferred question should be preserved");
         assert!(result.contains("defer: could not find source"), "Defer note should be preserved");
+    }
+
+    #[test]
+    fn test_prune_mixed_state_answered_removed_deferred_kept() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+                       - [x] `@q[temporal]` \"Answered fact\" - when?\n\
+                       - [ ] `@q[stale]` Deferred fact\n> defer: could not confirm\n\
+                       - [ ] `@q[missing]` Valid unanswered\n";
+        let mut valid = HashSet::new();
+        valid.insert("Valid unanswered".to_string());
+        let result = prune_stale_questions(content, &valid, false);
+        assert!(!result.contains("Answered fact"), "Answered [x] question should be pruned");
+        assert!(result.contains("Deferred fact"), "Deferred question should be preserved");
+        assert!(result.contains("Valid unanswered"), "Valid unanswered question should be preserved");
     }
 
     #[test]

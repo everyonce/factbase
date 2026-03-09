@@ -271,27 +271,28 @@ pub async fn check_all_documents(
                     let valid_descriptions: HashSet<_> =
                         questions.iter().map(|q| q.description.clone()).collect();
 
-                    // Prune stale unanswered questions from the document
+                    // Prune stale unanswered questions and answered ([x]) questions
                     let pruned_content = prune_stale_questions(
                         content,
                         &valid_descriptions,
                         false,
                     );
-                    let pruned_count = existing_unanswered
-                        - parse_review_queue(&pruned_content)
-                            .unwrap_or_default()
-                            .iter()
-                            .filter(|q| !q.answered)
-                            .count();
+                    let remaining_after_prune = parse_review_queue(&pruned_content)
+                        .unwrap_or_default();
+                    let remaining_unanswered = remaining_after_prune
+                        .iter()
+                        .filter(|q| !q.answered)
+                        .count();
+                    let pruned_unanswered = existing_unanswered - remaining_unanswered;
+                    // Total pruned includes both stale unanswered and answered ([x]) questions
+                    let pruned_count = pruned_unanswered + existing_answered;
 
                     // Dedup new questions against remaining existing questions
-                    let remaining = parse_review_queue(&pruned_content)
-                        .unwrap_or_default();
-                    let remaining_descs: HashSet<_> = remaining
+                    let remaining_descs: HashSet<_> = remaining_after_prune
                         .iter()
                         .map(|q| q.description.clone())
                         .collect();
-                    let remaining_conflict_normalized: HashSet<String> = remaining
+                    let remaining_conflict_normalized: HashSet<String> = remaining_after_prune
                         .iter()
                         .filter(|q| q.question_type == QuestionType::Conflict)
                         .map(|q| crate::processor::normalize_conflict_desc(&q.description).to_string())
@@ -430,8 +431,8 @@ pub async fn check_all_documents(
                 doc_title: doc.title.clone(),
                 new_questions: count,
                 pruned_questions: pruned_count,
-                existing_unanswered: existing_unanswered - pruned_count,
-                existing_answered,
+                existing_unanswered: existing_unanswered.saturating_sub(pruned_count.saturating_sub(existing_answered)),
+                existing_answered: 0, // answered questions are now pruned
                 skipped_reviewed,
                 suppressed_by_review,
             });
@@ -552,7 +553,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lint_reports_existing_answered() {
+    async fn test_lint_prunes_answered_questions() {
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
         let content = "- Fact one\n\n<!-- factbase:review -->\n## Review Queue\n\n\
@@ -574,7 +575,9 @@ mod tests {
             .await
             .unwrap().results;
         assert!(!results.is_empty());
-        assert_eq!(results[0].existing_answered, 1);
+        // Answered questions are now pruned, so existing_answered should be 0
+        assert_eq!(results[0].existing_answered, 0);
+        assert!(results[0].pruned_questions > 0, "answered question should be counted as pruned");
     }
 
     #[tokio::test]
