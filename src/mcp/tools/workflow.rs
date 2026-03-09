@@ -479,9 +479,6 @@ fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
     }
 }
 
-/// Batch size for resolve step 2 question batching.
-const RESOLVE_BATCH_SIZE: usize = 50;
-
 /// Minimum group size to surface as a repetitive pattern.
 const PATTERN_MIN_COUNT: usize = 4;
 
@@ -637,6 +634,7 @@ fn resolve_step(
                 "total_unanswered": total_unanswered,
                 "type_distribution": type_dist_json,
                 "recommended_order": rec_order,
+                "resolve_batch_size": wf.resolve_batch_size(),
                 "when_done": "Call workflow with workflow='resolve', step=2, question_type=<next_type>"
             })
         },
@@ -1024,7 +1022,7 @@ fn resolve_step2_batch(
         return result;
     }
 
-    let batch_size = RESOLVE_BATCH_SIZE;
+    let batch_size = wf.resolve_batch_size();
     let total_questions = resolved_so_far + remaining;
     let batch_number = (resolved_so_far / batch_size) + 1;
     let total_batches_estimate = total_questions.div_ceil(batch_size);
@@ -2554,14 +2552,14 @@ mod tests {
     #[test]
     fn test_resolve_step2_batch_size_limits_questions() {
         let (db, _tmp) = test_db();
-        // Insert 70 questions across seven docs (more than RESOLVE_BATCH_SIZE=50)
+        // Insert 70 questions across seven docs (more than default batch size of 50)
         let types_10: Vec<&str> = vec!["temporal"; 10];
         for i in 0..7 {
             insert_doc_with_questions(&db, &format!("big{:03}", i), &types_10);
         }
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
-        assert_eq!(batch["questions"].as_array().unwrap().len(), RESOLVE_BATCH_SIZE);
+        assert_eq!(batch["questions"].as_array().unwrap().len(), wf().resolve_batch_size());
         assert_eq!(batch["questions_remaining"], 70);
         assert_eq!(batch["total_batches_estimate"], 2);
         assert!(step["when_done"].as_str().unwrap().contains("step=2"));
