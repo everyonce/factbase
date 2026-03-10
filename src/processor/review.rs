@@ -544,6 +544,9 @@ fn normalize_review_section_inner(content: &str) -> String {
     // (c) Strip empty blockquote lines not part of an answer in the queue content
     let clean_queue = strip_orphaned_blockquotes(after_marker);
 
+    // (c2) Dedup exact duplicate questions by description, keeping last occurrence
+    let clean_queue = dedup_review_questions(&clean_queue);
+
     // (d) Check if any questions remain
     let has_questions = clean_queue
         .lines()
@@ -659,6 +662,55 @@ fn strip_orphaned_blockquotes(queue_content: &str) -> String {
         prev_is_question = is_question;
     }
 
+    result.join("\n")
+}
+
+/// Remove exact duplicate review questions (same description text).
+/// When duplicates exist, keeps the last occurrence (which may have a newer answer).
+fn dedup_review_questions(queue_content: &str) -> String {
+    let lines: Vec<&str> = queue_content.lines().collect();
+    let mut blocks: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut non_question_prefix: Vec<&str> = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+        if let Some(cap) = REVIEW_QUESTION_REGEX.captures(trimmed) {
+            let (_, desc) = extract_line_ref_and_strip(&cap[3]);
+            let mut block_lines = vec![lines[i]];
+            i += 1;
+            while i < lines.len() {
+                let next = lines[i].trim();
+                if next.starts_with('>') || next.is_empty() {
+                    block_lines.push(lines[i]);
+                    i += 1;
+                    if next.starts_with('>') {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            blocks.push((desc, block_lines));
+        } else {
+            non_question_prefix.push(lines[i]);
+            i += 1;
+        }
+    }
+
+    let mut seen = HashSet::new();
+    let mut keep = vec![false; blocks.len()];
+    for (idx, (desc, _)) in blocks.iter().enumerate().rev() {
+        if seen.insert(desc.as_str()) {
+            keep[idx] = true;
+        }
+    }
+
+    let mut result: Vec<&str> = non_question_prefix;
+    for (idx, (_, block_lines)) in blocks.iter().enumerate() {
+        if keep[idx] {
+            result.extend(block_lines);
+        }
+    }
     result.join("\n")
 }
 
@@ -794,9 +846,20 @@ fn append_review_questions_inner(
     // Find the marker position and append questions after it
     if let Some(marker_pos) = result.find(REVIEW_QUEUE_MARKER) {
         let insert_pos = marker_pos + REVIEW_QUEUE_MARKER.len();
+
+        // Collect existing question descriptions to skip duplicates
+        let existing_qs = parse_review_queue(&result).unwrap_or_default();
+        let existing: HashSet<&str> = existing_qs
+            .iter()
+            .map(|q| q.description.as_str())
+            .collect();
+
         let mut questions_text = String::new();
 
         for q in questions {
+            if existing.contains(q.description.as_str()) {
+                continue;
+            }
             let line_ref = q
                 .line_ref
                 .map(|n| format!("Line {n}: "))
@@ -1780,4 +1843,39 @@ Line 3
         assert!(result.contains("> [!info]- Review Queue"), "Should preserve callout");
         assert!(result.contains("valid question"), "Should keep valid");
         assert!(!result.contains("stale question"), "Should prune stale");
+    }
+
+    #[test]
+    fn test_append_duplicate_question_is_noop() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Source lacks detail\n  > \n";
+        let questions = vec![ReviewQuestion::new(
+            QuestionType::Missing,
+            None,
+            "Source lacks detail".to_string(),
+        )];
+        let result = append_review_questions(content, &questions, false);
+        assert_eq!(result.matches("Source lacks detail").count(), 1);
+    }
+
+    #[test]
+    fn test_normalize_strips_exact_duplicates() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Source lacks detail\n  > \n- [ ] `@q[weak-source]` Source lacks detail\n  > \n";
+        let result = normalize_review_section(content);
+        assert_eq!(result.matches("Source lacks detail").count(), 1);
+    }
+
+    #[test]
+    fn test_dedup_keeps_different_descriptions() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Source A lacks detail\n  > \n- [ ] `@q[weak-source]` Source B lacks detail\n  > \n";
+        let result = normalize_review_section(content);
+        assert!(result.contains("Source A lacks detail"));
+        assert!(result.contains("Source B lacks detail"));
+    }
+
+    #[test]
+    fn test_dedup_same_desc_different_answers_keeps_latest() {
+        let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n  > \n- [ ] `@q[temporal]` When did this happen?\n  > believed: around 2020\n";
+        let result = normalize_review_section(content);
+        assert_eq!(result.matches("When did this happen?").count(), 1);
+        assert!(result.contains("believed: around 2020"), "Should keep the last occurrence with the answer");
     }
