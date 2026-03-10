@@ -120,8 +120,9 @@ pub use link_detection::{DetectedLink, LinkDetector};
 pub use mcp::McpServer;
 pub use models::{
     load_perspective_from_file, normalize_pair, ContentMatch, ContentSearchResult, DetailedStats,
-    Document, Link, PoolStats, QuestionType, RepoStats, Repository, ReviewQuestion, ScanResult,
-    ScanStats, SearchResult, SourceStats, TemporalStats, TemporalTagType, PERSPECTIVE_TEMPLATE,
+    Document, FormatConfig, IdPlacement, Link, LinkStyle, PoolStats, QuestionType, RepoStats,
+    Repository, ResolvedFormat, ReviewQuestion, ScanResult, ScanStats, SearchResult, SourceStats,
+    TemporalStats, TemporalTagType, PERSPECTIVE_TEMPLATE,
 };
 pub use ollama::create_http_client;
 pub use organize::{
@@ -137,7 +138,7 @@ pub use organize::{
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
 pub use patterns::{
     content_body, extract_reviewed_date, is_reference_doc, strip_reviewed_markers,
-    FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER,
+    FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER, WIKILINK_REGEX,
 };
 pub use processor::{
     append_links_to_content, append_referenced_by_to_content, append_review_questions,
@@ -148,8 +149,10 @@ pub use processor::{
     merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
     overlaps_point, overlaps_range,
     parse_links_block, parse_referenced_by_block, parse_review_queue, prune_stale_questions,
+    extract_wikilink_names,
     parse_source_definitions, parse_source_references, parse_temporal_tags,
     strip_answered_questions, validate_temporal_tags,
+    build_document_header, format_link, format_references_line,
     DocumentProcessor,
 };
 pub use progress::{ProgressReporter, ProgressSender};

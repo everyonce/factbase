@@ -28,10 +28,30 @@ impl DocumentProcessor {
         Self::extract_id_static(content)
     }
 
-    /// Static version of extract_id for use in parallel contexts
+    /// Static version of extract_id for use in parallel contexts.
+    /// Checks both HTML comment header and YAML frontmatter for factbase ID.
     pub fn extract_id_static(content: &str) -> Option<String> {
         let first_line = content.lines().next()?;
-        ID_REGEX.captures(first_line).map(|c| c[1].to_string())
+        // Check HTML comment: <!-- factbase:abc123 -->
+        if let Some(cap) = ID_REGEX.captures(first_line) {
+            return Some(cap[1].to_string());
+        }
+        // Check YAML frontmatter: ---\nfactbase_id: abc123\n...---
+        if first_line.trim() == "---" {
+            for line in content.lines().skip(1) {
+                let trimmed = line.trim();
+                if trimmed == "---" {
+                    break;
+                }
+                if let Some(id) = trimmed.strip_prefix("factbase_id:") {
+                    let id = id.trim();
+                    if crate::patterns::DOC_ID_REGEX.is_match(id) {
+                        return Some(id.to_string());
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Generate a random 6-character hex document ID.
@@ -62,10 +82,56 @@ impl DocumentProcessor {
         format!("<!-- factbase:{id} -->\n{content}")
     }
 
+    /// Inject the factbase ID into content according to format config.
+    ///
+    /// For `IdPlacement::Comment`: prepends `<!-- factbase:id -->` (default behavior).
+    /// For `IdPlacement::Frontmatter`: adds `factbase_id: id` to existing frontmatter,
+    /// or creates a new frontmatter block if none exists.
+    pub fn inject_id_with_format(
+        &self,
+        content: &str,
+        id: &str,
+        format: &crate::models::format::ResolvedFormat,
+    ) -> String {
+        use crate::models::format::IdPlacement;
+        match format.id_placement {
+            IdPlacement::Comment => self.inject_header(content, id),
+            IdPlacement::Frontmatter => {
+                let mut lines = content.lines();
+                if let Some(first) = lines.next() {
+                    if first.trim() == "---" {
+                        // Existing frontmatter — insert factbase_id after opening ---
+                        let mut result = String::from("---\n");
+                        result.push_str(&format!("factbase_id: {id}\n"));
+                        for line in lines {
+                            result.push_str(line);
+                            result.push('\n');
+                        }
+                        return result;
+                    }
+                }
+                // No existing frontmatter — create one
+                format!("---\nfactbase_id: {id}\n---\n{content}")
+            }
+        }
+    }
+
     /// Extract the document title from the first H1 heading, falling back to filename.
     pub fn extract_title(&self, content: &str, path: &Path) -> String {
-        for line in content.lines() {
+        let mut in_frontmatter = false;
+        for (i, line) in content.lines().enumerate() {
             let trimmed = line.trim();
+            // Skip YAML frontmatter block
+            if i == 0 && trimmed == "---" {
+                in_frontmatter = true;
+                continue;
+            }
+            if in_frontmatter {
+                if trimmed == "---" {
+                    in_frontmatter = false;
+                }
+                continue;
+            }
             if trimmed.starts_with("<!-- factbase:") {
                 continue;
             }
@@ -305,5 +371,96 @@ mod tests {
         let processor = DocumentProcessor;
         let id = processor.generate_id();
         assert_eq!(id.len(), 6);
+    }
+
+    // --- Frontmatter ID extraction tests ---
+
+    #[test]
+    fn test_extract_id_from_frontmatter() {
+        let content = "---\nfactbase_id: abc123\ntype: person\n---\n# John Doe\n\nContent";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_frontmatter_only_id() {
+        let content = "---\nfactbase_id: def456\n---\n# Title";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("def456".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_frontmatter_invalid_id_ignored() {
+        // Not a valid 6-char hex ID
+        let content = "---\nfactbase_id: not-hex\n---\n# Title";
+        assert_eq!(DocumentProcessor::extract_id_static(content), None);
+    }
+
+    #[test]
+    fn test_extract_id_prefers_html_comment() {
+        // HTML comment takes precedence (checked first)
+        let content = "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\n---\n# Title";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("aaa111".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_title_from_frontmatter_doc() {
+        let processor = DocumentProcessor::new();
+        let content = "---\nfactbase_id: abc123\ntype: person\n---\n# John Doe\n\nContent";
+        let path = PathBuf::from("/test/doc.md");
+        assert_eq!(processor.extract_title(content, &path), "John Doe");
+    }
+
+    #[test]
+    fn test_extract_title_frontmatter_no_title() {
+        let processor = DocumentProcessor::new();
+        let content = "---\nfactbase_id: abc123\n---\nNo heading here";
+        let path = PathBuf::from("/test/my-doc.md");
+        assert_eq!(processor.extract_title(content, &path), "my-doc");
+    }
+
+    // --- inject_id_with_format tests ---
+
+    #[test]
+    fn test_inject_id_comment_format() {
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat::default();
+        let content = "# Title\nContent";
+        let result = processor.inject_id_with_format(content, "abc123", &fmt);
+        assert_eq!(result, "<!-- factbase:abc123 -->\n# Title\nContent");
+    }
+
+    #[test]
+    fn test_inject_id_frontmatter_format_no_existing() {
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat {
+            id_placement: crate::models::format::IdPlacement::Frontmatter,
+            ..Default::default()
+        };
+        let content = "# Title\nContent";
+        let result = processor.inject_id_with_format(content, "abc123", &fmt);
+        assert!(result.starts_with("---\nfactbase_id: abc123\n---\n"));
+        assert!(result.contains("# Title"));
+    }
+
+    #[test]
+    fn test_inject_id_frontmatter_format_existing_frontmatter() {
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat {
+            id_placement: crate::models::format::IdPlacement::Frontmatter,
+            ..Default::default()
+        };
+        let content = "---\ntype: person\ntags: [test]\n---\n# Title\nContent";
+        let result = processor.inject_id_with_format(content, "abc123", &fmt);
+        assert!(result.starts_with("---\nfactbase_id: abc123\n"));
+        assert!(result.contains("type: person"));
+        assert!(result.contains("# Title"));
     }
 }

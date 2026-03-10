@@ -231,6 +231,11 @@ pub static MANUAL_LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[\[([a-f0-9]{6})\]\]").expect("manual link regex should be valid")
 });
 
+/// Wikilink regex - matches `[[Name]]` references (any non-bracket content).
+pub static WIKILINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[\[([^\[\]]+)\]\]").expect("wikilink regex should be valid")
+});
+
 /// Review Queue marker comment.
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
 

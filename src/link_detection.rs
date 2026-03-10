@@ -7,7 +7,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-use crate::patterns::MANUAL_LINK_REGEX;
+use crate::patterns::{MANUAL_LINK_REGEX, WIKILINK_REGEX};
 
 /// A detected link between documents.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,6 +230,31 @@ impl LinkDetector {
             }
         }
 
+        // Extract [[Name]] wikilinks and resolve by title
+        let title_to_id: HashMap<String, &str> = known_entities
+            .iter()
+            .map(|(id, title)| (title.to_lowercase(), id.as_str()))
+            .collect();
+        for cap in WIKILINK_REGEX.captures_iter(content) {
+            let name = &cap[1];
+            // Skip if it's a hex ID (already handled above)
+            if MANUAL_LINK_REGEX.is_match(&format!("[[{name}]]")) {
+                continue;
+            }
+            if let Some(&target_id) = title_to_id.get(&name.to_lowercase()) {
+                if target_id != source_id
+                    && !links.iter().any(|l| l.target_id == target_id)
+                {
+                    links.push(DetectedLink {
+                        target_id: target_id.to_string(),
+                        target_title: name.to_string(),
+                        mention_text: format!("[[{name}]]"),
+                        context: String::new(),
+                    });
+                }
+            }
+        }
+
         if known_entities.is_empty() {
             return links;
         }
@@ -261,7 +286,11 @@ impl LinkDetector {
             .map(|(id, title)| (id.as_str(), title.as_str()))
             .collect();
 
-        // Initialize results and extract manual links
+        // Initialize results and extract manual links + wikilinks
+        let title_to_id: HashMap<String, &str> = known_entities
+            .iter()
+            .map(|(id, title)| (title.to_lowercase(), id.as_str()))
+            .collect();
         for (id, _, content) in documents {
             let mut links = Vec::with_capacity(4);
             for cap in MANUAL_LINK_REGEX.captures_iter(content) {
@@ -273,6 +302,25 @@ impl LinkDetector {
                             target_id,
                             target_title: title.to_string(),
                             mention_text,
+                            context: String::new(),
+                        });
+                    }
+                }
+            }
+            // Resolve [[Name]] wikilinks by title
+            for cap in WIKILINK_REGEX.captures_iter(content) {
+                let name = &cap[1];
+                if MANUAL_LINK_REGEX.is_match(&format!("[[{name}]]")) {
+                    continue;
+                }
+                if let Some(&target_id) = title_to_id.get(&name.to_lowercase()) {
+                    if target_id != *id
+                        && !links.iter().any(|l| l.target_id == target_id)
+                    {
+                        links.push(DetectedLink {
+                            target_id: target_id.to_string(),
+                            target_title: name.to_string(),
+                            mention_text: format!("[[{name}]]"),
                             context: String::new(),
                         });
                     }
@@ -681,5 +729,71 @@ mod tests {
             &candidates,
         );
         assert!(links.is_empty());
+    }
+
+    // --- Wikilink resolution tests ---
+
+    #[test]
+    fn test_detect_wikilink_by_name() {
+        let detector = LinkDetector::new();
+        let content = "See [[John Doe]] for details.";
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+        ];
+        let links = detector.detect_links(content, "src001", &known);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_id, "abc123");
+        assert_eq!(links[0].mention_text, "[[John Doe]]");
+    }
+
+    #[test]
+    fn test_detect_wikilink_case_insensitive() {
+        let detector = LinkDetector::new();
+        let content = "See [[john doe]] for details.";
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+        ];
+        let links = detector.detect_links(content, "src001", &known);
+        assert!(links.iter().any(|l| l.target_id == "abc123"));
+    }
+
+    #[test]
+    fn test_detect_wikilink_no_self_link() {
+        let detector = LinkDetector::new();
+        let content = "See [[John Doe]] for details.";
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+        ];
+        // source_id matches the target — should not create self-link
+        let links = detector.detect_links(content, "abc123", &known);
+        assert!(links.iter().all(|l| l.target_id != "abc123"));
+    }
+
+    #[test]
+    fn test_detect_wikilink_and_hex_link_coexist() {
+        let detector = LinkDetector::new();
+        let content = "See [[abc123]] and [[Jane Smith]].";
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+            ("def456".to_string(), "Jane Smith".to_string()),
+        ];
+        let links = detector.detect_links(content, "src001", &known);
+        assert!(links.iter().any(|l| l.target_id == "abc123"));
+        assert!(links.iter().any(|l| l.target_id == "def456"));
+    }
+
+    #[test]
+    fn test_batch_detect_wikilinks() {
+        let detector = LinkDetector::new();
+        let docs = vec![
+            ("doc1", "Doc One", "See [[John Doe]] here."),
+            ("doc2", "Doc Two", "No wikilinks."),
+        ];
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+        ];
+        let results = detector.detect_links_batch(&docs, &known);
+        assert!(results.get("doc1").unwrap().iter().any(|l| l.target_id == "abc123"));
+        assert!(results.get("doc2").unwrap().iter().all(|l| l.target_id != "abc123"));
     }
 }

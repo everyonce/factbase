@@ -188,6 +188,7 @@ async fn test_init_scan_search_workflow() {
             focus: Some("knowledge management".into()),
             allowed_types: None,
             review: None,
+            format: None,
         }),
         created_at: Utc::now(),
         last_indexed_at: None,

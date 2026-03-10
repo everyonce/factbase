@@ -301,6 +301,7 @@ async fn test_agent_workflow_via_mcp() {
             focus: Some("projects and people".into()),
             allowed_types: None,
             review: None,
+            format: None,
         }),
         created_at: Utc::now(),
         last_indexed_at: None,

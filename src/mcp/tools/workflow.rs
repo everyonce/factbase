@@ -1964,6 +1964,7 @@ mod tests {
                 ignore_patterns: None,
                 glossary_types: None,
             }),
+            format: None,
         })
     }
 

@@ -49,15 +49,36 @@ fn content_coverage_warning(content: &str) -> Option<String> {
     }
 }
 
-/// Strip the `<!-- factbase:ID -->` header and first `# Title` line from content,
-/// returning only the body. Handles content with or without the header.
+/// Get the resolved format config for a repository.
+fn resolve_repo_format(repo: &crate::models::Repository) -> crate::models::ResolvedFormat {
+    repo.perspective
+        .as_ref()
+        .and_then(|p| p.format.as_ref())
+        .map(|f| f.resolve())
+        .unwrap_or_default()
+}
+
+/// Strip the `<!-- factbase:ID -->` header, YAML frontmatter, and first `# Title` line
+/// from content, returning only the body.
 fn strip_factbase_header(content: &str) -> String {
     let mut lines = content.lines().peekable();
 
-    // Skip factbase header if present
+    // Skip factbase HTML comment header if present
     if let Some(first) = lines.peek() {
         if ID_REGEX.is_match(first) {
             lines.next();
+        }
+    }
+
+    // Skip YAML frontmatter block if present
+    if let Some(first) = lines.peek() {
+        if first.trim() == "---" {
+            lines.next(); // skip opening ---
+            for line in lines.by_ref() {
+                if line.trim() == "---" {
+                    break;
+                }
+            }
         }
     }
 
@@ -184,8 +205,17 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let glossary = load_glossary_terms(db, &repo_id);
     let content_deduped = crate::processor::dedup_acronym_expansions(content_trimmed, &glossary);
 
-    // Build document content with header and title
-    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{content_deduped}");
+    // Build document content with header and title using format config
+    let resolved_format = resolve_repo_format(&repo);
+    let doc_type = crate::processor::DocumentProcessor::new()
+        .derive_type(&repo.path.join(&path), &repo.path);
+    let header = crate::processor::build_document_header(
+        &id,
+        &title,
+        Some(&doc_type),
+        &resolved_format,
+    );
+    let doc_content = format!("{header}{content_deduped}");
 
     // Construct full file path
     let file_path: PathBuf = repo.path.join(&path);
@@ -205,10 +235,6 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // Write the file
     fs::write(&file_path, &doc_content)?;
-
-    // Derive type from path for status report
-    let doc_type = crate::processor::DocumentProcessor::new()
-        .derive_type(&file_path, &repo.path);
 
     let mut response = serde_json::json!({
         "id": id,
@@ -311,7 +337,19 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         body = crate::processor::dedup_acronym_expansions(&body, &glossary);
     }
 
-    let doc_content = format!("<!-- factbase:{id} -->\n# {title}\n\n{body}");
+    let doc_content = {
+        let repo = db.require_repository(&doc.repo_id)?;
+        let resolved_format = resolve_repo_format(&repo);
+        let doc_type = crate::processor::DocumentProcessor::new()
+            .derive_type(&file_path, &repo.path);
+        let header = crate::processor::build_document_header(
+            &id,
+            &title,
+            Some(&doc_type),
+            &resolved_format,
+        );
+        format!("{header}{body}")
+    };
     fs::write(&file_path, &doc_content)?;
 
     // Sync content and title to database so subsequent tools (answer_questions,
@@ -488,16 +526,21 @@ pub fn bulk_create_documents(
     let mut created: Vec<Value> = Vec::with_capacity(validated_docs.len());
     let total = validated_docs.len();
     let glossary = load_glossary_terms(db, &repo_id);
+    let resolved_format = resolve_repo_format(&repo);
     for (i, validated) in validated_docs.iter().enumerate() {
         let id = processor.generate_unique_id(db);
         let content_trimmed = strip_leading_title(validated.content, validated.title);
         let content_deduped =
             crate::processor::dedup_acronym_expansions(content_trimmed, &glossary);
-        let doc_content = format!(
-            "<!-- factbase:{} -->\n# {}\n\n{}",
-            id, validated.title, content_deduped
-        );
         let file_path: PathBuf = repo.path.join(validated.path);
+        let doc_type = processor.derive_type(&file_path, &repo.path);
+        let header = crate::processor::build_document_header(
+            &id,
+            validated.title,
+            Some(&doc_type),
+            &resolved_format,
+        );
+        let doc_content = format!("{header}{content_deduped}");
 
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
@@ -1230,5 +1273,109 @@ mod tests {
         let on_disk = fs::read_to_string(repo_dir.path().join("test.md")).unwrap();
         assert!(on_disk.contains("DR (Disaster Recovery) plan"), "{on_disk}");
         assert!(on_disk.contains("- DR site"), "deduped: {on_disk}");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_html_comment() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n\nBody text";
+        let body = strip_factbase_header(content);
+        assert_eq!(body, "Body text");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_frontmatter() {
+        let content = "---\nfactbase_id: abc123\ntype: person\n---\n# Title\n\nBody text";
+        let body = strip_factbase_header(content);
+        assert_eq!(body, "Body text");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_comment_plus_frontmatter() {
+        let content = "<!-- factbase:abc123 -->\n---\ntype: person\n---\n# Title\n\nBody text";
+        let body = strip_factbase_header(content);
+        assert_eq!(body, "Body text");
+    }
+
+    #[test]
+    fn test_strip_factbase_header_no_header() {
+        let content = "# Title\n\nBody text";
+        let body = strip_factbase_header(content);
+        assert_eq!(body, "Body text");
+    }
+
+    #[test]
+    fn test_create_document_obsidian_format() {
+        use crate::database::tests::test_db;
+        use crate::models::{FormatConfig, Perspective, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    preset: Some("obsidian".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "people/john.md",
+            "title": "John Doe",
+            "content": "- Works at Acme Corp"
+        });
+        let result = create_document(&db, &args).unwrap();
+        assert!(result["id"].is_string());
+
+        let on_disk = fs::read_to_string(repo_dir.path().join("people/john.md")).unwrap();
+        // Should have YAML frontmatter with factbase_id
+        assert!(on_disk.starts_with("---\n"), "should start with frontmatter: {on_disk}");
+        assert!(on_disk.contains("factbase_id:"), "should have factbase_id: {on_disk}");
+        assert!(on_disk.contains("type: people"), "should have type: {on_disk}");
+        assert!(!on_disk.contains("<!-- factbase:"), "should NOT have HTML comment: {on_disk}");
+        assert!(on_disk.contains("# John Doe"), "should have title: {on_disk}");
+    }
+
+    #[test]
+    fn test_create_document_default_format() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "notes/test.md",
+            "title": "Test Note",
+            "content": "- A fact"
+        });
+        create_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(repo_dir.path().join("notes/test.md")).unwrap();
+        // Default format: HTML comment, no frontmatter
+        assert!(on_disk.starts_with("<!-- factbase:"), "should start with HTML comment: {on_disk}");
+        assert!(!on_disk.contains("---\n"), "should NOT have frontmatter: {on_disk}");
     }
 }
