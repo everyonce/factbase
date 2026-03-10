@@ -186,8 +186,11 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
             }
         };
 
-        // Append questions to document
-        let updated_content = append_review_questions(&current_content, &questions, false);
+        let use_callout = repo.perspective.as_ref()
+            .and_then(|p| p.format.as_ref())
+            .map(|f| f.resolve().review_callout)
+            .unwrap_or(false);
+        let updated_content = append_review_questions(&current_content, &questions, use_callout);
 
         // Write updated content
         if let Err(e) = fs::write(&abs_path, &updated_content) {
