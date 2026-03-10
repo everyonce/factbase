@@ -167,18 +167,25 @@ pub async fn check_all_documents(
     // Build repo_id → repo_path map so we can resolve relative file paths.
     // Documents store paths relative to their repository root; without this
     // map, disk reads/writes silently fail when CWD ≠ repo root (e.g. MCP).
-    let repo_paths: HashMap<String, PathBuf> = {
-        let mut m = HashMap::new();
+    let (repo_paths, repo_callout): (HashMap<String, PathBuf>, HashMap<String, bool>) = {
+        let mut paths = HashMap::new();
+        let mut callout = HashMap::new();
         for doc in docs {
-            if !m.contains_key(&doc.repo_id) {
+            if !paths.contains_key(&doc.repo_id) {
                 if let Ok(Some(repo)) = db.get_repository(&doc.repo_id) {
-                    m.insert(doc.repo_id.clone(), repo.path.clone());
+                    let uc = repo.perspective.as_ref()
+                        .and_then(|p| p.format.as_ref())
+                        .map(|f| f.resolve().review_callout)
+                        .unwrap_or(false);
+                    paths.insert(doc.repo_id.clone(), repo.path.clone());
+                    callout.insert(doc.repo_id.clone(), uc);
                 }
             }
         }
-        m
+        (paths, callout)
     };
     let repo_paths_ref = &repo_paths;
+    let repo_callout_ref = &repo_callout;
 
     // Build title → doc IDs map for duplicate title detection (all docs, not just active)
     let mut title_map: HashMap<String, Vec<(&str, &str)>> = HashMap::new();
@@ -413,7 +420,8 @@ pub async fn check_all_documents(
             } else {
                 pruned_content.clone()
             };
-            let updated = append_review_questions(&base_content, &questions, false);
+            let use_callout = repo_callout_ref.get(&doc.repo_id).copied().unwrap_or(false);
+            let updated = append_review_questions(&base_content, &questions, use_callout);
             let path = abs_path.unwrap_or_else(|| PathBuf::from(&doc.file_path));
             if path.exists() {
                 std::fs::write(&path, &updated)?;
@@ -1212,5 +1220,122 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_check_writes_callout_format_when_perspective_has_obsidian_preset() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let md_path = repo_dir.path().join("test-doc.md");
+        std::fs::write(&md_path, "<!-- factbase:ooo -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+
+        let repo = crate::models::Repository {
+            id: "obs-repo".to_string(),
+            name: "Obsidian Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(crate::models::Perspective {
+                type_name: String::new(),
+                organization: None,
+                focus: None,
+                allowed_types: None,
+                review: None,
+                format: Some(crate::models::FormatConfig {
+                    preset: Some("obsidian".to_string()),
+                    link_style: None,
+                    frontmatter: None,
+                    inline_links: None,
+                    id_placement: None,
+                    review_callout: None,
+                    reviewed_in_frontmatter: None,
+                }),
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "ooo".to_string(),
+            title: "Test".to_string(),
+            content: "<!-- factbase:ooo -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            file_path: "test-doc.md".to_string(),
+            repo_id: "obs-repo".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+        assert!(output.results.iter().any(|r| r.new_questions > 0));
+
+        let on_disk = std::fs::read_to_string(&md_path).unwrap();
+        assert!(on_disk.contains("> [!info]- Review Queue"),
+            "Obsidian preset should produce callout format, got:\n{on_disk}");
+    }
+
+    #[tokio::test]
+    async fn test_check_writes_plain_format_when_no_obsidian_config() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(4);
+
+        let repo_dir = tempfile::tempdir().unwrap();
+        let md_path = repo_dir.path().join("test-doc.md");
+        std::fs::write(&md_path, "<!-- factbase:ppp -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+
+        let repo = crate::models::Repository {
+            id: "plain-repo".to_string(),
+            name: "Plain Repo".to_string(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = Document {
+            id: "ppp".to_string(),
+            title: "Test".to_string(),
+            content: "<!-- factbase:ppp -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            file_path: "test-doc.md".to_string(),
+            repo_id: "plain-repo".to_string(),
+            ..Document::test_default()
+        };
+
+        let config = CheckConfig {
+            stale_days: 365,
+            required_fields: None,
+            dry_run: false,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
+        let progress = ProgressReporter::Silent;
+        let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
+            .await
+            .unwrap();
+        assert!(output.results.iter().any(|r| r.new_questions > 0));
+
+        let on_disk = std::fs::read_to_string(&md_path).unwrap();
+        assert!(on_disk.contains("## Review Queue"),
+            "No obsidian config should produce plain format, got:\n{on_disk}");
+        assert!(!on_disk.contains("> [!info]- Review Queue"),
+            "Should NOT have callout format without obsidian config");
     }
 }
