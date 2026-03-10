@@ -72,9 +72,10 @@ pub use sources::{
 
 // Re-export review types and functions
 pub use review::{
-    append_review_questions, ensure_review_section, merge_duplicate_review_sections,
-    normalize_conflict_desc, normalize_review_section, parse_review_queue, prune_stale_questions,
-    recover_review_section, strip_answered_questions,
+    append_review_questions, ensure_review_section, is_callout_review,
+    merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
+    parse_review_queue, prune_stale_questions, recover_review_section,
+    strip_answered_questions, unwrap_review_callout, wrap_review_callout,
 };
 
 // Re-export citation quality scoring

@@ -239,6 +239,9 @@ pub static WIKILINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 /// Review Queue marker comment.
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
 
+/// Callout header used for Obsidian-format review sections.
+pub(crate) const REVIEW_CALLOUT_HEADER: &str = "> [!info]- Review Queue";
+
 /// Reference entity marker comment.
 pub const REFERENCE_MARKER: &str = "<!-- factbase:reference -->";
 
@@ -252,7 +255,14 @@ pub fn is_reference_doc(content: &str) -> bool {
 /// heading, returning whichever appears first. This prevents question generators
 /// from treating review queue entries as document facts when the marker is missing.
 pub(crate) fn body_end_offset(content: &str) -> usize {
-    let marker = content.find(REVIEW_QUEUE_MARKER);
+    let marker = content.find(REVIEW_QUEUE_MARKER).map(|pos| {
+        // If marker is inside a callout line (`> <!-- factbase:review -->`),
+        // walk back to the start of that line.
+        content[..pos]
+            .rfind('\n')
+            .map(|nl| nl + 1)
+            .unwrap_or(0)
+    });
     let heading = content
         .lines()
         .scan(0usize, |offset, line| {
@@ -260,7 +270,10 @@ pub(crate) fn body_end_offset(content: &str) -> usize {
             *offset += line.len() + 1; // +1 for newline
             Some((start, line))
         })
-        .find(|(_, line)| line.trim() == "## Review Queue")
+        .find(|(_, line)| {
+            let t = line.trim();
+            t == "## Review Queue" || t == REVIEW_CALLOUT_HEADER
+        })
         .map(|(pos, _)| pos);
     match (marker, heading) {
         (Some(m), Some(h)) => m.min(h),
@@ -846,6 +859,12 @@ mod tests {
         // No review section
         let c4 = "# Title\n\n- fact one\n- fact two\n";
         assert_eq!(body_end_offset(c4), c4.len());
+        // Callout format — body ends at callout header
+        let c5 = "# Title\n\n- fact\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] q\n";
+        assert_eq!(body_end_offset(c5), c5.find("> [!info]- Review Queue").unwrap());
+        // Callout marker without header — body ends at start of marker line
+        let c6 = "# Title\n\n- fact\n\n> <!-- factbase:review -->\n> - [ ] q\n";
+        assert_eq!(body_end_offset(c6), c6.find("> <!-- factbase:review -->").unwrap());
     }
 
     #[test]

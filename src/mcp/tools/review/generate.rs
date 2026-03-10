@@ -152,7 +152,12 @@ async fn generate_questions_single(
 
     // If not dry_run, write questions to file and sync DB
     if !dry_run && !questions_to_add.is_empty() {
-        let updated_content = append_review_questions(content, &questions_to_add);
+        let use_callout = perspective
+            .as_ref()
+            .and_then(|p| p.format.as_ref())
+            .map(|f| f.resolve().review_callout)
+            .unwrap_or(false);
+        let updated_content = append_review_questions(content, &questions_to_add, use_callout);
         fs::write(&file_path, &updated_content)?;
         let new_hash = content_hash(&updated_content);
         db.update_document_content(doc_id, &updated_content, &new_hash)?;

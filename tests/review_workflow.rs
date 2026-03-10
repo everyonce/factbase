@@ -114,7 +114,7 @@ fn test_append_review_questions_creates_section() {
 "#;
 
     let questions = generate_temporal_questions(content);
-    let updated = append_review_questions(content, &questions);
+    let updated = append_review_questions(content, &questions, false);
 
     // Should contain review queue marker
     assert!(
@@ -242,7 +242,7 @@ fn test_full_question_generation_workflow() {
     all_questions.extend(ambiguous_qs);
     all_questions.extend(stale_qs);
 
-    let updated = append_review_questions(content, &all_questions);
+    let updated = append_review_questions(content, &all_questions, false);
 
     // Verify all question types are present
     assert!(updated.contains("@q[temporal]"));
@@ -284,7 +284,7 @@ async fn test_review_apply_with_llm() {
     assert!(!questions.is_empty(), "Should generate temporal questions");
 
     // Step 3: Append questions to create document with Review Queue
-    let content_with_queue = append_review_questions(original_content, &questions);
+    let content_with_queue = append_review_questions(original_content, &questions, false);
     assert!(
         content_with_queue.contains("<!-- factbase:review -->"),
         "Should have review queue"
@@ -390,8 +390,8 @@ fn test_review_workflow_rule_based() {
     let ambiguous_qs = generate_ambiguous_questions(content);
 
     // Append questions
-    let with_queue = append_review_questions(content, &temporal_qs);
-    let with_all = append_review_questions(&with_queue, &ambiguous_qs);
+    let with_queue = append_review_questions(content, &temporal_qs, false);
+    let with_all = append_review_questions(&with_queue, &ambiguous_qs, false);
 
     assert!(with_all.contains("@q[temporal]"));
     assert!(with_all.contains("@q[ambiguous]"));

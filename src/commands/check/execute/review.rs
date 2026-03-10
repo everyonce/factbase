@@ -167,7 +167,13 @@ pub fn generate_review_questions(
         }
     } else {
         // Normal mode: append questions to document (using pruned content)
-        let updated_content = append_review_questions(&pruned_content, &questions_to_add);
+        let use_callout = repo
+            .perspective
+            .as_ref()
+            .and_then(|p| p.format.as_ref())
+            .map(|f| f.resolve().review_callout)
+            .unwrap_or(false);
+        let updated_content = append_review_questions(&pruned_content, &questions_to_add, use_callout);
         let abs_path = Path::new(&repo.path).join(&doc.file_path);
         fs::write(&abs_path, &updated_content)?;
         if opts.is_table_format {

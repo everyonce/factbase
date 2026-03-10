@@ -43,6 +43,8 @@ pub struct FormatConfig {
     pub inline_links: Option<bool>,
     /// Where to place the factbase document ID
     pub id_placement: Option<IdPlacement>,
+    /// Wrap review queue in a collapsed callout (for Obsidian rendering)
+    pub review_callout: Option<bool>,
 }
 
 /// Fully resolved format settings (no Option fields).
@@ -52,6 +54,8 @@ pub struct ResolvedFormat {
     pub frontmatter: bool,
     pub inline_links: bool,
     pub id_placement: IdPlacement,
+    /// Wrap review queue in a collapsed Obsidian callout.
+    pub review_callout: bool,
 }
 
 impl Default for ResolvedFormat {
@@ -61,6 +65,7 @@ impl Default for ResolvedFormat {
             frontmatter: false,
             inline_links: false,
             id_placement: IdPlacement::Comment,
+            review_callout: false,
         }
     }
 }
@@ -71,6 +76,7 @@ const OBSIDIAN: ResolvedFormat = ResolvedFormat {
     frontmatter: true,
     inline_links: true,
     id_placement: IdPlacement::Frontmatter,
+    review_callout: true,
 };
 
 impl FormatConfig {
@@ -85,6 +91,7 @@ impl FormatConfig {
             frontmatter: self.frontmatter.unwrap_or(base.frontmatter),
             inline_links: self.inline_links.unwrap_or(base.inline_links),
             id_placement: self.id_placement.unwrap_or(base.id_placement),
+            review_callout: self.review_callout.unwrap_or(base.review_callout),
         }
     }
 }
@@ -101,6 +108,7 @@ mod tests {
         assert!(!r.frontmatter);
         assert!(!r.inline_links);
         assert_eq!(r.id_placement, IdPlacement::Comment);
+        assert!(!r.review_callout);
     }
 
     #[test]
@@ -114,6 +122,7 @@ mod tests {
         assert!(r.frontmatter);
         assert!(r.inline_links);
         assert_eq!(r.id_placement, IdPlacement::Frontmatter);
+        assert!(r.review_callout);
     }
 
     #[test]
