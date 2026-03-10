@@ -4,7 +4,10 @@
 //! not just temporally-tagged ones. Used by cross-validation to search
 //! each fact against the rest of the factbase.
 
-use crate::patterns::{extract_reviewed_date, FACT_LINE_REGEX, SOURCE_REF_CAPTURE_REGEX};
+use crate::patterns::{
+    extract_frontmatter_reviewed_date, extract_reviewed_date, FACT_LINE_REGEX,
+    SOURCE_REF_CAPTURE_REGEX,
+};
 
 /// A single fact line extracted from a document.
 #[derive(Debug, Clone, PartialEq)]
@@ -34,6 +37,10 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
     let today = chrono::Local::now().date_naive();
     const REVIEWED_SKIP_DAYS: i64 = 180;
 
+    // Check frontmatter for document-level reviewed date (obsidian format)
+    let fm_reviewed = extract_frontmatter_reviewed_date(content)
+        .filter(|d| (today - *d).num_days() <= REVIEWED_SKIP_DAYS);
+
     // Stop before the review queue section
     let end = crate::patterns::body_end_offset(content);
 
@@ -48,7 +55,10 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
             continue;
         }
 
-        // Skip facts with a recent reviewed marker
+        // Skip facts with a recent reviewed marker (inline or frontmatter)
+        if fm_reviewed.is_some() {
+            continue;
+        }
         if extract_reviewed_date(line)
             .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
         {
@@ -301,5 +311,26 @@ mod tests {
         );
         let facts = extract_all_facts(&content);
         assert_eq!(facts.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_skips_all_facts_with_recent_frontmatter_reviewed() {
+        let today = chrono::Local::now().format("%Y-%m-%d");
+        let content = format!(
+            "---\nfactbase_id: abc123\nreviewed: {today}\n---\n# Title\n\n- Fact one\n- Fact two\n"
+        );
+        let facts = extract_all_facts(&content);
+        assert_eq!(facts.len(), 0, "All facts should be skipped when frontmatter reviewed date is recent");
+    }
+
+    #[test]
+    fn test_extract_includes_facts_with_old_frontmatter_reviewed() {
+        let old_date = (chrono::Local::now().date_naive() - chrono::Duration::days(200))
+            .format("%Y-%m-%d");
+        let content = format!(
+            "---\nfactbase_id: abc123\nreviewed: {old_date}\n---\n# Title\n\n- Fact one\n- Fact two\n"
+        );
+        let facts = extract_all_facts(&content);
+        assert_eq!(facts.len(), 2, "Facts should not be skipped when frontmatter reviewed date is old");
     }
 }

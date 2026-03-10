@@ -9,7 +9,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::extract_reviewed_date;
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date};
 
 use super::iter_fact_lines;
 
@@ -83,10 +83,14 @@ fn qualifier_regex(word: &str) -> Regex {
 pub fn generate_precision_questions(content: &str) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
 
     for (line_number, line, fact_text) in iter_fact_lines(content) {
-        // Skip facts with a recent reviewed marker
-        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        // Skip facts with a recent reviewed marker (inline or frontmatter)
+        if fm_skip
+            || extract_reviewed_date(line)
+                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
         {
             continue;
         }

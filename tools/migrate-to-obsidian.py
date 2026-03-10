@@ -5,6 +5,7 @@ Converts:
 - <!-- factbase:abc123 --> to YAML frontmatter with factbase_id
 - [[hex_id]] links to [[Entity Name]] wikilinks
 - Review queue sections to collapsed Obsidian callouts
+- Inline <!-- reviewed:YYYY-MM-DD --> markers to frontmatter reviewed: date
 - Updates perspective.yaml to add format preset
 
 Usage:
@@ -110,6 +111,38 @@ def convert_review_to_callout(content):
     
     return '\n'.join(result_lines)
 
+REVIEWED_RE = re.compile(r'<!-- reviewed:(\d{4}-\d{2}-\d{2})\b.*?-->')
+
+def convert_reviewed_to_frontmatter(content):
+    """Strip inline <!-- reviewed:YYYY-MM-DD --> markers and store latest date in frontmatter."""
+    dates = REVIEWED_RE.findall(content)
+    if not dates:
+        return content
+    
+    # Find the latest date
+    latest = max(dates)
+    
+    # Strip all inline reviewed markers and clean trailing whitespace
+    stripped = REVIEWED_RE.sub('', content)
+    lines = [line.rstrip() for line in stripped.split('\n')]
+    content = '\n'.join(lines)
+    
+    # Add/update reviewed: in frontmatter
+    if content.startswith('---\n'):
+        fm_end = content.find('\n---\n', 4)
+        if fm_end > 0:
+            fm_text = content[4:fm_end]
+            # Check if reviewed: already exists
+            if re.search(r'^reviewed:', fm_text, re.MULTILINE):
+                fm_text = re.sub(r'^reviewed:.*$', f'reviewed: {latest}', fm_text, flags=re.MULTILINE)
+            else:
+                fm_text += f'\nreviewed: {latest}'
+            content = f"---\n{fm_text}\n---\n{content[fm_end+5:]}"
+        return content
+    
+    # No frontmatter — create one
+    return f"---\nreviewed: {latest}\n---\n{content}"
+
 def convert_file(filepath, id_map, dry_run=False):
     """Convert a single markdown file to Obsidian format."""
     with open(filepath, 'r') as f:
@@ -124,9 +157,6 @@ def convert_file(filepath, id_map, dry_run=False):
     
     factbase_id = match.group(1)
     content = content[match.end():]
-    
-    # Detect doc_type from file path
-    rel_path = os.path.relpath(filepath, os.path.dirname(filepath))
     
     # Check if there's already YAML frontmatter
     if content.startswith('---\n'):
@@ -164,6 +194,9 @@ def convert_file(filepath, id_map, dry_run=False):
     
     # 4. Convert review queue section to collapsed callout
     content = convert_review_to_callout(content)
+    
+    # 5. Convert inline reviewed markers to frontmatter
+    content = convert_reviewed_to_frontmatter(content)
     
     if content == original:
         return False
