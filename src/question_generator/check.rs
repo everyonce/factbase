@@ -410,7 +410,7 @@ pub async fn check_all_documents(
             } else {
                 pruned_content.clone()
             };
-            let updated = append_review_questions(&base_content, &questions);
+            let updated = append_review_questions(&base_content, &questions, false);
             let path = abs_path.unwrap_or_else(|| PathBuf::from(&doc.file_path));
             if path.exists() {
                 std::fs::write(&path, &updated)?;
