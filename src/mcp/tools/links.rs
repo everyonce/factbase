@@ -5,9 +5,10 @@ use std::collections::{HashMap, HashSet};
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
+use crate::models::format::LinkStyle;
 use crate::processor::{
-    append_links_to_content, append_referenced_by_to_content, parse_links_block,
-    parse_referenced_by_block,
+    append_links_to_content, append_links_to_content_styled, append_referenced_by_to_content,
+    append_referenced_by_to_content_styled, parse_links_block, parse_referenced_by_block,
 };
 use serde_json::Value;
 
@@ -148,9 +149,22 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
     }))
 }
 
+/// Resolve the link style for a document's repository.
+fn resolve_link_style(db: &Database, repo_id: &str) -> LinkStyle {
+    db.get_repository(repo_id)
+        .ok()
+        .flatten()
+        .and_then(|r| r.perspective)
+        .and_then(|p| p.format)
+        .map(|f| f.resolve().link_style)
+        .unwrap_or_default()
+}
+
 /// Store links by writing [[id]] references into document files.
 /// Writes `References:` to source files and `Referenced by:` to target files.
 /// Only the forward direction (source→target) is added to the database.
+///
+/// In wikilink mode, emits `[[folder/filename|Title]]` for Obsidian compatibility.
 pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let links = args
         .get("links")
@@ -212,7 +226,29 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
             continue;
         }
 
-        let updated_content = append_links_to_content(&content, &new_ids);
+        let style = resolve_link_style(db, &doc.repo_id);
+        let updated_content = if style == LinkStyle::Factbase {
+            append_links_to_content(&content, &new_ids)
+        } else {
+            // Look up target docs for title/path info
+            let id_names: Vec<(&str, Option<String>, Option<String>)> = new_ids
+                .iter()
+                .map(|id| {
+                    let (title, fp) = db
+                        .get_document(id)
+                        .ok()
+                        .flatten()
+                        .map(|d| (Some(d.title), Some(d.file_path)))
+                        .unwrap_or((None, None));
+                    (*id, title, fp)
+                })
+                .collect();
+            let refs: Vec<(&str, Option<&str>, Option<&str>)> = id_names
+                .iter()
+                .map(|(id, t, fp)| (*id, t.as_deref(), fp.as_deref()))
+                .collect();
+            append_links_to_content_styled(&content, &refs, style)
+        };
         std::fs::write(file_path, &updated_content)?;
 
         // Update DB links (forward direction only)
@@ -248,7 +284,28 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
             continue;
         }
 
-        let updated_content = append_referenced_by_to_content(&content, &new_ids);
+        let style = resolve_link_style(db, &doc.repo_id);
+        let updated_content = if style == LinkStyle::Factbase {
+            append_referenced_by_to_content(&content, &new_ids)
+        } else {
+            let id_names: Vec<(&str, Option<String>, Option<String>)> = new_ids
+                .iter()
+                .map(|id| {
+                    let (title, fp) = db
+                        .get_document(id)
+                        .ok()
+                        .flatten()
+                        .map(|d| (Some(d.title), Some(d.file_path)))
+                        .unwrap_or((None, None));
+                    (*id, title, fp)
+                })
+                .collect();
+            let refs: Vec<(&str, Option<&str>, Option<&str>)> = id_names
+                .iter()
+                .map(|(id, t, fp)| (*id, t.as_deref(), fp.as_deref()))
+                .collect();
+            append_referenced_by_to_content_styled(&content, &refs, style)
+        };
         std::fs::write(file_path, &updated_content)?;
         documents_modified += 1;
     }
@@ -257,6 +314,63 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
         "added": added,
         "skipped_existing": skipped_existing,
         "documents_modified": documents_modified
+    }))
+}
+
+/// Migrate all cross-reference blocks in a repository to the repo's configured link style.
+///
+/// Rewrites `References:` and `Referenced by:` blocks in every document file.
+/// Useful when switching a repo from factbase IDs to wikilink (obsidian) format.
+pub fn migrate_repo_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let repo_id = args
+        .get("repo")
+        .and_then(Value::as_str)
+        .ok_or_else(|| FactbaseError::Parse("'repo' is required".into()))?;
+
+    let repo = db
+        .get_repository(repo_id)?
+        .ok_or_else(|| FactbaseError::NotFound(format!("Repository '{repo_id}' not found")))?;
+
+    let style = repo
+        .perspective
+        .as_ref()
+        .and_then(|p| p.format.as_ref())
+        .map(|f| f.resolve().link_style)
+        .unwrap_or_default();
+
+    let docs = db.get_documents_for_repo(repo_id)?;
+    let mut migrated = 0usize;
+
+    // Build lookup closure over all docs in repo
+    let doc_map: HashMap<String, (String, String)> = docs
+        .iter()
+        .map(|(id, doc)| (id.clone(), (doc.title.clone(), doc.file_path.clone())))
+        .collect();
+
+    for (_id, doc) in &docs {
+        if doc.is_deleted {
+            continue;
+        }
+        let file_path = repo.path.join(&doc.file_path);
+        if !file_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&file_path)?;
+        let updated = crate::processor::migrate_links(&content, style, |id| {
+            doc_map.get(id).cloned()
+        });
+
+        if updated != content {
+            std::fs::write(&file_path, &updated)?;
+            migrated += 1;
+        }
+    }
+
+    Ok(serde_json::json!({
+        "migrated": migrated,
+        "total_documents": docs.len(),
+        "link_style": format!("{:?}", style).to_lowercase()
     }))
 }
 
@@ -502,5 +616,172 @@ mod tests {
         let instr = result["instruction"].as_str().unwrap();
         assert!(instr.contains("factbase(op='links')"), "ingest step 5 should mention factbase(op='links')");
         assert!(result["complete"].as_bool().unwrap_or(false), "ingest step 5 should be complete");
+    }
+
+    fn test_repo_wikilink(path: &std::path::Path) -> crate::models::Repository {
+        use crate::models::Perspective;
+        use crate::models::format::FormatConfig;
+        crate::models::Repository {
+            id: "test-repo".to_string(),
+            name: "Test Repo".to_string(),
+            path: path.to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    preset: Some("obsidian".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        }
+    }
+
+    #[test]
+    fn test_store_links_wikilink_format() {
+        let (db, _tmp) = test_db();
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let repo = test_repo_wikilink(tmp_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        // Create source and target files in subdirectories
+        let people_dir = tmp_dir.path().join("people");
+        std::fs::create_dir_all(&people_dir).unwrap();
+        let src_path = people_dir.join("alice.md");
+        let tgt_path = people_dir.join("bob.md");
+        std::fs::write(&src_path, "# Alice\n\nContent.").unwrap();
+        std::fs::write(&tgt_path, "# Bob\n\nContent.").unwrap();
+
+        let mut doc1 = test_doc("aaa111", "Alice");
+        doc1.file_path = "people/alice.md".to_string();
+        db.upsert_document(&doc1).unwrap();
+
+        let mut doc2 = test_doc("bbb222", "Bob");
+        doc2.file_path = "people/bob.md".to_string();
+        db.upsert_document(&doc2).unwrap();
+
+        let args = serde_json::json!({
+            "links": [{"source_id": "aaa111", "target_id": "bbb222"}]
+        });
+        let result = store_links(&db, &args).unwrap();
+        assert_eq!(result["added"], 1);
+
+        // Source should have wikilink with path
+        let src_content = std::fs::read_to_string(&src_path).unwrap();
+        assert!(
+            src_content.contains("References: [[people/bob|Bob]]"),
+            "Expected wikilink path format, got: {src_content}"
+        );
+
+        // Target should have Referenced by: with wikilink path
+        let tgt_content = std::fs::read_to_string(&tgt_path).unwrap();
+        assert!(
+            tgt_content.contains("Referenced by: [[people/alice|Alice]]"),
+            "Expected wikilink path format, got: {tgt_content}"
+        );
+    }
+
+    #[test]
+    fn test_store_links_wikilink_disambiguates_same_name() {
+        let (db, _tmp) = test_db();
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let repo = test_repo_wikilink(tmp_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        // Create directories
+        let people_dir = tmp_dir.path().join("people");
+        let books_dir = tmp_dir.path().join("books");
+        let events_dir = tmp_dir.path().join("events");
+        std::fs::create_dir_all(&people_dir).unwrap();
+        std::fs::create_dir_all(&books_dir).unwrap();
+        std::fs::create_dir_all(&events_dir).unwrap();
+
+        let src_path = events_dir.join("conquest.md");
+        let person_path = people_dir.join("joshua.md");
+        let book_path = books_dir.join("joshua.md");
+        std::fs::write(&src_path, "# The Conquest\n\nContent.").unwrap();
+        std::fs::write(&person_path, "# Joshua\n\nA person.").unwrap();
+        std::fs::write(&book_path, "# Joshua\n\nA book.").unwrap();
+
+        let mut src = test_doc("src001", "The Conquest");
+        src.file_path = "events/conquest.md".to_string();
+        db.upsert_document(&src).unwrap();
+
+        let mut person = test_doc("per001", "Joshua");
+        person.file_path = "people/joshua.md".to_string();
+        db.upsert_document(&person).unwrap();
+
+        let mut book = test_doc("bok001", "Joshua");
+        book.file_path = "books/joshua.md".to_string();
+        db.upsert_document(&book).unwrap();
+
+        let args = serde_json::json!({
+            "links": [
+                {"source_id": "src001", "target_id": "per001"},
+                {"source_id": "src001", "target_id": "bok001"}
+            ]
+        });
+        let result = store_links(&db, &args).unwrap();
+        assert_eq!(result["added"], 2);
+
+        let content = std::fs::read_to_string(&src_path).unwrap();
+        assert!(content.contains("[[people/joshua|Joshua]]"), "Should have people path: {content}");
+        assert!(content.contains("[[books/joshua|Joshua]]"), "Should have books path: {content}");
+    }
+
+    #[test]
+    fn test_migrate_repo_links_hex_to_wikilink() {
+        let (db, _tmp) = test_db();
+        let tmp_dir = tempfile::TempDir::new().unwrap();
+        let repo = test_repo_wikilink(tmp_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        let people_dir = tmp_dir.path().join("people");
+        std::fs::create_dir_all(&people_dir).unwrap();
+
+        // Create files with hex ID references
+        let alice_path = people_dir.join("alice.md");
+        let bob_path = people_dir.join("bob.md");
+        std::fs::write(&alice_path, "# Alice\n\nContent.\n\nReferences: [[bbb222]]").unwrap();
+        std::fs::write(&bob_path, "# Bob\n\nContent.\n\nReferenced by: [[aaa111]]").unwrap();
+
+        let mut doc1 = test_doc("aaa111", "Alice");
+        doc1.file_path = "people/alice.md".to_string();
+        db.upsert_document(&doc1).unwrap();
+
+        let mut doc2 = test_doc("bbb222", "Bob");
+        doc2.file_path = "people/bob.md".to_string();
+        db.upsert_document(&doc2).unwrap();
+
+        let args = serde_json::json!({"repo": "test-repo"});
+        let result = migrate_repo_links(&db, &args).unwrap();
+        assert_eq!(result["migrated"], 2);
+        assert_eq!(result["link_style"], "wikilink");
+
+        let alice_content = std::fs::read_to_string(&alice_path).unwrap();
+        assert!(
+            alice_content.contains("References: [[people/bob|Bob]]"),
+            "Expected migrated wikilink, got: {alice_content}"
+        );
+
+        let bob_content = std::fs::read_to_string(&bob_path).unwrap();
+        assert!(
+            bob_content.contains("Referenced by: [[people/alice|Alice]]"),
+            "Expected migrated wikilink, got: {bob_content}"
+        );
+    }
+
+    #[test]
+    fn test_migrate_repo_links_no_change_for_factbase_style() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo(); // default style = factbase
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({"repo": "test-repo"});
+        let result = migrate_repo_links(&db, &args).unwrap();
+        // No docs to migrate, but should succeed
+        assert_eq!(result["migrated"], 0);
+        assert_eq!(result["link_style"], "factbase");
     }
 }

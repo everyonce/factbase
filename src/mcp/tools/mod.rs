@@ -45,7 +45,7 @@ pub use authoring::get_authoring_guide;
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
 pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_tool};
 pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
-pub use links::{get_link_suggestions, store_links};
+pub use links::{get_link_suggestions, migrate_repo_links, store_links};
 pub use organize::{organize, organize_analyze};
 pub use repository::{detect_links, init_repository, scan_repository};
 pub use review::{
@@ -176,6 +176,7 @@ async fn dispatch_tool<E: EmbeddingProvider>(
         "embeddings_status" => { let db = db.clone(); run_blocking(move || embeddings_status_tool(&db)).await }
         "get_link_suggestions" => get_link_suggestions(db, embedding, args).await,
         "store_links" => { let db = db.clone(); let a = args.clone(); run_blocking(move || store_links(&db, &a)).await }
+        "migrate_links" => { let db = db.clone(); let a = args.clone(); run_blocking(move || migrate_repo_links(&db, &a)).await }
         "get_fact_pairs" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_fact_pairs(&db, &a)).await }
         "workflow" => {
             let is_bootstrap = args.get("workflow").and_then(|v| v.as_str()) == Some("bootstrap");
@@ -338,11 +339,12 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
                 dispatch_tool(db, embedding, "organize", args, reporter).await
             }
         }
-        // links: action=suggest or action=store
+        // links: action=suggest, action=store, or action=migrate
         "links" => {
             let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("suggest");
             match action {
                 "store" => dispatch_tool(db, embedding, "store_links", args, reporter).await,
+                "migrate" => dispatch_tool(db, embedding, "migrate_links", args, reporter).await,
                 _ => dispatch_tool(db, embedding, "get_link_suggestions", args, reporter).await,
             }
         }

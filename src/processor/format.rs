@@ -52,17 +52,36 @@ pub fn build_document_header(
     }
 }
 
+/// Strip `.md` extension from a file path for wikilink targets.
+pub fn wikilink_path(file_path: &str) -> &str {
+    file_path.strip_suffix(".md").unwrap_or(file_path)
+}
+
 /// Format a link reference according to link style.
 ///
 /// - `Factbase`: `[[hex_id]]`
-/// - `Wikilink`: `[[entity_name]]`
+/// - `Wikilink`: `[[folder/filename|Display Title]]` when `file_path` is available,
+///   otherwise `[[entity_name]]`
 /// - `Markdown`: `[entity_name](hex_id)`
-pub fn format_link(id: &str, name: Option<&str>, style: LinkStyle) -> String {
+///
+/// `file_path` is the document's relative path (e.g. `people/tim-leidig.md`).
+pub fn format_link(
+    id: &str,
+    name: Option<&str>,
+    file_path: Option<&str>,
+    style: LinkStyle,
+) -> String {
     match style {
         LinkStyle::Factbase => format!("[[{id}]]"),
         LinkStyle::Wikilink => {
-            let display = name.unwrap_or(id);
-            format!("[[{display}]]")
+            if let Some(fp) = file_path {
+                let target = wikilink_path(fp);
+                let display = name.unwrap_or(id);
+                format!("[[{target}|{display}]]")
+            } else {
+                let display = name.unwrap_or(id);
+                format!("[[{display}]]")
+            }
         }
         LinkStyle::Markdown => {
             let display = name.unwrap_or(id);
@@ -71,16 +90,16 @@ pub fn format_link(id: &str, name: Option<&str>, style: LinkStyle) -> String {
     }
 }
 
-/// Format a References: line with the given IDs and optional names.
+/// Format a References: line with the given IDs and optional names/paths.
 ///
-/// `id_names` is a slice of `(id, Option<name>)` pairs.
+/// `id_names` is a slice of `(id, Option<name>, Option<file_path>)` tuples.
 pub fn format_references_line(
-    id_names: &[(&str, Option<&str>)],
+    id_names: &[(&str, Option<&str>, Option<&str>)],
     style: LinkStyle,
 ) -> String {
     let links: Vec<String> = id_names
         .iter()
-        .map(|(id, name)| format_link(id, *name, style))
+        .map(|(id, name, fp)| format_link(id, *name, *fp, style))
         .collect();
     format!("References: {}", links.join(" "))
 }
@@ -137,40 +156,82 @@ mod tests {
 
     #[test]
     fn test_format_link_factbase() {
-        assert_eq!(format_link("abc123", None, LinkStyle::Factbase), "[[abc123]]");
-        assert_eq!(format_link("abc123", Some("John"), LinkStyle::Factbase), "[[abc123]]");
+        assert_eq!(format_link("abc123", None, None, LinkStyle::Factbase), "[[abc123]]");
+        assert_eq!(format_link("abc123", Some("John"), None, LinkStyle::Factbase), "[[abc123]]");
     }
 
     #[test]
-    fn test_format_link_wikilink() {
-        assert_eq!(format_link("abc123", Some("John Doe"), LinkStyle::Wikilink), "[[John Doe]]");
-        assert_eq!(format_link("abc123", None, LinkStyle::Wikilink), "[[abc123]]");
+    fn test_format_link_wikilink_no_path() {
+        assert_eq!(format_link("abc123", Some("John Doe"), None, LinkStyle::Wikilink), "[[John Doe]]");
+        assert_eq!(format_link("abc123", None, None, LinkStyle::Wikilink), "[[abc123]]");
+    }
+
+    #[test]
+    fn test_format_link_wikilink_with_path() {
+        assert_eq!(
+            format_link("abc123", Some("Tim Leidig"), Some("people/tim-leidig.md"), LinkStyle::Wikilink),
+            "[[people/tim-leidig|Tim Leidig]]"
+        );
+    }
+
+    #[test]
+    fn test_format_link_wikilink_path_disambiguates() {
+        let person = format_link("aaa111", Some("Joshua"), Some("people/joshua.md"), LinkStyle::Wikilink);
+        let book = format_link("bbb222", Some("Joshua"), Some("books/joshua.md"), LinkStyle::Wikilink);
+        assert_eq!(person, "[[people/joshua|Joshua]]");
+        assert_eq!(book, "[[books/joshua|Joshua]]");
+        assert_ne!(person, book);
+    }
+
+    #[test]
+    fn test_format_link_wikilink_root_file() {
+        assert_eq!(
+            format_link("abc123", Some("Notes"), Some("notes.md"), LinkStyle::Wikilink),
+            "[[notes|Notes]]"
+        );
     }
 
     #[test]
     fn test_format_link_markdown() {
-        assert_eq!(format_link("abc123", Some("John"), LinkStyle::Markdown), "[John](abc123)");
-        assert_eq!(format_link("abc123", None, LinkStyle::Markdown), "[abc123](abc123)");
+        assert_eq!(format_link("abc123", Some("John"), None, LinkStyle::Markdown), "[John](abc123)");
+        assert_eq!(format_link("abc123", None, None, LinkStyle::Markdown), "[abc123](abc123)");
     }
 
     #[test]
     fn test_format_references_line_factbase() {
-        let ids = vec![("abc123", None), ("def456", None)];
+        let ids = vec![("abc123", None, None), ("def456", None, None)];
         let line = format_references_line(&ids, LinkStyle::Factbase);
         assert_eq!(line, "References: [[abc123]] [[def456]]");
     }
 
     #[test]
-    fn test_format_references_line_wikilink() {
-        let ids = vec![("abc123", Some("John")), ("def456", Some("Acme Corp"))];
+    fn test_format_references_line_wikilink_with_paths() {
+        let ids = vec![
+            ("abc123", Some("John"), Some("people/john.md")),
+            ("def456", Some("Acme Corp"), Some("companies/acme-corp.md")),
+        ];
+        let line = format_references_line(&ids, LinkStyle::Wikilink);
+        assert_eq!(line, "References: [[people/john|John]] [[companies/acme-corp|Acme Corp]]");
+    }
+
+    #[test]
+    fn test_format_references_line_wikilink_no_paths() {
+        let ids = vec![("abc123", Some("John"), None), ("def456", Some("Acme Corp"), None)];
         let line = format_references_line(&ids, LinkStyle::Wikilink);
         assert_eq!(line, "References: [[John]] [[Acme Corp]]");
     }
 
     #[test]
     fn test_format_references_line_markdown() {
-        let ids = vec![("abc123", Some("John"))];
+        let ids = vec![("abc123", Some("John"), None)];
         let line = format_references_line(&ids, LinkStyle::Markdown);
         assert_eq!(line, "References: [John](abc123)");
+    }
+
+    #[test]
+    fn test_wikilink_path_strips_md() {
+        assert_eq!(wikilink_path("people/john.md"), "people/john");
+        assert_eq!(wikilink_path("notes.md"), "notes");
+        assert_eq!(wikilink_path("no-extension"), "no-extension");
     }
 }
