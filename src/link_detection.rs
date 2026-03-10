@@ -231,16 +231,23 @@ impl LinkDetector {
         }
 
         // Extract [[Name]] wikilinks and resolve by title
+        // Handles both [[Name]] and [[path|Display Name]] formats
         let title_to_id: HashMap<String, &str> = known_entities
             .iter()
             .map(|(id, title)| (title.to_lowercase(), id.as_str()))
             .collect();
         for cap in WIKILINK_REGEX.captures_iter(content) {
-            let name = &cap[1];
+            let raw = &cap[1];
             // Skip if it's a hex ID (already handled above)
-            if MANUAL_LINK_REGEX.is_match(&format!("[[{name}]]")) {
+            if MANUAL_LINK_REGEX.is_match(&format!("[[{raw}]]")) {
                 continue;
             }
+            // Handle [[path|display]] format — extract display portion for title lookup
+            let name = if let Some((_path, display)) = raw.split_once('|') {
+                display
+            } else {
+                raw
+            };
             if let Some(&target_id) = title_to_id.get(&name.to_lowercase()) {
                 if target_id != source_id
                     && !links.iter().any(|l| l.target_id == target_id)
@@ -248,7 +255,7 @@ impl LinkDetector {
                     links.push(DetectedLink {
                         target_id: target_id.to_string(),
                         target_title: name.to_string(),
-                        mention_text: format!("[[{name}]]"),
+                        mention_text: format!("[[{raw}]]"),
                         context: String::new(),
                     });
                 }
@@ -307,12 +314,17 @@ impl LinkDetector {
                     }
                 }
             }
-            // Resolve [[Name]] wikilinks by title
+            // Resolve [[Name]] and [[path|Name]] wikilinks by title
             for cap in WIKILINK_REGEX.captures_iter(content) {
-                let name = &cap[1];
-                if MANUAL_LINK_REGEX.is_match(&format!("[[{name}]]")) {
+                let raw = &cap[1];
+                if MANUAL_LINK_REGEX.is_match(&format!("[[{raw}]]")) {
                     continue;
                 }
+                let name = if let Some((_path, display)) = raw.split_once('|') {
+                    display
+                } else {
+                    raw
+                };
                 if let Some(&target_id) = title_to_id.get(&name.to_lowercase()) {
                     if target_id != *id
                         && !links.iter().any(|l| l.target_id == target_id)
@@ -320,7 +332,7 @@ impl LinkDetector {
                         links.push(DetectedLink {
                             target_id: target_id.to_string(),
                             target_title: name.to_string(),
-                            mention_text: format!("[[{name}]]"),
+                            mention_text: format!("[[{raw}]]"),
                             context: String::new(),
                         });
                     }
@@ -795,5 +807,33 @@ mod tests {
         let results = detector.detect_links_batch(&docs, &known);
         assert!(results.get("doc1").unwrap().iter().any(|l| l.target_id == "abc123"));
         assert!(results.get("doc2").unwrap().iter().all(|l| l.target_id != "abc123"));
+    }
+
+    #[test]
+    fn test_detect_wikilink_path_pipe_format() {
+        let detector = LinkDetector::new();
+        let content = "See [[people/john-doe|John Doe]] for details.";
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+        ];
+        let links = detector.detect_links(content, "src001", &known);
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].target_id, "abc123");
+        assert_eq!(links[0].target_title, "John Doe");
+    }
+
+    #[test]
+    fn test_batch_detect_wikilink_path_pipe_format() {
+        let detector = LinkDetector::new();
+        let docs = vec![
+            ("doc1", "Doc One", "See [[people/john-doe|John Doe]] here."),
+        ];
+        let known = vec![
+            ("abc123".to_string(), "John Doe".to_string()),
+        ];
+        let results = detector.detect_links_batch(&docs, &known);
+        let doc1_links = results.get("doc1").unwrap();
+        assert_eq!(doc1_links.len(), 1);
+        assert_eq!(doc1_links[0].target_id, "abc123");
     }
 }

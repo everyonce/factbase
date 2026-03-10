@@ -32,7 +32,7 @@ pub fn legacy_tool_names() -> &'static [&'static str] {
         "get_authoring_guide",
         "organize_analyze", "organize",
         "embeddings_export", "embeddings_import", "embeddings_status",
-        "get_link_suggestions", "store_links", "get_fact_pairs",
+        "get_link_suggestions", "store_links", "migrate_links", "get_fact_pairs",
     ]
 }
 
@@ -122,7 +122,7 @@ fn factbase_schema() -> Value {
             "- answer: Answer/defer review questions. Params: doc_id, question_index, answer, confidence, answers (bulk array)\n",
             "- deferred: Get deferred items. Params: repo, type, limit, offset\n",
             "- organize: Reorganize KB. action=analyze for suggestions, action=move/retype/apply for execution. Params: action, repo, doc_id, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
-            "- links: action=suggest for link suggestions, action=store to write links. Params: action, repo, min_similarity, include_types, exclude_types, limit, links (array)\n",
+            "- links: action=suggest for link suggestions, action=store to write links, action=migrate to convert existing refs to repo's link style. Params: action, repo, min_similarity, include_types, exclude_types, limit, links (array)\n",
             "- fact_pairs: Get similar fact pairs for cross-validation. Params: repo, min_similarity, limit\n",
             "- embeddings: action=export/import/status. Params: action, repo, data, force\n",
             "- authoring_guide: Get document format rules and templates.\n",
