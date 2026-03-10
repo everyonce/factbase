@@ -118,7 +118,7 @@ pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers b
 
 pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call factbase(op='check') with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
 
-pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run factbase(op='scan') to re-index all documents, then run factbase(op='check') (without dry_run) to prune answered questions from files and detect any new issues. Do NOT resolve new questions — just report them.";
+pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run factbase(op='scan') to re-index all documents. This prunes answered [x] questions and re-indexes modified files. Do NOT run check — resolve only cleans up, it does not generate new work.";
 
 // --- Ingest workflow ---
 pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call factbase(op='search') with a relevant query. Also try factbase(op='list') to browse by type.{ctx}";
@@ -746,7 +746,7 @@ fn resolve_step(
             "step": 5, "total_steps": total,
             "instruction": resolve(wf, "resolve.cleanup", DEFAULT_RESOLVE_CLEANUP_INSTRUCTION, &[]),
             "next_tool": "factbase", "suggested_op": "scan",
-            "when_done": "After scan completes, call factbase(op='check') (without dry_run) to prune answered questions and detect new issues. Then call workflow with workflow='resolve', step=6"
+            "when_done": "After scan completes, call workflow with workflow='resolve', step=6"
         }),
         6 => {
             let type_dist = compute_type_distribution(db);
@@ -4068,8 +4068,8 @@ mod tests {
         let step = resolve_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["next_tool"], "factbase");
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("factbase(op='scan')"), "cleanup step should mention scan");
-        assert!(instr.contains("factbase(op='check')"), "cleanup step should mention check");
+        assert!(instr.contains("scan"), "cleanup step should mention scan");
+        assert!(!instr.contains("op='check'"), "cleanup step should NOT instruct running check");
         assert!(step.get("complete").is_none(), "step 5 should not be complete");
     }
 
@@ -4174,5 +4174,39 @@ mod tests {
         let result = workflow(&db, &args).unwrap();
         assert_eq!(result["workflow"], "maintain");
         assert_eq!(result["step"], 1);
+    }
+
+    #[test]
+    fn test_resolve_cleanup_does_not_mention_check() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        let when_done = step["when_done"].as_str().unwrap();
+        // Cleanup should suggest scan only, not check
+        assert_eq!(step["suggested_op"], "scan");
+        assert!(!when_done.contains("check"), "when_done should not instruct running check: {when_done}");
+        assert!(!instruction.contains("op='check'"), "instruction should not tell agent to run check: {instruction}");
+    }
+
+    #[test]
+    fn test_resolve_cleanup_instruction_constant_no_check() {
+        // The default instruction text must not reference running check
+        assert!(!DEFAULT_RESOLVE_CLEANUP_INSTRUCTION.contains("op='check'"),
+            "DEFAULT_RESOLVE_CLEANUP_INSTRUCTION should not reference op='check'");
+    }
+
+    #[test]
+    fn test_maintain_runs_check_only_at_step_3() {
+        let (db, _tmp) = test_db();
+        // Step 3 should suggest check
+        let step3 = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step3["suggested_op"], "check");
+
+        // No other maintain step should suggest check
+        for s in [1, 2, 4, 5] {
+            let step = maintain_step(s, &serde_json::json!({}), &None, 0, &db, &wf());
+            let suggested = step.get("suggested_op").and_then(|v| v.as_str()).unwrap_or("");
+            assert_ne!(suggested, "check", "maintain step {s} should not suggest check");
+        }
     }
 }
