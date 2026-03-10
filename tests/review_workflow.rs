@@ -35,7 +35,7 @@ fn test_question_generation_for_missing_temporal_tags() {
 - Has PhD in Computer Science
 "#;
 
-    let questions = generate_temporal_questions(content);
+    let questions = generate_temporal_questions(content, None);
 
     // Should generate questions for facts without temporal tags
     assert!(
@@ -113,7 +113,7 @@ fn test_append_review_questions_creates_section() {
 - Some fact
 "#;
 
-    let questions = generate_temporal_questions(content);
+    let questions = generate_temporal_questions(content, None);
     let updated = append_review_questions(content, &questions, false);
 
     // Should contain review queue marker
@@ -205,7 +205,7 @@ fn test_full_question_generation_workflow() {
 "#;
 
     // Generate all question types
-    let temporal_qs = generate_temporal_questions(content);
+    let temporal_qs = generate_temporal_questions(content, None);
     let missing_qs = generate_missing_questions(content);
     let ambiguous_qs = generate_ambiguous_questions(content);
     let stale_qs = generate_stale_questions(content, 365);
@@ -280,7 +280,7 @@ async fn test_review_apply_with_llm() {
 "#;
 
     // Step 2: Generate questions
-    let questions = generate_temporal_questions(original_content);
+    let questions = generate_temporal_questions(original_content, None);
     assert!(!questions.is_empty(), "Should generate temporal questions");
 
     // Step 3: Append questions to create document with Review Queue
@@ -386,7 +386,7 @@ fn test_review_workflow_rule_based() {
 "#;
 
     // Generate all question types
-    let temporal_qs = generate_temporal_questions(content);
+    let temporal_qs = generate_temporal_questions(content, None);
     let ambiguous_qs = generate_ambiguous_questions(content);
 
     // Append questions

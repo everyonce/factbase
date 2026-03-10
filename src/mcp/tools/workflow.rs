@@ -87,7 +87,7 @@ pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is s
 pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
 
 #[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
+pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence\n\n⚠️ TEMPORAL QUESTION FILTERING: After check completes, review the generated temporal questions. Some will have confidence='low' with a reason. Dismiss low-confidence temporal questions about:\n- Stable feature descriptions or capability lists\n- Glossary definitions or reference material\n- Facts sourced from official documentation pages that describe current capabilities\nOnly keep temporal questions about claims that could genuinely become outdated. Dismiss the rest via factbase(op='answer') with answer='dismiss: [reason]'.";
 
 #[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE — you'll compare after link suggestions{ctx}";
@@ -908,7 +908,7 @@ const DEFAULT_MAINTAIN_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick u
 
 const DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed{ctx}";
 
-const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)";
+const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence\n\n⚠️ TEMPORAL QUESTION FILTERING: After check completes, review the generated temporal questions. Some will have confidence='low' with a reason. Dismiss low-confidence temporal questions about:\n- Stable feature descriptions or capability lists\n- Glossary definitions or reference material\n- Facts sourced from official documentation pages that describe current capabilities\nOnly keep temporal questions about claims that could genuinely become outdated. Dismiss the rest via factbase(op='answer') with answer='dismiss: [reason]'.";
 
 const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=7) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from factbase(op='answer'), your response was too large. Split into smaller batches and retry.{ctx}";
 
@@ -4372,6 +4372,16 @@ mod tests {
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 3);
         assert_eq!(step["next_tool"], "factbase");
+    }
+
+    #[test]
+    fn test_maintain_check_includes_temporal_filtering_guidance() {
+        let (db, _tmp) = test_db();
+        let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("TEMPORAL QUESTION FILTERING"), "check instruction should include temporal filtering guidance");
+        assert!(instr.contains("confidence='low'"), "should mention low confidence");
+        assert!(instr.contains("dismiss"), "should tell agent to dismiss low-confidence questions");
     }
 
     #[test]

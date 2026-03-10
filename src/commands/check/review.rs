@@ -260,6 +260,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
 
         let filtered = filter_existing_questions(content, questions);
@@ -348,6 +350,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
 
         let filtered = filter_existing_questions(content, questions);

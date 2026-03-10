@@ -613,6 +613,8 @@ mod tests {
             answered: true,
             answer: None,
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         }
     }
 

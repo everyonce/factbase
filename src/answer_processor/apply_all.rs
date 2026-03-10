@@ -538,6 +538,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
+            confidence: None,
+            confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -555,6 +557,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
+            confidence: None,
+            confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -572,6 +576,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
+            confidence: None,
+            confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -589,6 +595,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
+            confidence: None,
+            confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -606,6 +614,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
+            confidence: None,
+            confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };

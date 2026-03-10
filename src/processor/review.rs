@@ -207,6 +207,8 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
                 answered,
                 answer,
                 line_number,
+                confidence: None,
+                confidence_reason: None,
             });
 
             i = j;
@@ -1447,6 +1449,8 @@ Line 3
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
         let result = append_review_questions(content, &questions, false);
         let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
@@ -1465,6 +1469,8 @@ Line 3
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
         let after_first = append_review_questions(content, &q1, false);
         let heading_count = after_first.lines().filter(|l| l.trim() == "## Review Queue").count();
@@ -1478,6 +1484,8 @@ Line 3
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
         let after_second = append_review_questions(&after_first, &q2, false);
         let heading_count = after_second.lines().filter(|l| l.trim() == "## Review Queue").count();
@@ -1759,6 +1767,8 @@ Line 3
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
         let result = append_review_questions(content, &questions, true);
         assert!(result.contains("> [!info]- Review Queue"), "Should have callout header, got:\n{result}");
@@ -1777,6 +1787,8 @@ Line 3
             answered: false,
             answer: None,
             line_number: 0,
+        confidence: None,
+        confidence_reason: None,
         }];
         // Even with use_callout=false, existing callout format is preserved
         let result = append_review_questions(content, &questions, false);

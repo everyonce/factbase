@@ -109,7 +109,7 @@ async fn generate_questions_single(
     let defined_terms = collect_defined_terms_with_types(&all_docs, glossary_types.as_deref());
 
     // Generate all question types
-    let mut new_questions = generate_temporal_questions(body);
+    let mut new_questions = generate_temporal_questions(body, doc.doc_type.as_deref());
     new_questions.extend(generate_conflict_questions(body));
     new_questions.extend(generate_duplicate_entry_questions(body));
     new_questions.extend(generate_missing_questions(body));
@@ -344,6 +344,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 1,
+            confidence: None,
+            confidence_reason: None,
             },
             ReviewQuestion {
                 question_type: QuestionType::Missing,
@@ -352,6 +354,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 2,
+            confidence: None,
+            confidence_reason: None,
             },
         ];
 
@@ -372,6 +376,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 1,
+            confidence: None,
+            confidence_reason: None,
             },
             ReviewQuestion {
                 question_type: QuestionType::Conflict,
@@ -380,6 +386,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 2,
+            confidence: None,
+            confidence_reason: None,
             },
         ];
 
@@ -396,6 +404,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 1,
+        confidence: None,
+        confidence_reason: None,
         };
 
         let json = format_question_json(&question, None);
@@ -413,6 +423,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 1,
+        confidence: None,
+        confidence_reason: None,
         };
 
         let json = format_question_json(&question, None);

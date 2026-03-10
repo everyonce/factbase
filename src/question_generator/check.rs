@@ -36,7 +36,7 @@ pub fn run_generators(
     stale_days: i64,
     full: bool,
 ) -> Vec<ReviewQuestion> {
-    let mut questions = generate_temporal_questions(body);
+    let mut questions = generate_temporal_questions(body, doc_type);
     questions.extend(generate_conflict_questions(body));
     if full {
         questions.extend(generate_duplicate_entry_questions(body));

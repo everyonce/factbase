@@ -265,6 +265,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
 
         let json = format_question_json(&q, Some(("abc123", "Test Doc")));
@@ -287,6 +289,8 @@ mod tests {
             answered: true,
             answer: Some("LinkedIn profile".to_string()),
             line_number: 20,
+        confidence: None,
+        confidence_reason: None,
         };
 
         let json = format_question_json(&q, Some(("def456", "Another Doc")));

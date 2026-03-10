@@ -41,6 +41,8 @@ export interface ReviewQuestion {
   line_ref?: number;
   answered: boolean;
   answer?: string;
+  confidence?: string;
+  confidence_reason?: string;
 }
 
 export interface DocumentReview {
