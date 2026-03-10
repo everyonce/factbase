@@ -24,6 +24,30 @@ use super::Database;
 pub type DocumentLinksMap = HashMap<String, (Vec<Link>, Vec<Link>)>;
 
 impl Database {
+    /// Gets document titles for a set of IDs. Returns a map of id → title.
+    pub fn get_document_titles_by_ids(
+        &self,
+        ids: &[&str],
+    ) -> Result<HashMap<String, String>, FactbaseError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conn = self.get_conn()?;
+        let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT id, title FROM documents WHERE is_deleted = FALSE AND id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        let mut rows = stmt.query(params.as_slice())?;
+        let mut map = HashMap::new();
+        while let Some(row) = rows.next()? {
+            map.insert(row.get(0)?, row.get(1)?);
+        }
+        Ok(map)
+    }
+
     /// Gets all document IDs and titles for link detection.
     ///
     /// Used by the link detector to build the entity list for LLM prompts.
@@ -311,6 +335,29 @@ mod tests {
             .get_all_document_titles(None)
             .expect("get_all_document_titles without filter should succeed");
         assert_eq!(all_titles.len(), 2);
+    }
+
+    #[test]
+    fn test_get_document_titles_by_ids() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("d1", "First")).unwrap();
+        db.upsert_document(&test_doc("d2", "Second")).unwrap();
+        db.upsert_document(&test_doc("d3", "Third")).unwrap();
+
+        let map = db.get_document_titles_by_ids(&["d1", "d3"]).unwrap();
+        assert_eq!(map.len(), 2);
+        assert_eq!(map["d1"], "First");
+        assert_eq!(map["d3"], "Third");
+
+        // Empty input
+        let empty = db.get_document_titles_by_ids(&[]).unwrap();
+        assert!(empty.is_empty());
+
+        // Non-existent ID
+        let missing = db.get_document_titles_by_ids(&["nope"]).unwrap();
+        assert!(missing.is_empty());
     }
 
     #[test]

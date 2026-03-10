@@ -12,6 +12,7 @@ use serde_json::Value;
 pub fn tools_list() -> Value {
     serde_json::json!({
         "tools": [
+            search_schema(),
             workflow_schema(),
             factbase_schema(),
         ]
@@ -33,6 +34,38 @@ pub fn legacy_tool_names() -> &'static [&'static str] {
         "embeddings_export", "embeddings_import", "embeddings_status",
         "get_link_suggestions", "store_links", "get_fact_pairs",
     ]
+}
+
+fn search_schema() -> Value {
+    serde_json::json!({
+        "name": "search",
+        "description": concat!(
+            "Search the factbase. Returns matching entities with their links so agents can explore the knowledge graph in one call.\n\n",
+            "Modes:\n",
+            "- semantic (default): Find documents by meaning using embeddings\n",
+            "- content: Exact text/regex search (like grep)\n\n",
+            "Each result includes a `links` array with outgoing links (link_id + entity_name) so you can see connections without extra lookups.",
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "Search query (semantic or content pattern)" },
+                "mode": { "type": "string", "enum": ["semantic", "content"], "description": "Search mode (default: semantic)" },
+                "limit": { "type": "integer", "description": "Max results (default: 10)" },
+                "doc_type": { "type": "string", "description": "Filter by document type" },
+                "title_filter": { "type": "string", "description": "Filter by title (partial match)" },
+                "as_of": { "type": "string", "description": "Filter to facts valid at date (YYYY, YYYY-MM, or YYYY-MM-DD)" },
+                "during": { "type": "string", "description": "Filter to facts valid during range (YYYY..YYYY)" },
+                "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags" },
+                "boost_recent": { "type": "boolean", "description": "Boost ranking of recent dates" },
+                "offset": { "type": "integer", "description": "Pagination offset" },
+                "repo": { "type": "string", "description": "Repository ID" },
+                "pattern": { "type": "string", "description": "Text pattern for content mode" },
+                "context": { "type": "integer", "description": "Context lines around content matches" }
+            },
+            "required": ["query"]
+        }
+    })
 }
 
 fn workflow_schema() -> Value {
@@ -73,7 +106,6 @@ fn factbase_schema() -> Value {
         "description": concat!(
             "Unified factbase operations tool. Called by workflow steps — use the workflow tool as the entry point for multi-step tasks.\n\n",
             "Operations (op=...):\n",
-            "- search: Search by meaning (mode=semantic, default) or exact text (mode=content). Params: query, mode, title_filter, limit, offset, doc_type, repo, pattern, context, as_of, during, exclude_unknown, boost_recent\n",
             "- get_entity: Get document by ID. Params: id (required), detail, include_preview, max_content_length\n",
             "- list: List documents. Params: doc_type, repo, title_filter, limit\n",
             "- repos: List all repositories.\n",
@@ -101,7 +133,7 @@ fn factbase_schema() -> Value {
                 "op": {
                     "type": "string",
                     "enum": [
-                        "search", "get_entity", "list", "repos", "perspective",
+                        "get_entity", "list", "repos", "perspective",
                         "create", "update", "delete", "bulk_create",
                         "scan", "check", "detect_links", "init",
                         "review_queue", "answer", "deferred",
@@ -115,17 +147,9 @@ fn factbase_schema() -> Value {
                 "doc_id": { "type": "string", "description": "Document ID" },
                 "limit": { "type": "integer", "description": "Max results" },
                 "offset": { "type": "integer", "description": "Pagination offset" },
-                // Search
-                "query": { "type": "string", "description": "Search query (semantic or content pattern)" },
-                "mode": { "type": "string", "enum": ["semantic", "content"], "description": "Search mode (default: semantic)" },
+                // Filters
                 "title_filter": { "type": "string", "description": "Filter by title (partial match)" },
                 "doc_type": { "type": "string", "description": "Filter by document type" },
-                "pattern": { "type": "string", "description": "Text pattern for content search" },
-                "context": { "type": "integer", "description": "Context lines around content matches" },
-                "as_of": { "type": "string", "description": "Filter to facts valid at date (YYYY, YYYY-MM, or YYYY-MM-DD)" },
-                "during": { "type": "string", "description": "Filter to facts valid during range (YYYY..YYYY)" },
-                "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags" },
-                "boost_recent": { "type": "boolean", "description": "Boost ranking of recent dates" },
                 // Entity
                 "id": { "type": "string", "description": "Document ID (get_entity, update, delete)" },
                 "detail": { "type": "string", "description": "get_entity: 'full' or 'stats'" },
@@ -179,14 +203,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_tools_list_has_two_tools() {
+    fn test_tools_list_has_three_tools() {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
-        assert_eq!(tools.len(), 2, "should have exactly 2 tools: workflow + factbase");
+        assert_eq!(tools.len(), 3, "should have exactly 3 tools: search + workflow + factbase");
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+        assert!(names.contains(&"search"));
         assert!(names.contains(&"workflow"));
         assert!(names.contains(&"factbase"));
+    }
+
+    #[test]
+    fn test_search_schema_has_required_query() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let required = search["inputSchema"]["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "query"));
     }
 
     #[test]
@@ -209,7 +243,7 @@ mod tests {
         let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
 
         let expected = [
-            "search", "get_entity", "list", "repos", "perspective",
+            "get_entity", "list", "repos", "perspective",
             "create", "update", "delete", "bulk_create",
             "scan", "check", "detect_links", "init",
             "review_queue", "answer", "deferred",
@@ -252,11 +286,11 @@ mod tests {
     }
 
     #[test]
-    fn test_factbase_schema_has_mode_for_search() {
+    fn test_search_schema_has_mode() {
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
-        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
-        let mode = &fb["inputSchema"]["properties"]["mode"];
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let mode = &search["inputSchema"]["properties"]["mode"];
         let mode_enum = mode["enum"].as_array().unwrap();
         let values: Vec<&str> = mode_enum.iter().filter_map(|v| v.as_str()).collect();
         assert!(values.contains(&"semantic"));
@@ -287,11 +321,11 @@ mod tests {
     }
 
     #[test]
-    fn test_factbase_schema_has_temporal_params() {
+    fn test_search_schema_has_temporal_params() {
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
-        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
-        let props = fb["inputSchema"]["properties"].as_object().unwrap();
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let props = search["inputSchema"]["properties"].as_object().unwrap();
         assert!(props.contains_key("as_of"));
         assert!(props.contains_key("during"));
         assert!(props.contains_key("exclude_unknown"));
