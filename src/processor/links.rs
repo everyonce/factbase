@@ -32,6 +32,11 @@ static LINK_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\[\[([a-f0-9]{6})\]\]").expect("link id regex")
 });
 
+/// Regex extracting [[Name]] wikilinks (non-hex content inside double brackets).
+static WIKILINK_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[\[([^\[\]]+)\]\]").expect("wikilink name regex")
+});
+
 fn extract_ids(regex: &Regex, content: &str) -> Vec<String> {
     let Some(cap) = regex.captures(content) else {
         return Vec::new();
@@ -57,6 +62,17 @@ pub fn parse_links_block(content: &str) -> Vec<String> {
 /// Returns inbound source document IDs.
 pub fn parse_referenced_by_block(content: &str) -> Vec<String> {
     extract_ids(&REFERENCED_BY_LINE_REGEX, content)
+}
+
+/// Extract all `[[Name]]` wikilinks from document content (body text, not just link blocks).
+/// Returns names that are NOT 6-char hex IDs (those are factbase IDs, not wikilinks).
+pub fn extract_wikilink_names(content: &str) -> Vec<String> {
+    let hex_id = regex::Regex::new(r"^[a-f0-9]{6}$").unwrap();
+    WIKILINK_NAME_REGEX
+        .captures_iter(content)
+        .map(|c| c[1].to_string())
+        .filter(|name| !hex_id.is_match(name))
+        .collect()
 }
 
 /// Build a formatted line: `{label}: [[id1]] [[id2]]`
@@ -109,6 +125,54 @@ pub fn append_links_to_content(content: &str, new_ids: &[&str]) -> String {
         all_ids.push(id);
     }
     let new_line = format_ids_line("References", &all_ids);
+
+    replace_or_append_line(
+        content,
+        &REFERENCES_LINE_REGEX,
+        Some(&LINKS_LINE_REGEX),
+        &new_line,
+    )
+}
+
+/// Append new links to a document's `References:` block using the specified link style.
+/// `id_names` is a slice of `(id, Option<title>)` pairs.
+/// For `LinkStyle::Wikilink`, writes `[[Title]]`; for `Factbase`, writes `[[id]]`.
+pub fn append_links_to_content_styled(
+    content: &str,
+    id_names: &[(&str, Option<&str>)],
+    style: crate::models::format::LinkStyle,
+) -> String {
+    let existing: HashSet<String> = parse_links_block(content).into_iter().collect();
+    // Also parse any existing wikilink names to avoid duplicates
+    let existing_names: HashSet<String> = extract_wikilink_names(content)
+        .into_iter()
+        .map(|n| n.to_lowercase())
+        .collect();
+
+    let to_add: Vec<&(&str, Option<&str>)> = id_names
+        .iter()
+        .filter(|(id, name)| {
+            !existing.contains(*id)
+                && name
+                    .map(|n| !existing_names.contains(&n.to_lowercase()))
+                    .unwrap_or(true)
+        })
+        .collect();
+
+    if to_add.is_empty() {
+        return content.to_string();
+    }
+
+    // Rebuild all IDs line
+    let existing_ids = parse_links_block(content);
+    let mut all: Vec<(&str, Option<&str>)> = existing_ids
+        .iter()
+        .map(|id| (id.as_str(), None))
+        .collect();
+    for (id, name) in &to_add {
+        all.push((id, *name));
+    }
+    let new_line = super::format::format_references_line(&all, style);
 
     replace_or_append_line(
         content,
@@ -329,5 +393,73 @@ mod tests {
         let result = append_referenced_by_to_content(content, &["bbb222"]);
         let ids = parse_referenced_by_block(&result);
         assert_eq!(ids, vec!["aaa111", "bbb222"]);
+    }
+
+    // --- wikilink extraction ---
+
+    #[test]
+    fn test_extract_wikilink_names_basic() {
+        let content = "# Title\n\nSee [[John Doe]] and [[Acme Corp]] for details.";
+        let names = extract_wikilink_names(content);
+        assert_eq!(names, vec!["John Doe", "Acme Corp"]);
+    }
+
+    #[test]
+    fn test_extract_wikilink_names_excludes_hex_ids() {
+        let content = "References: [[abc123]] [[def456]]\n\nSee [[John Doe]].";
+        let names = extract_wikilink_names(content);
+        assert_eq!(names, vec!["John Doe"]);
+    }
+
+    #[test]
+    fn test_extract_wikilink_names_empty() {
+        let content = "# Title\n\nNo wikilinks here.";
+        let names = extract_wikilink_names(content);
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn test_extract_wikilink_names_mixed() {
+        let content = "See [[abc123]] and [[Project Alpha]] and [[def456]].";
+        let names = extract_wikilink_names(content);
+        assert_eq!(names, vec!["Project Alpha"]);
+    }
+
+    // --- styled link appending ---
+
+    #[test]
+    fn test_append_links_styled_wikilink() {
+        let content = "# Title\n\nSome content.";
+        let ids = vec![("abc123", Some("John Doe")), ("def456", Some("Acme Corp"))];
+        let result = append_links_to_content_styled(
+            content,
+            &ids,
+            crate::models::format::LinkStyle::Wikilink,
+        );
+        assert!(result.contains("References: [[John Doe]] [[Acme Corp]]"));
+    }
+
+    #[test]
+    fn test_append_links_styled_factbase() {
+        let content = "# Title\n\nSome content.";
+        let ids = vec![("abc123", Some("John Doe"))];
+        let result = append_links_to_content_styled(
+            content,
+            &ids,
+            crate::models::format::LinkStyle::Factbase,
+        );
+        assert!(result.contains("References: [[abc123]]"));
+    }
+
+    #[test]
+    fn test_append_links_styled_markdown() {
+        let content = "# Title\n\nSome content.";
+        let ids = vec![("abc123", Some("John Doe"))];
+        let result = append_links_to_content_styled(
+            content,
+            &ids,
+            crate::models::format::LinkStyle::Markdown,
+        );
+        assert!(result.contains("References: [John Doe](abc123)"));
     }
 }

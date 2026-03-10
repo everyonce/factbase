@@ -14,6 +14,7 @@ fn test_context_with_perspective() {
         focus: Some("Testing".to_string()),
         allowed_types: Some(vec!["person".to_string(), "project".to_string()]),
         review: None,
+        format: None,
     };
 
     let ctx = TestContext::with_perspective("test-repo", perspective);
@@ -43,6 +44,7 @@ fn test_context_with_files_and_perspective() {
         focus: Some("Notes".to_string()),
         allowed_types: None,
         review: None,
+        format: None,
     };
 
     let files = &[
@@ -103,6 +105,7 @@ fn test_context_with_review_perspective() {
         focus: None,
         allowed_types: None,
         review: Some(review),
+        format: None,
     };
 
     let ctx = TestContext::with_perspective("test-repo", perspective);

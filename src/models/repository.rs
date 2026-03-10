@@ -1,3 +1,4 @@
+use super::format::FormatConfig;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -31,6 +32,9 @@ pub struct Perspective {
     /// Review-specific perspective overrides
     #[serde(default)]
     pub review: Option<ReviewPerspective>,
+    /// Output format configuration (link style, frontmatter, etc.)
+    #[serde(default)]
+    pub format: Option<FormatConfig>,
 }
 
 /// Default perspective.yaml template created by init commands.
@@ -49,6 +53,14 @@ pub const PERSPECTIVE_TEMPLATE: &str = "\
 #   allowed_types: [species, habitat, region]           # biology\n\
 #   allowed_types: [civilization, event, artifact]       # history\n\
 #   allowed_types: [person, company, project]            # business\n\
+\n\
+# Output format (optional — omit for factbase defaults)\n\
+# format:\n\
+#   preset: obsidian   # shorthand for all obsidian-friendly settings\n\
+#   link_style: wikilink   # wikilink | markdown | factbase\n\
+#   frontmatter: true      # YAML frontmatter with type, tags, dates\n\
+#   inline_links: true     # [[Entity Name]] in body text\n\
+#   id_placement: frontmatter  # factbase ID in YAML frontmatter\n\
 \n\
 # Review quality settings\n\
 # review:\n\
@@ -99,6 +111,7 @@ pub fn load_perspective_from_file(repo_root: &Path) -> Option<Perspective> {
                 || p.allowed_types.is_some()
                 || !p.type_name.is_empty()
                 || p.review.is_some()
+                || p.format.is_some()
             {
                 Some(p)
             } else {
@@ -284,5 +297,34 @@ mod tests {
                 "Non-comment line in PERSPECTIVE_TEMPLATE: {trimmed}"
             );
         }
+    }
+
+    #[test]
+    fn test_load_perspective_with_format_obsidian() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "format:\n  preset: obsidian\n",
+        )
+        .unwrap();
+        let p = load_perspective_from_file(tmp.path()).unwrap();
+        let fmt = p.format.unwrap();
+        assert_eq!(fmt.preset.as_deref(), Some("obsidian"));
+    }
+
+    #[test]
+    fn test_load_perspective_with_format_explicit() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "format:\n  link_style: wikilink\n  frontmatter: true\n  id_placement: frontmatter\n",
+        )
+        .unwrap();
+        let p = load_perspective_from_file(tmp.path()).unwrap();
+        let fmt = p.format.unwrap();
+        let r = fmt.resolve();
+        assert_eq!(r.link_style, super::super::format::LinkStyle::Wikilink);
+        assert!(r.frontmatter);
+        assert_eq!(r.id_placement, super::super::format::IdPlacement::Frontmatter);
     }
 }

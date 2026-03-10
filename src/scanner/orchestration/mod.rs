@@ -286,7 +286,15 @@ pub async fn full_scan(
                 ctx.processor.generate_unique_id(db)
             } else {
                 let id = ctx.processor.generate_unique_id(db);
-                let new_content = ctx.processor.inject_header(&content, &id);
+                let resolved_format = repo
+                    .perspective
+                    .as_ref()
+                    .and_then(|p| p.format.as_ref())
+                    .map(|f| f.resolve())
+                    .unwrap_or_default();
+                let new_content =
+                    ctx.processor
+                        .inject_id_with_format(&content, &id, &resolved_format);
                 fs::write(&pre.path, &new_content)?;
                 id
             };

@@ -4,7 +4,7 @@
 //! preventing document corruption from malformed output.
 
 use crate::output::truncate_str;
-use crate::patterns::{FACT_LINE_REGEX, ID_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX};
+use crate::patterns::{FACT_LINE_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX};
 
 /// Errors detected during output validation.
 #[derive(Debug, Clone)]
@@ -112,11 +112,8 @@ pub fn validate_document(original: &str, new_content: &str) -> Vec<ValidationErr
 }
 
 fn extract_header_id(content: &str) -> Option<String> {
-    content
-        .lines()
-        .next()
-        .and_then(|line| ID_REGEX.captures(line))
-        .map(|cap| cap[1].to_string())
+    // Delegate to DocumentProcessor which handles both HTML comment and YAML frontmatter
+    crate::processor::DocumentProcessor::extract_id_static(content)
 }
 
 fn count_fact_lines(content: &str) -> usize {

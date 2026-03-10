@@ -40,6 +40,7 @@ mod acronyms;
 mod chunks;
 mod citations;
 mod core;
+pub mod format;
 mod links;
 pub mod repair;
 mod review;
@@ -87,9 +88,12 @@ pub use stats::{calculate_fact_stats, count_facts, count_facts_with_temporal_tag
 
 // Re-export links types and functions
 pub use links::{
-    append_links_to_content, append_referenced_by_to_content, parse_links_block,
-    parse_referenced_by_block,
+    append_links_to_content, append_links_to_content_styled, append_referenced_by_to_content,
+    extract_wikilink_names, parse_links_block, parse_referenced_by_block,
 };
+
+// Re-export format layer
+pub use format::{build_document_header, format_link, format_references_line};
 
 // Note: Unit tests are distributed to their respective submodules:
 // - core.rs: 16 tests (ID, title, type, hash)
