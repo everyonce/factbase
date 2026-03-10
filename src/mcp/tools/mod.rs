@@ -226,6 +226,25 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
 
     // Direct mapping ops
     if let Some(tool_name) = op_to_tool_name(op) {
+        // For answer op: propagate top-level doc_id into each answer if missing
+        if op == "answer" {
+            if let Some(doc_id) = args.get("doc_id").and_then(|v| v.as_str()).map(String::from) {
+                if let Some(answers) = args.get("answers").and_then(|v| v.as_array()) {
+                    let mut patched_args = args.clone();
+                    let patched_answers: Vec<Value> = answers.iter().map(|a| {
+                        if a.get("doc_id").is_some() {
+                            a.clone()
+                        } else {
+                            let mut a = a.clone();
+                            a.as_object_mut().unwrap().insert("doc_id".into(), Value::String(doc_id.clone()));
+                            a
+                        }
+                    }).collect();
+                    patched_args.as_object_mut().unwrap().insert("answers".into(), Value::Array(patched_answers));
+                    return dispatch_tool(db, embedding, tool_name, &patched_args, reporter).await;
+                }
+            }
+        }
         return dispatch_tool(db, embedding, tool_name, args, reporter).await;
     }
 
