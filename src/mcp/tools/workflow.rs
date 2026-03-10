@@ -121,7 +121,7 @@ pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. F
 pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run factbase(op='scan') to re-index all documents. This prunes answered [x] questions and re-indexes modified files. Do NOT run check — resolve only cleans up, it does not generate new work.";
 
 // --- Ingest workflow ---
-pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call factbase(op='search') with a relevant query. Also try factbase(op='list') to browse by type.{ctx}";
+pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call search(query='...') with a relevant query. Also try factbase(op='list') to browse by type.{ctx}";
 
 pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}' using your available tools. Strategies:\n- **Search**: Use available research tools for recent, authoritative information. Try specific queries like '{entity name} {fact type} {year}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the reference (URL, document ID, publication, etc.), author, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}";
 

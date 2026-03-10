@@ -193,7 +193,6 @@ async fn dispatch_tool<E: EmbeddingProvider>(
 /// Map a `factbase` op value to the legacy tool name used by dispatch_tool.
 fn op_to_tool_name(op: &str) -> Option<&'static str> {
     Some(match op {
-        "search" => return None, // handled specially (mode param)
         "get_entity" => "get_entity",
         "list" => "list_entities",
         "repos" => "list_repositories",
@@ -213,6 +212,87 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
         "authoring_guide" => "get_authoring_guide",
         _ => return None,
     })
+}
+
+/// Handle the first-class `search` tool. Delegates to search_knowledge or search_content,
+/// then enriches each result with outgoing links (link_id + entity_name).
+async fn handle_search_tool<E: EmbeddingProvider>(
+    db: &Database,
+    embedding: &E,
+    args: &Value,
+    reporter: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("semantic");
+
+    let mut result = match mode {
+        "content" => {
+            let mut a = args.clone();
+            if a.get("pattern").is_none() {
+                if let Some(q) = a.get("query").cloned() {
+                    a.as_object_mut().unwrap().insert("pattern".into(), q);
+                }
+            }
+            dispatch_tool(db, embedding, "search_content", &a, reporter).await?
+        }
+        _ => dispatch_tool(db, embedding, "search_knowledge", args, reporter).await?,
+    };
+
+    // Enrich results with outgoing links
+    if let Some(items) = result.get_mut("results").and_then(|v| v.as_array_mut()) {
+        let doc_ids: Vec<String> = items
+            .iter()
+            .filter_map(|item| item.get("id").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+
+        let links_map = {
+            let db = db.clone();
+            let ids = doc_ids.clone();
+            run_blocking(move || {
+                let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+                db.get_links_for_documents(&refs)
+            }).await?
+        };
+
+        // Collect all unique target IDs to resolve titles
+        let target_ids: Vec<String> = links_map
+            .values()
+            .flat_map(|(outgoing, _)| outgoing.iter().map(|l| l.target_id.clone()))
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+
+        let title_map = {
+            let db = db.clone();
+            let ids = target_ids;
+            run_blocking(move || {
+                let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+                db.get_document_titles_by_ids(&refs)
+            }).await?
+        };
+
+        for item in items.iter_mut() {
+            let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let links: Vec<Value> = links_map
+                .get(id)
+                .map(|(outgoing, _)| {
+                    outgoing
+                        .iter()
+                        .map(|link| {
+                            serde_json::json!({
+                                "link_id": link.target_id,
+                                "entity_name": title_map.get(&link.target_id).cloned().unwrap_or_default()
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            item.as_object_mut()
+                .unwrap()
+                .insert("links".into(), Value::Array(links));
+        }
+    }
+
+    Ok(result)
 }
 
 /// Handle the unified `factbase` tool by extracting `op` and dispatching.
@@ -249,23 +329,6 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
     }
 
     match op {
-        // search: mode=semantic (default) or mode=content
-        "search" => {
-            let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("semantic");
-            match mode {
-                "content" => {
-                    // Content search uses "pattern" param; map "query" to "pattern" if needed
-                    let mut a = args.clone();
-                    if a.get("pattern").is_none() {
-                        if let Some(q) = a.get("query").cloned() {
-                            a.as_object_mut().unwrap().insert("pattern".into(), q);
-                        }
-                    }
-                    dispatch_tool(db, embedding, "search_content", &a, reporter).await
-                }
-                _ => dispatch_tool(db, embedding, "search_knowledge", args, reporter).await,
-            }
-        }
         // organize: action=analyze or action=move/retype/apply
         "organize" => {
             let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("");
@@ -316,6 +379,7 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
 
             let result = match tool_name {
                 // Primary tools
+                "search" => handle_search_tool(db, embedding, &args, &reporter).await,
                 "factbase" => handle_factbase_op(db, embedding, &args, &reporter).await,
                 "workflow" => dispatch_tool(db, embedding, "workflow", &args, &reporter).await,
 
@@ -467,13 +531,13 @@ mod tests {
             .filter_map(|t| t["name"].as_str().map(String::from))
             .collect();
 
-        // Schema now has exactly 2 tools: workflow + factbase
-        let expected: HashSet<String> = ["workflow", "factbase"]
+        // Schema now has exactly 3 tools: search + workflow + factbase
+        let expected: HashSet<String> = ["search", "workflow", "factbase"]
             .iter()
             .map(|s| s.to_string())
             .collect();
 
-        assert_eq!(schema_names, expected, "schema should have exactly workflow + factbase");
+        assert_eq!(schema_names, expected, "schema should have exactly search + workflow + factbase");
 
         // All legacy tool names should still be dispatchable (tested via integration tests)
         let legacy = schema::legacy_tool_names();
@@ -485,7 +549,11 @@ mod tests {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools array");
 
-        // factbase and workflow should have doc_type param
+        // search, factbase and workflow should have doc_type param
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let s_props = search["inputSchema"]["properties"].as_object().unwrap();
+        assert!(s_props.contains_key("doc_type"), "search should have doc_type param");
+
         let factbase = tools.iter().find(|t| t["name"] == "factbase").unwrap();
         let fb_props = factbase["inputSchema"]["properties"].as_object().unwrap();
         assert!(fb_props.contains_key("doc_type"), "factbase should have doc_type param");
@@ -1205,5 +1273,92 @@ mod tests {
         assert!(result.get("resume").is_none());
         assert!(result.get("total").is_some());
         assert!(result.get("summary").is_some());
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_search_tool_enriches_results_with_links() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use crate::link_detection::DetectedLink;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("alpha.md"), "# Alpha\nAlpha content about Beta.").unwrap();
+        std::fs::write(repo_path.join("beta.md"), "# Beta\nBeta content.").unwrap();
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        // Scan to index documents
+        scan_repository(&db, &embedding, &serde_json::json!({}), &reporter)
+            .await
+            .unwrap();
+
+        // Get the IDs
+        let docs = db.get_documents_for_repo("test").unwrap();
+        let alpha = docs.values().find(|d| d.title == "Alpha").unwrap();
+        let beta = docs.values().find(|d| d.title == "Beta").unwrap();
+
+        // Add a link from Alpha -> Beta
+        db.update_links(&alpha.id, &[DetectedLink {
+            target_id: beta.id.clone(),
+            target_title: "Beta".into(),
+            mention_text: "Beta".into(),
+            context: String::new(),
+        }]).unwrap();
+
+        // Search via the search tool
+        let args = serde_json::json!({"query": "Alpha"});
+        let result = handle_search_tool(&db, &embedding, &args, &reporter).await.unwrap();
+
+        let results = result["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+
+        // Find the Alpha result and check it has links
+        let alpha_result = results.iter().find(|r| r["id"] == alpha.id).unwrap();
+        let links = alpha_result["links"].as_array().unwrap();
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0]["link_id"], beta.id);
+        assert_eq!(links[0]["entity_name"], "Beta");
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn test_search_tool_content_mode_includes_links() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use crate::embedding::test_helpers::MockEmbedding;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo_path = repo_dir.path();
+
+        std::fs::write(repo_path.join("doc.md"), "# Doc\nSome unique content here.").unwrap();
+
+        test_repo_in_db(&db, "test", repo_path);
+
+        let embedding = MockEmbedding::new(1024);
+        let reporter = crate::ProgressReporter::Silent;
+
+        scan_repository(&db, &embedding, &serde_json::json!({}), &reporter)
+            .await
+            .unwrap();
+
+        // Content search
+        let args = serde_json::json!({"query": "unique", "mode": "content"});
+        let result = handle_search_tool(&db, &embedding, &args, &reporter).await.unwrap();
+
+        let results = result["results"].as_array().unwrap();
+        assert!(!results.is_empty());
+        // Each result should have a links array (even if empty)
+        for r in results {
+            assert!(r.get("links").is_some(), "content search results should have links field");
+        }
     }
 }
