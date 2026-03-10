@@ -82,19 +82,26 @@ pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the ne
 
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run factbase(op='scan') afterward to re-index.";
 
-// --- Update workflow ---
+// --- Update workflow (legacy — kept for test coverage, aliased to maintain in production) ---
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
 
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence";
 
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE — you'll compare after link suggestions{ctx}";
 
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call factbase(op='fact_pairs') to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call factbase(op='answer') with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
 
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call factbase(op='links') TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type (e.g., exclude_types=[\"person\"] if reviewing people docs) with min_similarity=0.5. This finds connections between different entity types.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7. This finds related entities of the same kind.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs.\n   - factbase(op='links', action='store') writes `References:` to source files and `Referenced by:` to target files, and updates the database.\n4. Record: links_added, documents_modified";
 
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call factbase(op='organize', action='analyze') (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
 
+#[allow(dead_code)]
 pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
 
 // --- Resolve workflow ---
@@ -149,9 +156,29 @@ pub(crate) const DEFAULT_IMPROVE_ENRICH_INSTRUCTION: &str = "Enrich the document
 
 pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call factbase(op='check') with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
 
+/// Patch the `workflow` and `when_done` fields in a step response to use a different workflow name.
+fn rebrand_step(mut val: Value, old_name: &str, new_name: &str) -> Value {
+    if let Some(obj) = val.as_object_mut() {
+        obj.insert("workflow".into(), Value::String(new_name.into()));
+        if let Some(wd) = obj.get("when_done").and_then(|v| v.as_str()).map(String::from) {
+            obj.insert("when_done".into(), Value::String(wd.replace(
+                &format!("workflow='{old_name}'"),
+                &format!("workflow='{new_name}'"),
+            )));
+        }
+        if let Some(instr) = obj.get("instruction").and_then(|v| v.as_str()).map(String::from) {
+            obj.insert("instruction".into(), Value::String(instr.replace(
+                &format!("workflow='{old_name}'"),
+                &format!("workflow='{new_name}'"),
+            )));
+        }
+    }
+    val
+}
+
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
-    let workflow = get_str_arg_required(args, "workflow")?;
+    let workflow_name = get_str_arg_required(args, "workflow")?;
     let step = get_u64_arg(args, "step", 1) as usize;
     let repo_resolved = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let perspective = load_perspective(db, repo_resolved.as_deref());
@@ -166,43 +193,56 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
         }
     }
 
-    match workflow.as_str() {
-        "update" => Ok(update_step(step, args, &perspective, &wf_config, db)),
-        "resolve" => {
-            let deferred = db
-                .count_deferred_questions(repo_resolved.as_deref())
-                .unwrap_or(0);
-            Ok(resolve_step(step, args, &perspective, deferred, db, &wf_config))
+    let deferred = || db.count_deferred_questions(repo_resolved.as_deref()).unwrap_or(0);
+
+    match workflow_name.as_str() {
+        // --- Primary workflows (new 4-verb design) ---
+        "create" => Ok(create_step(step, args, &wf_config)),
+        "add" => {
+            let topic = get_str_arg(args, "topic");
+            let doc_id = get_str_arg(args, "doc_id");
+            if topic.is_some() {
+                Ok(rebrand_step(ingest_step(step, args, &perspective, &wf_config), "ingest", "add"))
+            } else if doc_id.is_some() {
+                let skip = parse_skip_steps(args);
+                Ok(rebrand_step(improve_step(step, doc_id, &perspective, &skip, db, &wf_config), "improve", "add"))
+            } else {
+                Ok(rebrand_step(enrich_step(step, args, &perspective, db, repo_resolved.as_deref(), &wf_config), "enrich", "add"))
+            }
         }
-        "ingest" => Ok(ingest_step(step, args, &perspective, &wf_config)),
-        "enrich" => Ok(enrich_step(step, args, &perspective, db, repo_resolved.as_deref(), &wf_config)),
+        "maintain" => Ok(maintain_step(step, args, &perspective, deferred(), db, &wf_config)),
+        "refresh" => Ok(refresh_step(step, args, &perspective, deferred(), db, &wf_config)),
+
+        // --- Standalone (power user) ---
+        "resolve" => Ok(resolve_step(step, args, &perspective, deferred(), db, &wf_config)),
+
+        // --- Legacy aliases ---
+        "bootstrap" | "setup" => Ok(rebrand_step(create_step(step, args, &wf_config), "create", workflow_name.as_str())),
+        "update" => Ok(rebrand_step(maintain_step(step, args, &perspective, deferred(), db, &wf_config), "maintain", "update")),
+        "ingest" => Ok(rebrand_step(ingest_step(step, args, &perspective, &wf_config), "ingest", "ingest")),
+        "enrich" => Ok(rebrand_step(enrich_step(step, args, &perspective, db, repo_resolved.as_deref(), &wf_config), "enrich", "enrich")),
         "improve" => {
             let doc_id = get_str_arg(args, "doc_id");
             let skip = parse_skip_steps(args);
             Ok(improve_step(step, doc_id, &perspective, &skip, db, &wf_config))
         }
-        "setup" => Ok(setup_step(step, args, &wf_config)),
-        "bootstrap" => Ok(bootstrap(args)?),
-        "maintain" => {
-            let deferred = db
-                .count_deferred_questions(repo_resolved.as_deref())
-                .unwrap_or(0);
-            Ok(maintain_step(step, args, &perspective, deferred, db, &wf_config))
-        }
+
         "list" => Ok(serde_json::json!({
             "workflows": [
-                {"name": "bootstrap", "description": "Design a domain-specific knowledge base structure. Provide domain='mycology' (or any domain) and get instructions for generating suggested document types, folder structure, templates, and perspective. Use this BEFORE setup when starting a new KB in an unfamiliar domain."},
-                {"name": "setup", "description": "Set up a new factbase repository from scratch: initialize, configure perspective, create first documents, scan, and verify"},
-                {"name": "update", "description": "Scan, check quality, analyze organization (merge/split/misplaced/duplicates), and report what needs attention"},
-                {"name": "maintain", "description": "Full maintenance: scan, detect links, check quality, resolve all questions, apply changes, cleanup scan, and report. One command for a clean knowledge base state."},
-                {"name": "resolve", "description": "Answer existing review queue questions using external sources, apply changes, then clean up. Includes a cleanup scan that prunes answered questions from files so they end in a clean state. Optionally pass question_type to filter by type (e.g. 'stale' or 'temporal,ambiguous'). Response includes type_distribution and recommended_order (fewest questions first for quick wins). Process types in recommended_order for best results."},
-                {"name": "ingest", "description": "Research a topic or process source data into factbase documents. Handles search, research, bulk creation, quality checks, and link discovery."},
-                {"name": "enrich", "description": "Find and fill gaps in existing documents"},
-                {"name": "improve", "description": "Improve a single document end-to-end: cleanup, resolve questions, enrich, then quality check. Requires doc_id."}
-            ]
+                {"name": "create", "description": "Build a knowledge base from scratch. Provide domain='mycology' (or any domain) to get tailored structure suggestions, then guided setup: init, perspective, first documents, scan, verify. Accepts: domain, entity_types, path."},
+                {"name": "add", "description": "Grow the knowledge base. With topic='X': research and create new entities. With doc_id='X': improve that specific document. With neither: scan for gaps and enrich existing docs."},
+                {"name": "maintain", "description": "Internal quality maintenance: scan, detect links, check quality, link suggestions, organize analysis, resolve all questions, cleanup scan, report. Answers from existing knowledge only — no external research. With doc_id: maintain just that document."},
+                {"name": "refresh", "description": "Research-enabled maintenance: scan, check, then actively research entities using available tools (web search, etc.) to find latest info, update facts, add temporal tags, resolve questions, cleanup, report. Designed for automation (e.g. weekly cron). Optional filters: doc_type, doc_id, staleness threshold."},
+                {"name": "resolve", "description": "(Advanced) Answer existing review queue questions, apply changes, cleanup. Use maintain instead for full maintenance. Optionally pass question_type to filter by type."},
+            ],
+            "aliases": {
+                "bootstrap": "create", "setup": "create",
+                "update": "maintain",
+                "ingest": "add", "enrich": "add", "improve": "add"
+            }
         })),
         _ => Ok(serde_json::json!({
-            "error": format!("Unknown workflow '{}'. Call workflow with workflow='list' to see available workflows.", workflow)
+            "error": format!("Unknown workflow '{}'. Call workflow with workflow='list' to see available workflows.", workflow_name)
         })),
     }
 }
@@ -403,12 +443,104 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
         "next_steps": [
             "Generate the JSON suggestions based on the instruction above.",
             "Use the suggestions as reference when configuring perspective.yaml (YAML format, not markdown) and creating documents.",
-            "⚠️ REQUIRED NEXT: Call workflow(workflow='setup', step=1) to begin the guided setup process.",
-            "Do NOT skip the setup workflow — it provides step-by-step guidance including format rules for temporal tags and source footnotes."
+            "⚠️ REQUIRED NEXT: Call workflow(workflow='create', step=2) to continue setup.",
+            "Do NOT skip — the next steps provide guidance including format rules for temporal tags and source footnotes."
         ],
         "note": "These are suggestions — adapt them to your needs. The templates and folder structure can be modified at any time.",
-        "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=1) to begin guided setup"
+        "when_done": "⚠️ REQUIRED: Call workflow(workflow='create', step=2) to continue"
     }))
+}
+
+// --- Create workflow (combines bootstrap + setup) ---
+
+pub(crate) const DEFAULT_CREATE_COMPLETE_INSTRUCTION: &str = "The knowledge base is set up! Summarize what was created and suggest next steps:\n\n- **Add content**: Use workflow='add' with topic='X' to research and add new entities\n- **Fill gaps**: Use workflow='add' (no topic) to find and fill missing information\n- **Quality check**: Use workflow='maintain' to scan, check quality, and resolve issues\n- **Research refresh**: Use workflow='refresh' to update entities with latest information from external sources\n- **Improve a document**: Use workflow='add' with doc_id='X' to improve a specific document\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run factbase(op='scan') afterward to re-index.";
+
+fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
+    let domain = get_str_arg(args, "domain");
+    let total = if domain.is_some() { 7 } else { 6 };
+
+    // Step 1 with domain: bootstrap. Without domain: init.
+    if domain.is_some() {
+        match step {
+            1 => {
+                // Bootstrap: generate domain-specific structure
+                match bootstrap(args) {
+                    Ok(mut v) => {
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert("workflow".into(), Value::String("create".into()));
+                            obj.insert("step".into(), serde_json::json!(1));
+                            obj.insert("total_steps".into(), serde_json::json!(total));
+                            obj.insert("title".into(), Value::String(format!("Step 1 of {total}: Design Knowledge Base Structure")));
+                            obj.insert("when_done".into(), Value::String(format!("⚠️ REQUIRED: Call workflow(workflow='create', step=2) to continue to Step 2 of {total}")));
+                        }
+                        v
+                    }
+                    Err(_) => serde_json::json!({
+                        "workflow": "create", "step": 1, "total_steps": total,
+                        "error": "Bootstrap requires a 'domain' parameter."
+                    }),
+                }
+            }
+            s => {
+                // Steps 2-7 map to setup steps 1-6
+                let mut v = setup_step(s - 1, args, wf);
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("workflow".into(), Value::String("create".into()));
+                    obj.insert("step".into(), serde_json::json!(s));
+                    obj.insert("total_steps".into(), serde_json::json!(total));
+                    obj.insert("title".into(), Value::String(format!("Step {s} of {total}: {}",
+                        match s { 2 => "Initialize Repository", 3 => "Configure Perspective",
+                            4 => "Validate Perspective", 5 => "Create Documents",
+                            6 => "Scan & Verify", _ => "Complete" })));
+                    // Fix when_done routing
+                    if s < total {
+                        obj.insert("when_done".into(), Value::String(format!(
+                            "⚠️ REQUIRED: Call workflow(workflow='create', step={}) to continue to Step {} of {total}", s + 1, s + 1)));
+                    }
+                    // Replace setup complete instruction with create complete
+                    if s == total {
+                        obj.insert("instruction".into(), Value::String(
+                            resolve(wf, "create.complete", DEFAULT_CREATE_COMPLETE_INSTRUCTION, &[])));
+                        obj.insert("complete".into(), Value::Bool(true));
+                    }
+                }
+                // Fix instruction references to setup workflow
+                if let Some(instr) = v.get("instruction").and_then(|v| v.as_str()).map(String::from) {
+                    v.as_object_mut().unwrap().insert("instruction".into(),
+                        Value::String(instr.replace("workflow='setup'", "workflow='create'")));
+                }
+                v
+            }
+        }
+    } else {
+        // No domain: steps 1-6 map directly to setup steps 1-6
+        match step {
+            s @ 1..=5 => {
+                let mut v = setup_step(s, args, wf);
+                if let Some(obj) = v.as_object_mut() {
+                    obj.insert("workflow".into(), Value::String("create".into()));
+                    obj.insert("total_steps".into(), serde_json::json!(total));
+                    if s < total {
+                        obj.insert("when_done".into(), Value::String(format!(
+                            "⚠️ REQUIRED: Call workflow(workflow='create', step={}) to continue to Step {} of {total}", s + 1, s + 1)));
+                    }
+                }
+                if let Some(instr) = v.get("instruction").and_then(|v| v.as_str()).map(String::from) {
+                    v.as_object_mut().unwrap().insert("instruction".into(),
+                        Value::String(instr.replace("workflow='setup'", "workflow='create'")));
+                }
+                v
+            }
+            _ => {
+                serde_json::json!({
+                    "workflow": "create", "step": total, "total_steps": total,
+                    "title": format!("Step {total} of {total}: Complete"),
+                    "instruction": resolve(wf, "create.complete", DEFAULT_CREATE_COMPLETE_INSTRUCTION, &[]),
+                    "complete": true
+                })
+            }
+        }
+    }
 }
 
 /// Detect whether a full embedding rebuild is needed (not just incremental updates).
@@ -456,6 +588,7 @@ fn detect_full_rebuild(db: &Database) -> Option<(String, usize)> {
     None
 }
 
+#[allow(dead_code)]
 fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig, db: &Database) -> Value {
     let ctx = perspective_context(perspective);
     let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
@@ -777,9 +910,13 @@ const DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document l
 
 const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)";
 
-const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=5) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from factbase(op='answer'), your response was too large. Split into smaller batches and retry.{ctx}";
+const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=7) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from factbase(op='answer'), your response was too large. Split into smaller batches and retry.{ctx}";
 
-const DEFAULT_MAINTAIN_REPORT_INSTRUCTION: &str = "Write a final maintenance report.\n\n## Maintenance Summary\n- Documents scanned: X\n- Links detected: X\n- Questions found: X\n- Questions resolved: X\n- Questions deferred: X (need human attention)\n- Remaining questions: X\n\n## Health Assessment\nOne paragraph: overall KB health after maintenance, what was fixed, and any remaining issues that need human attention.\n\nIf deferred items exist, remind the user to review them with factbase(op='deferred').";
+const DEFAULT_MAINTAIN_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call factbase(op='links') TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type with min_similarity=0.5.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs.\n4. Record: links_added, documents_modified";
+
+const DEFAULT_MAINTAIN_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call factbase(op='organize', action='analyze') (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
+
+const DEFAULT_MAINTAIN_REPORT_INSTRUCTION: &str = "Write a final maintenance report.\n\n## Maintenance Summary\n- Documents scanned: X\n- Links detected: X\n- Link suggestions applied: X\n- Organize candidates: X (merge/split/misplaced/duplicates)\n- Questions found: X\n- Questions resolved: X\n- Questions deferred: X (need human attention)\n- Remaining questions: X\n\n## Health Assessment\nOne paragraph: overall KB health after maintenance, what was fixed, and any remaining issues that need human attention.\n\nIf deferred items exist, remind the user to review them with factbase(op='deferred').";
 
 fn maintain_step(
     step: usize,
@@ -790,7 +927,7 @@ fn maintain_step(
     wf: &WorkflowsConfig,
 ) -> Value {
     let ctx = perspective_context(perspective);
-    let total = 5;
+    let total = 7;
     match step {
         1 => {
             let mut resp = serde_json::json!({
@@ -829,48 +966,160 @@ fn maintain_step(
             "next_tool": "factbase", "suggested_op": "check",
             "when_done": "Call workflow with workflow='maintain', step=4"
         }),
-        4 => {
+        4 => serde_json::json!({
+            "workflow": "maintain",
+            "step": 4, "total_steps": total,
+            "instruction": resolve(wf, "maintain.links", DEFAULT_MAINTAIN_LINKS_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "links",
+            "when_done": "Call workflow with workflow='maintain', step=5"
+        }),
+        5 => serde_json::json!({
+            "workflow": "maintain",
+            "step": 5, "total_steps": total,
+            "instruction": resolve(wf, "maintain.organize", DEFAULT_MAINTAIN_ORGANIZE_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "organize",
+            "when_done": "Call workflow with workflow='maintain', step=6"
+        }),
+        6 => {
             let type_dist = compute_type_distribution(db);
             let total_unanswered: usize = type_dist.iter().map(|(_, c)| c).sum();
             if total_unanswered == 0 {
-                // No questions to resolve — skip to report
                 return serde_json::json!({
                     "workflow": "maintain",
-                    "step": 4, "total_steps": total,
+                    "step": 6, "total_steps": total,
                     "instruction": "No review questions found — the knowledge base is clean. Skip to the final report.",
                     "total_unanswered": 0,
-                    "when_done": "Call workflow with workflow='maintain', step=5"
+                    "when_done": "Call workflow with workflow='maintain', step=7"
                 });
             }
             serde_json::json!({
                 "workflow": "maintain",
-                "step": 4, "total_steps": total,
+                "step": 6, "total_steps": total,
                 "instruction": resolve(wf, "maintain.resolve", DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION, &[("ctx", &ctx)]),
                 "next_tool": "workflow",
                 "suggested_args": {"workflow": "resolve", "step": 1},
                 "total_unanswered": total_unanswered,
                 "deferred_count": deferred,
-                "when_done": "After resolve workflow completes, call workflow with workflow='maintain', step=5"
+                "when_done": "After resolve workflow completes, call workflow with workflow='maintain', step=7"
             })
         }
-        5 => {
+        _ => {
             let type_dist = compute_type_distribution(db);
             let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
             let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
             serde_json::json!({
                 "workflow": "maintain",
-                "step": 5, "total_steps": total,
+                "step": 7, "total_steps": total,
                 "instruction": resolve(wf, "maintain.report", DEFAULT_MAINTAIN_REPORT_INSTRUCTION, &[]),
                 "remaining_questions": remaining,
                 "deferred_questions": new_deferred,
                 "complete": true
             })
         }
-        _ => serde_json::json!({
-            "workflow": "maintain",
-            "complete": true,
-            "instruction": "Workflow complete."
+    }
+}
+
+// --- Refresh workflow (research-enabled maintenance) ---
+
+const DEFAULT_REFRESH_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
+
+const DEFAULT_REFRESH_CHECK_INSTRUCTION: &str = "Run quality checks to identify stale facts and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type\n3. Pay special attention to stale questions — these are the primary targets for refresh";
+
+const DEFAULT_REFRESH_RESEARCH_INSTRUCTION: &str = "Research and update entities with latest information.\n\nFor each entity that needs refreshing (prioritize stale facts, then low temporal/source coverage):\n\n1. Call factbase(op='get_entity') to read the current document\n2. Use your available tools (web search, local search, etc.) to find the latest information about this entity\n3. Compare findings with existing facts:\n   - Facts that changed: update the fact text, add new @t[...] tag with current date, update source footnote\n   - Facts confirmed current: update the @t[~YYYY-MM] tag to show when last verified, update source\n   - New facts discovered: add with @t[...] tag and source footnote\n   - Entities discovered during research: create new documents if they fit the KB's allowed types\n4. Call factbase(op='update') with the modified content\n\nWork through entities systematically. After updating each entity, move to the next.\n\n⚠️ SOURCE REQUIREMENT: Every update MUST cite a specific, verifiable source. Do not update facts without evidence.{ctx}{format_rules}";
+
+const DEFAULT_REFRESH_RESOLVE_INSTRUCTION: &str = "Resolve any review questions generated during the refresh.\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Process questions using the resolve workflow (step=2 loop)\n3. Apply answers and verify\n\nSince you just researched these entities, you should be able to answer most questions from your recent findings.{ctx}";
+
+const DEFAULT_REFRESH_CLEANUP_INSTRUCTION: &str = "Clean up after refresh. Run factbase(op='scan') to re-index all modified documents and prune answered questions.";
+
+const DEFAULT_REFRESH_REPORT_INSTRUCTION: &str = "Write a refresh report.\n\n## Refresh Summary\n- Entities researched: X\n- Facts updated: X\n- Facts confirmed current: X\n- New facts added: X\n- New entities created: X\n- Questions resolved: X\n- Questions deferred: X\n\n## Changes\nList the most significant changes discovered during refresh.\n\n## Health Assessment\nOverall KB freshness after refresh, and any entities that could not be verified.";
+
+fn refresh_step(
+    step: usize,
+    args: &Value,
+    perspective: &Option<Perspective>,
+    deferred: usize,
+    db: &Database,
+    wf: &WorkflowsConfig,
+) -> Value {
+    let ctx = perspective_context(perspective);
+    let total = 6;
+    match step {
+        1 => serde_json::json!({
+            "workflow": "refresh",
+            "step": 1, "total_steps": total,
+            "instruction": resolve(wf, "refresh.scan", DEFAULT_REFRESH_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
+            "next_tool": "factbase", "suggested_op": "scan",
+            "when_done": "Call workflow with workflow='refresh', step=2"
         }),
+        2 => serde_json::json!({
+            "workflow": "refresh",
+            "step": 2, "total_steps": total,
+            "instruction": resolve(wf, "refresh.check", DEFAULT_REFRESH_CHECK_INSTRUCTION, &[("ctx", &ctx)]),
+            "next_tool": "factbase", "suggested_op": "check",
+            "when_done": "Call workflow with workflow='refresh', step=3"
+        }),
+        3 => {
+            // Build entity list for research, filtered by args
+            let doc_type = get_str_arg(args, "doc_type");
+            let doc_id = get_str_arg(args, "doc_id");
+            let repo = get_str_arg(args, "repo");
+            let quality = if let Some(id) = doc_id {
+                entity_quality(db, id).map(|q| Value::Array(vec![q])).unwrap_or(Value::Array(vec![]))
+            } else {
+                bulk_quality(db, doc_type, repo)
+            };
+            serde_json::json!({
+                "workflow": "refresh",
+                "step": 3, "total_steps": total,
+                "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
+                "entity_quality": quality,
+                "note": "Entities sorted by attention_score (highest first). Focus on stale and low-coverage entities.",
+                "when_done": "Call workflow with workflow='refresh', step=4"
+            })
+        }
+        4 => {
+            let type_dist = compute_type_distribution(db);
+            let total_unanswered: usize = type_dist.iter().map(|(_, c)| c).sum();
+            if total_unanswered == 0 {
+                return serde_json::json!({
+                    "workflow": "refresh",
+                    "step": 4, "total_steps": total,
+                    "instruction": "No review questions to resolve. Skip to cleanup.",
+                    "total_unanswered": 0,
+                    "when_done": "Call workflow with workflow='refresh', step=5"
+                });
+            }
+            serde_json::json!({
+                "workflow": "refresh",
+                "step": 4, "total_steps": total,
+                "instruction": resolve(wf, "refresh.resolve", DEFAULT_REFRESH_RESOLVE_INSTRUCTION, &[("ctx", &ctx)]),
+                "next_tool": "workflow",
+                "suggested_args": {"workflow": "resolve", "step": 1},
+                "total_unanswered": total_unanswered,
+                "deferred_count": deferred,
+                "when_done": "After resolve completes, call workflow with workflow='refresh', step=5"
+            })
+        }
+        5 => serde_json::json!({
+            "workflow": "refresh",
+            "step": 5, "total_steps": total,
+            "instruction": resolve(wf, "refresh.cleanup", DEFAULT_REFRESH_CLEANUP_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "scan",
+            "when_done": "Call workflow with workflow='refresh', step=6"
+        }),
+        _ => {
+            let type_dist = compute_type_distribution(db);
+            let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
+            let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
+            serde_json::json!({
+                "workflow": "refresh",
+                "step": 6, "total_steps": total,
+                "instruction": resolve(wf, "refresh.report", DEFAULT_REFRESH_REPORT_INSTRUCTION, &[]),
+                "remaining_questions": remaining,
+                "deferred_questions": new_deferred,
+                "complete": true
+            })
+        }
     }
 }
 
@@ -2517,12 +2766,15 @@ mod tests {
         let (db, _tmp) = test_db();
         let args = serde_json::json!({"workflow": "list"});
         let result = workflow(&db, &args).unwrap();
+        // bootstrap is now an alias for create
+        let aliases = result["aliases"].as_object().unwrap();
+        assert_eq!(aliases["bootstrap"], "create");
         let workflows = result["workflows"].as_array().unwrap();
         let names: Vec<&str> = workflows
             .iter()
             .filter_map(|w| w["name"].as_str())
             .collect();
-        assert!(names.contains(&"bootstrap"));
+        assert!(names.contains(&"create"));
     }
 
     #[test]
@@ -4099,7 +4351,7 @@ mod tests {
         let step = maintain_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 1);
-        assert_eq!(step["total_steps"], 5);
+        assert_eq!(step["total_steps"], 7);
         assert_eq!(step["next_tool"], "factbase");
     }
 
@@ -4122,12 +4374,31 @@ mod tests {
     }
 
     #[test]
-    fn test_maintain_step4_resolve_delegates() {
+    fn test_maintain_step4_links() {
         let (db, _tmp) = test_db();
-        insert_doc_with_questions(&db, "mnt001", &["temporal", "stale"]);
         let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 4);
+        assert_eq!(step["next_tool"], "factbase");
+        assert_eq!(step["suggested_op"], "links");
+    }
+
+    #[test]
+    fn test_maintain_step5_organize() {
+        let (db, _tmp) = test_db();
+        let step = maintain_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "maintain");
+        assert_eq!(step["step"], 5);
+        assert_eq!(step["suggested_op"], "organize");
+    }
+
+    #[test]
+    fn test_maintain_step6_resolve_delegates() {
+        let (db, _tmp) = test_db();
+        insert_doc_with_questions(&db, "mnt001", &["temporal", "stale"]);
+        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "maintain");
+        assert_eq!(step["step"], 6);
         assert_eq!(step["next_tool"], "workflow");
         assert_eq!(step["suggested_args"]["workflow"], "resolve");
         assert_eq!(step["total_unanswered"], 2);
@@ -4137,17 +4408,17 @@ mod tests {
     }
 
     #[test]
-    fn test_maintain_step4_skips_when_no_questions() {
+    fn test_maintain_step6_skips_when_no_questions() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["total_unanswered"], 0);
         assert!(step["instruction"].as_str().unwrap().contains("clean"));
     }
 
     #[test]
-    fn test_maintain_step5_report() {
+    fn test_maintain_step7_report() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["complete"], true);
         assert!(step.get("remaining_questions").is_some());
@@ -4203,10 +4474,182 @@ mod tests {
         assert_eq!(step3["suggested_op"], "check");
 
         // No other maintain step should suggest check
-        for s in [1, 2, 4, 5] {
+        for s in [1, 2, 4, 5, 6, 7] {
             let step = maintain_step(s, &serde_json::json!({}), &None, 0, &db, &wf());
             let suggested = step.get("suggested_op").and_then(|v| v.as_str()).unwrap_or("");
             assert_ne!(suggested, "check", "maintain step {s} should not suggest check");
         }
+    }
+
+    // --- New workflow design tests ---
+
+    #[test]
+    fn test_create_with_domain_step1_is_bootstrap() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "create", "domain": "mycology"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "create");
+        assert_eq!(result["step"], 1);
+        assert_eq!(result["total_steps"], 7);
+        assert!(result["instruction"].is_string());
+        assert!(result["instruction"].as_str().unwrap().contains("mycology"));
+    }
+
+    #[test]
+    fn test_create_without_domain_step1_is_init() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "create", "path": "/tmp/test"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "create");
+        assert_eq!(result["step"], 1);
+        assert_eq!(result["total_steps"], 6);
+        assert!(result["instruction"].as_str().unwrap().contains("init"));
+    }
+
+    #[test]
+    fn test_create_complete_mentions_new_workflows() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "create", "step": 6, "path": "/tmp/test"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "create");
+        assert_eq!(result["complete"], true);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("workflow='add'"), "should mention add workflow");
+        assert!(instr.contains("workflow='maintain'"), "should mention maintain workflow");
+        assert!(instr.contains("workflow='refresh'"), "should mention refresh workflow");
+    }
+
+    #[test]
+    fn test_add_with_topic_dispatches_to_ingest() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "add", "topic": "mushrooms"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "add");
+        assert!(result["instruction"].as_str().unwrap().contains("mushrooms"));
+    }
+
+    #[test]
+    fn test_add_with_doc_id_dispatches_to_improve() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "add", "doc_id": "abc123"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "add");
+        assert_eq!(result["doc_id"], "abc123");
+    }
+
+    #[test]
+    fn test_add_bare_dispatches_to_enrich() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "add"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "add");
+        assert!(result.get("entity_quality").is_some(), "enrich mode should include entity_quality");
+    }
+
+    #[test]
+    fn test_refresh_step1_scan() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "refresh"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "refresh");
+        assert_eq!(result["step"], 1);
+        assert_eq!(result["total_steps"], 6);
+        assert_eq!(result["suggested_op"], "scan");
+    }
+
+    #[test]
+    fn test_refresh_step3_research_includes_entity_quality() {
+        let (db, _tmp) = test_db();
+        let step = refresh_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "refresh");
+        assert_eq!(step["step"], 3);
+        assert!(step.get("entity_quality").is_some());
+    }
+
+    #[test]
+    fn test_refresh_step6_report() {
+        let (db, _tmp) = test_db();
+        let step = refresh_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "refresh");
+        assert_eq!(step["complete"], true);
+        assert!(step.get("remaining_questions").is_some());
+    }
+
+    // --- Legacy alias tests ---
+
+    #[test]
+    fn test_legacy_bootstrap_alias() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "bootstrap", "domain": "mycology"});
+        let result = workflow(&db, &args).unwrap();
+        // Legacy alias returns with old name for backward compat
+        assert_eq!(result["workflow"], "bootstrap");
+        assert!(result["instruction"].is_string());
+    }
+
+    #[test]
+    fn test_legacy_setup_alias() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "setup", "path": "/tmp/test"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "setup");
+    }
+
+    #[test]
+    fn test_legacy_update_alias() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "update"});
+        let result = workflow(&db, &args).unwrap();
+        // update is aliased to maintain but rebranded back to "update"
+        assert_eq!(result["workflow"], "update");
+        assert_eq!(result["step"], 1);
+    }
+
+    #[test]
+    fn test_legacy_ingest_alias() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "ingest", "topic": "test"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "ingest");
+    }
+
+    #[test]
+    fn test_legacy_enrich_alias() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "enrich"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "enrich");
+    }
+
+    #[test]
+    fn test_legacy_improve_alias() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "improve", "doc_id": "abc123"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "improve");
+    }
+
+    #[test]
+    fn test_workflow_list_has_4_primary_plus_resolve() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "list"});
+        let result = workflow(&db, &args).unwrap();
+        let workflows = result["workflows"].as_array().unwrap();
+        let names: Vec<&str> = workflows.iter().filter_map(|w| w["name"].as_str()).collect();
+        assert_eq!(names, vec!["create", "add", "maintain", "refresh", "resolve"]);
+        assert!(result["aliases"].is_object());
+    }
+
+    #[test]
+    fn test_rebrand_step_patches_workflow_and_when_done() {
+        let val = serde_json::json!({
+            "workflow": "ingest",
+            "instruction": "Call workflow(workflow='ingest', step=2)",
+            "when_done": "Call workflow(workflow='ingest', step=3)"
+        });
+        let rebranded = rebrand_step(val, "ingest", "add");
+        assert_eq!(rebranded["workflow"], "add");
+        assert!(rebranded["instruction"].as_str().unwrap().contains("workflow='add'"));
+        assert!(rebranded["when_done"].as_str().unwrap().contains("workflow='add'"));
     }
 }

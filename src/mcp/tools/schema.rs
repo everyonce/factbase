@@ -71,27 +71,27 @@ fn search_schema() -> Value {
 fn workflow_schema() -> Value {
     serde_json::json!({
         "name": "workflow",
-        "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'I want to make a factbase repo about mushrooms' or 'design a KB for ancient history' → workflow='bootstrap', domain='mycology' (or 'ancient Mediterranean history', etc.)\n- 'set up a new factbase' or 'create a knowledge base' → workflow='setup', path='...'\n- 'update the factbase' or 'check the factbase' or 'resync' or 'do a quality check' or 'check for issues' → workflow='update'\n- 'run full maintenance' or 'clean up KB' or 'do everything' or 'maintain the factbase' → workflow='maintain'\n- 'fix the review queue' or 'resolve issues' or 'resolve conflicts' → workflow='resolve'\n- 'research [topic]' or 'add [person/company] to factbase' → workflow='ingest', topic='...'\n- 'populate KB from a source file' or 'create documents from [data]' or 'bootstrap with data' → workflow='ingest', topic='...'\n- 'improve the data' or 'fill in gaps' or 'enrich [type] documents' → workflow='enrich'\n- 'improve [entity]' or 'improve document X' or 'make X better' → workflow='improve', doc_id='...'\n- 'what can factbase do' or 'what workflows are available' → workflow='list'\n\nThe 'bootstrap' workflow uses the LLM to generate domain-specific suggestions (document types, folder structure, templates, temporal patterns, source types, and example documents). Use it BEFORE 'setup' when the user describes a non-obvious domain.\n\nThe 'maintain' workflow chains scan → detect_links → check → resolve → report for a one-command clean state.\n\nThe 'resolve' workflow has 6 steps: queue overview, answer batches, apply, verify, cleanup scan, and final report.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.\n\nCall again with the next step number to advance.",
+        "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'build a KB' / 'create a knowledge base about X' / 'design a KB for Y' → workflow='create', domain='X'\n- 'add [topic]' / 'research [X]' / 'fill gaps' → workflow='add', topic='...'\n- 'improve [doc]' / 'make X better' → workflow='add', doc_id='...'\n- 'run maintenance' / 'fix issues' / 'check quality' / 'clean up KB' → workflow='maintain'\n- 'refresh' / 'update with latest' / 'weekly update' / 'check what changed' → workflow='refresh'\n- 'what can factbase do' / 'what workflows are available' → workflow='list'\n\n4 primary workflows:\n- **create**: From zero to working KB. Design schema, init, configure, create docs, scan, verify.\n- **add**: Grow the KB. topic=research new entities, doc_id=improve one doc, bare=enrich all.\n- **maintain**: Internal quality. Scan, links, check, organize, resolve questions. No external research.\n- **refresh**: Research-enabled maintenance. Actively verify/update facts against live sources.\n\nAlso available: 'resolve' (advanced — just the answer loop).\n\nOld names still work as aliases: bootstrap/setup→create, update→maintain, ingest/enrich/improve→add.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.\n\nCall again with the next step number to advance.",
         "inputSchema": {
             "type": "object",
             "properties": {
-                "workflow": { "type": "string", "description": "Workflow name: 'bootstrap', 'setup', 'update', 'maintain', 'resolve', 'ingest', 'enrich', 'improve', or 'list'" },
+                "workflow": { "type": "string", "description": "Workflow name: 'create', 'add', 'maintain', 'refresh', 'resolve', or 'list'. Legacy aliases also accepted: bootstrap, setup, update, ingest, enrich, improve" },
                 "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
-                "domain": { "type": "string", "description": "For bootstrap: domain description (e.g. 'mycology', 'ancient Mediterranean history', 'indie video games')" },
-                "entity_types": { "type": "string", "description": "For bootstrap: optional comma-separated entity types the user wants to track (e.g. 'species, habitats, researchers')" },
-                "path": { "type": "string", "description": "For setup/bootstrap: directory path for the new repository" },
-                "topic": { "type": "string", "description": "For ingest: what to research" },
-                "doc_type": { "type": "string", "description": "For enrich: document type to focus on" },
-                "doc_id": { "type": "string", "description": "For improve: document ID to improve" },
-                "question_type": { "type": "string", "description": "For resolve step 2: filter questions by type. Comma-separated for multiple types (e.g. 'temporal,ambiguous'). Omit to get all types. Valid types: stale, temporal, ambiguous, conflict, precision, duplicate, missing, weak-source" },
-                "variant": { "type": "string", "enum": ["baseline", "type_evidence", "research_batch"], "description": "For resolve: prompt variant to use. 'baseline' (default) uses standard prompts. 'type_evidence' uses type-specific evidence standards per question type. 'research_batch' restructures workflow to research per-document first, then answer all questions for that document." },
-                "cross_validate": { "type": "boolean", "description": "For update: include cross-document fact validation step (default: false). If true, workflow includes a cross_validate mode step after questions." },
+                "domain": { "type": "string", "description": "For create: domain description (e.g. 'mycology', 'ancient Mediterranean history')" },
+                "entity_types": { "type": "string", "description": "For create: optional comma-separated entity types (e.g. 'species, habitats, researchers')" },
+                "path": { "type": "string", "description": "For create: directory path for the new repository" },
+                "topic": { "type": "string", "description": "For add: what to research (triggers ingest mode)" },
+                "doc_type": { "type": "string", "description": "For add/refresh: document type to focus on" },
+                "doc_id": { "type": "string", "description": "For add: document ID to improve. For refresh: specific document to refresh." },
+                "question_type": { "type": "string", "description": "For resolve step 2: filter questions by type. Comma-separated for multiple types (e.g. 'temporal,ambiguous')." },
+                "variant": { "type": "string", "enum": ["baseline", "type_evidence", "research_batch"], "description": "For resolve: prompt variant to use." },
+                "cross_validate": { "type": "boolean", "description": "For maintain: include cross-document fact validation step (default: false)." },
                 "skip": {
                     "oneOf": [
                         { "type": "string", "description": "Comma-separated step names to skip" },
                         { "type": "array", "items": { "type": "string" }, "description": "Step names to skip" }
                     ],
-                    "description": "For improve: steps to skip. Valid names: 'cleanup', 'resolve', 'enrich', 'check'"
+                    "description": "For add (improve mode): steps to skip. Valid names: 'cleanup', 'resolve', 'enrich', 'check'"
                 },
                 "repo": { "type": "string", "description": "Repository ID (optional)" }
             },
