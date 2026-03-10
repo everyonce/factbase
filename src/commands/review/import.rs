@@ -48,6 +48,8 @@ fn imported_to_review_question(imported: &ImportedQuestion) -> ReviewQuestion {
         answered: false,
         answer: None,
         line_number: 0, // Will be set when appended to document
+        confidence: None,
+        confidence_reason: None,
     }
 }
 

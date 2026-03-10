@@ -7,7 +7,8 @@ use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
-    extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, TEMPORAL_TAG_FULL_REGEX,
+    extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, SOURCE_REF_DETECT_REGEX,
+    TEMPORAL_TAG_FULL_REGEX,
 };
 use crate::processor::{find_malformed_tags, normalize_temporal_tags, line_has_temporal_tag};
 
@@ -23,10 +24,18 @@ const REVIEWED_SKIP_DAYS: i64 = 180;
 /// 2. Ongoing roles (`@t[YYYY..]`) older than 1 year that may have ended
 ///
 /// Returns a list of `ReviewQuestion` with `question_type = Temporal`.
-pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
+///
+/// `doc_type` is used to provide confidence signals — e.g., facts in
+/// definition/glossary documents are flagged as low-confidence candidates
+/// since they often describe stable concepts.
+pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
     let current_year = Utc::now().year();
     let today = Utc::now().date_naive();
+
+    let is_definition_type = doc_type.is_some_and(|t| {
+        matches!(t, "definition" | "glossary" | "reference")
+    });
 
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker
@@ -41,11 +50,18 @@ pub fn generate_temporal_questions(content: &str) -> Vec<ReviewQuestion> {
                 continue;
             }
             // No temporal tag at all
-            questions.push(ReviewQuestion::new(
+            let mut q = ReviewQuestion::new(
                 QuestionType::Temporal,
                 Some(line_number),
                 format!("\"{fact_text}\" - when was this true?"),
-            ));
+            );
+            // Provide confidence signals for the agent
+            if is_definition_type {
+                q = q.with_confidence("low", "fact in definition/glossary document");
+            } else if SOURCE_REF_DETECT_REGEX.is_match(line) {
+                q = q.with_confidence("low", "fact has source citation — may be an evergreen description");
+            }
+            questions.push(q);
         } else {
             let normalized = normalize_temporal_tags(line);
             if let Some(cap) = ONGOING_TAG_REGEX.captures(&normalized) {
@@ -152,14 +168,14 @@ mod tests {
     #[test]
     fn test_generate_temporal_questions_no_facts() {
         let content = "# Title\n\nSome paragraph text.";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         assert!(questions.is_empty());
     }
 
     #[test]
     fn test_generate_temporal_questions_fact_without_tag() {
         let content = "# Person\n\n- Works at Acme Corp";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question_type, QuestionType::Temporal);
         assert_eq!(questions[0].line_ref, Some(3));
@@ -170,7 +186,7 @@ mod tests {
     #[test]
     fn test_generate_temporal_questions_fact_with_tag() {
         let content = "# Person\n\n- Works at Acme Corp @t[2020..]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         // Should generate stale ongoing question if >1 year old
         // (depends on current year)
         for q in &questions {
@@ -181,7 +197,7 @@ mod tests {
     #[test]
     fn test_generate_temporal_questions_multiple_facts() {
         let content = "# Person\n\n- Fact one\n- Fact two @t[2024]\n- Fact three";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         // Should have questions for facts without tags (line 3 and 5)
         let without_tag: Vec<_> = questions
             .iter()
@@ -194,7 +210,7 @@ mod tests {
     fn test_generate_temporal_questions_stale_ongoing() {
         // Use a date that's definitely >1 year old
         let content = "# Person\n\n- CTO at Acme @t[2020..]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         // Should generate a stale ongoing question
         assert!(!questions.is_empty());
         assert!(questions[0].description.contains("still current?"));
@@ -205,7 +221,7 @@ mod tests {
         // Use current year - should not be stale
         let current_year = Utc::now().year();
         let content = format!("# Person\n\n- CTO at Acme @t[{}..]", current_year);
-        let questions = generate_temporal_questions(&content);
+        let questions = generate_temporal_questions(&content, None);
         // Should not generate stale question for current year
         let stale_questions: Vec<_> = questions
             .iter()
@@ -217,7 +233,7 @@ mod tests {
     #[test]
     fn test_generate_temporal_questions_line_numbers() {
         let content = "# Title\n\nParagraph\n\n- Fact one\n- Fact two";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 2);
         assert_eq!(questions[0].line_ref, Some(5));
         assert_eq!(questions[1].line_ref, Some(6));
@@ -246,7 +262,7 @@ mod tests {
     fn test_stale_ongoing_with_recent_verification_suppressed() {
         // @t[2024..] is stale, but @t[~2026-01] is within 180 days → no question
         let content = "# Person\n\n- CTO at Acme @t[2024..] @t[~2026-01]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         let stale: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("still current?"))
@@ -258,7 +274,7 @@ mod tests {
     fn test_stale_ongoing_without_verification_still_generates() {
         // @t[2024..] is stale, no @t[~] → should generate question
         let content = "# Person\n\n- CTO at Acme @t[2024..]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         let stale: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("still current?"))
@@ -270,7 +286,7 @@ mod tests {
     fn test_stale_ongoing_with_old_verification_still_generates() {
         // @t[2024..] is stale, @t[~2024-06] is >180 days old → should still generate
         let content = "# Person\n\n- CTO at Acme @t[2024..] @t[~2024-06]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         let stale: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("still current?"))
@@ -334,7 +350,7 @@ mod tests {
             "# Person\n\n- Works at Acme Corp <!-- reviewed:{} -->",
             marker_date.format("%Y-%m-%d")
         );
-        let questions = generate_temporal_questions(&content);
+        let questions = generate_temporal_questions(&content, None);
         assert!(
             questions.is_empty(),
             "Recent reviewed marker should suppress temporal question"
@@ -344,7 +360,7 @@ mod tests {
     #[test]
     fn test_old_reviewed_marker_still_generates_temporal() {
         let content = "# Person\n\n- Works at Acme Corp <!-- reviewed:2020-01-01 -->";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         assert_eq!(
             questions.len(),
             1,
@@ -360,7 +376,7 @@ mod tests {
             "# Person\n\n- CTO at Acme @t[2020..] <!-- reviewed:{} -->",
             marker_date.format("%Y-%m-%d")
         );
-        let questions = generate_temporal_questions(&content);
+        let questions = generate_temporal_questions(&content, None);
         let stale: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("still current?"))
@@ -382,7 +398,7 @@ mod tests {
         ];
         for case in cases {
             let content = format!("# Doc\n\n{case}");
-            let questions = generate_temporal_questions(&content);
+            let questions = generate_temporal_questions(&content, None);
             let malformed: Vec<_> = questions
                 .iter()
                 .filter(|q| q.description.contains("Malformed"))
@@ -407,7 +423,7 @@ mod tests {
     #[test]
     fn test_valid_tags_not_flagged_malformed() {
         let content = "# Doc\n\n- Fact @t[2024]\n- Range @t[2020..2023]\n- Unknown @t[?]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         let malformed: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("Malformed"))
@@ -419,7 +435,7 @@ mod tests {
     fn test_bce_tags_not_flagged_as_missing_temporal() {
         let content =
             "# Doc\n\n- Battle @t[=331 BCE]\n- Reign @t[336 BCE..323 BCE]\n- Event @t[=-0490]";
-        let questions = generate_temporal_questions(content);
+        let questions = generate_temporal_questions(content, None);
         let missing: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("when was this true?"))
@@ -428,5 +444,77 @@ mod tests {
             missing.is_empty(),
             "BCE-tagged facts should not be flagged as missing temporal tags"
         );
+    }
+
+    #[test]
+    fn test_confidence_none_by_default() {
+        let content = "# Doc\n\n- Unsourced fact without temporal tag";
+        let questions = generate_temporal_questions(content, None);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].confidence.is_none());
+        assert!(questions[0].confidence_reason.is_none());
+    }
+
+    #[test]
+    fn test_confidence_low_for_sourced_fact() {
+        let content = "# Doc\n\n- Sourced fact [^1]\n\n---\n[^1]: Some source";
+        let questions = generate_temporal_questions(content, None);
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+        assert!(questions[0].confidence_reason.as_ref().unwrap().contains("source citation"));
+    }
+
+    #[test]
+    fn test_confidence_low_for_definition_doc_type() {
+        let content = "# Glossary\n\n- Term means something";
+        let questions = generate_temporal_questions(content, Some("definition"));
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+        assert!(questions[0].confidence_reason.as_ref().unwrap().contains("definition"));
+    }
+
+    #[test]
+    fn test_confidence_low_for_glossary_doc_type() {
+        let content = "# Terms\n\n- Another term";
+        let questions = generate_temporal_questions(content, Some("glossary"));
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn test_confidence_low_for_reference_doc_type() {
+        let content = "# Ref\n\n- Reference fact";
+        let questions = generate_temporal_questions(content, Some("reference"));
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn test_confidence_definition_takes_precedence_over_source() {
+        // When both doc_type=definition AND fact has source, definition reason wins
+        let content = "# Glossary\n\n- Term means something [^1]\n\n---\n[^1]: Docs";
+        let questions = generate_temporal_questions(content, Some("definition"));
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+        assert!(questions[0].confidence_reason.as_ref().unwrap().contains("definition"));
+    }
+
+    #[test]
+    fn test_confidence_none_for_stale_ongoing() {
+        // Stale ongoing questions should not have low confidence
+        let content = "# Doc\n\n- Role at Company @t[2020..]";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions.iter().filter(|q| q.description.contains("still current")).collect();
+        for q in &stale {
+            assert!(q.confidence.is_none(), "stale ongoing questions should have no confidence override");
+        }
+    }
+
+    #[test]
+    fn test_confidence_none_for_regular_doc_type() {
+        let content = "# Person\n\n- Some fact without tag";
+        let questions = generate_temporal_questions(content, Some("person"));
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].confidence.is_none(), "regular doc types should not get low confidence");
     }
 }

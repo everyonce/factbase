@@ -81,6 +81,13 @@ pub struct ReviewQuestion {
     pub answer: Option<String>,
     /// Line number where question appears in document (1-indexed)
     pub line_number: usize,
+    /// Confidence level for this question (e.g., "high", "low").
+    /// When None, treated as normal confidence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<String>,
+    /// Reason for the confidence level (e.g., "fact in definition document").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence_reason: Option<String>,
 }
 
 impl ReviewQuestion {
@@ -93,7 +100,20 @@ impl ReviewQuestion {
             answered: false,
             answer: None,
             line_number: 0,
+            confidence: None,
+            confidence_reason: None,
         }
+    }
+
+    /// Create a new review question with confidence metadata.
+    pub fn with_confidence(
+        mut self,
+        confidence: &str,
+        reason: &str,
+    ) -> Self {
+        self.confidence = Some(confidence.to_string());
+        self.confidence_reason = Some(reason.to_string());
+        self
     }
 
     /// Returns true if this question was deferred (unchecked but has an answer/note).
@@ -113,11 +133,18 @@ impl ReviewQuestion {
 
     /// Returns a JSON representation of the base question fields.
     pub fn to_json(&self) -> Value {
-        serde_json::json!({
+        let mut json = serde_json::json!({
             "type": self.question_type.as_str(),
             "line_ref": self.line_ref,
             "description": self.description,
-        })
+        });
+        if let Some(ref c) = self.confidence {
+            json["confidence"] = Value::String(c.clone());
+        }
+        if let Some(ref r) = self.confidence_reason {
+            json["confidence_reason"] = Value::String(r.clone());
+        }
+        json
     }
 }
 
@@ -300,5 +327,37 @@ mod tests {
         q.answered = true;
         q.answer = Some("believed: answer".to_string());
         assert!(!q.is_believed()); // answered overrides believed
+    }
+
+    #[test]
+    fn test_new_has_no_confidence() {
+        let q = ReviewQuestion::new(QuestionType::Temporal, Some(5), "test".to_string());
+        assert!(q.confidence.is_none());
+        assert!(q.confidence_reason.is_none());
+    }
+
+    #[test]
+    fn test_with_confidence_sets_fields() {
+        let q = ReviewQuestion::new(QuestionType::Temporal, Some(5), "test".to_string())
+            .with_confidence("low", "fact in glossary");
+        assert_eq!(q.confidence.as_deref(), Some("low"));
+        assert_eq!(q.confidence_reason.as_deref(), Some("fact in glossary"));
+    }
+
+    #[test]
+    fn test_to_json_includes_confidence_when_set() {
+        let q = ReviewQuestion::new(QuestionType::Temporal, Some(5), "When?".to_string())
+            .with_confidence("low", "sourced from docs");
+        let json = q.to_json();
+        assert_eq!(json["confidence"], "low");
+        assert_eq!(json["confidence_reason"], "sourced from docs");
+    }
+
+    #[test]
+    fn test_to_json_omits_confidence_when_none() {
+        let q = ReviewQuestion::new(QuestionType::Temporal, Some(5), "When?".to_string());
+        let json = q.to_json();
+        assert!(json.get("confidence").is_none());
+        assert!(json.get("confidence_reason").is_none());
     }
 }

@@ -483,6 +483,8 @@ mod tests {
             answered: true,
             answer: Some("dismiss".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(interpret_answer(&q, "dismiss"), ChangeInstruction::Dismiss));
         // "ignore" is an alias for dismiss
@@ -498,6 +500,8 @@ mod tests {
             answered: true,
             answer: Some("delete".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "delete");
         match result {
@@ -517,6 +521,8 @@ mod tests {
             answered: true,
             answer: Some("split: separate roles".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "split: separate roles");
         match result {
@@ -540,6 +546,8 @@ mod tests {
             answered: true,
             answer: Some("No, left March 2024".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "No, left March 2024");
         match result {
@@ -565,6 +573,8 @@ mod tests {
             answered: true,
             answer: Some("defer".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "defer");
         assert!(matches!(result, ChangeInstruction::Defer));
@@ -579,6 +589,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn profile".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "per LinkedIn profile");
         // Source citations from review answers are dismissed — they should not
@@ -599,6 +611,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-06".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "per LinkedIn 2024-06");
         assert!(
@@ -616,6 +630,8 @@ mod tests {
             answered: true,
             answer: Some("confirmed".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "confirmed");
         match result {
@@ -638,6 +654,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "yes");
         match result {
@@ -695,6 +713,8 @@ mod tests {
             answered: true,
             answer: Some("Still current 2024-02".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "Still current 2024-02");
         match result {
@@ -736,6 +756,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-01".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(interpret_answer(&q, "per LinkedIn 2024-01"), ChangeInstruction::Dismiss));
     }
@@ -750,6 +772,8 @@ mod tests {
             answered: true,
             answer: Some("these are sequential promotions at the same company".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(interpret_answer(&q, "these are sequential promotions at the same company"), ChangeInstruction::Dismiss));
     }
@@ -764,6 +788,8 @@ mod tests {
             answered: true,
             answer: Some("correct: ended 2021-06".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "correct: ended 2021-06");
         assert!(!matches!(result, ChangeInstruction::Dismiss), "Date correction should not be dismissed");
@@ -779,6 +805,8 @@ mod tests {
             answered: true,
             answer: Some("still current per LinkedIn scraped 2026-02-10".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "still current per LinkedIn scraped 2026-02-10");
         assert!(
@@ -793,6 +821,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result2 = interpret_answer(&q2, "yes");
         assert!(
@@ -811,6 +841,8 @@ mod tests {
             answered: true,
             answer: Some("confirmed".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "confirmed");
         match result {
@@ -832,6 +864,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(interpret_answer(&q, "yes"), ChangeInstruction::Dismiss));
     }
@@ -848,6 +882,8 @@ mod tests {
             answered: true,
             answer: Some("Unable to verify from available sources".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "Unable to verify from available sources"),
@@ -866,6 +902,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-06".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "per LinkedIn 2024-06"),
@@ -883,6 +921,8 @@ mod tests {
             answered: true,
             answer: Some("Corroborated by account document which lists them as contact".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "Corroborated by account document which lists them as contact"),
@@ -899,6 +939,8 @@ mod tests {
             answered: true,
             answer: Some("defer".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "defer"),
@@ -915,6 +957,8 @@ mod tests {
             answered: true,
             answer: Some("delete".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "delete"),
@@ -935,6 +979,8 @@ mod tests {
             answered: true,
             answer: Some("Corroborated by account document (0db425) which lists them as technical implementation contact @t[~] sourced from 2026-01-15 transition meeting. Role is current.".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "Corroborated by account document (0db425) which lists them as technical implementation contact @t[~] sourced from 2026-01-15 transition meeting. Role is current.");
         match result {
@@ -956,6 +1002,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-06".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "per LinkedIn 2024-06");
         match result {
@@ -976,6 +1024,8 @@ mod tests {
             answered: true,
             answer: Some("role appears unchanged based on available info".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "role appears unchanged based on available info"),
@@ -996,6 +1046,8 @@ mod tests {
             answered: true,
             answer: Some("Beard (1998) findings are still current".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "Beard (1998) findings are still current");
         match result {
@@ -1019,6 +1071,8 @@ mod tests {
             answered: true,
             answer: Some("Still current per 2024-06 review".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "Still current per 2024-06 review");
         match result {
@@ -1039,6 +1093,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(&q, "yes");
         match result {
@@ -1062,6 +1118,8 @@ mod tests {
             answered: true,
             answer: Some("the 3rd ruler of that name. Standard historical convention.".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         let result = interpret_answer(
             &q,
@@ -1082,6 +1140,8 @@ mod tests {
             answered: true,
             answer: Some("defer".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "defer"),
@@ -1098,6 +1158,8 @@ mod tests {
             answered: true,
             answer: Some("delete".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "delete"),
@@ -1115,6 +1177,8 @@ mod tests {
             answered: true,
             answer: Some("split: separate roles".to_string()),
             line_number: 10,
+        confidence: None,
+        confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "split: separate roles"),
