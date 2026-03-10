@@ -3,7 +3,7 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::models::{Document, QuestionType, ReviewQuestion};
-use crate::patterns::{extract_reviewed_date, has_corruption_artifacts, FACT_LINE_REGEX};
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, has_corruption_artifacts, FACT_LINE_REGEX};
 use crate::processor::{
     append_review_questions, content_hash, parse_review_queue, prune_stale_questions,
 };
@@ -313,12 +313,15 @@ pub async fn check_all_documents(
 
                     // Count fact lines with recent reviewed markers
                     let today = Utc::now().date_naive();
+                    let fm_recent = extract_frontmatter_reviewed_date(&content)
+                        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
                     let skipped_reviewed = content
                         .lines()
                         .filter(|line| FACT_LINE_REGEX.is_match(line))
                         .filter(|line| {
-                            extract_reviewed_date(line)
-                                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+                            fm_recent
+                                || extract_reviewed_date(line)
+                                    .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
                         })
                         .count();
 

@@ -45,6 +45,8 @@ pub struct FormatConfig {
     pub id_placement: Option<IdPlacement>,
     /// Wrap review queue in a collapsed callout (for Obsidian rendering)
     pub review_callout: Option<bool>,
+    /// Store reviewed dates in YAML frontmatter instead of inline HTML comments
+    pub reviewed_in_frontmatter: Option<bool>,
 }
 
 /// Fully resolved format settings (no Option fields).
@@ -56,6 +58,8 @@ pub struct ResolvedFormat {
     pub id_placement: IdPlacement,
     /// Wrap review queue in a collapsed Obsidian callout.
     pub review_callout: bool,
+    /// Store reviewed dates in YAML frontmatter instead of inline comments.
+    pub reviewed_in_frontmatter: bool,
 }
 
 impl Default for ResolvedFormat {
@@ -66,6 +70,7 @@ impl Default for ResolvedFormat {
             inline_links: false,
             id_placement: IdPlacement::Comment,
             review_callout: false,
+            reviewed_in_frontmatter: false,
         }
     }
 }
@@ -77,6 +82,7 @@ const OBSIDIAN: ResolvedFormat = ResolvedFormat {
     inline_links: true,
     id_placement: IdPlacement::Frontmatter,
     review_callout: true,
+    reviewed_in_frontmatter: true,
 };
 
 impl FormatConfig {
@@ -92,6 +98,7 @@ impl FormatConfig {
             inline_links: self.inline_links.unwrap_or(base.inline_links),
             id_placement: self.id_placement.unwrap_or(base.id_placement),
             review_callout: self.review_callout.unwrap_or(base.review_callout),
+            reviewed_in_frontmatter: self.reviewed_in_frontmatter.unwrap_or(base.reviewed_in_frontmatter),
         }
     }
 }
@@ -181,5 +188,33 @@ mod tests {
         assert_eq!(cfg.link_style, Some(LinkStyle::Markdown));
         assert!(cfg.preset.is_none());
         assert!(cfg.frontmatter.is_none());
+    }
+
+    #[test]
+    fn test_obsidian_preset_reviewed_in_frontmatter() {
+        let cfg = FormatConfig {
+            preset: Some("obsidian".into()),
+            ..Default::default()
+        };
+        let r = cfg.resolve();
+        assert!(r.reviewed_in_frontmatter);
+    }
+
+    #[test]
+    fn test_default_format_no_reviewed_in_frontmatter() {
+        let cfg = FormatConfig::default();
+        let r = cfg.resolve();
+        assert!(!r.reviewed_in_frontmatter);
+    }
+
+    #[test]
+    fn test_reviewed_in_frontmatter_explicit_override() {
+        let cfg = FormatConfig {
+            preset: Some("obsidian".into()),
+            reviewed_in_frontmatter: Some(false),
+            ..Default::default()
+        };
+        let r = cfg.resolve();
+        assert!(!r.reviewed_in_frontmatter); // overridden
     }
 }

@@ -189,15 +189,22 @@ pub fn filter_existing_questions(
 }
 
 /// Count fact lines with recent reviewed markers (within 180 days).
+/// Checks both inline `<!-- reviewed:... -->` markers and frontmatter `reviewed:` date.
 pub fn count_reviewed_facts(content: &str) -> usize {
     use chrono::Utc;
-    use factbase::{extract_reviewed_date, FACT_LINE_REGEX};
+    use factbase::{extract_frontmatter_reviewed_date, extract_reviewed_date, FACT_LINE_REGEX};
 
     let today = Utc::now().date_naive();
+    let fm_date = extract_frontmatter_reviewed_date(content);
+    let fm_recent = fm_date.is_some_and(|d| (today - d).num_days() <= 180);
+
     content
         .lines()
         .filter(|line| FACT_LINE_REGEX.is_match(line))
-        .filter(|line| extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= 180))
+        .filter(|line| {
+            extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= 180)
+                || fm_recent
+        })
         .count()
 }
 

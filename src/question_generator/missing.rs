@@ -7,7 +7,7 @@ use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::output::truncate_str;
-use crate::patterns::{extract_reviewed_date, SOURCE_REF_DETECT_REGEX};
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, SOURCE_REF_DETECT_REGEX};
 use crate::processor::{parse_source_definitions, parse_source_references};
 
 use super::iter_fact_lines;
@@ -22,9 +22,12 @@ const REVIEWED_SKIP_DAYS: i64 = 180;
 /// Returns a list of `ReviewQuestion` with `question_type = Missing`.
 pub fn generate_missing_questions(content: &str) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
     iter_fact_lines(content)
         .filter(|(_, line, _)| {
             !SOURCE_REF_DETECT_REGEX.is_match(line)
+                && !fm_skip
                 && extract_reviewed_date(line)
                     .is_none_or(|d| (today - d).num_days() > REVIEWED_SKIP_DAYS)
         })
@@ -44,6 +47,8 @@ pub fn generate_missing_questions(content: &str) -> Vec<ReviewQuestion> {
 /// or subject line cannot be verified. This flags those for human review.
 pub fn generate_source_quality_questions(content: &str) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
     let lines: Vec<&str> = content.lines().collect();
     let defs = parse_source_definitions(content);
     let refs = parse_source_references(content);
@@ -54,6 +59,9 @@ pub fn generate_source_quality_questions(content: &str) -> Vec<ReviewQuestion> {
             refs.iter().any(|r| r.number == d.number) && is_untraceable_source(&d.context)
         })
         .filter(|d| {
+            if fm_skip {
+                return false;
+            }
             // Skip source definitions with a recent reviewed marker
             if d.line_number > 0 && d.line_number <= lines.len() {
                 let line = lines[d.line_number - 1];

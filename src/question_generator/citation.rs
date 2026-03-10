@@ -7,7 +7,7 @@ use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::output::truncate_str;
-use crate::patterns::extract_reviewed_date;
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date};
 use crate::processor::{is_citation_specific, parse_source_definitions, parse_source_references};
 
 /// Default number of days a reviewed marker suppresses question regeneration.
@@ -20,6 +20,8 @@ const REVIEWED_SKIP_DAYS: i64 = 180;
 /// already flagged as completely untraceable by `generate_source_quality_questions`.
 pub fn generate_weak_source_questions(content: &str) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
     let lines: Vec<&str> = content.lines().collect();
     let defs = parse_source_definitions(content);
     let refs = parse_source_references(content);
@@ -30,6 +32,9 @@ pub fn generate_weak_source_questions(content: &str) -> Vec<ReviewQuestion> {
             refs.iter().any(|r| r.number == d.number)
         })
         .filter(|d| {
+            if fm_skip {
+                return false;
+            }
             // Skip if recently reviewed
             if d.line_number > 0 && d.line_number <= lines.len() {
                 let line = lines[d.line_number - 1];

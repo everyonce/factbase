@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::extract_reviewed_date;
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date};
 
 use super::iter_fact_lines;
 
@@ -137,12 +137,18 @@ pub fn generate_ambiguous_questions_with_type(
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
 
+    // Check frontmatter for document-level reviewed date (obsidian format)
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
+
     // Skip acronym detection for glossary/definition documents
     let skip_acronyms = is_glossary_doc(doc_type, content);
 
     for (line_number, line, fact_text) in iter_fact_lines(content) {
-        // Skip facts with a recent reviewed marker
-        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        // Skip facts with a recent reviewed marker (inline or frontmatter)
+        if fm_skip
+            || extract_reviewed_date(line)
+                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
         {
             continue;
         }

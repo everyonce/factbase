@@ -389,6 +389,78 @@ pub fn strip_reviewed_markers(content: &str) -> String {
     SEQUENTIAL_MARKER_REGEX.replace_all(&stripped, "").to_string()
 }
 
+/// Extract the `reviewed: YYYY-MM-DD` date from YAML frontmatter.
+pub fn extract_frontmatter_reviewed_date(content: &str) -> Option<chrono::NaiveDate> {
+    let mut lines = content.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for line in lines {
+        let trimmed = line.trim();
+        if trimmed == "---" {
+            break;
+        }
+        if let Some(val) = trimmed.strip_prefix("reviewed:") {
+            return chrono::NaiveDate::parse_from_str(val.trim(), "%Y-%m-%d").ok();
+        }
+    }
+    None
+}
+
+/// Set or update the `reviewed: YYYY-MM-DD` field in YAML frontmatter.
+///
+/// If frontmatter exists, adds or updates the `reviewed:` field.
+/// If no frontmatter exists, creates one with just the reviewed field.
+pub fn set_frontmatter_reviewed_date(content: &str, date: &chrono::NaiveDate) -> String {
+    let date_str = date.format("%Y-%m-%d").to_string();
+    let lines: Vec<&str> = content.lines().collect();
+
+    if lines.first().map(|l| l.trim()) == Some("---") {
+        // Find closing ---
+        let close = lines.iter().skip(1).position(|l| l.trim() == "---").map(|i| i + 1);
+        if let Some(close_idx) = close {
+            // Check if reviewed: already exists
+            let mut found = false;
+            let mut result = Vec::with_capacity(lines.len());
+            for (i, line) in lines.iter().enumerate() {
+                if i > 0 && i < close_idx && line.trim().starts_with("reviewed:") {
+                    result.push(format!("reviewed: {date_str}"));
+                    found = true;
+                } else {
+                    result.push(line.to_string());
+                }
+            }
+            if !found {
+                // Insert before closing ---
+                result.insert(close_idx, format!("reviewed: {date_str}"));
+            }
+            return result.join("\n");
+        }
+    }
+
+    // No frontmatter — create one
+    format!("---\nreviewed: {date_str}\n---\n{content}")
+}
+
+/// Strip all inline `<!-- reviewed:... -->` markers from content and return
+/// the cleaned content plus the latest reviewed date found (if any).
+pub fn convert_inline_reviewed_to_frontmatter(content: &str) -> (String, Option<chrono::NaiveDate>) {
+    let mut latest: Option<chrono::NaiveDate> = None;
+    for line in content.lines() {
+        if let Some(d) = extract_reviewed_date(line) {
+            latest = Some(latest.map_or(d, |prev: chrono::NaiveDate| prev.max(d)));
+        }
+    }
+    // Also consider existing frontmatter date
+    if let Some(fm_date) = extract_frontmatter_reviewed_date(content) {
+        latest = Some(latest.map_or(fm_date, |prev| prev.max(fm_date)));
+    }
+    let stripped = strip_reviewed_markers(content);
+    // Clean up trailing whitespace left by marker removal on each line
+    let cleaned: String = stripped.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+    (cleaned, latest)
+}
+
 /// Matches `<!-- sequential ... -->` markers on fact lines.
 static SEQUENTIAL_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"<!-- sequential\b.*?-->").expect("sequential marker regex should be valid")
@@ -991,5 +1063,85 @@ mod tests {
             extract_heading_title("# Title [^1]\n"),
             Some("Title".to_string())
         );
+    }
+
+    // =========================================================================
+    // Frontmatter reviewed date tests
+    // =========================================================================
+
+    #[test]
+    fn test_extract_frontmatter_reviewed_date_present() {
+        let content = "---\nfactbase_id: abc123\nreviewed: 2026-02-20\n---\n# Title\n";
+        let date = extract_frontmatter_reviewed_date(content).unwrap();
+        assert_eq!(date, chrono::NaiveDate::from_ymd_opt(2026, 2, 20).unwrap());
+    }
+
+    #[test]
+    fn test_extract_frontmatter_reviewed_date_absent() {
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n";
+        assert!(extract_frontmatter_reviewed_date(content).is_none());
+    }
+
+    #[test]
+    fn test_extract_frontmatter_reviewed_date_no_frontmatter() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n";
+        assert!(extract_frontmatter_reviewed_date(content).is_none());
+    }
+
+    #[test]
+    fn test_set_frontmatter_reviewed_date_existing_frontmatter() {
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let result = set_frontmatter_reviewed_date(content, &date);
+        assert!(result.contains("reviewed: 2026-03-10"));
+        assert!(result.contains("factbase_id: abc123"));
+        assert!(result.contains("# Title"));
+    }
+
+    #[test]
+    fn test_set_frontmatter_reviewed_date_update_existing() {
+        let content = "---\nfactbase_id: abc123\nreviewed: 2025-01-01\n---\n# Title\n";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let result = set_frontmatter_reviewed_date(content, &date);
+        assert!(result.contains("reviewed: 2026-03-10"));
+        assert!(!result.contains("2025-01-01"));
+    }
+
+    #[test]
+    fn test_set_frontmatter_reviewed_date_no_frontmatter() {
+        let content = "# Title\n\n- fact\n";
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 3, 10).unwrap();
+        let result = set_frontmatter_reviewed_date(content, &date);
+        assert!(result.starts_with("---\nreviewed: 2026-03-10\n---\n"));
+        assert!(result.contains("# Title"));
+    }
+
+    #[test]
+    fn test_convert_inline_reviewed_to_frontmatter() {
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\n- Fact one <!-- reviewed:2026-02-15 -->\n- Fact two <!-- reviewed:2026-02-20 -->\n";
+        let (cleaned, latest) = convert_inline_reviewed_to_frontmatter(content);
+        assert!(!cleaned.contains("<!-- reviewed:"));
+        assert!(cleaned.contains("- Fact one"));
+        assert!(cleaned.contains("- Fact two"));
+        assert_eq!(latest, Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 20).unwrap()));
+    }
+
+    #[test]
+    fn test_convert_inline_reviewed_no_markers() {
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\n- Fact one\n";
+        let (cleaned, latest) = convert_inline_reviewed_to_frontmatter(content);
+        // Trailing newline may be trimmed by line iteration — content is equivalent
+        assert!(cleaned.contains("- Fact one"));
+        assert!(cleaned.contains("factbase_id: abc123"));
+        assert!(latest.is_none());
+    }
+
+    #[test]
+    fn test_convert_inline_reviewed_preserves_frontmatter_date() {
+        let content = "---\nfactbase_id: abc123\nreviewed: 2026-03-01\n---\n# Title\n\n- Fact <!-- reviewed:2026-02-15 -->\n";
+        let (cleaned, latest) = convert_inline_reviewed_to_frontmatter(content);
+        assert!(!cleaned.contains("<!-- reviewed:"));
+        // Frontmatter date (March) is later than inline (Feb), so it wins
+        assert_eq!(latest, Some(chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()));
     }
 }

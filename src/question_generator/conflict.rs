@@ -5,8 +5,8 @@
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
-    date_cmp, extract_reviewed_date, normalize_date_for_comparison, FACT_LINE_REGEX,
-    MANUAL_LINK_REGEX,
+    date_cmp, extract_frontmatter_reviewed_date, extract_reviewed_date,
+    normalize_date_for_comparison, FACT_LINE_REGEX, MANUAL_LINK_REGEX,
 };
 use crate::processor::{parse_temporal_tags, ranges_overlap};
 
@@ -211,6 +211,9 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
     let tags = parse_temporal_tags(content);
     let mut current_section: Option<String> = None;
 
+    // Check frontmatter for document-level reviewed date (obsidian format)
+    let fm_reviewed = skip_reviewed && extract_frontmatter_reviewed_date(content).is_some();
+
     // Stop before the review queue section
     let end = crate::patterns::body_end_offset(content);
 
@@ -230,7 +233,7 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
 
         // Skip facts with a reviewed marker — conflict overlaps are structural
         // (the dates don't change), so once reviewed the suppression is permanent.
-        if skip_reviewed && extract_reviewed_date(line).is_some() {
+        if skip_reviewed && (fm_reviewed || extract_reviewed_date(line).is_some()) {
             continue;
         }
 

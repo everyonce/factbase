@@ -7,7 +7,7 @@ use chrono::{NaiveDate, Utc};
 use std::collections::HashMap;
 
 use crate::models::{QuestionType, ReviewQuestion, TemporalTagType};
-use crate::patterns::{extract_reviewed_date, FACT_LINE_REGEX};
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, FACT_LINE_REGEX};
 use crate::processor::{parse_source_definitions, parse_source_references, parse_temporal_tags};
 
 use super::temporal::has_recent_verification;
@@ -23,6 +23,10 @@ use super::{extract_fact_text, iter_fact_lines};
 pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
+
+    // Check frontmatter for document-level reviewed date (obsidian format)
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= max_age_days);
 
     // Truncate at review queue marker — review entries are not document facts
     let body = &content[..crate::patterns::body_end_offset(content)];
@@ -76,8 +80,11 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
             .filter(|r| r.line_number == line_number)
             .collect();
 
-        // Skip facts with a recent reviewed marker
-        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= max_age_days) {
+        // Skip facts with a recent reviewed marker (inline or frontmatter)
+        if fm_skip
+            || extract_reviewed_date(line)
+                .is_some_and(|d| (today - d).num_days() <= max_age_days)
+        {
             continue;
         }
 
@@ -111,8 +118,10 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                         if tag.line_number > 0 && tag.line_number <= lines.len() {
                             let line = lines[tag.line_number - 1];
                             // Skip facts with a recent reviewed marker
-                            if extract_reviewed_date(line)
-                                .is_some_and(|d| (today - d).num_days() <= max_age_days)
+                            // Skip facts with a recent reviewed marker (inline or frontmatter)
+                            if fm_skip
+                                || extract_reviewed_date(line)
+                                    .is_some_and(|d| (today - d).num_days() <= max_age_days)
                             {
                                 continue;
                             }

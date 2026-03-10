@@ -6,8 +6,7 @@
 use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::{
-    extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, SOURCE_REF_DETECT_REGEX,
+use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, SOURCE_REF_DETECT_REGEX,
     TEMPORAL_TAG_FULL_REGEX,
 };
 use crate::processor::{find_malformed_tags, normalize_temporal_tags, line_has_temporal_tag};
@@ -37,9 +36,15 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
         matches!(t, "definition" | "glossary" | "reference")
     });
 
+    // Check frontmatter for document-level reviewed date (obsidian format)
+    let fm_skip = extract_frontmatter_reviewed_date(content)
+        .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
+
     for (line_number, line, fact_text) in iter_fact_lines(content) {
-        // Skip facts with a recent reviewed marker
-        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        // Skip facts with a recent reviewed marker (inline or frontmatter)
+        if fm_skip
+            || extract_reviewed_date(line)
+                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
         {
             continue;
         }

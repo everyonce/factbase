@@ -88,6 +88,18 @@ pub async fn apply_all_review_answers(
     let repos = db.list_repositories()?;
     let repo_paths: HashMap<_, _> = repos.iter().map(|r| (r.id.as_str(), &r.path)).collect();
 
+    // Load resolved format per repo for reviewed-in-frontmatter support
+    let repo_formats: HashMap<&str, crate::models::format::ResolvedFormat> = repos
+        .iter()
+        .map(|r| {
+            let fmt = crate::models::load_perspective_from_file(&r.path)
+                .and_then(|p| p.format)
+                .map(|f| f.resolve())
+                .unwrap_or_default();
+            (r.id.as_str(), fmt)
+        })
+        .collect();
+
     // Load glossary terms for stripping redundant reviewed markers
     let glossary_terms = {
         let types = ["definition", "glossary", "reference"];
@@ -234,6 +246,25 @@ pub async fn apply_all_review_answers(
                 // Strip reviewed markers that are now redundant due to glossary coverage
                 let new_content = if !config.dry_run && !new_content.is_empty() && !glossary_terms.is_empty() {
                     crate::processor::strip_glossary_reviewed_markers(&new_content, &glossary_terms)
+                } else {
+                    new_content
+                };
+                // Convert inline reviewed markers to frontmatter for obsidian-format repos
+                let new_content = if !config.dry_run && !new_content.is_empty() {
+                    let use_fm = repo_formats
+                        .get(doc.repo_id.as_str())
+                        .is_some_and(|f| f.reviewed_in_frontmatter);
+                    if use_fm {
+                        let (cleaned, latest) =
+                            crate::patterns::convert_inline_reviewed_to_frontmatter(&new_content);
+                        if let Some(date) = latest {
+                            crate::patterns::set_frontmatter_reviewed_date(&cleaned, &date)
+                        } else {
+                            cleaned
+                        }
+                    } else {
+                        new_content
+                    }
                 } else {
                     new_content
                 };
