@@ -118,11 +118,6 @@ pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database
     Ok((config, db, repo))
 }
 
-/// Canonicalize a path, stripping the Windows `\\?\` prefix if present.
-pub fn clean_canonicalize(path: &std::path::Path) -> std::path::PathBuf {
-    factbase::organize::clean_canonicalize(path)
-}
-
 /// Find repository by ID or from current directory, returning config for callers that need it.
 ///
 /// Use this when you need both the repository and config (e.g., for embedding/LLM setup).

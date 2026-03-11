@@ -13,7 +13,7 @@
 //!     {ctx}
 //! ```
 //!
-//! Flat key format: `workflow_name.step_name` (e.g. `improve.cleanup`, `update.scan`).
+//! Flat key format: `workflow_name.step_name` (e.g. `improve.cleanup`, `maintain.scan`).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -85,10 +85,6 @@ impl WorkflowsConfig {
 /// | `setup.create` | `format_rules` |
 /// | `setup.scan` | _(none)_ |
 /// | `setup.complete` | _(none)_ |
-/// | `update.scan` | `ctx` |
-/// | `update.check` | _(none)_ |
-/// | `update.organize` | _(none)_ |
-/// | `update.summary` | _(none)_ |
 /// | `resolve.queue` | `ctx`, `deferred_note` |
 /// | `resolve.answer` | `stale`, `ctx` |
 /// | `resolve.answer_intro` | `stale`, `ctx` |
@@ -106,7 +102,6 @@ impl WorkflowsConfig {
 /// | `improve.resolve` | `doc_hint`, `stale`, `ctx` |
 /// | `improve.enrich` | `doc_hint`, `fields`, `ctx` |
 /// | `improve.check` | `doc_hint`, `compare_note` |
-// TODO: update.check and update.scan instructions should explicitly mention time_budget_secs (#197, #198)
 pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
     HashMap::from([
         ("setup.init", &["path"] as &[&str]),
@@ -116,10 +111,6 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("setup.create", &["format_rules"]),
         ("setup.scan", &[] as &[&str]),
         ("setup.complete", &[] as &[&str]),
-        ("update.scan", &["ctx"]),
-        ("update.check", &[] as &[&str]),
-        ("update.organize", &[] as &[&str]),
-        ("update.summary", &[] as &[&str]),
         ("resolve.queue", &["ctx", "deferred_note"]),
         ("resolve.answer", &["stale", "ctx"]),
         ("resolve.answer_intro", &["stale", "ctx"]),
@@ -234,7 +225,7 @@ mod tests {
     #[test]
     fn test_known_workflows_count() {
         let known = known_workflows();
-        assert_eq!(known.len(), 28);
+        assert_eq!(known.len(), 24);
     }
 
     #[test]
