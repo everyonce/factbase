@@ -61,7 +61,7 @@ pub(crate) use helpers::{
 };
 
 // Re-export schema
-pub use schema::tools_list;
+pub use schema::{tools_list, tools_list_with_overrides};
 
 #[derive(Debug, Deserialize)]
 pub struct McpRequest {

@@ -36,13 +36,19 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let step = get_u64_arg(args, "step", 1) as usize;
     let repo_resolved = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let perspective = load_perspective(db, repo_resolved.as_deref());
-    let mut wf_config = crate::Config::load(None)
-        .unwrap_or_default()
-        .workflows;
+    let repo_path = resolve_repo_path(db, repo_resolved.as_deref());
 
-    // Merge per-repo .factbase/prompts.yaml overrides (highest priority)
-    if let Some(repo_path) = resolve_repo_path(db, repo_resolved.as_deref()) {
-        if let Some(repo_prompts) = WorkflowsConfig::load_repo_prompts(&repo_path) {
+    // Build workflow config with priority: TOML files < config.yaml < prompts.yaml
+    let mut wf_config = WorkflowsConfig::default();
+    if let Some(ref rp) = repo_path {
+        if let Some(toml_overrides) = WorkflowsConfig::load_instruction_files(rp) {
+            wf_config.merge(&toml_overrides);
+        }
+    }
+    let global_config = crate::Config::load(None).unwrap_or_default().workflows;
+    wf_config.merge(&global_config);
+    if let Some(ref rp) = repo_path {
+        if let Some(repo_prompts) = WorkflowsConfig::load_repo_prompts(rp) {
             wf_config.merge(&repo_prompts);
         }
     }

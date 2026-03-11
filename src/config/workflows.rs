@@ -70,6 +70,59 @@ impl WorkflowsConfig {
             }
         }
     }
+
+    /// Load workflow instruction overrides from `.factbase/instructions/*.toml`.
+    ///
+    /// Each TOML file is named after a workflow (e.g., `maintain.toml`) and contains
+    /// step names as keys with instruction text as values:
+    ///
+    /// ```toml
+    /// scan = """Custom scan instruction..."""
+    /// check = """Custom check instruction..."""
+    /// ```
+    ///
+    /// The filename becomes the workflow prefix: `maintain.toml` with key `scan`
+    /// produces template key `maintain.scan`.
+    pub fn load_instruction_files(repo_path: &Path) -> Option<WorkflowsConfig> {
+        let dir = repo_path.join(".factbase").join("instructions");
+        let entries = std::fs::read_dir(&dir).ok()?;
+        let mut config = WorkflowsConfig::default();
+        let mut found_any = false;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let workflow_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            if workflow_name.is_empty() {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to read {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+            let table: toml::Table = match content.parse() {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!("Failed to parse TOML {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+            for (step_name, value) in &table {
+                if let Some(text) = value.as_str() {
+                    config.templates.insert(
+                        format!("{workflow_name}.{step_name}"),
+                        text.to_string(),
+                    );
+                    found_any = true;
+                }
+            }
+        }
+        if found_any { Some(config) } else { None }
+    }
 }
 
 /// Valid workflow keys and their allowed placeholder variables.
@@ -412,5 +465,149 @@ workflows:
         let overlay = WorkflowsConfig::default();
         base.merge(&overlay);
         assert_eq!(base.resolve_batch_size(), 30);
+    }
+
+    // --- load_instruction_files ---
+
+    #[test]
+    fn test_load_instruction_files_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(WorkflowsConfig::load_instruction_files(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_load_instruction_files_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".factbase/instructions")).unwrap();
+        assert!(WorkflowsConfig::load_instruction_files(dir.path()).is_none());
+    }
+
+    #[test]
+    fn test_load_instruction_files_valid_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(
+            instr_dir.join("maintain.toml"),
+            r#"scan = "Custom scan instruction"
+check = "Custom check {ctx}"
+"#,
+        ).unwrap();
+        let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        assert_eq!(config.templates["maintain.scan"], "Custom scan instruction");
+        assert_eq!(config.templates["maintain.check"], "Custom check {ctx}");
+    }
+
+    #[test]
+    fn test_load_instruction_files_multiple_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(instr_dir.join("maintain.toml"), "scan = \"A\"").unwrap();
+        std::fs::write(instr_dir.join("resolve.toml"), "queue = \"B\"").unwrap();
+        let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        assert_eq!(config.templates["maintain.scan"], "A");
+        assert_eq!(config.templates["resolve.queue"], "B");
+    }
+
+    #[test]
+    fn test_load_instruction_files_skips_non_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(instr_dir.join("maintain.toml"), "scan = \"A\"").unwrap();
+        std::fs::write(instr_dir.join("notes.txt"), "not a toml file").unwrap();
+        let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        assert_eq!(config.templates.len(), 1);
+    }
+
+    #[test]
+    fn test_load_instruction_files_invalid_toml_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(instr_dir.join("bad.toml"), "{{invalid toml").unwrap();
+        std::fs::write(instr_dir.join("good.toml"), "scan = \"OK\"").unwrap();
+        let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        assert_eq!(config.templates.len(), 1);
+        assert_eq!(config.templates["good.scan"], "OK");
+    }
+
+    #[test]
+    fn test_load_instruction_files_multiline_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(
+            instr_dir.join("improve.toml"),
+            "cleanup = \"\"\"\nLine 1\nLine 2\nLine 3\n\"\"\"",
+        ).unwrap();
+        let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        assert!(config.templates["improve.cleanup"].contains("Line 1"));
+        assert!(config.templates["improve.cleanup"].contains("Line 3"));
+    }
+
+    #[test]
+    fn test_instruction_files_override_priority() {
+        // TOML files should be overridden by config.yaml templates
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(instr_dir.join("maintain.toml"), "scan = \"from toml\"").unwrap();
+
+        let mut wf_config = WorkflowsConfig::default();
+        // Merge TOML (lower priority)
+        let toml_overrides = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        wf_config.merge(&toml_overrides);
+        // Merge config.yaml (higher priority)
+        let mut yaml_config = WorkflowsConfig::default();
+        yaml_config.templates.insert("maintain.scan".into(), "from yaml".into());
+        wf_config.merge(&yaml_config);
+
+        assert_eq!(wf_config.templates["maintain.scan"], "from yaml");
+    }
+
+    #[test]
+    fn test_instruction_files_fallback_to_default() {
+        // When no TOML or config override exists, resolve_workflow_text uses the default
+        let config = WorkflowsConfig::default();
+        let result = resolve_workflow_text(&config, "maintain.scan", "compiled default", &[]);
+        assert_eq!(result, "compiled default");
+    }
+
+    #[test]
+    fn test_instruction_files_toml_overrides_default() {
+        // TOML file should override compiled default
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(instr_dir.join("maintain.toml"), "scan = \"from toml {ctx}\"").unwrap();
+
+        let mut wf_config = WorkflowsConfig::default();
+        let toml_overrides = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        wf_config.merge(&toml_overrides);
+
+        let result = resolve_workflow_text(&wf_config, "maintain.scan", "compiled default", &[("ctx", "here")]);
+        assert_eq!(result, "from toml here");
+    }
+
+    #[test]
+    fn test_instruction_files_missing_step_falls_back() {
+        // If TOML only overrides some steps, others fall back to default
+        let dir = tempfile::tempdir().unwrap();
+        let instr_dir = dir.path().join(".factbase/instructions");
+        std::fs::create_dir_all(&instr_dir).unwrap();
+        std::fs::write(instr_dir.join("maintain.toml"), "scan = \"custom scan\"").unwrap();
+
+        let mut wf_config = WorkflowsConfig::default();
+        let toml_overrides = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
+        wf_config.merge(&toml_overrides);
+
+        // scan is overridden
+        let result = resolve_workflow_text(&wf_config, "maintain.scan", "default scan", &[]);
+        assert_eq!(result, "custom scan");
+        // check falls back to default
+        let result = resolve_workflow_text(&wf_config, "maintain.check", "default check", &[]);
+        assert_eq!(result, "default check");
     }
 }

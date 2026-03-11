@@ -31,6 +31,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
+toml = "0.8"
 clap = { version = "4.5.60", features = ["derive"] }
 regex = "1"
 sha2 = "0.10"
