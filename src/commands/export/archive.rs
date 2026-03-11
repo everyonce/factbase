@@ -1,6 +1,8 @@
 //! Compressed archive export handler.
 
-use factbase::{Database, Document, ProgressReporter};
+use factbase::database::Database;
+use factbase::models::Document;
+use factbase::progress::ProgressReporter;
 use std::fs;
 use std::path::Path;
 

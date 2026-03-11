@@ -1,6 +1,10 @@
 //! Document validation for import operations.
 
-use factbase::{parse_source_definitions, parse_source_references, validate_temporal_tags};
+use factbase::processor::{
+    parse_source_definitions,
+    parse_source_references,
+    validate_temporal_tags,
+};
 use std::collections::HashSet;
 
 /// Validation error for an imported document

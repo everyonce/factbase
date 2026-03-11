@@ -1,6 +1,6 @@
 use crate::commands::setup::Setup;
 use clap::Parser;
-use factbase::{format_bytes, format_json};
+use factbase::output::{format_bytes, format_json};
 use serde::Serialize;
 use std::fs;
 

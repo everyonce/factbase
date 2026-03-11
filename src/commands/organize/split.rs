@@ -8,8 +8,14 @@ use crate::commands::{
     confirm_prompt, print_output, OutputFormat,
 };
 use crate::commands::setup::Setup;
-use factbase::{
-    execute_split, extract_sections, plan_split, verify_split, SplitPlan, SplitResult, SplitSection,
+use factbase::organize::{
+    SplitPlan,
+    SplitResult,
+    SplitSection,
+    execute_split,
+    extract_sections,
+    plan_split,
+    verify_split,
 };
 use serde::Serialize;
 

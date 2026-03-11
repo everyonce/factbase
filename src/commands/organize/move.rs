@@ -10,7 +10,7 @@ use anyhow::Context;
 use super::MoveArgs;
 use crate::commands::{confirm_prompt, print_output, OutputFormat};
 use crate::commands::setup::Setup;
-use factbase::{execute_move, MoveResult};
+use factbase::organize::{MoveResult, execute_move};
 use serde::Serialize;
 
 /// Output for move command (dry-run or execution).

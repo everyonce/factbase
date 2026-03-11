@@ -2,9 +2,13 @@
 
 use super::args::ReviewArgs;
 use crate::commands::setup::Setup;
-use factbase::{
-    content_hash, normalize_review_section, parse_review_queue, unwrap_review_callout,
-    wrap_review_callout, QuestionType,
+use factbase::models::QuestionType;
+use factbase::processor::{
+    content_hash,
+    normalize_review_section,
+    parse_review_queue,
+    unwrap_review_callout,
+    wrap_review_callout,
 };
 use std::fs;
 

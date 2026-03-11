@@ -3,7 +3,9 @@
 //! Provides common functionality for grep, search, and lint watch modes.
 
 use chrono::Local;
-use factbase::{find_repo_for_path, Config, FileWatcher, Repository};
+use factbase::config::Config;
+use factbase::models::Repository;
+use factbase::watcher::{FileWatcher, find_repo_for_path};
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing::info;
@@ -83,7 +85,7 @@ where
             if let Err(e) = run_fn() {
                 eprintln!(
                     "{}",
-                    factbase::format_user_error(&format!("Command failed: {e}"), None)
+                    factbase::error::format_user_error(&format!("Command failed: {e}"), None)
                 );
             }
 
@@ -121,7 +123,7 @@ where
             if let Err(e) = run_fn().await {
                 eprintln!(
                     "{}",
-                    factbase::format_user_error(&format!("Command failed: {e}"), None)
+                    factbase::error::format_user_error(&format!("Command failed: {e}"), None)
                 );
             }
 

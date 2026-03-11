@@ -8,7 +8,7 @@
 //! - [`ExportedDocQuestions`] - Document with exported questions
 
 use crate::commands::OutputFormat;
-use factbase::{format_json, format_yaml};
+use factbase::output::{format_json, format_yaml};
 use serde::Serialize;
 use std::collections::HashMap;
 

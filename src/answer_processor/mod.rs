@@ -25,7 +25,7 @@
 //! - [`uncheck_deferred_questions`] - Uncheck deferred questions (keep in queue)
 
 mod apply;
-pub(crate) mod apply_all;
+pub mod apply_all;
 pub mod inbox;
 mod interpret;
 mod temporal;

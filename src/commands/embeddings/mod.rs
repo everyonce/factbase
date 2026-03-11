@@ -5,7 +5,7 @@ mod args;
 pub use args::{EmbeddingsArgs, EmbeddingsCommands};
 
 use super::setup::Setup;
-use factbase::Config;
+use factbase::config::Config;
 
 pub fn cmd_embeddings(args: EmbeddingsArgs) -> anyhow::Result<()> {
     match args.command {
@@ -20,7 +20,7 @@ fn cmd_export(args: args::ExportArgs) -> anyhow::Result<()> {
     let db = Setup::new().build()?.db;
     let model = config.embedding.model.clone();
 
-    let (chunk_count, fact_count) = factbase::export_embeddings_to_file(
+    let (chunk_count, fact_count) = factbase::embeddings_io::export_embeddings_to_file(
         &db,
         args.repo.as_deref(),
         &model,
@@ -37,7 +37,7 @@ fn cmd_export(args: args::ExportArgs) -> anyhow::Result<()> {
 fn cmd_import(args: args::ImportArgs) -> anyhow::Result<()> {
     let db = Setup::new().build()?.db;
 
-    let result = factbase::import_embeddings_from_file(&db, &args.input, args.force)?;
+    let result = factbase::embeddings_io::import_embeddings_from_file(&db, &args.input, args.force)?;
 
     eprintln!(
         "Imported {} chunks ({} skipped), {} fact embeddings ({} skipped) — model: {}, dimension: {}",
@@ -53,7 +53,7 @@ fn cmd_status(args: args::StatusArgs) -> anyhow::Result<()> {
     let db = Setup::new().build()?.db;
     let model = config.embedding.model.clone();
 
-    let info = factbase::embeddings_status(&db, args.repo.as_deref(), &model)?;
+    let info = factbase::embeddings_io::embeddings_status(&db, args.repo.as_deref(), &model)?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&info)?);

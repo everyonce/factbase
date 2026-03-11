@@ -1,7 +1,7 @@
 use super::{print_output, OutputFormat};
 use crate::commands::setup::Setup;
 use clap::Parser;
-use factbase::Database;
+use factbase::database::Database;
 use serde::Serialize;
 
 #[derive(Parser)]

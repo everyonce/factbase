@@ -24,11 +24,12 @@ pub use args::ScanArgs;
 
 use super::{parse_since, resolve_repos, setup_embedding_with_timeout};
 use crate::commands::setup::Setup;
-use factbase::{
-    config::validate_timeout, find_repo_for_path, format_json, full_scan, scan_all_repositories,
-    DocumentProcessor, FileWatcher, ProgressReporter, ScanContext, ScanCoordinator, ScanOptions,
-    Scanner,
-};
+use factbase::output::format_json;
+use factbase::processor::DocumentProcessor;
+use factbase::progress::ProgressReporter;
+use factbase::scanner::{ScanContext, ScanOptions, Scanner, full_scan, scan_all_repositories};
+use factbase::watcher::{FileWatcher, ScanCoordinator, find_repo_for_path};
+use factbase::config::validate_timeout;
 use prune::cmd_scan_prune;
 use stats::{cmd_scan_check, cmd_scan_stats_only};
 use std::io::{self, IsTerminal};
@@ -161,7 +162,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         db.set_embedding_info(&config.embedding.model, provider_dim)?;
     }
 
-    let link_detector = factbase::LinkDetector::new();
+    let link_detector = factbase::link_detection::LinkDetector::new();
 
     let batch_size = args
         .batch_size
@@ -171,7 +172,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
     if batch_size > 100 && !quiet {
         eprintln!(
             "{}",
-            factbase::format_warning(&format!(
+            factbase::error::format_warning(&format!(
                 "Large batch size ({batch_size}) may increase memory usage significantly"
             ))
         );

@@ -6,7 +6,8 @@ use super::{
 };
 use crate::commands::setup::Setup;
 use chrono::{DateTime, Utc};
-use factbase::{ContentSearchParams, ProgressReporter};
+use factbase::database::ContentSearchParams;
+use factbase::progress::ProgressReporter;
 use regex::RegexBuilder;
 use serde::Serialize;
 

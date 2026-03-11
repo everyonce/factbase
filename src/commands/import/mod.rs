@@ -19,7 +19,7 @@ pub use args::ImportArgs;
 
 use super::{validate_file_path};
 use crate::commands::setup::Setup;
-use factbase::ProgressReporter;
+use factbase::progress::ProgressReporter;
 use formats::{import_directory, import_json};
 
 #[cfg(feature = "compression")]

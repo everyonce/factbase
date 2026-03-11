@@ -21,10 +21,15 @@
 //! ```
 
 use super::errors::db_not_found_error;
-use factbase::{
-    CachedEmbedding, Config, Database, EmbeddingProvider,
-    OllamaEmbedding, PersistentCachedEmbedding, Repository,
+use factbase::config::Config;
+use factbase::database::Database;
+use factbase::embedding::{
+    CachedEmbedding,
+    EmbeddingProvider,
+    OllamaEmbedding,
+    PersistentCachedEmbedding,
 };
+use factbase::models::Repository;
 use std::path::PathBuf;
 
 // ---------------------------------------------------------------------------
@@ -202,7 +207,7 @@ pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database
     std::fs::create_dir_all(&factbase_dir)?;
     let perspective_path = dir.join("perspective.yaml");
     if !perspective_path.exists() {
-        std::fs::write(&perspective_path, factbase::PERSPECTIVE_TEMPLATE)?;
+        std::fs::write(&perspective_path, factbase::models::PERSPECTIVE_TEMPLATE)?;
     }
     let config = Config::load(None)?;
     let db_path = factbase_dir.join("factbase.db");
@@ -257,7 +262,7 @@ pub async fn setup_embedding_with_timeout(
         #[cfg(feature = "local-embedding")]
         "local" => {
             eprintln!("Using local CPU embeddings (BGE-small-en-v1.5, 384-dim)");
-            match factbase::LocalEmbeddingProvider::new(true) {
+            match factbase::local_embedding::LocalEmbeddingProvider::new(true) {
                 Ok(provider) => Box::new(provider),
                 Err(e) => {
                     eprintln!("error: Failed to initialize local embedding provider: {e}");
@@ -337,7 +342,7 @@ pub async fn setup_cached_embedding(
 mod tests {
     use super::*;
     use factbase::config::EmbeddingConfig;
-    use factbase::EmbeddingProvider;
+    use factbase::embedding::EmbeddingProvider;
 
     fn test_config() -> Config {
         let config = Config::default();
@@ -367,7 +372,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_setup_link_detector_no_llm_needed() {
-        let _detector = factbase::LinkDetector::new();
+        let _detector = factbase::link_detection::LinkDetector::new();
     }
 
     #[test]

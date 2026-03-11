@@ -1,5 +1,6 @@
 use clap::Parser;
-use factbase::{format_json, Config};
+use factbase::config::Config;
+use factbase::output::format_json;
 
 #[derive(Parser)]
 #[command(

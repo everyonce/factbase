@@ -35,16 +35,16 @@ pub mod local_embedding;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod models;
-pub(crate) mod ollama;
+pub mod ollama;
 pub mod organize;
 pub mod output;
-pub(crate) mod patterns;
+pub mod patterns;
 pub mod processor;
 pub mod progress;
 pub mod question_generator;
 pub mod scanner;
 pub mod services;
-pub(crate) mod shutdown;
+pub mod shutdown;
 pub mod watcher;
 pub(crate) mod write_guard;
 #[cfg(feature = "web")]
@@ -93,6 +93,12 @@ pub fn ensure_gitignore(repo_root: &std::path::Path) -> std::io::Result<Vec<&'st
 pub(crate) type BoxFuture<'a, T> =
     std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
+// ── Deprecated flat re-exports ──────────────────────────────────────────────
+// All callers have been migrated to qualified paths (e.g., factbase::processor::parse_review_queue).
+// These re-exports are kept only for backward compatibility with external consumers.
+// Do NOT add new re-exports here. Use qualified paths in new code.
+
+#[deprecated(note = "use factbase::answer_processor::* directly")]
 pub use answer_processor::{
     apply_all::{apply_all_review_answers, ApplyConfig, ApplyDocResult, ApplyResult, ApplyStatus},
     apply_changes_to_section, apply_confirmations, apply_source_citations, classify_answer,
@@ -103,29 +109,42 @@ pub use answer_processor::{
     stamp_sequential_lines, uncheck_deferred_questions, AnswerType,
     ChangeInstruction, InterpretedAnswer,
 };
+#[deprecated(note = "use factbase::config::Config")]
 pub use config::Config;
+#[deprecated(note = "use factbase::config::prompts::*")]
 pub use config::prompts::{resolve_prompt, PromptsConfig};
+#[deprecated(note = "use factbase::config::workflows::*")]
 pub use config::workflows::{resolve_workflow_text, WorkflowsConfig};
+#[deprecated(note = "use factbase::database::{ContentSearchParams, Database}")]
 pub use database::{ContentSearchParams, Database};
+#[deprecated(note = "use factbase::embedding::*")]
 pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding};
 #[cfg(feature = "local-embedding")]
+#[deprecated(note = "use factbase::local_embedding::LocalEmbeddingProvider")]
 pub use local_embedding::LocalEmbeddingProvider;
+#[deprecated(note = "use factbase::embeddings_io::*")]
 pub use embeddings_io::{
     embeddings_status, export_embeddings, export_embeddings_to_file, import_embeddings,
     import_embeddings_from_file, EmbeddingExportHeader, EmbeddingRecord, EmbeddingsStatusInfo,
     FactEmbeddingRecord, ImportResult, FORMAT_VERSION as EMBEDDING_FORMAT_VERSION,
 };
+#[deprecated(note = "use factbase::error::*")]
 pub use error::{format_user_error, format_warning, repo_not_found, FactbaseError};
+#[deprecated(note = "use factbase::link_detection::*")]
 pub use link_detection::{DetectedLink, LinkDetector};
 #[cfg(feature = "mcp")]
+#[deprecated(note = "use factbase::mcp::McpServer")]
 pub use mcp::McpServer;
+#[deprecated(note = "use factbase::models::*")]
 pub use models::{
     load_perspective_from_file, normalize_pair, ContentMatch, ContentSearchResult, DetailedStats,
     Document, FormatConfig, IdPlacement, Link, LinkStyle, PoolStats, QuestionType, RepoStats,
     Repository, ResolvedFormat, ReviewQuestion, ScanResult, ScanStats, SearchResult, SourceStats,
     TemporalStats, TemporalTagType, PERSPECTIVE_TEMPLATE,
 };
+#[deprecated(note = "use factbase::ollama::create_http_client")]
 pub use ollama::create_http_client;
+#[deprecated(note = "use factbase::organize::*")]
 pub use organize::{
     assess_staleness, cleanup, cosine_similarity, create_snapshot, detect_duplicate_entries,
     detect_ghost_files, detect_merge_candidates, detect_misplaced, detect_split_candidates,
@@ -136,13 +155,16 @@ pub use organize::{
     SplitCandidate, SplitPlan, SplitResult, SplitSection, StaleDuplicate, SuggestedEntity,
     TemporalIssue, VerificationResult,
 };
+#[deprecated(note = "use factbase::output::*")]
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
+#[deprecated(note = "use factbase::patterns::*")]
 pub use patterns::{
     content_body, convert_inline_reviewed_to_frontmatter, extract_frontmatter_reviewed_date,
     extract_reviewed_date, is_reference_doc, set_frontmatter_reviewed_date,
     strip_reviewed_markers, FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER,
     WIKILINK_REGEX,
 };
+#[deprecated(note = "use factbase::processor::*")]
 pub use processor::{
     append_links_to_content, append_referenced_by_to_content,
     append_referenced_by_to_content_styled, append_review_questions,
@@ -160,9 +182,13 @@ pub use processor::{
     build_document_header, format_link, format_references_line, wikilink_path,
     DocumentProcessor,
 };
+#[deprecated(note = "use factbase::progress::*")]
 pub use progress::{ProgressReporter, ProgressSender};
+#[deprecated(note = "use factbase::question_generator::check::VocabCandidate")]
 pub use question_generator::check::VocabCandidate;
+#[deprecated(note = "use factbase::question_generator::cross_validate::make_pair_id")]
 pub use question_generator::cross_validate::make_pair_id;
+#[deprecated(note = "use factbase::question_generator::*")]
 pub use question_generator::{
     collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question, extract_defined_terms, is_glossary_doc, is_glossary_doc_with_types,
     filter_sequential_conflicts, generate_ambiguous_questions,
@@ -172,10 +198,14 @@ pub use question_generator::{
     generate_source_quality_questions, generate_weak_source_questions,
     generate_stale_questions, generate_temporal_questions,
 };
+#[deprecated(note = "use factbase::scanner::*")]
 pub use scanner::{full_scan, run_fact_embedding_phase, scan_all_repositories, FactEmbeddingInput, FactEmbeddingOutput, ScanContext, ScanOptions, Scanner};
+#[deprecated(note = "use factbase::shutdown::init_shutdown_handler")]
 pub use shutdown::init_shutdown_handler;
+#[deprecated(note = "use factbase::watcher::*")]
 pub use watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
 #[cfg(feature = "web")]
+#[deprecated(note = "use factbase::web::start_web_server")]
 pub use web::start_web_server;
 
 #[cfg(test)]

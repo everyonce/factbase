@@ -1,7 +1,7 @@
 //! Auto-fix logic for doctor command.
 
 use anyhow::{bail, Context};
-use factbase::Config;
+use factbase::config::Config;
 use std::fs;
 use std::process::Command;
 

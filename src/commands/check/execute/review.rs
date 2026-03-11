@@ -8,7 +8,9 @@ use crate::commands::check::output::{ExportedDocQuestions, ExportedQuestion};
 use crate::commands::check::review::{
     add_duplicate_questions, generate_and_prune, ReviewConfig,
 };
-use factbase::{append_review_questions, Database, Document, Repository};
+use factbase::database::Database;
+use factbase::models::{Document, Repository};
+use factbase::processor::append_review_questions;
 use glob::Pattern;
 use std::fs;
 use std::path::Path;
@@ -103,8 +105,8 @@ pub fn generate_review_questions(
     // Add title-based duplicate questions
     for (other_id, other_title) in title_duplicates {
         if *other_id != doc.id {
-            questions_to_add.push(factbase::ReviewQuestion::new(
-                factbase::QuestionType::Duplicate,
+            questions_to_add.push(factbase::models::ReviewQuestion::new(
+                factbase::models::QuestionType::Duplicate,
                 None,
                 format!("Same title as \"{other_title}\" [{other_id}] — are these the same entity?"),
             ));

@@ -3,7 +3,8 @@
 //! Handles filtering documents by modification time and tracking last lint timestamps.
 
 use chrono::{DateTime, Utc};
-use factbase::{Database, Document, Repository};
+use factbase::database::Database;
+use factbase::models::{Document, Repository};
 use std::fs;
 use std::path::Path;
 use tracing::info;

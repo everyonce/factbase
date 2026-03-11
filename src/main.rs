@@ -162,11 +162,11 @@ async fn async_main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     // Initialize graceful shutdown handler for Ctrl+C
-    factbase::init_shutdown_handler();
+    factbase::shutdown::init_shutdown_handler();
 
     // Set global no-color flag if --no-color was passed
     if cli.no_color {
-        factbase::set_no_color(true);
+        factbase::output::set_no_color(true);
     }
 
     // Determine log level: --log-level takes precedence, then -v flags, then default

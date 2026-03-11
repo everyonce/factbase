@@ -1,6 +1,6 @@
 use super::{setup::Setup, utils::print_output, OutputFormat};
 use clap::Parser;
-use factbase::format_bytes;
+use factbase::output::format_bytes;
 use serde::Serialize;
 use std::fs;
 

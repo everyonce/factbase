@@ -2,7 +2,11 @@
 //!
 //! Contains `cmd_scan_stats_only` and `cmd_scan_check` functions.
 
-use factbase::{format_bytes, format_json, Config, Database, Repository, Scanner};
+use factbase::config::Config;
+use factbase::database::Database;
+use factbase::models::Repository;
+use factbase::output::{format_bytes, format_json};
+use factbase::scanner::Scanner;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::ffi::OsStr;

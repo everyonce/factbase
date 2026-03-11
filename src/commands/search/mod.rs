@@ -22,10 +22,16 @@ use crate::commands::{filter_by_excluded_types, setup_cached_embedding};
 use crate::commands::setup::Setup;
 use crate::commands::watch_helper::{run_async_watch_loop, WatchContext};
 use crate::commands::resolve_repos;
-use factbase::{
-    calculate_recency_boost, config::validate_timeout, format_json, overlaps_point, overlaps_range,
-    parse_temporal_tags, EmbeddingProvider, TemporalTagType,
+use factbase::embedding::EmbeddingProvider;
+use factbase::models::TemporalTagType;
+use factbase::output::format_json;
+use factbase::processor::{
+    calculate_recency_boost,
+    overlaps_point,
+    overlaps_range,
+    parse_temporal_tags,
 };
+use factbase::config::validate_timeout;
 use output::{
     compute_search_summary, print_compact_results, print_detailed_results, print_search_summary,
 };
@@ -280,7 +286,7 @@ pub(crate) async fn run_single_search(args: &SearchArgs) -> anyhow::Result<()> {
 
 #[cfg(test)]
 pub(crate) mod tests {
-    use factbase::SearchResult;
+    use factbase::models::SearchResult;
     use std::cmp::Ordering;
 
     pub(crate) fn make_result(id: &str, title: &str, doc_type: Option<&str>, score: f32) -> SearchResult {

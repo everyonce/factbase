@@ -2,7 +2,9 @@
 //!
 //! Contains `cmd_scan_prune` for removing orphaned database entries.
 
-use factbase::{format_json, Database, Repository};
+use factbase::database::Database;
+use factbase::models::Repository;
+use factbase::output::format_json;
 use serde::Serialize;
 use std::path::Path;
 
@@ -174,7 +176,7 @@ pub(super) fn cmd_scan_prune(
 mod tests {
     use super::*;
     use factbase::models::Document;
-    use factbase::Database;
+    use factbase::database::Database;
     use tempfile::TempDir;
 
     fn test_db() -> (Database, TempDir) {

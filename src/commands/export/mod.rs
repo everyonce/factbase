@@ -23,7 +23,7 @@ pub use args::ExportArgs;
 
 use super::setup::Setup;
 use super::paths::ends_with_ext;
-use factbase::ProgressReporter;
+use factbase::progress::ProgressReporter;
 
 /// Determine if the output path represents a single file (vs directory)
 pub fn is_single_file_output(path: &str) -> bool {

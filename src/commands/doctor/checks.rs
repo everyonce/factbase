@@ -1,6 +1,6 @@
 //! Health check functions for doctor command.
 
-use factbase::Config;
+use factbase::config::Config;
 use reqwest::Client;
 use serde::Serialize;
 use std::path::Path;

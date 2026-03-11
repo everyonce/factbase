@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use factbase::{parse_source_references, parse_temporal_tags, Database, Link, SearchResult};
+use factbase::database::Database;
+use factbase::models::{Link, SearchResult};
+use factbase::processor::{parse_source_references, parse_temporal_tags};
 
 /// Parsed filter expression for document metadata filtering.
 ///
@@ -86,21 +88,21 @@ pub fn matches_filter(
         FilterExpr::LinksGreaterThan(n) => {
             let count = outgoing_links.map_or_else(
                 || db.get_links_from(&result.id).unwrap_or_default().len(),
-                <[factbase::Link]>::len,
+                <[factbase::models::Link]>::len,
             );
             count > *n
         }
         FilterExpr::LinksLessThan(n) => {
             let count = outgoing_links.map_or_else(
                 || db.get_links_from(&result.id).unwrap_or_default().len(),
-                <[factbase::Link]>::len,
+                <[factbase::models::Link]>::len,
             );
             count < *n
         }
         FilterExpr::LinksEquals(n) => {
             let count = outgoing_links.map_or_else(
                 || db.get_links_from(&result.id).unwrap_or_default().len(),
-                <[factbase::Link]>::len,
+                <[factbase::models::Link]>::len,
             );
             count == *n
         }
