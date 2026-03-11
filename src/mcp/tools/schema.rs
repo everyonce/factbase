@@ -113,7 +113,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
                 "entity_types": { "type": "string", "description": "For create: optional comma-separated entity types (e.g. 'species, habitats, researchers')" },
                 "path": { "type": "string", "description": "For create: directory path for the new repository" },
                 "topic": { "type": "string", "description": "For add: what to research (triggers ingest mode)" },
-                "doc_type": { "type": "string", "description": "For add/refresh: document type to focus on" },
+                "doc_type": { "type": "string", "description": "For add/refresh/resolve: document type to focus on" },
                 "doc_id": { "type": "string", "description": "For add: document ID to improve. For refresh: specific document to refresh." },
                 "correction": { "type": "string", "description": "For correct: free text describing what is wrong and what the true fact is." },
                 "change": { "type": "string", "description": "For transition: what changed — free text (e.g. 'XSOLIS renamed to PRIMA-X as of today')." },
