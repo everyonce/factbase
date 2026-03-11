@@ -21,6 +21,8 @@ pub enum ConflictPattern {
     SameEntityTransition,
     /// Overlap is small relative to the spans — likely date-source imprecision.
     DateImprecision,
+    /// Two point-in-time facts at the same date describing different events in a timeline.
+    Sequential,
     /// No recognized pattern — needs manual investigation.
     Unknown,
 }
@@ -31,6 +33,7 @@ impl ConflictPattern {
             Self::ParallelOverlap => "parallel_overlap",
             Self::SameEntityTransition => "same_entity_transition",
             Self::DateImprecision => "date_imprecision",
+            Self::Sequential => "sequential",
             Self::Unknown => "unknown",
         }
     }
@@ -40,6 +43,7 @@ impl ConflictPattern {
             Self::ParallelOverlap => "Overlapping facts about different entities that may legitimately coexist. If both are valid parallel facts, answer: 'Not a conflict: parallel overlap' and mark both facts with <!-- reviewed:YYYY-MM-DD -->.",
             Self::SameEntityTransition => "Overlapping facts about the same entity where one likely supersedes the other. If sequential progression, answer: 'Not a conflict: transition — [earlier fact] ended when [later fact] began' and adjust the end date of the earlier entry.",
             Self::DateImprecision => "Overlap is small relative to the date ranges — likely imprecision from the data source. If the facts are clearly sequential, answer: 'Not a conflict: date imprecision — adjust [fact] end date to [date]'.",
+            Self::Sequential => "Two events at the same date that describe different steps in a timeline. If both are valid sequential events, answer: 'Not a conflict: sequential events'.",
             Self::Unknown => "Investigate which fact is current.",
         }
     }
@@ -122,6 +126,7 @@ struct FactWithRange {
     start_date: Option<String>,
     end_date: Option<String>,
     is_ongoing: bool,
+    is_point_in_time: bool,
 }
 
 /// Filter out conflict questions whose referenced line participates in a
@@ -159,6 +164,7 @@ pub fn filter_sequential_conflicts(
             };
             if is_boundary_month_sequential(s1, e1, s2, e2)
                 || is_shared_entity_sequential(&f1.text, &f2.text, s1, s2)
+                || is_same_date_sequential(f1, f2)
             {
                 sequential_lines.insert(f1.line_number);
                 sequential_lines.insert(f2.line_number);
@@ -249,8 +255,8 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
             .collect();
 
         // Extract the best range from tags
-        let (start_date, end_date, is_ongoing) = if line_tags.is_empty() {
-            (None, None, false)
+        let (start_date, end_date, is_ongoing, is_point_in_time) = if line_tags.is_empty() {
+            (None, None, false, false)
         } else {
             // Prefer Range/Ongoing tags, fall back to PointInTime/LastSeen as single-point ranges
             let tag = line_tags
@@ -275,15 +281,20 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
             let Some(tag) = tag else { continue };
 
             let is_ongoing = matches!(tag.tag_type, crate::models::TemporalTagType::Ongoing);
+            let is_pit = matches!(
+                tag.tag_type,
+                crate::models::TemporalTagType::PointInTime
+                    | crate::models::TemporalTagType::LastSeen
+            );
 
             match tag.tag_type {
                 crate::models::TemporalTagType::PointInTime
                 | crate::models::TemporalTagType::LastSeen => {
                     // Treat as a single-point range: start == end
                     let date = tag.start_date.clone();
-                    (date.clone(), date, false)
+                    (date.clone(), date, false, is_pit)
                 }
-                _ => (tag.start_date.clone(), tag.end_date.clone(), is_ongoing),
+                _ => (tag.start_date.clone(), tag.end_date.clone(), is_ongoing, false),
             }
         };
 
@@ -294,6 +305,7 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
             start_date,
             end_date,
             is_ongoing,
+            is_point_in_time,
         });
     }
 
@@ -353,6 +365,13 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
     // entire range.  An ongoing fact represents a persistent state; point events
     // or sub-ranges within it are definitionally parallel, not conflicts.
     if is_contained_in_ongoing(fact1, fact2, start1, end1, start2, end2) {
+        return None;
+    }
+
+    // Suppress when both facts are point-in-time events at the same date
+    // describing different events in a timeline.  Two things can happen in the
+    // same year without contradicting each other.
+    if is_same_date_sequential(fact1, fact2) {
         return None;
     }
 
@@ -478,6 +497,30 @@ fn dates_within_one_month(date_a: &str, date_b: &str) -> bool {
     let months1 = y1 * 12 + m1;
     let months2 = y2 * 12 + m2;
     (months1 - months2).abs() <= 1
+}
+
+/// Returns true when both facts are point-in-time events at the same date
+/// and describe different events (no shared significant words).  Multiple
+/// events can occur at the same date without contradicting each other —
+/// e.g. "shepherd threw stone" and "scrolls sold" both in 1947.
+///
+/// Facts that share significant words (suggesting they describe the same
+/// entity or attribute) are NOT suppressed — those may genuinely conflict.
+fn is_same_date_sequential(fact1: &FactWithRange, fact2: &FactWithRange) -> bool {
+    // Both must be point-in-time (not ranges or ongoing)
+    if !fact1.is_point_in_time || !fact2.is_point_in_time {
+        return false;
+    }
+    // Must have the same date
+    let (Some(s1), Some(s2)) = (fact1.start_date.as_deref(), fact2.start_date.as_deref()) else {
+        return false;
+    };
+    if normalize_date_for_comparison(s1) != normalize_date_for_comparison(s2) {
+        return false;
+    }
+    // If they share significant words, they may describe the same entity/attribute
+    // and could genuinely conflict
+    !has_shared_significant_word(&fact1.text, &fact2.text)
 }
 
 /// Returns true when two date ranges are sequential with at most a boundary-month
@@ -881,9 +924,10 @@ mod tests {
 
     #[test]
     fn test_two_point_in_time_same_date_conflict() {
+        // Different entities at the same point-in-time are sequential, not conflicts
         let content = "# Person\n\n- CTO at Acme @t[=2023]\n- CEO at BigCo @t[=2023]";
         let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
+        assert!(questions.is_empty());
     }
 
     #[test]
@@ -1344,10 +1388,74 @@ mod tests {
         assert_eq!(ConflictPattern::ParallelOverlap.tag(), "parallel_overlap");
         assert_eq!(ConflictPattern::SameEntityTransition.tag(), "same_entity_transition");
         assert_eq!(ConflictPattern::DateImprecision.tag(), "date_imprecision");
+        assert_eq!(ConflictPattern::Sequential.tag(), "sequential");
         assert_eq!(ConflictPattern::Unknown.tag(), "unknown");
-        for p in [ConflictPattern::ParallelOverlap, ConflictPattern::SameEntityTransition, ConflictPattern::DateImprecision, ConflictPattern::Unknown] {
+        for p in [ConflictPattern::ParallelOverlap, ConflictPattern::SameEntityTransition, ConflictPattern::DateImprecision, ConflictPattern::Sequential, ConflictPattern::Unknown] {
             assert!(!p.hint().is_empty());
         }
     }
 
+    // --- same-date sequential (point-in-time timeline) tests ---
+
+    #[test]
+    fn test_same_date_sequential_different_events_suppressed() {
+        // Two different events in the same year — sequential, not conflict
+        let content = "# Dead Sea Scrolls\n\n## Discovery\n\
+            - Bedouin shepherd threw stone into cave @t[=1947]\n\
+            - Scrolls sold to antiquities dealer @t[=1947]";
+        assert!(generate_conflict_questions(content).is_empty());
+    }
+
+    #[test]
+    fn test_same_date_sequential_multiple_events_suppressed() {
+        // Multiple sequential events at the same date
+        let content = "# Event\n\n## Timeline\n\
+            - Phase one began @t[=2020]\n\
+            - Construction completed @t[=2020]\n\
+            - Grand opening held @t[=2020]";
+        assert!(generate_conflict_questions(content).is_empty());
+    }
+
+    #[test]
+    fn test_same_date_shared_word_still_conflicts() {
+        // Same date, shared significant word — could be contradictory
+        let content = "# Entity\n\n\
+            - Population of Springfield reached 5000 @t[=2020]\n\
+            - Population of Springfield was 3000 @t[=2020]";
+        assert_eq!(generate_conflict_questions(content).len(), 1);
+    }
+
+    #[test]
+    fn test_same_date_range_not_suppressed() {
+        // Ranges (not point-in-time) at the same date should still conflict
+        let content = "# Entity\n\n\
+            - CTO at Acme @t[2020..2020]\n\
+            - CEO at BigCo @t[2020..2020]";
+        assert_eq!(generate_conflict_questions(content).len(), 1);
+    }
+
+    #[test]
+    fn test_same_date_sequential_different_dates_not_applicable() {
+        // Different point-in-time dates — normal overlap rules apply
+        let content = "# Entity\n\n\
+            - Event A @t[=2020]\n\
+            - Event B @t[=2021]";
+        // Different dates, no overlap
+        assert!(generate_conflict_questions(content).is_empty());
+    }
+
+    #[test]
+    fn test_filter_sequential_catches_same_date_events() {
+        // filter_sequential_conflicts should also catch same-date sequential
+        let content = "# Entity\n\n## Timeline\n\
+            - Shepherd threw stone into cave @t[=1947]\n\
+            - Scrolls sold to dealer @t[=1947]";
+        let mut questions = vec![
+            ReviewQuestion::new(QuestionType::Conflict, Some(4), "Cross-check: threw stone".to_string()),
+            ReviewQuestion::new(QuestionType::Stale, Some(4), "Stale fact".to_string()),
+        ];
+        filter_sequential_conflicts(content, &mut questions);
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].question_type, QuestionType::Stale);
+    }
 }
