@@ -724,3 +724,535 @@ pub async fn scan_all_repositories(
 
     Ok(total)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::test_db;
+    use crate::embedding::test_helpers::MockEmbedding;
+    use crate::models::Repository;
+    use crate::scanner::options::ScanOptions;
+    use crate::ProgressReporter;
+    use std::collections::HashSet;
+    use tempfile::TempDir;
+
+    /// Create a repo dir with perspective.yaml and register it in the DB.
+    fn setup_repo(db: &Database) -> (TempDir, Repository) {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "name: test\ndescription: test repo\n",
+        )
+        .unwrap();
+        let repo = Repository {
+            id: "test".into(),
+            name: "test".into(),
+            path: tmp.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        (tmp, repo)
+    }
+
+    fn scan_ctx<'a>(
+        scanner: &'a super::super::Scanner,
+        processor: &'a DocumentProcessor,
+        embedding: &'a dyn EmbeddingProvider,
+        link_detector: &'a LinkDetector,
+        opts: &'a ScanOptions,
+        progress: &'a ProgressReporter,
+    ) -> ScanContext<'a> {
+        ScanContext {
+            scanner,
+            processor,
+            embedding,
+            link_detector,
+            opts,
+            progress,
+        }
+    }
+
+    // ── pre_read_files ──
+
+    #[test]
+    fn test_pre_read_files_reads_content_and_hash() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("doc.md");
+        std::fs::write(&p, "<!-- factbase:abc123 -->\n# Hello").unwrap();
+
+        let results = pre_read_files(vec![p]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.is_ok());
+        assert!(results[0].hash.is_some());
+        assert_eq!(results[0].existing_id.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn test_pre_read_files_no_id() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("doc.md");
+        std::fs::write(&p, "# No ID").unwrap();
+
+        let results = pre_read_files(vec![p]);
+        assert_eq!(results[0].existing_id, None);
+        assert!(results[0].hash.is_some());
+    }
+
+    #[test]
+    fn test_pre_read_files_nonexistent() {
+        let results = pre_read_files(vec![PathBuf::from("/nonexistent/file.md")]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.is_err());
+        assert!(results[0].hash.is_none());
+        assert!(results[0].existing_id.is_none());
+    }
+
+    #[test]
+    fn test_pre_read_files_multiple() {
+        let tmp = TempDir::new().unwrap();
+        let p1 = tmp.path().join("a.md");
+        let p2 = tmp.path().join("b.md");
+        std::fs::write(&p1, "# A").unwrap();
+        std::fs::write(&p2, "# B").unwrap();
+
+        let results = pre_read_files(vec![p1, p2]);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| r.content.is_ok()));
+    }
+
+    #[test]
+    fn test_pre_read_files_modified_at() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("doc.md");
+        std::fs::write(&p, "# Doc").unwrap();
+
+        let results = pre_read_files(vec![p]);
+        assert!(results[0].modified_at.is_some());
+    }
+
+    // ── check_duplicates ──
+
+    #[test]
+    fn test_check_duplicates_empty_set() {
+        let (db, _tmp) = test_db();
+        let changed = HashSet::new();
+        let result = check_duplicates(&db, &changed).unwrap();
+        assert!(result.is_empty());
+    }
+
+    // ── full_scan: new file detection ──
+
+    #[tokio::test]
+    async fn test_full_scan_detects_new_files() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# New Doc\n\nSome content.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(result.added, 1);
+        assert_eq!(result.total, 1);
+        assert_eq!(result.deleted, 0);
+        assert_eq!(result.unchanged, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_unchanged_on_rescan() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        // First scan — adds file and injects ID header into the file
+        let r1 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r1.added, 1);
+
+        // Second scan — file was modified by ID injection, so it's "updated"
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.updated, 1);
+
+        // Third scan — now truly unchanged
+        let r3 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r3.added, 0);
+        assert_eq!(r3.unchanged, 1);
+        assert_eq!(r3.updated, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_detects_modified_file() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, "# Doc\n\nOriginal.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Read back the file (now has injected ID) and modify content
+        let content = std::fs::read_to_string(&path).unwrap();
+        let modified = content.replace("Original.", "Modified content.");
+        std::fs::write(&path, modified).unwrap();
+
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.updated, 1);
+        assert_eq!(r2.added, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_detects_deleted_file() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        full_scan(&repo, &db, &ctx).await.unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.deleted, 1);
+        assert_eq!(r2.added, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_skips_dot_directories() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("visible.md"), "# Visible").unwrap();
+        std::fs::create_dir(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join(".git/hidden.md"), "# Hidden").unwrap();
+        std::fs::create_dir(tmp.path().join(".kiro")).unwrap();
+        std::fs::write(tmp.path().join(".kiro/task.md"), "# Task").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(result.added, 1, "Only visible.md should be indexed");
+        assert_eq!(result.total, 1);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_resume_with_file_offset() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        for i in 0..5 {
+            std::fs::write(
+                tmp.path().join(format!("doc{i}.md")),
+                format!("# Doc {i}\n\nContent {i}."),
+            )
+            .unwrap();
+        }
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            file_offset: 3,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        // With offset 3, only 2 of 5 files should be processed
+        assert_eq!(result.added, 2);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_dry_run_no_db_writes() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            dry_run: true,
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(result.added, 1);
+
+        // DB should have no documents
+        let docs = db.get_documents_for_repo("test").unwrap();
+        assert!(docs.is_empty(), "dry_run should not write to DB");
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_malformed_file_skipped() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        // Write a valid file
+        std::fs::write(tmp.path().join("good.md"), "# Good\n\nContent.").unwrap();
+        // Write a binary/unreadable file with .md extension — create a dir with .md name
+        // to simulate an unreadable file, use a symlink to nowhere
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/nonexistent/path", tmp.path().join("bad.md")).unwrap();
+        }
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        // Good file should be indexed, bad file skipped without crash
+        assert_eq!(result.added, 1);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_multiple_files() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::create_dir(tmp.path().join("topics")).unwrap();
+        std::fs::write(tmp.path().join("topics/alpha.md"), "# Alpha\n\nAlpha content.").unwrap();
+        std::fs::write(tmp.path().join("topics/beta.md"), "# Beta\n\nBeta content.").unwrap();
+        std::fs::write(tmp.path().join("root.md"), "# Root\n\nRoot content.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(result.added, 3);
+        assert_eq!(result.total, 3);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_skip_embeddings_mode() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            skip_embeddings: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(result.added, 1);
+        assert!(result.embeddings_skipped);
+
+        // Document should still be in DB
+        let docs = db.get_documents_for_repo("test").unwrap();
+        assert_eq!(docs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_force_reindex() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        // First scan
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Second scan to stabilize (ID injection changed the file)
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Third scan with force_reindex — content is now stable
+        let opts2 = ScanOptions {
+            skip_links: true,
+            force_reindex: true,
+            ..Default::default()
+        };
+        let ctx2 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts2, &progress);
+        let r3 = full_scan(&repo, &db, &ctx2).await.unwrap();
+        assert_eq!(r3.reindexed, 1);
+        assert_eq!(r3.added, 0);
+        assert_eq!(r3.unchanged, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_deadline_interrupts() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        for i in 0..10 {
+            std::fs::write(
+                tmp.path().join(format!("doc{i}.md")),
+                format!("# Doc {i}\n\nContent."),
+            )
+            .unwrap();
+        }
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        // Deadline already passed
+        let opts = ScanOptions {
+            skip_links: true,
+            deadline: Some(std::time::Instant::now() - std::time::Duration::from_secs(1)),
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert!(result.interrupted);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_temporal_stats_collected() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(
+            tmp.path().join("doc.md"),
+            "# Doc\n\n- Fact one @t[2024-01]\n- Fact two\n",
+        )
+        .unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        let ts = result.temporal_stats.unwrap();
+        assert_eq!(ts.total_facts, 2);
+        assert_eq!(ts.facts_with_tags, 1);
+        assert!(ts.coverage > 0.0 && ts.coverage < 1.0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_empty_repo() {
+        let (db, _db_tmp) = test_db();
+        let (_, repo) = setup_repo(&db);
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(result.total, 0);
+        assert_eq!(result.added, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_file_offset_beyond_total() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            file_offset: 100,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+        // All files skipped
+        assert_eq!(result.added, 0);
+    }
+}

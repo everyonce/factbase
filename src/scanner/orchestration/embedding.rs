@@ -208,3 +208,176 @@ pub async fn run_embedding_phase(
         interrupted,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::test_db;
+    use crate::embedding::test_helpers::MockEmbedding;
+    use crate::models::Repository;
+    use crate::ProgressReporter;
+    use std::path::PathBuf;
+
+    fn make_pending(id: &str, content: &str, path: PathBuf) -> PendingDoc {
+        PendingDoc {
+            id: id.into(),
+            content: content.into(),
+            relative: path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            hash: crate::processor::content_hash(content),
+            title: format!("Title {id}"),
+            doc_type: "document".into(),
+            path,
+        }
+    }
+
+    fn setup_repo(db: &Database) {
+        let repo = Repository {
+            id: "test".into(),
+            name: "test".into(),
+            path: PathBuf::from("/tmp/test"),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_embedding_phase_empty() {
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        let output = run_embedding_phase(EmbeddingPhaseInput {
+            pending: vec![],
+            repo_id: "test",
+            embedding: &embedding,
+            db: &db,
+            chunk_size: 100_000,
+            chunk_overlap: 2_000,
+            embedding_batch_size: 10,
+            show_progress: false,
+            verbose: false,
+            collect_stats: false,
+            progress: &progress,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output.docs_embedded, 0);
+        assert_eq!(output.embedding_ms, 0);
+        assert!(!output.interrupted);
+    }
+
+    #[tokio::test]
+    async fn test_embedding_phase_single_doc() {
+        let (db, _tmp) = test_db();
+        setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, "# Doc\n\nShort content.").unwrap();
+
+        let pending = vec![make_pending("aaa111", "# Doc\n\nShort content.", path)];
+
+        let output = run_embedding_phase(EmbeddingPhaseInput {
+            pending,
+            repo_id: "test",
+            embedding: &embedding,
+            db: &db,
+            chunk_size: 100_000,
+            chunk_overlap: 2_000,
+            embedding_batch_size: 10,
+            show_progress: false,
+            verbose: false,
+            collect_stats: false,
+            progress: &progress,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output.docs_embedded, 1);
+        assert!(!output.interrupted);
+
+        // Verify document was stored in DB
+        let doc = db.get_document("aaa111").unwrap();
+        assert!(doc.is_some());
+        assert_eq!(doc.unwrap().title, "Title aaa111");
+    }
+
+    #[tokio::test]
+    async fn test_embedding_phase_multiple_docs() {
+        let (db, _tmp) = test_db();
+        setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut pending = Vec::new();
+        for i in 0..3 {
+            let path = tmp.path().join(format!("doc{i}.md"));
+            let content = format!("# Doc {i}\n\nContent {i}.");
+            std::fs::write(&path, &content).unwrap();
+            pending.push(make_pending(&format!("id{i:04}"), &content, path));
+        }
+
+        let output = run_embedding_phase(EmbeddingPhaseInput {
+            pending,
+            repo_id: "test",
+            embedding: &embedding,
+            db: &db,
+            chunk_size: 100_000,
+            chunk_overlap: 2_000,
+            embedding_batch_size: 10,
+            show_progress: false,
+            verbose: false,
+            collect_stats: false,
+            progress: &progress,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output.docs_embedded, 3);
+        assert!(!output.interrupted);
+    }
+
+    #[tokio::test]
+    async fn test_embedding_phase_collects_stats() {
+        let (db, _tmp) = test_db();
+        setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let progress = ProgressReporter::Silent;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, "# Doc\n\nContent.").unwrap();
+
+        let pending = vec![make_pending("aaa111", "# Doc\n\nContent.", path)];
+
+        let output = run_embedding_phase(EmbeddingPhaseInput {
+            pending,
+            repo_id: "test",
+            embedding: &embedding,
+            db: &db,
+            chunk_size: 100_000,
+            chunk_overlap: 2_000,
+            embedding_batch_size: 10,
+            show_progress: false,
+            verbose: false,
+            collect_stats: true,
+            progress: &progress,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output.docs_embedded, 1);
+        assert!(!output.file_timings.is_empty());
+    }
+}
