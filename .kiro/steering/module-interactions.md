@@ -120,7 +120,13 @@ src/
 │   ├── links.rs         # Links: block parsing and manipulation
 │   ├── stats.rs         # Fact statistics
 │   ├── sources.rs       # Source footnote parsing
-│   ├── review.rs        # Review queue parsing
+│   ├── review/          # Review queue handling (modular)
+│   │   ├── mod.rs       # Re-exports for backward compat
+│   │   ├── parse.rs     # parse_review_queue, extract_line_ref_and_strip, normalize_conflict_desc
+│   │   ├── callout.rs   # is_callout_review, unwrap_review_callout, wrap_review_callout
+│   │   ├── append.rs    # append_review_questions, merge_duplicate_review_sections, ensure/recover
+│   │   ├── normalize.rs # normalize_review_section, dedup_review_questions, strip_orphaned_*
+│   │   └── prune.rs     # prune_stale_questions, strip_answered_questions
 │   └── temporal/        # Temporal tag parsing
 │       ├── mod.rs
 │       ├── date.rs      # Date parsing
