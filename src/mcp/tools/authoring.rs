@@ -68,8 +68,11 @@ pub fn get_authoring_guide() -> Value {
                 "❌ WRONG — statuses inside tag": "@t[Active Production Status: Ongoing] @t[Critically Endangered]",
                 "❌ WRONG — statistics inside tag": "@t[Total Produced: 650+] @t[Population: 12000]",
                 "❌ WRONG — vague time words": "@t[seasonal] @t[since ancient times] @t[traditional..modern] @t[varies by region]",
+                "❌ WRONG — = prefix in ranges": "@t[=2020..=2024] @t[=-300..=200] — the = prefix is for SINGLE exact dates only, never in ranges",
                 "✅ CORRECT — dates only": "@t[=2024] @t[~2024] @t[1753..] @t[2020..2023] @t[?]",
-                "rule": "If it's not a year, month, day, quarter, or ?, it does NOT go inside @t[...]"
+                "✅ CORRECT — ranges": "@t[2020..2024] @t[-300..200] @t[-490..-479] — bare dates, no = prefix",
+                "✅ CORRECT — single exact dates with =": "@t[=2024-01-15] @t[=-480] @t[=331 BCE]",
+                "rule": "If it's not a year, month, day, quarter, or ?, it does NOT go inside @t[...]. The = prefix means 'exact date' and is ONLY for single dates — never use = inside ranges."
             },
             "granularity": "Year (2024), Quarter (2024-Q2), Month (2024-03), Day (2024-03-15)",
             "placement": "Place the @t[...] tag AFTER the fact text, BEFORE the source footnote: `- Fact description @t[~2024] [^1]`",
@@ -241,5 +244,14 @@ mod tests {
         assert!(errors_str.contains("Total Produced"), "missing statistic negative example");
         // Vague time words
         assert!(errors_str.contains("seasonal"), "missing vague time word negative example");
+        // Equals in ranges
+        assert!(errors_str.contains("@t[=2020..=2024]"), "missing equals-in-range negative example");
+    }
+
+    #[test]
+    fn test_authoring_guide_equals_range_rule() {
+        let guide = get_authoring_guide();
+        let rule = guide["temporal_tags"]["common_errors"]["rule"].as_str().unwrap();
+        assert!(rule.contains("ONLY for single dates"), "rule should explain = is for single dates only");
     }
 }

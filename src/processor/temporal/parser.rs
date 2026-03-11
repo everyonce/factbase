@@ -5,6 +5,19 @@ use crate::patterns::{pad_negative_year, MALFORMED_TAG_REGEX, TEMPORAL_TAG_FULL_
 use regex::Regex;
 use std::sync::LazyLock;
 
+/// Regex to strip `=` prefix from start of range tags: `@t[=XXX..YYY]` → `@t[XXX..YYY]`
+/// The `=` prefix means "exact date" and is only valid on single dates, not ranges.
+static RANGE_START_EQUALS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"@t\[=([^\]]+?\.\.[^\]]*)\]")
+        .expect("range start equals regex should compile")
+});
+
+/// Regex to strip `=` prefix from end of range tags: `@t[XXX..=YYY]` → `@t[XXX..YYY]`
+static RANGE_END_EQUALS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(@t\[[^\]]*)\.\.=([^\]]*\])")
+        .expect("range end equals regex should compile")
+});
+
 /// Regex to find range tags where the end date is missing the year (e.g., @t[2025-Q3..Q4])
 static SHORT_RANGE_END_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"@t\[((?:-\d{1,4}|\d{4}))(-(?:Q[1-4]|\d{2}(?:-\d{2})?))\.\.(Q[1-4]|\d{2}(?:-\d{2})?)\]")
@@ -23,13 +36,20 @@ static BCE_YEAR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Normalize shorthand temporal tags:
+/// - Equals in ranges: `@t[=2020..=2024]` → `@t[2020..2024]` (= is for single dates only)
 /// - Short range ends: `@t[2025-Q3..Q4]` → `@t[2025-Q3..2025-Q4]`
 /// - BCE notation: `@t[=331 BCE]` → `@t[=-331]`, `@t[490 BCE..479 BCE]` → `@t[-490..-479]`
 pub(crate) fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
-    let result = SHORT_RANGE_END_REGEX.replace_all(line, "@t[$1$2..$1-$3]");
+    // Strip = prefix from range tags (= is only valid on single dates)
+    let result = RANGE_START_EQUALS_REGEX.replace_all(line, "@t[$1]");
+    let result = RANGE_END_EQUALS_REGEX.replace_all(&result, "$1..$2");
+    let result = SHORT_RANGE_END_REGEX.replace_all(&result, "@t[$1$2..$1-$3]");
     // Convert BCE notation to negative years within @t[...] tags
     if !result.contains("BCE") {
-        return result;
+        if *result == *line {
+            return std::borrow::Cow::Borrowed(line);
+        }
+        return std::borrow::Cow::Owned(result.into_owned());
     }
     let converted = BCE_TAG_REGEX.replace_all(&result, |caps: &regex::Captures| {
         // Safe: group 0 always exists in regex captures
@@ -415,5 +435,100 @@ mod tests {
         assert!(!line_has_temporal_tag("- Fact @t[traditional..modern]"));
         assert!(!line_has_temporal_tag("- Fact @t[static]"));
         assert!(!line_has_temporal_tag("- No tag here"));
+    }
+
+    // --- Equals-in-range normalization tests ---
+
+    #[test]
+    fn test_normalize_equals_in_range_both() {
+        let line = "- Fact @t[=2020..=2024]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Fact @t[2020..2024]");
+    }
+
+    #[test]
+    fn test_normalize_equals_in_range_start_only() {
+        let line = "- Fact @t[=2020..2024]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Fact @t[2020..2024]");
+    }
+
+    #[test]
+    fn test_normalize_equals_in_range_end_only() {
+        let line = "- Fact @t[2020..=2024]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Fact @t[2020..2024]");
+    }
+
+    #[test]
+    fn test_normalize_equals_in_range_negative_years() {
+        let line = "- Wars @t[=-300..=200]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Wars @t[-300..200]");
+    }
+
+    #[test]
+    fn test_normalize_equals_in_range_both_negative() {
+        let line = "- Period @t[=-100..=-68]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Period @t[-100..-68]");
+    }
+
+    #[test]
+    fn test_normalize_equals_in_ongoing() {
+        let line = "- Since @t[=2020..]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Since @t[2020..]");
+    }
+
+    #[test]
+    fn test_normalize_equals_preserves_single_date() {
+        let line = "- Event @t[=2024-03]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Event @t[=2024-03]");
+    }
+
+    #[test]
+    fn test_normalize_equals_preserves_bce_single() {
+        let line = "- Battle @t[=-480]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- Battle @t[=-480]");
+    }
+
+    #[test]
+    fn test_equals_in_range_parses_correctly() {
+        let content = "- Period @t[=-300..=0200]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("-0300".to_string()));
+        assert_eq!(tags[0].end_date, Some("0200".to_string()));
+    }
+
+    #[test]
+    fn test_equals_in_range_both_negative_parses() {
+        let content = "- Period @t[=-100..=-68]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("-0100".to_string()));
+        assert_eq!(tags[0].end_date, Some("-0068".to_string()));
+    }
+
+    #[test]
+    fn test_equals_in_range_ce_parses() {
+        let content = "- Period @t[=2020..=2024]";
+        let tags = parse_temporal_tags(content);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].tag_type, TemporalTagType::Range);
+        assert_eq!(tags[0].start_date, Some("2020".to_string()));
+        assert_eq!(tags[0].end_date, Some("2024".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_equals_multiple_tags_on_line() {
+        let line = "- A @t[=2020..=2022] and B @t[=2023]";
+        let normalized = normalize_temporal_tags(line);
+        assert_eq!(normalized, "- A @t[2020..2022] and B @t[=2023]");
     }
 }
