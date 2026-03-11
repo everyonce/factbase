@@ -1,8 +1,7 @@
 use factbase::models::Repository;
 use factbase::output::{format_bytes, format_json};
-use factbase::{
-    calculate_fact_stats, count_facts_with_sources, DocumentProcessor, Scanner,
-};
+use factbase::processor::{DocumentProcessor, calculate_fact_stats, count_facts_with_sources};
+use factbase::scanner::Scanner;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::fs;

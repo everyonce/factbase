@@ -5,10 +5,10 @@ use super::super::{
 };
 use crate::commands::setup::Setup;
 use super::args::ReviewArgs;
-use factbase::{
-    apply_all_review_answers, config::validate_timeout, extract_inbox_blocks, ApplyConfig,
-    ApplyStatus, ProgressReporter,
-};
+use factbase::answer_processor::apply_all::{ApplyConfig, ApplyStatus, apply_all_review_answers};
+use factbase::answer_processor::inbox::extract_inbox_blocks;
+use factbase::progress::ProgressReporter;
+use factbase::config::validate_timeout;
 use std::fs;
 use std::path::Path;
 use tracing::error;
@@ -166,7 +166,7 @@ pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
                 }
             }
 
-            match factbase::apply_inbox_integration(&content, &blocks).await {
+            match factbase::answer_processor::inbox::apply_inbox_integration(&content, &blocks).await {
                 Ok(new_content) => {
                     if let Err(e) = write_file_safely(&abs_path, &new_content) {
                         inbox_errors += 1;
@@ -221,8 +221,8 @@ struct InboxDocument {
 
 /// Collect documents that contain inbox blocks.
 fn collect_inbox_documents(
-    db: &factbase::Database,
-    repos: &[factbase::Repository],
+    db: &factbase::database::Database,
+    repos: &[factbase::models::Repository],
     since_filter: Option<&chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<Vec<InboxDocument>> {
     use super::status::file_modified_since;

@@ -6,11 +6,13 @@ use crate::commands::utils::resolve_repos;
 use anyhow::Context;
 use clap::Parser;
 #[cfg(feature = "web")]
-use factbase::start_web_server;
-use factbase::{
-    find_repo_for_path, full_scan, Config, DocumentProcessor, FileWatcher, McpServer,
-    ProgressReporter, ScanContext, ScanCoordinator, ScanOptions, Scanner,
-};
+use factbase::web::start_web_server;
+use factbase::config::Config;
+use factbase::mcp::McpServer;
+use factbase::processor::DocumentProcessor;
+use factbase::progress::ProgressReporter;
+use factbase::scanner::{ScanContext, ScanOptions, Scanner, full_scan};
+use factbase::watcher::{FileWatcher, ScanCoordinator, find_repo_for_path};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tracing::{error, info};
@@ -58,7 +60,7 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
 
     let cached_embedding = setup_cached_embedding(&config, None, &db).await;
     let scan_embedding = setup_embedding(&config).await;
-    let link_detector = factbase::LinkDetector::new();
+    let link_detector = factbase::link_detection::LinkDetector::new();
 
     let mut watcher =
         FileWatcher::new(config.watcher.debounce_ms, &config.watcher.ignore_patterns)?;
@@ -180,10 +182,10 @@ async fn run_health_check(config: &Config) -> anyhow::Result<()> {
     let port = config.server.port;
     let url = format!("http://{host}:{port}/health");
 
-    let client = factbase::create_http_client(Duration::from_secs(5));
+    let client = factbase::ollama::create_http_client(Duration::from_secs(5));
 
     let response = client.get(&url).send().await.with_context(|| {
-        factbase::format_user_error(
+        factbase::error::format_user_error(
             "Health check failed: connection error",
             Some("Is the server running? Start with: factbase serve"),
         )
@@ -193,7 +195,7 @@ async fn run_health_check(config: &Config) -> anyhow::Result<()> {
         error!(status = %response.status(), "Health check failed: HTTP error");
         anyhow::bail!(
             "{}",
-            factbase::format_user_error(
+            factbase::error::format_user_error(
                 &format!("Health check failed: HTTP {}", response.status()),
                 Some("Check server logs for details")
             )

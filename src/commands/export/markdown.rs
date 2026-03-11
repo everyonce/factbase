@@ -1,6 +1,9 @@
 //! Markdown export format handler.
 
-use factbase::{writeln_str, Database, Document, ProgressReporter};
+use factbase::database::Database;
+use factbase::models::Document;
+use factbase::progress::ProgressReporter;
+use factbase::writeln_str;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;

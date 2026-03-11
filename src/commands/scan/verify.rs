@@ -3,7 +3,10 @@
 //! Contains `cmd_scan_verify` and fix helper functions.
 
 use anyhow::bail;
-use factbase::{content_hash, format_json, Database, Repository};
+use factbase::database::Database;
+use factbase::models::Repository;
+use factbase::output::format_json;
+use factbase::processor::content_hash;
 use serde::Serialize;
 use std::fmt;
 use std::fs;

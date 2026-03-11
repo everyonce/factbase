@@ -1,7 +1,8 @@
 //! Utility functions for CLI commands
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
-use factbase::{format_json, format_yaml, Repository};
+use factbase::models::Repository;
+use factbase::output::{format_json, format_yaml};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::Path;

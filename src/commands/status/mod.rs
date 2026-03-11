@@ -34,7 +34,7 @@ pub fn cmd_status(args: StatusArgs) -> anyhow::Result<()> {
         let repo = repos
             .iter()
             .find(|r| r.id == repo_id)
-            .ok_or_else(|| factbase::repo_not_found(repo_id))?;
+            .ok_or_else(|| factbase::error::repo_not_found(repo_id))?;
 
         // Use filtered or unfiltered stats based on --since
         let stats = db.get_stats(&repo.id, since.as_ref())?;

@@ -3,7 +3,8 @@
 //! Checks documents for orphan and broken links.
 
 use super::LinkCheckResult;
-use factbase::{Document, Link, MANUAL_LINK_REGEX};
+use factbase::models::{Document, Link};
+use factbase::patterns::MANUAL_LINK_REGEX;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Write};
@@ -120,7 +121,7 @@ pub fn check_document_links(
 mod tests {
     use super::*;
     use chrono::Utc;
-    use factbase::Document;
+    use factbase::models::Document;
 
     fn make_test_doc_with_id(id: &str, content: &str) -> Document {
         Document {

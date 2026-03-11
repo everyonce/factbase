@@ -11,10 +11,16 @@
 //! database access (links_from/links_to queries).
 
 use chrono::{Duration, Utc};
-use factbase::{
-    calculate_fact_stats, count_facts_with_sources, detect_illogical_sequences,
-    detect_temporal_conflicts, parse_source_definitions, parse_source_references,
-    parse_temporal_tags, validate_temporal_tags, TemporalTagType,
+use factbase::models::TemporalTagType;
+use factbase::processor::{
+    calculate_fact_stats,
+    count_facts_with_sources,
+    detect_illogical_sequences,
+    detect_temporal_conflicts,
+    parse_source_definitions,
+    parse_source_references,
+    parse_temporal_tags,
+    validate_temporal_tags,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -56,7 +62,7 @@ pub struct ParallelCheckOptions {
 
 /// Perform CPU-bound lint checks on a document (can be parallelized)
 pub fn check_document_content(
-    doc: &factbase::Document,
+    doc: &factbase::models::Document,
     opts: &ParallelCheckOptions,
 ) -> DocCheckResult {
     let mut result = DocCheckResult::default();
@@ -252,7 +258,7 @@ mod tests {
         }
     }
 
-    fn make_doc(content: &str) -> factbase::Document {
+    fn make_doc(content: &str) -> factbase::models::Document {
         make_doc_with(content, None, None, Utc::now())
     }
 
@@ -261,8 +267,8 @@ mod tests {
         doc_type: Option<&str>,
         modified: Option<DateTime<Utc>>,
         indexed: DateTime<Utc>,
-    ) -> factbase::Document {
-        factbase::Document {
+    ) -> factbase::models::Document {
+        factbase::models::Document {
             id: "abc123".into(),
             repo_id: "test".into(),
             file_path: "test.md".into(),

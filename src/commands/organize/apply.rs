@@ -4,7 +4,9 @@ use super::args::ApplyArgs;
 use crate::commands::{print_output, OutputFormat};
 use crate::commands::setup::Setup;
 use crate::commands::utils::resolve_repos;
-use factbase::{has_orphans, load_orphan_entries, process_orphan_answers, Database, Repository};
+use factbase::database::Database;
+use factbase::models::Repository;
+use factbase::organize::{has_orphans, load_orphan_entries, process_orphan_answers};
 use serde::Serialize;
 use std::path::PathBuf;
 

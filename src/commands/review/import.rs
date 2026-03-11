@@ -3,7 +3,8 @@
 use crate::commands::setup::Setup;
 use super::args::ReviewArgs;
 use anyhow::Context;
-use factbase::{append_review_questions, QuestionType, ReviewQuestion};
+use factbase::models::{QuestionType, ReviewQuestion};
+use factbase::processor::append_review_questions;
 use serde::Deserialize;
 use std::fs;
 use tracing::warn;

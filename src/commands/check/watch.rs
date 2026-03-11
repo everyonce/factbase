@@ -3,7 +3,10 @@
 //! Monitors file changes and re-lints affected repositories.
 
 use crate::commands::watch_helper::WatchContext;
-use factbase::{find_repo_for_path, Database, Repository, MANUAL_LINK_REGEX};
+use factbase::database::Database;
+use factbase::models::Repository;
+use factbase::patterns::MANUAL_LINK_REGEX;
+use factbase::watcher::find_repo_for_path;
 use std::collections::HashSet;
 use std::time::Duration as StdDuration;
 

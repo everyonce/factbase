@@ -1,7 +1,8 @@
 //! Shared test helpers for binary-crate test modules.
 
 use chrono::Utc;
-use factbase::{Database, Document, Repository};
+use factbase::database::Database;
+use factbase::models::{Document, Repository};
 use std::path::PathBuf;
 use tempfile::TempDir;
 

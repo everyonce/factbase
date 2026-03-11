@@ -48,7 +48,9 @@ use super::{
 };
 use crate::commands::setup::Setup;
 use chrono::Utc;
-use factbase::{config::validate_timeout, format_json, format_yaml, ProgressReporter};
+use factbase::output::{format_json, format_yaml};
+use factbase::progress::ProgressReporter;
+use factbase::config::validate_timeout;
 use incremental::{filter_documents_by_time, get_effective_since, update_check_timestamps};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -159,8 +161,8 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         }
 
         // Filter out reference entities (indexed for linking, but not quality-checked)
-        let reference_count = docs.iter().filter(|d| factbase::is_reference_doc(&d.content)).count();
-        let docs: Vec<_> = docs.into_iter().filter(|d| !factbase::is_reference_doc(&d.content)).collect();
+        let reference_count = docs.iter().filter(|d| factbase::patterns::is_reference_doc(&d.content)).count();
+        let docs: Vec<_> = docs.into_iter().filter(|d| !factbase::patterns::is_reference_doc(&d.content)).collect();
         if reference_count > 0 && is_table_format && !args.quiet {
             println!("  Skipping {reference_count} reference document(s)");
         }
@@ -233,13 +235,13 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
             .and_then(|p| p.review.as_ref())
             .and_then(|r| r.glossary_types.clone());
         let all_repo_docs = db.list_documents(None, Some(&repo.id), None, 10000)?;
-        let defined_terms = factbase::collect_defined_terms_with_types(&all_repo_docs, glossary_types.as_deref());
+        let defined_terms = factbase::question_generator::collect_defined_terms_with_types(&all_repo_docs, glossary_types.as_deref());
 
         // Report check phase via ProgressReporter
         progress.phase("Generating review questions");
 
         // Process documents in batches if batch_size > 0, otherwise process all at once
-        let doc_batches: Vec<&[factbase::Document]> = if batch_size > 0 {
+        let doc_batches: Vec<&[factbase::models::Document]> = if batch_size > 0 {
             docs.chunks(batch_size).collect()
         } else {
             vec![&docs[..]]
@@ -353,7 +355,7 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
                 // Generate review questions (unless --no-questions)
                 if !args.no_questions {
                     // Count existing questions and reviewed markers for summary
-                    let existing = factbase::parse_review_queue(&doc.content).unwrap_or_default();
+                    let existing = factbase::processor::parse_review_queue(&doc.content).unwrap_or_default();
                     review_already_in_queue += existing.len();
                     review_skipped_reviewed += review::count_reviewed_facts(&doc.content);
                     review_suppressed += review::count_suppressed_questions(&doc.content, args.max_age);

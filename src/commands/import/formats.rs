@@ -2,7 +2,8 @@
 
 use super::args::ImportArgs;
 use super::validate::{extract_factbase_id, validate_import_document, ImportValidationError};
-use factbase::{ProgressReporter, Repository};
+use factbase::models::Repository;
+use factbase::progress::ProgressReporter;
 use std::collections::HashSet;
 use std::fs;
 

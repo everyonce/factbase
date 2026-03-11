@@ -7,10 +7,19 @@ use crate::commands::{
     print_output, setup_embedding_with_timeout, OutputFormat,
 };
 use crate::commands::setup::Setup;
-use factbase::{
-    assess_staleness, detect_duplicate_entries, detect_ghost_files, detect_merge_candidates,
-    detect_misplaced, detect_split_candidates, DuplicateEntry, GhostFile, MergeCandidate,
-    MisplacedCandidate, SplitCandidate, StaleDuplicate,
+use factbase::organize::{
+    DuplicateEntry,
+    GhostFile,
+    MergeCandidate,
+    MisplacedCandidate,
+    SplitCandidate,
+    StaleDuplicate,
+    assess_staleness,
+    detect_duplicate_entries,
+    detect_ghost_files,
+    detect_merge_candidates,
+    detect_misplaced,
+    detect_split_candidates,
 };
 use serde::Serialize;
 
@@ -53,7 +62,7 @@ pub async fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
     let ctx = Setup::new().require_repo(args.repo.as_deref()).build()?;
     let (config, db, repo) = ctx.take_repo();
     let format = OutputFormat::resolve(args.json, args.format);
-    let progress = factbase::ProgressReporter::Cli { quiet: false };
+    let progress = factbase::progress::ProgressReporter::Cli { quiet: false };
 
     let repo_id = Some(repo.id.as_str());
 
@@ -268,7 +277,7 @@ mod tests {
 
     #[test]
     fn test_analysis_results_total_count() {
-        use factbase::{SplitCandidate, SplitSection};
+    use factbase::organize::{SplitCandidate, SplitSection};
 
         let results = AnalysisResults {
             merge_candidates: vec![MergeCandidate {
@@ -320,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_print_table_duplicate_entries_with_staleness() {
-        use factbase::EntryLocation;
+    use factbase::organize::EntryLocation;
 
         let loc_acme = EntryLocation {
             doc_id: "aaa111".to_string(),

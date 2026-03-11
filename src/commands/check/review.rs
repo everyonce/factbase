@@ -4,12 +4,12 @@
 //! This module provides helper functions to generate questions for documents
 //! based on various quality checks (temporal tags, sources, duplicates, etc.).
 
-use factbase::{
+use factbase::models::{QuestionType, ReviewQuestion};
+use factbase::processor::{normalize_conflict_desc, parse_review_queue, prune_stale_questions};
+use factbase::question_generator::{
     filter_sequential_conflicts,
     generate_duplicate_questions,
     generate_required_field_questions,
-    normalize_conflict_desc, parse_review_queue, prune_stale_questions, QuestionType,
-    ReviewQuestion,
 };
 use factbase::question_generator::check::run_generators;
 use std::collections::{HashMap, HashSet};
@@ -59,7 +59,7 @@ pub fn generate_questions_for_content(
     doc_type: Option<&str>,
     config: &ReviewConfig,
 ) -> Vec<ReviewQuestion> {
-    let body = factbase::content_body(content);
+    let body = factbase::patterns::content_body(content);
 
     let mut new_questions = run_generators(body, doc_type, &config.defined_terms, config.stale_threshold, true);
 
@@ -95,7 +95,7 @@ pub fn generate_and_prune(
     doc_type: Option<&str>,
     config: &ReviewConfig,
 ) -> (Vec<ReviewQuestion>, String, usize) {
-    let body = factbase::content_body(content);
+    let body = factbase::patterns::content_body(content);
 
     let mut all_generated = run_generators(body, doc_type, &config.defined_terms, config.stale_threshold, true);
     if let Some(ref required_fields) = config.required_fields {
@@ -192,7 +192,11 @@ pub fn filter_existing_questions(
 /// Checks both inline `<!-- reviewed:... -->` markers and frontmatter `reviewed:` date.
 pub fn count_reviewed_facts(content: &str) -> usize {
     use chrono::Utc;
-    use factbase::{extract_frontmatter_reviewed_date, extract_reviewed_date, FACT_LINE_REGEX};
+    use factbase::patterns::{
+        FACT_LINE_REGEX,
+        extract_frontmatter_reviewed_date,
+        extract_reviewed_date,
+    };
 
     let today = Utc::now().date_naive();
     let fm_date = extract_frontmatter_reviewed_date(content);
@@ -221,7 +225,7 @@ pub fn count_suppressed_questions(content: &str, max_age: Option<i64>) -> usize 
     };
 
     let (normal, _, _) = generate_and_prune(content, None, &config);
-    let stripped = factbase::strip_reviewed_markers(content);
+    let stripped = factbase::patterns::strip_reviewed_markers(content);
     let (unrestricted, _, _) = generate_and_prune(&stripped, None, &config);
     unrestricted.len().saturating_sub(normal.len())
 }
@@ -261,7 +265,7 @@ mod tests {
 "#;
         // The description in the parsed question has "Line N:" stripped
         let questions = vec![ReviewQuestion {
-            question_type: factbase::QuestionType::Temporal,
+            question_type: factbase::models::QuestionType::Temporal,
             line_ref: Some(3),
             description: "\"Some fact\" - when was this true?".to_string(),
             answered: false,
@@ -277,12 +281,12 @@ mod tests {
 
     #[test]
     fn test_question_type_as_str() {
-        assert_eq!(factbase::QuestionType::Temporal.as_str(), "temporal");
-        assert_eq!(factbase::QuestionType::Conflict.as_str(), "conflict");
-        assert_eq!(factbase::QuestionType::Missing.as_str(), "missing");
-        assert_eq!(factbase::QuestionType::Ambiguous.as_str(), "ambiguous");
-        assert_eq!(factbase::QuestionType::Stale.as_str(), "stale");
-        assert_eq!(factbase::QuestionType::Duplicate.as_str(), "duplicate");
+        assert_eq!(factbase::models::QuestionType::Temporal.as_str(), "temporal");
+        assert_eq!(factbase::models::QuestionType::Conflict.as_str(), "conflict");
+        assert_eq!(factbase::models::QuestionType::Missing.as_str(), "missing");
+        assert_eq!(factbase::models::QuestionType::Ambiguous.as_str(), "ambiguous");
+        assert_eq!(factbase::models::QuestionType::Stale.as_str(), "stale");
+        assert_eq!(factbase::models::QuestionType::Duplicate.as_str(), "duplicate");
     }
 
     #[test]

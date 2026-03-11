@@ -2,7 +2,8 @@
 //!
 //! This module contains functions that operate on collections of documents.
 
-use factbase::{normalize_pair, Database, Document};
+use factbase::database::Database;
+use factbase::models::{Document, normalize_pair};
 use std::collections::HashSet;
 
 /// Check for duplicate documents in a repository.

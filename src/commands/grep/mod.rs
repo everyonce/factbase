@@ -55,7 +55,7 @@ pub fn cmd_grep(args: GrepArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::output::highlight_matches;
-    use factbase::ansi;
+    use factbase::output::ansi;
     use regex::RegexBuilder;
 
     #[test]

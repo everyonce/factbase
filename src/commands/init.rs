@@ -1,6 +1,7 @@
 use super::create_repository;
 use clap::Parser;
-use factbase::{format_json, Config};
+use factbase::config::Config;
+use factbase::output::format_json;
 use std::fs;
 use std::path::PathBuf;
 
@@ -68,7 +69,7 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
 
     let perspective_path = path.join("perspective.yaml");
     if !perspective_path.exists() {
-        fs::write(&perspective_path, factbase::PERSPECTIVE_TEMPLATE)?;
+        fs::write(&perspective_path, factbase::models::PERSPECTIVE_TEMPLATE)?;
     }
 
     factbase::ensure_gitignore(&path)?;
@@ -126,7 +127,7 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factbase::Database;
+    use factbase::database::Database;
     use tempfile::TempDir;
 
     #[test]

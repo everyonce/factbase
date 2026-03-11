@@ -1,7 +1,7 @@
 use super::{create_repository, validate_directory_path};
 use crate::commands::setup::Setup;
 use clap::Parser;
-use factbase::format_json;
+use factbase::output::format_json;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -122,7 +122,7 @@ pub fn cmd_repo_remove(args: RepoRemoveArgs) -> anyhow::Result<()> {
     let _repo = repos
         .iter()
         .find(|r| r.id == args.id)
-        .ok_or_else(|| factbase::repo_not_found(&args.id))?;
+        .ok_or_else(|| factbase::error::repo_not_found(&args.id))?;
 
     let doc_count = db.get_documents_for_repo(&args.id)?.len();
 

@@ -1,5 +1,7 @@
 use super::{args::GrepArgs, OutputFormat};
-use factbase::{output::ansi, should_highlight, ContentSearchResult};
+use factbase::models::ContentSearchResult;
+use factbase::output::should_highlight;
+use factbase::output::ansi;
 use serde::Serialize;
 use std::collections::HashSet;
 
@@ -75,7 +77,7 @@ pub(super) fn highlight_matches(text: &str, pattern: &regex::Regex) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factbase::{ContentMatch, ContentSearchResult};
+    use factbase::models::{ContentMatch, ContentSearchResult};
 
     fn make_result(
         repo_id: &str,

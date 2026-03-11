@@ -1,6 +1,7 @@
 //! Output formatting helpers for search results.
 
-use factbase::{Database, SearchResult};
+use factbase::database::Database;
+use factbase::models::SearchResult;
 use serde::Serialize;
 use std::collections::HashMap;
 

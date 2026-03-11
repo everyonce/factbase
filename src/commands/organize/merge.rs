@@ -7,7 +7,7 @@ use crate::commands::{
     confirm_prompt, print_output, OutputFormat,
 };
 use crate::commands::setup::Setup;
-use factbase::{execute_merge, plan_merge, verify_merge, MergePlan, MergeResult};
+use factbase::organize::{MergePlan, MergeResult, execute_merge, plan_merge, verify_merge};
 use serde::Serialize;
 
 /// Output for merge command (dry-run or execution).

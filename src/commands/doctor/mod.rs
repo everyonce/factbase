@@ -24,7 +24,8 @@ use checks::{
 use fix::{create_default_config, pull_ollama_model};
 
 use anyhow::bail;
-use factbase::{format_json, Config};
+use factbase::config::Config;
+use factbase::output::format_json;
 use std::time::Duration;
 
 pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
@@ -74,7 +75,7 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
     };
 
     let timeout_secs = args.timeout.unwrap_or(config.embedding.timeout_secs);
-    let client = factbase::create_http_client(Duration::from_secs(timeout_secs));
+    let client = factbase::ollama::create_http_client(Duration::from_secs(timeout_secs));
 
     qprintln!("Checking system health...\n");
 
@@ -103,7 +104,7 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
 
         #[cfg(feature = "local-embedding")]
         {
-            match factbase::LocalEmbeddingProvider::new(false) {
+            match factbase::local_embedding::LocalEmbeddingProvider::new(false) {
                 Ok(_) => {
                     qprintln!("✓ Local embedding: BGE-small-en-v1.5 (384-dim, CPU)");
                     (true, CheckStatus::ok(), true, CheckStatus::ok())

@@ -20,7 +20,8 @@ mod split;
 
 use std::path::Path;
 
-use factbase::{cleanup, create_snapshot, rollback, Database, VerificationResult};
+use factbase::database::Database;
+use factbase::organize::{VerificationResult, cleanup, create_snapshot, rollback};
 
 pub use args::{
     AnalyzeArgs, MergeArgs, MoveArgs, OrganizeArgs, OrganizeCommands, RetypeArgs, SplitArgs,
@@ -35,8 +36,8 @@ pub fn execute_with_snapshot<R>(
     db: &Database,
     repo_path: &Path,
     operation_name: &str,
-    execute_fn: impl FnOnce() -> Result<R, factbase::FactbaseError>,
-    verify_fn: impl FnOnce(&R) -> Result<VerificationResult, factbase::FactbaseError>,
+    execute_fn: impl FnOnce() -> Result<R, factbase::error::FactbaseError>,
+    verify_fn: impl FnOnce(&R) -> Result<VerificationResult, factbase::error::FactbaseError>,
 ) -> anyhow::Result<R> {
     let snapshot = create_snapshot(doc_ids, db, repo_path)?;
 
