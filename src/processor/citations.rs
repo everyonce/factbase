@@ -8,37 +8,37 @@ use regex::Regex;
 
 /// URL pattern (http:// or https://)
 static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"https?://").unwrap()
+    Regex::new(r"https?://").expect("url regex")
 });
 
 /// File path pattern (absolute paths, or common doc extensions)
 static FILE_PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[\s(])(?:[/~][^\s]+|[^\s]+\.(?:md|pdf|doc|docx|txt|csv|xlsx|html))\b").unwrap()
+    Regex::new(r"(?:^|[\s(])(?:[/~][^\s]+|[^\s]+\.(?:md|pdf|doc|docx|txt|csv|xlsx|html))\b").expect("file path regex")
 });
 
 /// Page/section/chapter reference
 static PAGE_SECTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:pp?\.\s*\d|§\s*\d|[Ss]ection\s+\d|[Cc]hapter\s+\d)").unwrap()
+    Regex::new(r"(?i)(?:pp?\.\s*\d|§\s*\d|[Ss]ection\s+\d|[Cc]hapter\s+\d)").expect("page section regex")
 });
 
 /// Standard identifiers (ISBN, DOI, RFC, ISSN, arXiv, ticket/observation/thread with number)
 static IDENTIFIER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)(?:ISBN|DOI|RFC|ISSN|arXiv|PMID|CVE)[\s:-]+[\w./-]+|(?:#|observation\s*#?|ticket\s*#?|thread\s*#?|issue\s*#?)\s*\d+").unwrap()
+    Regex::new(r"(?i)(?:ISBN|DOI|RFC|ISSN|arXiv|PMID|CVE)[\s:-]+[\w./-]+|(?:#|observation\s*#?|ticket\s*#?|thread\s*#?|issue\s*#?)\s*\d+").expect("identifier regex")
 });
 
 /// Date pattern (YYYY-MM-DD or YYYY-MM or similar)
 static DATE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\d{4}-\d{2}(?:-\d{2})?").unwrap()
+    Regex::new(r"\d{4}-\d{2}(?:-\d{2})?").expect("date regex")
 });
 
 /// Named person pattern (capitalized words suggesting a person name)
 static NAMED_PERSON_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:with|from|by|interview)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+").unwrap()
+    Regex::new(r"(?:with|from|by|interview)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+").expect("named person regex")
 });
 
 /// Named channel/thread with date (e.g., "#project-alpha, thread 2026-01-20")
 static CHANNEL_DATE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"#[a-zA-Z][\w-]+.*\d{4}-\d{2}").unwrap()
+    Regex::new(r"#[a-zA-Z][\w-]+.*\d{4}-\d{2}").expect("channel date regex")
 });
 
 /// Returns true if the citation text is specific enough for independent verification.

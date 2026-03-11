@@ -17,7 +17,7 @@ use crate::patterns::{extract_reviewed_date, REVIEWED_MARKER_REGEX};
 /// and the parenthetical starts with an uppercase letter (distinguishing expansions
 /// from normal parentheticals like "(see above)").
 static ACRONYM_EXPANSION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"([A-Z][A-Z0-9&]{1,9})\s+\(([A-Z][^)]{2,})\)").unwrap()
+    Regex::new(r"([A-Z][A-Z0-9&]{1,9})\s+\(([A-Z][^)]{2,})\)").expect("acronym expansion regex")
 });
 
 /// Remove duplicate inline acronym expansions from `content`.
@@ -46,7 +46,8 @@ fn dedup_line(line: &str, seen: &mut HashSet<String>, glossary_terms: &HashSet<S
     let mut last_end = 0;
 
     for caps in ACRONYM_EXPANSION_RE.captures_iter(line) {
-        let full = caps.get(0).unwrap();
+        // Safe: captures always have group 0 (the full match)
+        let full = caps.get(0).expect("group 0 always exists in regex captures");
         let acronym = &caps[1];
         let key = acronym.to_uppercase();
 

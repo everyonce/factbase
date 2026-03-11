@@ -349,36 +349,45 @@ impl Database {
             count as usize
         };
 
-        // Insert pairs in a transaction
+        // Insert pairs in a transaction with proper rollback on error
         conn.execute_batch("BEGIN")?;
-        {
-            let mut stmt = conn.prepare_cached(
-                "INSERT INTO cached_fact_pairs (scope, fact_a_id, fact_a_doc_id, fact_a_line, fact_a_text,
-                    fact_b_id, fact_b_doc_id, fact_b_line, fact_b_text, similarity)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        let result = (|| -> Result<(), FactbaseError> {
+            {
+                let mut stmt = conn.prepare_cached(
+                    "INSERT INTO cached_fact_pairs (scope, fact_a_id, fact_a_doc_id, fact_a_line, fact_a_text,
+                        fact_b_id, fact_b_doc_id, fact_b_line, fact_b_text, similarity)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                )?;
+                for p in pairs {
+                    stmt.execute(rusqlite::params![
+                        scope,
+                        p.fact_a.id,
+                        p.fact_a.document_id,
+                        p.fact_a.line_number as i64,
+                        p.fact_a.fact_text,
+                        p.fact_b.id,
+                        p.fact_b.document_id,
+                        p.fact_b.line_number as i64,
+                        p.fact_b.fact_text,
+                        p.similarity,
+                    ])?;
+                }
+            }
+
+            conn.execute(
+                "INSERT INTO cached_fact_pairs_meta (scope, fact_count, threshold, limit_per_fact, created_at)
+                 VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+                rusqlite::params![scope, current_count as i64, threshold, limit_per_fact as i64],
             )?;
-            for p in pairs {
-                stmt.execute(rusqlite::params![
-                    scope,
-                    p.fact_a.id,
-                    p.fact_a.document_id,
-                    p.fact_a.line_number as i64,
-                    p.fact_a.fact_text,
-                    p.fact_b.id,
-                    p.fact_b.document_id,
-                    p.fact_b.line_number as i64,
-                    p.fact_b.fact_text,
-                    p.similarity,
-                ])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => conn.execute_batch("COMMIT")?,
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e);
             }
         }
-
-        conn.execute(
-            "INSERT INTO cached_fact_pairs_meta (scope, fact_count, threshold, limit_per_fact, created_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))",
-            rusqlite::params![scope, current_count as i64, threshold, limit_per_fact as i64],
-        )?;
-        conn.execute_batch("COMMIT")?;
 
         Ok(())
     }

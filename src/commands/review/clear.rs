@@ -73,7 +73,10 @@ pub fn cmd_review_clear(args: &ReviewArgs) -> anyhow::Result<()> {
 
         fs::write(&abs_path, &new_content)?;
         let new_hash = content_hash(&new_content);
-        let _ = db.update_document_content(&doc.id, &new_content, &new_hash);
+        // Sync database content after writing to disk
+        if let Err(e) = db.update_document_content(&doc.id, &new_content, &new_hash) {
+            tracing::warn!("Failed to update database content for {}: {e}", doc.id);
+        }
 
         total_cleared += to_remove;
         docs_modified += 1;

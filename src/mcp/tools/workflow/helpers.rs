@@ -197,14 +197,14 @@ pub(super) const PATTERN_MIN_COUNT: usize = 4;
 pub(super) fn normalize_question_text(desc: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
-    static RE_FOOTNOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\^(\d+)\]").unwrap());
-    static RE_QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]+""#).unwrap());
+    static RE_FOOTNOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\^(\d+)\]").expect("footnote regex"));
+    static RE_QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]+""#).expect("quoted text regex"));
     static RE_DATE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\b\d{4}(?:-\d{2}(?:-\d{2})?)?\b").unwrap());
+        LazyLock::new(|| Regex::new(r"\b\d{4}(?:-\d{2}(?:-\d{2})?)?\b").expect("date regex"));
     static RE_TEMPORAL: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"@t\[[^\]]+\]").unwrap());
+        LazyLock::new(|| Regex::new(r"@t\[[^\]]+\]").expect("temporal tag regex"));
     static RE_LINE_REF: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\(line \d+\)").unwrap());
+        LazyLock::new(|| Regex::new(r"\(line \d+\)").expect("line ref regex"));
 
     let s = RE_FOOTNOTE.replace_all(desc, "[^_]");
     let s = RE_QUOTED.replace_all(&s, "\"_\"");
@@ -393,9 +393,12 @@ pub(super) fn auto_dismiss_question(db: &Database, doc_id: &str, question_index:
     let new_hash = crate::processor::content_hash(&new_content);
     db.update_document_content(doc_id, &new_content, &new_hash)?;
 
-    // Also write to disk if possible
+    // Best-effort write to disk — log warning on failure but don't fail the operation
+    // since the database is already updated
     if let Ok(file_path) = resolve_doc_path(db, &doc) {
-        let _ = std::fs::write(&file_path, &new_content);
+        if let Err(e) = std::fs::write(&file_path, &new_content) {
+            tracing::warn!("Failed to write auto-resolved question to disk for {}: {e}", doc_id);
+        }
     }
     Ok(())
 }

@@ -230,7 +230,9 @@ async fn handle_search_tool<E: EmbeddingProvider>(
             let mut a = args.clone();
             if a.get("pattern").is_none() {
                 if let Some(q) = a.get("query").cloned() {
-                    a.as_object_mut().unwrap().insert("pattern".into(), q);
+                    if let Some(obj) = a.as_object_mut() {
+                        obj.insert("pattern".into(), q);
+                    }
                 }
             }
             dispatch_tool(db, embedding, "search_content", &a, reporter).await?
@@ -287,9 +289,9 @@ async fn handle_search_tool<E: EmbeddingProvider>(
                         .collect()
                 })
                 .unwrap_or_default();
-            item.as_object_mut()
-                .unwrap()
-                .insert("links".into(), Value::Array(links));
+            if let Some(obj) = item.as_object_mut() {
+                obj.insert("links".into(), Value::Array(links));
+            }
         }
     }
 
@@ -317,11 +319,15 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
                             a.clone()
                         } else {
                             let mut a = a.clone();
-                            a.as_object_mut().unwrap().insert("doc_id".into(), Value::String(doc_id.clone()));
+                            if let Some(obj) = a.as_object_mut() {
+                                obj.insert("doc_id".into(), Value::String(doc_id.clone()));
+                            }
                             a
                         }
                     }).collect();
-                    patched_args.as_object_mut().unwrap().insert("answers".into(), Value::Array(patched_answers));
+                    if let Some(obj) = patched_args.as_object_mut() {
+                        obj.insert("answers".into(), Value::Array(patched_answers));
+                    }
                     return dispatch_tool(db, embedding, tool_name, &patched_args, reporter).await;
                 }
             }

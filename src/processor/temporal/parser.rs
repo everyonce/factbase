@@ -32,10 +32,11 @@ pub(crate) fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
         return result;
     }
     let converted = BCE_TAG_REGEX.replace_all(&result, |caps: &regex::Captures| {
-        let tag = caps.get(0).unwrap().as_str();
+        // Safe: group 0 always exists in regex captures
+        let tag = caps.get(0).expect("group 0 always exists").as_str();
         BCE_YEAR_REGEX
             .replace_all(tag, |inner: &regex::Captures| {
-                format!("-{}", inner.get(1).unwrap().as_str())
+                format!("-{}", inner.get(1).expect("capture group 1 required by regex").as_str())
             })
             .to_string()
     });

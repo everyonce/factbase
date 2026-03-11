@@ -265,8 +265,7 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 }
                 // Fix instruction references to setup workflow
                 if let Some(instr) = v.get("instruction").and_then(|v| v.as_str()).map(String::from) {
-                    v.as_object_mut().unwrap().insert("instruction".into(),
-                        Value::String(instr.replace("workflow='setup'", "workflow='create'")));
+                    if let Some(obj) = v.as_object_mut() { obj.insert("instruction".into(), Value::String(instr.replace("workflow='setup'", "workflow='create'"))); }
                 }
                 v
             }
@@ -285,8 +284,7 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                     }
                 }
                 if let Some(instr) = v.get("instruction").and_then(|v| v.as_str()).map(String::from) {
-                    v.as_object_mut().unwrap().insert("instruction".into(),
-                        Value::String(instr.replace("workflow='setup'", "workflow='create'")));
+                    if let Some(obj) = v.as_object_mut() { obj.insert("instruction".into(), Value::String(instr.replace("workflow='setup'", "workflow='create'"))); }
                 }
                 v
             }
@@ -854,12 +852,12 @@ fn resolve_step2_batch(
     // Only include conflict_patterns when first batch or batch contains conflict questions
     let batch_has_conflicts = batch.iter().any(|q| q["type"].as_str() == Some("conflict"));
     if is_first_batch || batch_has_conflicts {
-        result.as_object_mut().unwrap().insert("conflict_patterns".to_string(), serde_json::json!({
+        if let Some(obj) = result.as_object_mut() { obj.insert("conflict_patterns".to_string(), serde_json::json!({
             "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
             "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
             "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
             "unknown": "No recognized pattern — investigate which fact is current."
-        }));
+        })); }
     }
 
     if is_first_batch {
@@ -874,24 +872,15 @@ fn resolve_step2_batch(
             .map(|(qt, c)| (qt.to_string(), *c))
             .collect();
         intro.push_str(&subagent_fanout_hint(total_questions, &fanout_types));
-        result
-            .as_object_mut()
-            .unwrap()
-            .insert("intro".to_string(), Value::String(intro));
+        if let Some(obj) = result.as_object_mut() { obj.insert("intro".to_string(), Value::String(intro)); }
     }
 
     if glossary_auto_resolved > 0 {
-        result
-            .as_object_mut()
-            .unwrap()
-            .insert("glossary_auto_resolved".to_string(), serde_json::json!(glossary_auto_resolved));
+        if let Some(obj) = result.as_object_mut() { obj.insert("glossary_auto_resolved".to_string(), serde_json::json!(glossary_auto_resolved)); }
     }
 
     if is_first_batch && !patterns.is_empty() {
-        result
-            .as_object_mut()
-            .unwrap()
-            .insert("patterns_detected".to_string(), Value::Array(patterns));
+        if let Some(obj) = result.as_object_mut() { obj.insert("patterns_detected".to_string(), Value::Array(patterns)); }
     }
 
     result

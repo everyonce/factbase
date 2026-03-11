@@ -99,7 +99,8 @@ pub fn detect_ghost_files(
                     .iter()
                     .partition(|e| tracked.get(&e.0).is_some_and(|id| id == *doc_id));
 
-                let tracked_entry = tracked_entry.first().or(group.first()).unwrap();
+                // Safe: group.len() >= 2 checked above, so group.first() always succeeds
+                let tracked_entry = tracked_entry.first().or(group.first()).expect("group is non-empty (len >= 2)");
                 let title = tracked_entry
                     .2
                     .clone()
@@ -150,7 +151,8 @@ pub fn detect_ghost_files(
                 let (tracked_entries, others): (Vec<_>, Vec<_>) =
                     group.iter().partition(|e| tracked.contains_key(&e.0));
 
-                let primary = tracked_entries.first().or(group.first()).unwrap();
+                // Safe: group.len() >= 2 checked above, so group.first() always succeeds
+                let primary = tracked_entries.first().or(group.first()).expect("group is non-empty (len >= 2)");
                 let doc_id = primary
                     .1
                     .clone()
