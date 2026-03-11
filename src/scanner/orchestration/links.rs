@@ -217,3 +217,264 @@ pub async fn run_link_detection_phase(
         doc_offset: total_docs_processed,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::database::tests::test_db;
+    use crate::embedding::test_helpers::MockEmbedding;
+    use crate::embedding::EmbeddingProvider;
+    use crate::models::{Document, Repository};
+    use crate::ProgressReporter;
+    use tempfile::TempDir;
+
+    fn setup_repo_with_docs(db: &crate::Database) -> (TempDir, String) {
+        let tmp = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "test".into(),
+            name: "test".into(),
+            path: tmp.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // Insert two documents that reference each other
+        let doc1 = Document {
+            id: "aaa111".into(),
+            repo_id: "test".into(),
+            file_path: "alpha.md".into(),
+            file_hash: "h1".into(),
+            title: "Alpha".into(),
+            doc_type: Some("document".into()),
+            content: "# Alpha\n\nThis mentions Beta.".into(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        let doc2 = Document {
+            id: "bbb222".into(),
+            repo_id: "test".into(),
+            file_path: "beta.md".into(),
+            file_hash: "h2".into(),
+            title: "Beta".into(),
+            doc_type: Some("document".into()),
+            content: "# Beta\n\nThis mentions Alpha.".into(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        };
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+
+        // Store embeddings so find_similar works
+        let emb = MockEmbedding::new(1024);
+        let dim = emb.dimension();
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &vec![0.1; dim]).unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &vec![0.1; dim]).unwrap();
+
+        (tmp, "test".into())
+    }
+
+    #[tokio::test]
+    async fn test_link_phase_skip_links() {
+        let (db, _tmp) = test_db();
+        let changed = HashSet::new();
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        let output = run_link_detection_phase(LinkPhaseInput {
+            db: &db,
+            link_detector: &link_detector,
+            repo_id: "test",
+            changed_ids: &changed,
+            added_count: 0,
+            show_progress: false,
+            verbose: false,
+            skip_links: true,
+            force_relink: false,
+            link_batch_size: 5,
+            progress: &progress,
+            deadline: None,
+            doc_offset: 0,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output.links_detected, 0);
+        assert_eq!(output.link_detection_ms, 0);
+        assert!(!output.interrupted);
+    }
+
+    #[tokio::test]
+    async fn test_link_phase_detects_links_for_changed_docs() {
+        let (db, _db_tmp) = test_db();
+        let (_tmp, repo_id) = setup_repo_with_docs(&db);
+
+        let mut changed = HashSet::new();
+        changed.insert("aaa111".to_string());
+
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        let output = run_link_detection_phase(LinkPhaseInput {
+            db: &db,
+            link_detector: &link_detector,
+            repo_id: &repo_id,
+            changed_ids: &changed,
+            added_count: 1,
+            show_progress: false,
+            verbose: false,
+            skip_links: false,
+            force_relink: false,
+            link_batch_size: 5,
+            progress: &progress,
+            deadline: None,
+            doc_offset: 0,
+        })
+        .await
+        .unwrap();
+
+        assert!(!output.interrupted);
+        // Both docs should be scanned (changed + keyword match)
+        assert!(output.docs_link_detected >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_link_phase_force_relink() {
+        let (db, _db_tmp) = test_db();
+        let (_tmp, repo_id) = setup_repo_with_docs(&db);
+
+        let changed = HashSet::new(); // no changes
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        let output = run_link_detection_phase(LinkPhaseInput {
+            db: &db,
+            link_detector: &link_detector,
+            repo_id: &repo_id,
+            changed_ids: &changed,
+            added_count: 0,
+            show_progress: false,
+            verbose: false,
+            skip_links: false,
+            force_relink: true,
+            link_batch_size: 5,
+            progress: &progress,
+            deadline: None,
+            doc_offset: 0,
+        })
+        .await
+        .unwrap();
+
+        // Force relink should process all docs even with no changes
+        assert_eq!(output.docs_link_detected, 2);
+        assert!(!output.interrupted);
+    }
+
+    #[tokio::test]
+    async fn test_link_phase_deadline_interrupts() {
+        let (db, _db_tmp) = test_db();
+        let (_tmp, repo_id) = setup_repo_with_docs(&db);
+
+        let mut changed = HashSet::new();
+        changed.insert("aaa111".to_string());
+
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        let output = run_link_detection_phase(LinkPhaseInput {
+            db: &db,
+            link_detector: &link_detector,
+            repo_id: &repo_id,
+            changed_ids: &changed,
+            added_count: 0,
+            show_progress: false,
+            verbose: false,
+            skip_links: false,
+            force_relink: true,
+            link_batch_size: 1, // small batch to hit deadline check
+            progress: &progress,
+            deadline: Some(std::time::Instant::now() - std::time::Duration::from_secs(1)),
+            doc_offset: 0,
+        })
+        .await
+        .unwrap();
+
+        assert!(output.interrupted);
+    }
+
+    #[tokio::test]
+    async fn test_link_phase_empty_repo() {
+        let (db, _db_tmp) = test_db();
+        let repo = Repository {
+            id: "empty".into(),
+            name: "empty".into(),
+            path: std::path::PathBuf::from("/tmp/empty"),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let changed = HashSet::new();
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        let output = run_link_detection_phase(LinkPhaseInput {
+            db: &db,
+            link_detector: &link_detector,
+            repo_id: "empty",
+            changed_ids: &changed,
+            added_count: 0,
+            show_progress: false,
+            verbose: false,
+            skip_links: false,
+            force_relink: false,
+            link_batch_size: 5,
+            progress: &progress,
+            deadline: None,
+            doc_offset: 0,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(output.links_detected, 0);
+        assert_eq!(output.docs_link_detected, 0);
+    }
+
+    #[tokio::test]
+    async fn test_link_phase_doc_offset_resume() {
+        let (db, _db_tmp) = test_db();
+        let (_tmp, repo_id) = setup_repo_with_docs(&db);
+
+        let changed = HashSet::new();
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        let output = run_link_detection_phase(LinkPhaseInput {
+            db: &db,
+            link_detector: &link_detector,
+            repo_id: &repo_id,
+            changed_ids: &changed,
+            added_count: 0,
+            show_progress: false,
+            verbose: false,
+            skip_links: false,
+            force_relink: true,
+            link_batch_size: 5,
+            progress: &progress,
+            deadline: None,
+            doc_offset: 1, // skip first doc
+        })
+        .await
+        .unwrap();
+
+        // Should process only 1 of 2 docs
+        assert_eq!(output.docs_link_detected, 1);
+        assert_eq!(output.doc_offset, 2);
+    }
+}
