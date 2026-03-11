@@ -158,7 +158,6 @@ src/
 │   ├── links.rs         # Link redirection utilities
 │   ├── orphans.rs       # Orphan document creation
 │   ├── review.rs        # Orphan review integration
-│   ├── audit.rs         # Audit logging for reorganization operations
 │   ├── fs_helpers.rs    # write_file/remove_file with descriptive errors
 │   ├── detect/          # Detection algorithms
 │   │   ├── mod.rs
