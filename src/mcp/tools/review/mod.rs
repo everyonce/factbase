@@ -1,39 +1,106 @@
 //! Review queue MCP tools.
 //!
-//! This module provides MCP tools for managing review questions:
-//!
-//! # Module Organization
-//!
-//! - `queue` - Review queue retrieval (`get_review_queue`)
-//! - `answer` - Question answering (`answer_question`, `bulk_answer_questions`)
-//! - `generate` - Question generation (internal, used by check_repository)
-//! - `check` - Repository-wide quality checks (`check_repository`)
+//! Thin wrappers that parse JSON args and delegate to the service layer.
 //!
 //! # Public API
-//!
-//! All public functions are re-exported from this module:
 //! - `get_review_queue` - Get pending review questions
 //! - `answer_question` - Answer a single question
 //! - `bulk_answer_questions` - Answer multiple questions atomically
-//! - `generate_questions` - Generate review questions for a document (internal, used by check_repository)
+//! - `generate_questions` - Generate review questions for a document
 //! - `check_repository` - Run rule-based quality checks
 
-pub(crate) mod answer;
 mod generate;
 mod check;
-mod queue;
 
-pub use answer::{answer_question, bulk_answer_questions};
-pub use generate::generate_questions;
 pub use check::check_repository;
-pub use queue::{get_deferred_items, get_review_queue};
+pub use generate::generate_questions;
+
+// Re-export service types and functions for backward compatibility
+pub use crate::services::review::{
+    format_question_json, count_question_types, modify_question_in_queue,
+    AnswerQuestionParams, BulkAnswerItem, ReviewQueueParams,
+};
 
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::models::{Document, QuestionType, ReviewQuestion};
-use crate::processor::parse_review_queue;
+use crate::services;
 use serde_json::Value;
-use std::collections::HashMap;
+
+/// Gets pending review questions. Parses JSON args and delegates to service.
+pub fn get_review_queue(
+    db: &Database,
+    args: &Value,
+    progress: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let params = ReviewQueueParams {
+        repo: crate::mcp::tools::get_str_arg(args, "repo").map(String::from),
+        doc_id: args.get("doc_id").and_then(|v| {
+            v.as_str().map(String::from)
+                .or_else(|| v.as_u64().map(|n| n.to_string()))
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        }),
+        question_type: crate::mcp::tools::get_str_arg(args, "type").map(String::from),
+        status: Some(crate::mcp::tools::get_str_arg(args, "status").unwrap_or("unanswered").to_string()),
+        limit: crate::mcp::tools::get_u64_arg(args, "limit", 10) as usize,
+        offset: crate::mcp::tools::get_u64_arg(args, "offset", 0) as usize,
+        include_context: crate::mcp::tools::get_bool_arg(args, "include_context", false),
+    };
+    services::get_review_queue(db, &params, progress)
+}
+
+/// Gets deferred review items. Parses JSON args and delegates to service.
+pub fn get_deferred_items(
+    db: &Database,
+    args: &Value,
+    progress: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let params = ReviewQueueParams {
+        repo: crate::mcp::tools::get_str_arg(args, "repo").map(String::from),
+        doc_id: args.get("doc_id").and_then(|v| v.as_str().map(String::from)),
+        question_type: crate::mcp::tools::get_str_arg(args, "type").map(String::from),
+        status: Some("deferred".to_string()),
+        limit: crate::mcp::tools::get_u64_arg(args, "limit", 10) as usize,
+        offset: crate::mcp::tools::get_u64_arg(args, "offset", 0) as usize,
+        include_context: false,
+    };
+    services::get_deferred_items(db, &params, progress)
+}
+
+/// Marks a review question as answered. Parses JSON args and delegates to service.
+pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let params = AnswerQuestionParams {
+        doc_id: crate::mcp::tools::get_str_arg_required(args, "doc_id")?,
+        question_index: crate::mcp::tools::get_u64_arg_required(args, "question_index")? as usize,
+        answer: crate::mcp::tools::get_str_arg_required(args, "answer")?,
+        confidence: crate::mcp::tools::get_str_arg(args, "confidence").map(String::from),
+    };
+    services::answer_question(db, &params)
+}
+
+/// Answers multiple review questions atomically. Parses JSON args and delegates to service.
+pub fn bulk_answer_questions(
+    db: &Database,
+    args: &Value,
+    progress: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let answers = args.get("answers").and_then(|v| v.as_array())
+        .ok_or_else(|| FactbaseError::parse("answers array is required"))?;
+    if answers.len() > 50 {
+        return Err(FactbaseError::parse("Maximum 50 answers per call"));
+    }
+    let items: Vec<BulkAnswerItem> = answers.iter().enumerate().map(|(i, a)| {
+        Ok(BulkAnswerItem {
+            doc_id: a.get("doc_id").and_then(|v| v.as_str()).map(String::from)
+                .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: doc_id is required")))?,
+            question_index: a.get("question_index").and_then(Value::as_u64)
+                .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: question_index is required")))? as usize,
+            answer: a.get("answer").and_then(|v| v.as_str()).map(String::from)
+                .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: answer is required")))?,
+            confidence: a.get("confidence").and_then(|v| v.as_str()).map(String::from),
+        })
+    }).collect::<Result<Vec<_>, FactbaseError>>()?;
+    services::bulk_answer_questions(db, &items, progress)
+}
 
 /// Unified answer tool: dispatches to single or bulk based on args.
 pub fn answer_questions(
@@ -41,54 +108,47 @@ pub fn answer_questions(
     args: &Value,
     progress: &crate::ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    if args.get("answers").is_some() {
-        bulk_answer_questions(db, args, progress)
-    } else {
-        answer_question(db, args)
-    }
+    services::answer_questions(db, args, progress)
 }
 
-/// Formats a review question as JSON. When `doc_context` is provided,
-/// includes doc_id, doc_title, answered, and answer fields.
-pub(crate) fn format_question_json(q: &ReviewQuestion, doc_context: Option<(&str, &str)>) -> Value {
-    let mut json = q.to_json();
-    if let Some((doc_id, doc_title)) = doc_context {
-        let obj = json
-            .as_object_mut()
-            .expect("to_json() returns a JSON object");
-        obj.insert("doc_id".to_string(), Value::String(doc_id.to_string()));
-        obj.insert(
-            "doc_title".to_string(),
-            Value::String(doc_title.to_string()),
-        );
-        obj.insert("answered".to_string(), Value::Bool(q.answered));
-        obj.insert("answer".to_string(), serde_json::json!(q.answer));
-    }
-    json
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{QuestionType, ReviewQuestion};
 
-/// Counts unanswered question types and believed questions across documents.
-///
-/// Returns `(type_counts, believed_count)` where `type_counts` maps question type
-/// to the number of truly unanswered questions (excluding deferred and believed).
-pub(crate) fn count_question_types(docs: &[Document]) -> (HashMap<QuestionType, usize>, usize) {
-    let mut counts: HashMap<QuestionType, usize> = HashMap::new();
-    let mut believed = 0usize;
-    for doc in docs {
-        if let Some(questions) = parse_review_queue(&doc.content) {
-            for q in &questions {
-                if q.answered {
-                    continue;
-                }
-                if q.is_deferred() {
-                    if q.is_believed() {
-                        believed += 1;
-                    }
-                    continue;
-                }
-                *counts.entry(q.question_type).or_insert(0) += 1;
-            }
-        }
+    #[test]
+    fn test_format_question_json_with_doc_context() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Temporal,
+            line_ref: Some(5),
+            description: "When was this role held?".to_string(),
+            answered: false,
+            answer: None,
+            line_number: 10,
+            confidence: None,
+            confidence_reason: None,
+        };
+        let json = format_question_json(&q, Some(("abc123", "Test Doc")));
+        assert_eq!(json["doc_id"], "abc123");
+        assert_eq!(json["doc_title"], "Test Doc");
+        assert_eq!(json["type"], "temporal");
     }
-    (counts, believed)
+
+    #[test]
+    fn test_format_question_json_with_answer() {
+        let q = ReviewQuestion {
+            question_type: QuestionType::Missing,
+            line_ref: None,
+            description: "What is the source?".to_string(),
+            answered: true,
+            answer: Some("LinkedIn profile".to_string()),
+            line_number: 20,
+            confidence: None,
+            confidence_reason: None,
+        };
+        let json = format_question_json(&q, Some(("def456", "Another Doc")));
+        assert_eq!(json["type"], "missing");
+        assert_eq!(json["answered"], true);
+        assert_eq!(json["answer"], "LinkedIn profile");
+    }
 }

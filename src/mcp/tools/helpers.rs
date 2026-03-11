@@ -73,10 +73,7 @@ pub(crate) fn resolve_repo_filter(
     db: &Database,
     repo: Option<&str>,
 ) -> Result<Option<String>, FactbaseError> {
-    match repo {
-        Some(r) => Ok(Some(db.resolve_repo_id(r)?)),
-        None => Ok(None),
-    }
+    crate::services::review::helpers::resolve_repo_filter(db, repo)
 }
 
 /// Build temporal stats JSON from document content.
@@ -360,13 +357,7 @@ pub(crate) fn resolve_doc_path(
     db: &Database,
     doc: &crate::models::Document,
 ) -> Result<PathBuf, FactbaseError> {
-    let repo = db.get_repository(&doc.repo_id)?.ok_or_else(|| {
-        FactbaseError::not_found(format!(
-            "Repository '{}' not found for document {}",
-            doc.repo_id, doc.id
-        ))
-    })?;
-    Ok(repo.path.join(&doc.file_path))
+    crate::services::review::helpers::resolve_doc_path(db, doc)
 }
 
 #[cfg(test)]

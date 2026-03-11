@@ -386,7 +386,7 @@ pub(super) fn auto_dismiss_question(db: &Database, doc_id: &str, question_index:
 
     // Mark the question as answered with a glossary note
     let answer = "Defined in glossary — auto-resolved";
-    let Some(modified) = super::super::review::answer::modify_question_in_queue(queue_content, question_index, answer, false) else {
+    let Some(modified) = super::super::review::modify_question_in_queue(queue_content, question_index, answer, false) else {
         return Ok(());
     };
     let new_content = format!("{before}{marker}{modified}");
