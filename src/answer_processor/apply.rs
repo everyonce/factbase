@@ -120,8 +120,9 @@ pub async fn apply_changes_to_section(
         return apply_deletes_without_llm(section, &active_instructions);
     }
 
-    // For non-delete changes that previously needed LLM, return error
-    Err(FactbaseError::internal("LLM-based rewrite removed. Use update_document to apply complex changes."))
+    // For non-delete changes (Split, Generic) that previously needed LLM:
+    // apply any deletes we can, skip the rest. Better than failing the whole document.
+    apply_deletes_without_llm(section, &active_instructions)
 }
 
 /// Apply delete instructions without LLM
@@ -1187,5 +1188,70 @@ Content here
         assert!(!section.contains("# My Document"), "Section should not contain title");
         assert!(section.contains("Fact on line 4"));
         assert!(start >= 3, "Start should be after header+title, got {start}");
+    }
+
+    // --- apply_changes_to_section tests ---
+
+    #[tokio::test]
+    async fn test_apply_changes_to_section_all_dismissed() {
+        let section = "- Fact 1\n- Fact 2";
+        let instructions = vec![make_answer(ChangeInstruction::Dismiss)];
+        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        assert_eq!(result, section);
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_to_section_delete() {
+        let section = "- Fact 1\n- Fact 2\n- Fact 3";
+        let instructions = vec![make_answer(ChangeInstruction::Delete {
+            line_text: "Fact 2".to_string(),
+        })];
+        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        assert!(result.contains("Fact 1"));
+        assert!(!result.contains("Fact 2"));
+        assert!(result.contains("Fact 3"));
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_to_section_split_does_not_error() {
+        let section = "- Fact 1\n- Combined fact\n- Fact 3";
+        let instructions = vec![make_answer(ChangeInstruction::Split {
+            line_text: "Combined fact".to_string(),
+            instruction: "separate into two".to_string(),
+        })];
+        // Should succeed (skip the split) instead of erroring
+        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        assert_eq!(result, section);
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_to_section_generic_does_not_error() {
+        let section = "- Fact 1\n- Fact 2";
+        let instructions = vec![make_answer(ChangeInstruction::Generic {
+            description: "some complex change".to_string(),
+        })];
+        // Should succeed (skip the generic) instead of erroring
+        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        assert_eq!(result, section);
+    }
+
+    #[tokio::test]
+    async fn test_apply_changes_to_section_mixed_delete_and_split() {
+        let section = "- Fact 1\n- Delete me\n- Split me\n- Fact 4";
+        let instructions = vec![
+            make_answer(ChangeInstruction::Delete {
+                line_text: "Delete me".to_string(),
+            }),
+            make_answer(ChangeInstruction::Split {
+                line_text: "Split me".to_string(),
+                instruction: "separate".to_string(),
+            }),
+        ];
+        // Should apply the delete and skip the split
+        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        assert!(!result.contains("Delete me"));
+        assert!(result.contains("Split me")); // split skipped, line preserved
+        assert!(result.contains("Fact 1"));
+        assert!(result.contains("Fact 4"));
     }
 }
