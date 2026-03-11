@@ -321,11 +321,6 @@ fn resolve_step(
     let ctx = perspective_context(perspective);
     let stale = stale_days(perspective);
     let total = 6;
-    let deferred_note = if deferred > 0 {
-        format!("\n\nYou have {deferred} deferred item(s) that need human attention. Call factbase(op='deferred') first to review them before proceeding with new questions.")
-    } else {
-        String::new()
-    };
     match step {
         1 => {
             let type_dist = compute_type_distribution(db);
@@ -344,7 +339,7 @@ fn resolve_step(
             serde_json::json!({
                 "workflow": "resolve",
                 "step": 1, "total_steps": total,
-                "instruction": resolve(wf, "resolve.queue", DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx), ("deferred_note", &deferred_note)]),
+                "instruction": resolve(wf, "resolve.queue", DEFAULT_RESOLVE_QUEUE_INSTRUCTION, &[("ctx", &ctx)]),
                 "next_tool": "workflow",
                 "suggested_args": suggested,
                 "policy": {"stale_days": stale},
@@ -627,6 +622,9 @@ fn resolve_step2_batch(
         })
         .unwrap_or_default();
 
+    // Optional doc_type filter
+    let doc_type_filter = get_str_arg(args, "doc_type");
+
     // Collect all questions from the review queue (prefer disk content)
     let docs = load_review_docs_from_disk(db);
     let mut unanswered: Vec<Value> = Vec::new();
@@ -640,6 +638,13 @@ fn resolve_step2_batch(
     let mut glossary_auto_resolved: usize = 0;
 
     for doc in &docs {
+        // Apply doc_type filter
+        if let Some(dt_filter) = doc_type_filter {
+            let matches = doc.doc_type.as_deref().map_or(false, |dt| dt.eq_ignore_ascii_case(dt_filter));
+            if !matches {
+                continue;
+            }
+        }
         if let Some(questions) = parse_review_queue(&doc.content) {
             for (idx, q) in questions.iter().enumerate() {
                 if q.answered {
@@ -1586,7 +1591,9 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = resolve_step(1, &serde_json::json!({}), &None, 5, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("5 deferred item(s)"));
+        // Deferred items should NOT appear in instruction (agents misinterpret as "stop")
+        assert!(!instruction.contains("deferred"), "instruction must not mention deferred items");
+        // But the count is still available as structured data
         assert_eq!(step["deferred_count"], 5);
     }
 
@@ -3557,6 +3564,69 @@ mod tests {
         let questions = step["batch"]["questions"].as_array().unwrap();
         assert_eq!(questions.len(), 2, "should find weak-source questions from disk");
         assert_eq!(questions[0]["type"], "weak-source");
+    }
+
+    #[test]
+    fn test_resolve_step2_doc_type_filter() {
+        let (db, _tmp) = test_db();
+        // Insert two docs with different doc_types, each with a review question
+        let person_content = "<!-- factbase:per001 -->\n# Alice\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Missing date (line 4)\n";
+        let service_content = "<!-- factbase:svc001 -->\n# S3\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Old source (line 4)\n";
+        {
+            use crate::database::tests::test_repo_in_db;
+            use crate::models::Document;
+            test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+            db.upsert_document(&Document {
+                id: "per001".to_string(),
+                content: person_content.to_string(),
+                title: "Alice".to_string(),
+                file_path: "per001.md".to_string(),
+                doc_type: Some("person".to_string()),
+                ..Document::test_default()
+            }).unwrap();
+            db.upsert_document(&Document {
+                id: "svc001".to_string(),
+                content: service_content.to_string(),
+                title: "S3".to_string(),
+                file_path: "svc001.md".to_string(),
+                doc_type: Some("service".to_string()),
+                ..Document::test_default()
+            }).unwrap();
+        }
+
+        // Without filter: both questions returned
+        let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 2, "without filter should return all questions");
+
+        // With doc_type=person: only person question returned
+        let step = resolve_step2_batch(&serde_json::json!({"doc_type": "person"}), &None, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 1, "doc_type=person should return only person questions");
+        assert_eq!(questions[0]["doc_id"], "per001");
+
+        // With doc_type=service: only service question returned
+        let step = resolve_step2_batch(&serde_json::json!({"doc_type": "service"}), &None, &db, &wf());
+        let questions = step["batch"]["questions"].as_array().unwrap();
+        assert_eq!(questions.len(), 1, "doc_type=service should return only service questions");
+        assert_eq!(questions[0]["doc_id"], "svc001");
+
+        // With doc_type=nonexistent: no questions
+        let step = resolve_step2_batch(&serde_json::json!({"doc_type": "nonexistent"}), &None, &db, &wf());
+        assert!(step["all_resolved"].as_bool().unwrap_or(false), "nonexistent doc_type should yield no questions");
+    }
+
+    #[test]
+    fn test_resolve_step1_deferred_does_not_block() {
+        let (db, _tmp) = test_db();
+        let step = resolve_step(1, &serde_json::json!({}), &None, 713, &db, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        // Must not contain language that causes agents to stop
+        assert!(!instruction.contains("human attention"), "instruction must not say 'human attention'");
+        assert!(!instruction.contains("before proceeding"), "instruction must not say 'before proceeding'");
+        assert!(!instruction.contains("deferred"), "instruction must not mention deferred items");
+        // Deferred count still available as data
+        assert_eq!(step["deferred_count"], 713);
     }
 
     #[test]
