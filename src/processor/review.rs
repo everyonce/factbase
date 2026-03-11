@@ -935,12 +935,9 @@ pub fn recover_review_section(disk_content: &str, db_content: &str) -> (String, 
         }
         return (disk_content.to_string(), false);
     }
-    // Try to recover from DB content
-    if let Some(marker_pos) = db_content.find(REVIEW_QUEUE_MARKER) {
-        // Find the start of the review section (look for --- or ## Review Queue before marker)
-        let before_marker = &db_content[..marker_pos];
-        let section_start = find_review_section_start(before_marker);
-        let review_section = &db_content[section_start..];
+    // Try to recover from DB content using extract_review_queue_section
+    // which correctly handles both plain and callout-wrapped review sections.
+    if let Some(review_section) = crate::patterns::extract_review_queue_section(db_content) {
         let mut result = disk_content.to_string();
         if !result.ends_with('\n') {
             result.push('\n');
@@ -1612,6 +1609,27 @@ Line 3
         let (result, changed) = recover_review_section(disk, db);
         assert!(!changed);
         assert_eq!(result, disk);
+    }
+
+    #[test]
+    fn test_recover_review_section_callout_from_db() {
+        let disk = "# Doc\n\nSome content\n";
+        let db = "# Doc\n\nSome content\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(changed);
+        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format from DB");
+        assert!(result.contains("> <!-- factbase:review -->"));
+        assert!(result.contains("When?"));
+    }
+
+    #[test]
+    fn test_recover_review_section_callout_disk_empty() {
+        let disk = "# Doc\n\nContent\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n";
+        let db = "# Doc\n\nContent\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let (result, changed) = recover_review_section(disk, db);
+        assert!(changed);
+        assert!(result.contains("When?"));
+        assert!(result.contains("> [!info]- Review Queue"));
     }
 
     #[test]

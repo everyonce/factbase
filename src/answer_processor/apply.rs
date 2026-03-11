@@ -4,9 +4,10 @@ use chrono::NaiveDate;
 
 use crate::error::FactbaseError;
 use crate::patterns::{
-    add_or_update_reviewed_marker, FACT_LINE_REGEX, REVIEWED_MARKER_REGEX, REVIEW_QUEUE_MARKER,
-    SOURCE_DEF_REGEX,
+    add_or_update_reviewed_marker, body_end_offset, FACT_LINE_REGEX, REVIEWED_MARKER_REGEX,
+    REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX,
 };
+use crate::processor::{unwrap_review_callout, wrap_review_callout};
 use crate::ReviewQuestion;
 
 use super::{ChangeInstruction, InterpretedAnswer};
@@ -220,11 +221,12 @@ pub fn apply_source_citations(content: &str, sources: &[(&str, &str)]) -> String
             lines.insert(idx + 1 + i, def);
         }
     } else {
-        // No existing footnotes — insert before review queue or at end
-        let insert_idx = lines
-            .iter()
-            .position(|l| l.contains(REVIEW_QUEUE_MARKER))
-            .unwrap_or(lines.len());
+        // No existing footnotes — insert before review queue or at end.
+        // Use body_end_offset to correctly handle callout-wrapped review sections
+        // (the callout header line comes before the marker line).
+        let joined = lines.join("\n");
+        let byte_offset = body_end_offset(&joined);
+        let insert_idx = joined[..byte_offset].matches('\n').count();
         // Add separator and definitions
         let mut to_insert = vec!["".to_string(), "---".to_string()];
         to_insert.extend(footnote_defs);
@@ -487,6 +489,16 @@ pub fn dedup_titles(content: &str) -> String {
 
 /// Remove processed questions from Review Queue
 pub fn remove_processed_questions(content: &str, processed_indices: &[usize]) -> String {
+    let (unwrapped, was_callout) = unwrap_review_callout(content);
+    let result = remove_processed_questions_inner(&unwrapped, processed_indices);
+    if was_callout && result != unwrapped {
+        wrap_review_callout(&result)
+    } else {
+        result
+    }
+}
+
+fn remove_processed_questions_inner(content: &str, processed_indices: &[usize]) -> String {
     let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
         return content.to_string();
     };
@@ -560,6 +572,16 @@ pub fn uncheck_deferred_questions(content: &str, deferred_indices: &[usize]) -> 
     if deferred_indices.is_empty() {
         return content.to_string();
     }
+    let (unwrapped, was_callout) = unwrap_review_callout(content);
+    let result = uncheck_deferred_questions_inner(&unwrapped, deferred_indices);
+    if was_callout && result != unwrapped {
+        wrap_review_callout(&result)
+    } else {
+        result
+    }
+}
+
+fn uncheck_deferred_questions_inner(content: &str, deferred_indices: &[usize]) -> String {
     let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
         return content.to_string();
     };
@@ -1253,5 +1275,56 @@ Content here
         assert!(result.contains("Split me")); // split skipped, line preserved
         assert!(result.contains("Fact 1"));
         assert!(result.contains("Fact 4"));
+    }
+
+    // ==================== callout format tests ====================
+
+    #[test]
+    fn test_remove_processed_questions_callout() {
+        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
+        let result = remove_processed_questions(content, &[0]);
+        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format");
+        assert!(!result.contains("Q0"), "should remove processed question");
+        assert!(result.contains("Q1"), "should keep unprocessed question");
+    }
+
+    #[test]
+    fn test_remove_processed_questions_callout_all_removed() {
+        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n";
+        let result = remove_processed_questions(content, &[0]);
+        assert!(!result.contains("Review Queue"), "should remove entire section");
+        assert!(result.contains("Content."));
+    }
+
+    #[test]
+    fn test_uncheck_deferred_questions_callout() {
+        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > defer\n> - [x] `@q[stale]` Q1\n>   > dismiss\n";
+        let result = uncheck_deferred_questions(content, &[0]);
+        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format");
+        // Q0 should be unchecked and answer removed
+        assert!(result.contains("Q0"));
+        assert!(!result.contains("defer"));
+        // Q1 should be unchanged
+        assert!(result.contains("- [x]") || result.contains("Q1"));
+    }
+
+    #[test]
+    fn test_apply_source_citations_callout() {
+        let content = "# Doc\n\n- Fact one\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[missing]` Q\n>   > \n";
+        let result = apply_source_citations(content, &[("Fact one", "Source info")]);
+        assert!(result.contains("[^1]: Source info"));
+        // Footnotes must appear before the callout review section
+        let footnote_pos = result.find("[^1]: Source info").unwrap();
+        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        assert!(footnote_pos < review_pos, "footnotes must be before callout review section");
+    }
+
+    #[test]
+    fn test_remove_processed_questions_callout_roundtrip() {
+        // Start with callout → remove one question → verify still callout
+        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
+        let result = remove_processed_questions(content, &[0]);
+        assert!(result.contains("> [!info]- Review Queue"));
+        assert!(result.contains("> <!-- factbase:review -->"));
     }
 }

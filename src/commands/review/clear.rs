@@ -3,7 +3,8 @@
 use super::args::ReviewArgs;
 use super::super::setup_database_only;
 use factbase::{
-    content_hash, normalize_review_section, parse_review_queue, QuestionType,
+    content_hash, normalize_review_section, parse_review_queue, unwrap_review_callout,
+    wrap_review_callout, QuestionType,
 };
 use std::fs;
 
@@ -97,6 +98,16 @@ pub fn cmd_review_clear(args: &ReviewArgs) -> anyhow::Result<()> {
 /// Remove unanswered questions from content, optionally filtered by type.
 /// Keeps answered questions and deferred questions (have answers).
 fn clear_unanswered(content: &str, type_filter: &Option<QuestionType>) -> String {
+    let (unwrapped, was_callout) = unwrap_review_callout(content);
+    let result = clear_unanswered_inner(&unwrapped, type_filter);
+    if was_callout && result != unwrapped {
+        wrap_review_callout(&result)
+    } else {
+        result
+    }
+}
+
+fn clear_unanswered_inner(content: &str, type_filter: &Option<QuestionType>) -> String {
     let Some(marker_pos) = content.find("<!-- factbase:review -->") else {
         return content.to_string();
     };
@@ -198,5 +209,31 @@ mod tests {
         let result = clear_unanswered(content, &None);
         assert!(!result.contains("Review Queue"));
         assert!(result.contains("Content."));
+    }
+
+    #[test]
+    fn test_clear_unanswered_callout() {
+        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` question 1\n>   > \n> - [x] `@q[stale]` answered\n>   > yes\n";
+        let result = clear_unanswered(content, &None);
+        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format");
+        assert!(!result.contains("question 1"), "should remove unanswered");
+        assert!(result.contains("answered"), "should keep answered");
+    }
+
+    #[test]
+    fn test_clear_unanswered_callout_all_removed() {
+        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` only q\n>   > \n";
+        let result = clear_unanswered(content, &None);
+        assert!(!result.contains("Review Queue"), "should remove entire section");
+        assert!(result.contains("Content."));
+    }
+
+    #[test]
+    fn test_clear_unanswered_callout_by_type() {
+        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` temporal q\n>   > \n> - [ ] `@q[missing]` missing q\n>   > \n";
+        let result = clear_unanswered(content, &Some(QuestionType::Temporal));
+        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout");
+        assert!(!result.contains("temporal q"), "should remove temporal");
+        assert!(result.contains("missing q"), "should keep missing");
     }
 }

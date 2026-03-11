@@ -4,7 +4,7 @@
 //! preventing document corruption from malformed output.
 
 use crate::output::truncate_str;
-use crate::patterns::{FACT_LINE_REGEX, REVIEW_QUEUE_MARKER, SOURCE_DEF_REGEX};
+use crate::patterns::{FACT_LINE_REGEX, SOURCE_DEF_REGEX};
 
 /// Errors detected during output validation.
 #[derive(Debug, Clone)]
@@ -121,11 +121,10 @@ fn count_fact_lines(content: &str) -> usize {
     // section. Review queue items (e.g. `- [x] @q[temporal] ...`) match the
     // fact-line regex but are not actual facts — removing answered questions
     // would otherwise trigger a false-positive content-loss validation error.
-    let body = match content.find(REVIEW_QUEUE_MARKER) {
-        Some(pos) => &content[..pos],
-        None => content,
-    };
-    body.lines()
+    // Use body_end_offset which handles both plain and callout-wrapped review sections.
+    let end = crate::patterns::body_end_offset(content);
+    content[..end]
+        .lines()
         .filter(|l| FACT_LINE_REGEX.is_match(l))
         .count()
 }
@@ -288,5 +287,32 @@ mod tests {
             - [x] @q[temporal] Q1? > A1\n\
             - [x] @q[conflict] Q2? > A2\n";
         assert_eq!(count_fact_lines(content), 2);
+    }
+
+    #[test]
+    fn test_count_fact_lines_excludes_callout_review_queue() {
+        let content = "# Doc\n\n\
+            - Fact A\n\
+            - Fact B\n\
+            \n> [!info]- Review Queue\n> <!-- factbase:review -->\n\
+            > - [x] @q[temporal] Q1? > A1\n\
+            > - [x] @q[conflict] Q2? > A2\n";
+        assert_eq!(count_fact_lines(content), 2);
+    }
+
+    #[test]
+    fn test_validate_document_callout_review_no_false_content_loss() {
+        let original = "<!-- factbase:abc123 -->\n# Topic\n\n\
+            - Fact 1\n- Fact 2\n- Fact 3\n\
+            \n> [!info]- Review Queue\n> <!-- factbase:review -->\n\
+            > - [x] @q[temporal] Q? > A\n";
+        // Remove answered review question but keep all facts
+        let new_content = "<!-- factbase:abc123 -->\n# Topic\n\n\
+            - Fact 1\n- Fact 2\n- Fact 3\n";
+        let errors = validate_document(original, new_content);
+        assert!(
+            !errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
+            "Removing callout review questions should not trigger content loss"
+        );
     }
 }
