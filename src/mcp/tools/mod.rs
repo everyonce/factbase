@@ -21,7 +21,7 @@
 //! - [`handle_tool_call`]: Main entry point for routing tool calls
 
 mod authoring;
-mod document;
+pub(crate) mod document;
 mod embeddings;
 mod entity;
 pub(crate) mod helpers;

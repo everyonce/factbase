@@ -30,7 +30,6 @@ fn resolve_repo(db: &Database, repo_id: Option<&str>) -> Result<crate::models::R
 }
 
 /// Unified organize tool dispatcher. Routes to the appropriate action based on the "action" field.
-/// Supports: move, retype, apply. Merge and split are now agent-driven via get_entity + CRUD tools.
 #[instrument(name = "mcp_organize", skip(db, _embedding, args, _progress))]
 pub async fn organize<E: EmbeddingProvider>(
     db: &Database,
@@ -40,20 +39,15 @@ pub async fn organize<E: EmbeddingProvider>(
 ) -> Result<Value, FactbaseError> {
     let action = get_str_arg_required(args, "action")?;
     match action.as_str() {
-        "merge" => Ok(serde_json::json!({
-            "error": "The 'merge' action has been removed from the organize tool. Use get_entity to read both documents, plan the merge yourself, then use update_document and delete_document to execute it.",
-            "migration": "Agent-driven merge: get_entity(doc1) + get_entity(doc2) → plan → update_document(keep) + delete_document(remove)"
-        })),
-        "split" => Ok(serde_json::json!({
-            "error": "The 'split' action has been removed from the organize tool. Use get_entity to read the document, plan the split yourself, then use create_document and update_document to execute it.",
-            "migration": "Agent-driven split: get_entity(doc) → plan → create_document(new) + update_document(original)"
-        })),
+        "merge" => organize_merge(db, args),
+        "split" => organize_split(db, args),
+        "delete" => organize_delete(db, args),
         "move" => organize_move(db, args),
         "retype" => organize_retype(db, args),
         "apply" => organize_apply(db, args),
         "execute_suggestions" => organize_execute_suggestions(db, args),
         _ => Err(FactbaseError::parse(format!(
-            "Unknown organize action: '{action}'. Expected: move, retype, apply, execute_suggestions"
+            "Unknown organize action: '{action}'. Expected: merge, split, delete, move, retype, apply, execute_suggestions"
         ))),
     }
 }
@@ -240,6 +234,173 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
         "stale_entries": stale_entries.len(),
         "ghost_file_count": ghost_files.len(),
         "total_suggestions": ghost_files.len() + merge_candidates.len() + split_candidates.len() + misplaced_candidates.len() + duplicate_entries.len() + stale_entries.len(),
+    }))
+}
+
+/// Merge source document into target: append unique content, redirect links, delete source.
+#[instrument(name = "mcp_organize_merge", skip(db, args))]
+fn organize_merge(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let source_id = get_str_arg_required(args, "source_id")?;
+    let target_id = get_str_arg_required(args, "target_id")?;
+
+    if source_id == target_id {
+        return Err(FactbaseError::parse("source_id and target_id must be different"));
+    }
+
+    let source = db.require_document(&source_id)?;
+    let target = db.require_document(&target_id)?;
+    let repo = resolve_repo(db, Some(target.repo_id.as_str()))?;
+
+    let source_path = repo.path.join(&source.file_path);
+    let target_path = repo.path.join(&target.file_path);
+
+    if !target_path.exists() {
+        return Err(FactbaseError::not_found(format!("Target file not found: {}", target_path.display())));
+    }
+
+    // Read target content from disk (authoritative)
+    let target_content = std::fs::read_to_string(&target_path)?;
+
+    // Extract source body (strip factbase header + title)
+    let source_body = crate::mcp::tools::document::strip_factbase_header(&source.content);
+
+    // Append source body to target
+    let mut merged = target_content.clone();
+    if !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(&format!("\n## Merged from {}\n\n{}\n", source.title, source_body));
+
+    // Write merged content
+    std::fs::write(&target_path, &merged)?;
+
+    // Redirect links from source to target
+    let links_redirected = crate::organize::redirect_links(db, &source_id, &target_id, &repo.path)?;
+
+    // Delete source file and mark deleted
+    if source_path.exists() {
+        std::fs::remove_file(&source_path)?;
+    }
+    db.mark_deleted(&source_id)?;
+
+    Ok(serde_json::json!({
+        "source_id": source_id,
+        "source_title": source.title,
+        "target_id": target_id,
+        "target_title": target.title,
+        "links_redirected": links_redirected,
+        "message": format!("Merged '{}' into '{}'. {} links redirected. Source deleted. Run scan to re-index.",
+            source.title, target.title, links_redirected)
+    }))
+}
+
+/// Split a document into multiple new documents. Agent provides sections.
+#[instrument(name = "mcp_organize_split", skip(db, args))]
+fn organize_split(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let doc_id = get_str_arg_required(args, "doc_id")?;
+    let sections = args.get("sections")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| FactbaseError::parse("sections array is required (each with 'title' and 'content')"))?;
+
+    if sections.is_empty() {
+        return Err(FactbaseError::parse("sections array cannot be empty"));
+    }
+
+    let doc = db.require_document(&doc_id)?;
+    let repo = resolve_repo(db, Some(doc.repo_id.as_str()))?;
+    let doc_path = repo.path.join(&doc.file_path);
+    let parent_dir = doc_path.parent()
+        .ok_or_else(|| FactbaseError::internal("Document has no parent directory"))?;
+
+    let processor = DocumentProcessor::new();
+    let mut new_docs = Vec::new();
+
+    for section in sections {
+        let title = section.get("title").and_then(|v| v.as_str())
+            .ok_or_else(|| FactbaseError::parse("Each section requires a 'title'"))?;
+        let content = section.get("content").and_then(|v| v.as_str())
+            .ok_or_else(|| FactbaseError::parse("Each section requires 'content'"))?;
+
+        let new_id = processor.generate_unique_id(db);
+        let safe_name = title.chars()
+            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
+            .collect::<String>().trim().replace(' ', "-").to_lowercase();
+        let new_path = parent_dir.join(format!("{safe_name}.md"));
+
+        let full_content = format!("<!-- factbase:{new_id} -->\n# {title}\n\n{content}\n");
+        if let Some(p) = new_path.parent() {
+            std::fs::create_dir_all(p)?;
+        }
+        std::fs::write(&new_path, &full_content)?;
+
+        new_docs.push(serde_json::json!({
+            "id": new_id,
+            "title": title,
+            "file_path": new_path.strip_prefix(&repo.path).unwrap_or(&new_path).display().to_string(),
+        }));
+    }
+
+    // Delete original
+    if doc_path.exists() {
+        std::fs::remove_file(&doc_path)?;
+    }
+    db.mark_deleted(&doc_id)?;
+
+    Ok(serde_json::json!({
+        "source_id": doc_id,
+        "source_title": doc.title,
+        "new_documents": new_docs,
+        "message": format!("Split '{}' into {} documents. Source deleted. Run scan to re-index.",
+            doc.title, new_docs.len())
+    }))
+}
+
+/// Clean delete: remove file, DB entries (documents, links, embeddings), update wikilinks.
+#[instrument(name = "mcp_organize_delete", skip(db, args))]
+fn organize_delete(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let doc_id = get_str_arg_required(args, "doc_id")?;
+
+    let doc = db.require_document(&doc_id)?;
+    let repo = resolve_repo(db, Some(doc.repo_id.as_str()))?;
+    let file_path = repo.path.join(&doc.file_path);
+
+    // Find incoming links before deletion
+    let incoming_links = db.get_links_to(&doc_id)?;
+    let links_affected = incoming_links.len();
+
+    // Remove [[id]] references from files that link to this doc
+    let mut wikilinks_cleaned = 0;
+    for link in &incoming_links {
+        if let Some(source_doc) = db.get_document(&link.source_id)? {
+            let source_path = repo.path.join(&source_doc.file_path);
+            if source_path.exists() {
+                let content = std::fs::read_to_string(&source_path)?;
+                let pattern = format!("[[{}]]", doc_id);
+                if content.contains(&pattern) {
+                    let cleaned = content.replace(&pattern, &doc.title);
+                    std::fs::write(&source_path, &cleaned)?;
+                    wikilinks_cleaned += 1;
+                }
+            }
+        }
+    }
+
+    // Delete file from disk
+    if file_path.exists() {
+        std::fs::remove_file(&file_path)?;
+    }
+
+    // Hard delete from DB (documents, links, embeddings, facts)
+    db.hard_delete_document(&doc_id)?;
+
+    Ok(serde_json::json!({
+        "doc_id": doc_id,
+        "title": doc.title,
+        "file_path": doc.file_path,
+        "links_affected": links_affected,
+        "wikilinks_cleaned": wikilinks_cleaned,
+        "message": format!("Deleted '{}' ({}). File removed, DB cleaned. {} incoming links affected, {} wikilinks updated.",
+            doc.title, doc_id, links_affected, wikilinks_cleaned)
     }))
 }
 
@@ -779,5 +940,290 @@ mod tests {
 
         // Should succeed with no actions (doc deleted → suggestion cleaned up)
         assert_eq!(result["moves"].as_array().unwrap().len(), 0);
+    }
+
+    // --- Tests for merge, split, delete ---
+
+    fn setup_two_docs(db: &Database, tmp: &std::path::Path) {
+        crate::database::tests::test_repo_in_db(db, "test", tmp);
+
+        std::fs::write(
+            tmp.join("source.md"),
+            "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n",
+        ).unwrap();
+        std::fs::write(
+            tmp.join("target.md"),
+            "<!-- factbase:tgt001 -->\n# Target Doc\n\n- Target fact X\n",
+        ).unwrap();
+
+        let mut src = crate::models::Document::test_default();
+        src.id = "src001".to_string();
+        src.title = "Source Doc".to_string();
+        src.content = "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n".to_string();
+        src.file_path = "source.md".to_string();
+        src.repo_id = "test".to_string();
+        db.upsert_document(&src).unwrap();
+
+        let mut tgt = crate::models::Document::test_default();
+        tgt.id = "tgt001".to_string();
+        tgt.title = "Target Doc".to_string();
+        tgt.content = "<!-- factbase:tgt001 -->\n# Target Doc\n\n- Target fact X\n".to_string();
+        tgt.file_path = "target.md".to_string();
+        tgt.repo_id = "test".to_string();
+        db.upsert_document(&tgt).unwrap();
+    }
+
+    #[test]
+    fn test_organize_merge_appends_source_to_target() {
+        let (db, tmp) = crate::database::tests::test_db();
+        setup_two_docs(&db, tmp.path());
+
+        let args = serde_json::json!({"action": "merge", "source_id": "src001", "target_id": "tgt001"});
+        let result = organize_merge(&db, &args).unwrap();
+
+        assert_eq!(result["source_id"], "src001");
+        assert_eq!(result["target_id"], "tgt001");
+
+        // Source file deleted
+        assert!(!tmp.path().join("source.md").exists());
+        // Target file has merged content
+        let content = std::fs::read_to_string(tmp.path().join("target.md")).unwrap();
+        assert!(content.contains("Target fact X"));
+        assert!(content.contains("Source fact A"));
+        assert!(content.contains("Source fact B"));
+        assert!(content.contains("Merged from Source Doc"));
+    }
+
+    #[test]
+    fn test_organize_merge_with_duplicate_facts() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        // Both docs have "Shared fact"
+        std::fs::write(
+            tmp.path().join("a.md"),
+            "<!-- factbase:aaa001 -->\n# Doc A\n\n- Shared fact\n- Unique A\n",
+        ).unwrap();
+        std::fs::write(
+            tmp.path().join("b.md"),
+            "<!-- factbase:bbb001 -->\n# Doc B\n\n- Shared fact\n- Unique B\n",
+        ).unwrap();
+
+        let mut a = crate::models::Document::test_default();
+        a.id = "aaa001".to_string();
+        a.title = "Doc A".to_string();
+        a.content = "<!-- factbase:aaa001 -->\n# Doc A\n\n- Shared fact\n- Unique A\n".to_string();
+        a.file_path = "a.md".to_string();
+        a.repo_id = "test".to_string();
+        db.upsert_document(&a).unwrap();
+
+        let mut b = crate::models::Document::test_default();
+        b.id = "bbb001".to_string();
+        b.title = "Doc B".to_string();
+        b.content = "<!-- factbase:bbb001 -->\n# Doc B\n\n- Shared fact\n- Unique B\n".to_string();
+        b.file_path = "b.md".to_string();
+        b.repo_id = "test".to_string();
+        db.upsert_document(&b).unwrap();
+
+        let args = serde_json::json!({"action": "merge", "source_id": "aaa001", "target_id": "bbb001"});
+        let result = organize_merge(&db, &args).unwrap();
+        assert_eq!(result["source_id"], "aaa001");
+
+        // Merge appends all source body (dedup is agent's job)
+        let content = std::fs::read_to_string(tmp.path().join("b.md")).unwrap();
+        assert!(content.contains("Unique A"));
+        assert!(content.contains("Unique B"));
+    }
+
+    #[test]
+    fn test_organize_merge_redirects_links() {
+        let (db, tmp) = crate::database::tests::test_db();
+        setup_two_docs(&db, tmp.path());
+
+        // Create a third doc that links to source
+        std::fs::write(
+            tmp.path().join("ref.md"),
+            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[src001]] for details.",
+        ).unwrap();
+        let mut r = crate::models::Document::test_default();
+        r.id = "ref001".to_string();
+        r.title = "Ref".to_string();
+        r.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[src001]] for details.".to_string();
+        r.file_path = "ref.md".to_string();
+        r.repo_id = "test".to_string();
+        db.upsert_document(&r).unwrap();
+
+        db.update_links("ref001", &[crate::link_detection::DetectedLink {
+            target_id: "src001".to_string(),
+            target_title: "Source Doc".to_string(),
+            mention_text: "Source Doc".to_string(),
+            context: "references".to_string(),
+        }]).unwrap();
+
+        let args = serde_json::json!({"action": "merge", "source_id": "src001", "target_id": "tgt001"});
+        let result = organize_merge(&db, &args).unwrap();
+        assert!(result["links_redirected"].as_u64().unwrap() >= 1);
+
+        // DB link redirected
+        let links = db.get_links_from("ref001").unwrap();
+        assert_eq!(links[0].target_id, "tgt001");
+    }
+
+    #[test]
+    fn test_organize_merge_same_id_rejected() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let args = serde_json::json!({"action": "merge", "source_id": "abc", "target_id": "abc"});
+        assert!(organize_merge(&db, &args).is_err());
+    }
+
+    #[test]
+    fn test_organize_delete_cleans_up() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        std::fs::write(
+            tmp.path().join("victim.md"),
+            "<!-- factbase:vic001 -->\n# Victim\n\n- Some fact\n",
+        ).unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "vic001".to_string();
+        doc.title = "Victim".to_string();
+        doc.content = "<!-- factbase:vic001 -->\n# Victim\n\n- Some fact\n".to_string();
+        doc.file_path = "victim.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({"action": "delete", "doc_id": "vic001"});
+        let result = organize_delete(&db, &args).unwrap();
+
+        assert_eq!(result["doc_id"], "vic001");
+        assert_eq!(result["title"], "Victim");
+
+        // File deleted
+        assert!(!tmp.path().join("victim.md").exists());
+        // DB hard-deleted
+        assert!(db.get_document("vic001").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_organize_delete_cleans_wikilinks() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        std::fs::write(tmp.path().join("target.md"), "<!-- factbase:del001 -->\n# Target\n\n- Fact\n").unwrap();
+        std::fs::write(tmp.path().join("ref.md"), "<!-- factbase:ref001 -->\n# Ref\n\nSee [[del001]] here.").unwrap();
+
+        let mut target = crate::models::Document::test_default();
+        target.id = "del001".to_string();
+        target.title = "Target".to_string();
+        target.content = "<!-- factbase:del001 -->\n# Target\n\n- Fact\n".to_string();
+        target.file_path = "target.md".to_string();
+        target.repo_id = "test".to_string();
+        db.upsert_document(&target).unwrap();
+
+        let mut r = crate::models::Document::test_default();
+        r.id = "ref001".to_string();
+        r.title = "Ref".to_string();
+        r.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[del001]] here.".to_string();
+        r.file_path = "ref.md".to_string();
+        r.repo_id = "test".to_string();
+        db.upsert_document(&r).unwrap();
+
+        db.update_links("ref001", &[crate::link_detection::DetectedLink {
+            target_id: "del001".to_string(),
+            target_title: "Target".to_string(),
+            mention_text: "Target".to_string(),
+            context: "references".to_string(),
+        }]).unwrap();
+
+        let args = serde_json::json!({"action": "delete", "doc_id": "del001"});
+        let result = organize_delete(&db, &args).unwrap();
+
+        assert_eq!(result["links_affected"], 1);
+        assert_eq!(result["wikilinks_cleaned"], 1);
+
+        // Wikilink replaced with title text
+        let ref_content = std::fs::read_to_string(tmp.path().join("ref.md")).unwrap();
+        assert!(!ref_content.contains("[[del001]]"));
+        assert!(ref_content.contains("Target"));
+    }
+
+    #[test]
+    fn test_organize_split_creates_new_docs() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        std::fs::write(
+            tmp.path().join("multi.md"),
+            "<!-- factbase:mul001 -->\n# Multi Topic\n\n## Section A\n- Fact A\n\n## Section B\n- Fact B\n",
+        ).unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "mul001".to_string();
+        doc.title = "Multi Topic".to_string();
+        doc.content = "<!-- factbase:mul001 -->\n# Multi Topic\n\n## Section A\n- Fact A\n\n## Section B\n- Fact B\n".to_string();
+        doc.file_path = "multi.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "action": "split",
+            "doc_id": "mul001",
+            "sections": [
+                {"title": "Section A", "content": "- Fact A"},
+                {"title": "Section B", "content": "- Fact B"}
+            ]
+        });
+        let result = organize_split(&db, &args).unwrap();
+
+        assert_eq!(result["source_id"], "mul001");
+        let new_docs = result["new_documents"].as_array().unwrap();
+        assert_eq!(new_docs.len(), 2);
+
+        // Original deleted
+        assert!(!tmp.path().join("multi.md").exists());
+
+        // New files created
+        assert!(tmp.path().join("section-a.md").exists());
+        assert!(tmp.path().join("section-b.md").exists());
+
+        let a_content = std::fs::read_to_string(tmp.path().join("section-a.md")).unwrap();
+        assert!(a_content.contains("# Section A"));
+        assert!(a_content.contains("Fact A"));
+        assert!(a_content.starts_with("<!-- factbase:"));
+    }
+
+    #[test]
+    fn test_organize_split_empty_sections_rejected() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let args = serde_json::json!({"action": "split", "doc_id": "x", "sections": []});
+        assert!(organize_split(&db, &args).is_err());
+    }
+
+    #[test]
+    fn test_maintain_workflow_lists_organize_operations() {
+        // Test via the workflow function output (step 5 = organize step)
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", _tmp.path());
+        let args = serde_json::json!({"workflow": "maintain", "step": 5});
+        let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
+        let instruction = result["instruction"].as_str().unwrap();
+        assert!(instruction.contains("merge"), "should mention merge: {instruction}");
+        assert!(instruction.contains("split"), "should mention split");
+        assert!(instruction.contains("delete"), "should mention delete");
+        assert!(instruction.contains("move"), "should mention move");
+        assert!(instruction.contains("execute_suggestions"), "should mention execute_suggestions");
+        assert!(instruction.contains("Do NOT use shell commands"), "should warn against shell commands");
+    }
+
+    #[test]
+    fn test_correct_workflow_mentions_execute_suggestions() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", _tmp.path());
+        let args = serde_json::json!({"workflow": "correct", "step": 4, "correction": "test", "source": "test"});
+        let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
+        let instruction = result["instruction"].as_str().unwrap();
+        assert!(instruction.contains("execute_suggestions"), "should mention execute_suggestions: {instruction}");
     }
 }

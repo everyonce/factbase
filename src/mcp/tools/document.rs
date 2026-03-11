@@ -72,7 +72,7 @@ fn merge_frontmatter_fields(base: &mut Vec<String>, overrides: &[String]) {
 
 /// Strip the `<!-- factbase:ID -->` header, YAML frontmatter, and first `# Title` line
 /// from content, returning only the body.
-fn strip_factbase_header(content: &str) -> String {
+pub(crate) fn strip_factbase_header(content: &str) -> String {
     let mut lines = content.lines().peekable();
 
     // Skip factbase HTML comment header if present

@@ -132,7 +132,8 @@ fn execute_move_suggestion(
             return Err(FactbaseError::not_found(format!("Source file not found: {}", old_abs.display())));
         }
         if new_abs.exists() {
-            return Err(FactbaseError::internal(format!("Destination already exists: {}", new_abs.display())));
+            // Auto-merge: destination already exists, merge source into it
+            return execute_move_with_merge(db, doc, repo_path, &new_path, &new_abs);
         }
         if let Some(parent) = new_abs.parent() {
             fs::create_dir_all(parent)?;
@@ -228,6 +229,56 @@ fn execute_title_suggestion(
         doc_id: doc.id.clone(),
         old_title: old_title.clone(),
         new_title: new_title.to_string(),
+        links_updated,
+    })
+}
+
+// --- Auto-merge helper for move conflicts ---
+
+/// When a move destination already exists, merge the source into the existing file.
+fn execute_move_with_merge(
+    db: &Database,
+    doc: &crate::models::Document,
+    repo_path: &Path,
+    new_path: &str,
+    new_abs: &Path,
+) -> Result<MoveAction, FactbaseError> {
+    let old_path = &doc.file_path;
+    let old_abs = repo_path.join(old_path);
+
+    // Find the target document by file_path
+    let target_doc = db.list_documents(None, Some(&doc.repo_id), None, 100_000)?
+        .into_iter()
+        .find(|d| d.file_path == new_path)
+        .ok_or_else(|| FactbaseError::internal(format!(
+            "Destination file exists but no matching document in DB: {}", new_abs.display()
+        )))?;
+
+    // Read both files
+    let target_content = fs::read_to_string(new_abs)?;
+    let source_body = crate::mcp::tools::document::strip_factbase_header(&doc.content);
+
+    // Append source body to target
+    let mut merged = target_content;
+    if !merged.ends_with('\n') {
+        merged.push('\n');
+    }
+    merged.push_str(&format!("\n## Merged from {}\n\n{}\n", doc.title, source_body));
+    fs::write(new_abs, &merged)?;
+
+    // Redirect links from source to target
+    let links_updated = crate::organize::redirect_links(db, &doc.id, &target_doc.id, repo_path)?;
+
+    // Delete source file and mark deleted
+    if old_abs.exists() {
+        fs::remove_file(&old_abs)?;
+    }
+    db.mark_deleted(&doc.id)?;
+
+    Ok(MoveAction {
+        doc_id: doc.id.clone(),
+        old_path: old_path.clone(),
+        new_path: format!("{} (merged into {})", new_path, target_doc.id),
         links_updated,
     })
 }
@@ -378,5 +429,60 @@ mod tests {
         let content = "No links here.";
         let result = replace_wikilink_path(content, "old/path", "new/path");
         assert_eq!(result, "No links here.");
+    }
+
+    #[test]
+    fn test_execute_move_with_merge_when_destination_exists() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        // Create source file
+        let src_dir = tmp.path().join("old");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::write(src_dir.join("entity.md"), "<!-- factbase:src001 -->\n# Entity\n\n- Source fact").unwrap();
+
+        // Create destination file (already exists at target location)
+        let dst_dir = tmp.path().join("new");
+        fs::create_dir_all(&dst_dir).unwrap();
+        fs::write(dst_dir.join("entity.md"), "<!-- factbase:dst001 -->\n# Entity\n\n- Existing fact").unwrap();
+
+        let mut src = crate::models::Document::test_default();
+        src.id = "src001".to_string();
+        src.title = "Entity".to_string();
+        src.content = "<!-- factbase:src001 -->\n# Entity\n\n- Source fact".to_string();
+        src.file_path = "old/entity.md".to_string();
+        src.repo_id = "test".to_string();
+        db.upsert_document(&src).unwrap();
+
+        let mut dst = crate::models::Document::test_default();
+        dst.id = "dst001".to_string();
+        dst.title = "Entity".to_string();
+        dst.content = "<!-- factbase:dst001 -->\n# Entity\n\n- Existing fact".to_string();
+        dst.file_path = "new/entity.md".to_string();
+        dst.repo_id = "test".to_string();
+        db.upsert_document(&dst).unwrap();
+
+        // Insert move suggestion that would conflict
+        db.insert_suggestion("src001", "move", "new/", "update").unwrap();
+
+        // Execute suggestions
+        let result = execute_suggestions(&db, Some("test"), false).unwrap();
+
+        // Should auto-merge instead of erroring
+        assert_eq!(result.moves.len(), 1);
+        assert!(result.moves[0].new_path.contains("merged into"));
+        assert!(result.errors.is_empty());
+
+        // Source file should be deleted
+        assert!(!src_dir.join("entity.md").exists());
+
+        // Destination file should have merged content
+        let content = fs::read_to_string(dst_dir.join("entity.md")).unwrap();
+        assert!(content.contains("Existing fact"));
+        assert!(content.contains("Source fact"));
+        assert!(content.contains("Merged from Entity"));
+
+        // Suggestion should be consumed
+        assert!(db.list_suggestions(None).unwrap().is_empty());
     }
 }
