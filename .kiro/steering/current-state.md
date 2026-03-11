@@ -198,7 +198,7 @@ The codebase has been modularized into focused submodules. See `.kiro/steering/m
 | `answer_processor/` | mod, interpret, apply, temporal, inbox, apply_all, validate |
 | `commands/` | scan/, search/, grep/, status/, check/, review/, export/, import/, doctor/, organize/, mcp |
 | `mcp/` | protocol, stdio, server, tools/ |
-| `mcp/tools/` | schema, helpers, search, entity, document, organize, review/ |
+| `mcp/tools/` | schema, helpers, search, entity, document, organize, workflow/, review/ |
 | `web/` (feature-gated) | server, assets, api/ |
 | `progress.rs` | ProgressReporter enum (Cli/Mcp/Silent), ProgressSender type alias |
 | `embedding.rs` | EmbeddingProvider trait, OllamaEmbedding, test_helpers (MockEmbedding, HashEmbedding) |

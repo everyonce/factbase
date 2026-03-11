@@ -269,7 +269,11 @@ src/
         ├── search.rs    # search_knowledge, search_content, search_temporal
         ├── entity.rs    # get_entity, list_entities, etc.
         ├── document.rs  # CRUD operations
-        ├── workflow.rs  # Guided workflow tools
+        ├── workflow/    # Guided workflow tools (split into submodules)
+        │   ├── mod.rs           # Step dispatch logic + tests
+        │   ├── instructions.rs  # All DEFAULT_*_INSTRUCTION constants
+        │   ├── variants.rs      # VARIANT_* constants for resolve
+        │   └── helpers.rs       # Utility functions (repo resolution, quality stats, etc.)
         └── review/      # Review tools
 
 # Feature-gated modules (web feature)
