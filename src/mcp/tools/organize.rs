@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::mcp::tools::{get_bool_arg, get_str_arg, get_str_arg_required, run_blocking};
+use crate::mcp::tools::{get_bool_arg, get_str_arg, get_str_arg_required, resolve_repo, run_blocking};
 use crate::organize::{
     assess_staleness,
     detect_duplicate_entries, detect_ghost_files, detect_merge_candidates, detect_misplaced,
@@ -16,18 +16,6 @@ use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
 use tracing::instrument;
-
-/// Resolve a repository from the database, optionally filtered by ID or name.
-fn resolve_repo(db: &Database, repo_id: Option<&str>) -> Result<crate::models::Repository, FactbaseError> {
-    let resolved = crate::mcp::tools::resolve_repo_filter(db, repo_id)?;
-    let repos = db.list_repositories()?;
-    let repo = if let Some(id) = resolved {
-        repos.into_iter().find(|r| r.id == id)
-    } else {
-        repos.into_iter().next()
-    };
-    repo.ok_or_else(|| FactbaseError::NotFound("No repository found.".into()))
-}
 
 /// Unified organize tool dispatcher. Routes to the appropriate action based on the "action" field.
 #[instrument(name = "mcp_organize", skip(db, _embedding, args, _progress))]

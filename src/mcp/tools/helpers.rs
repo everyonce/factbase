@@ -76,6 +76,26 @@ pub(crate) fn resolve_repo_filter(
     crate::services::review::helpers::resolve_repo_filter(db, repo)
 }
 
+/// Resolve a repository from an optional repo parameter.
+///
+/// If `repo` is provided, resolves by ID or name. If `None`, returns the first
+/// (and typically only) repository. Returns `NotFound` if no repository exists.
+pub(crate) fn resolve_repo(
+    db: &Database,
+    repo: Option<&str>,
+) -> Result<crate::models::Repository, FactbaseError> {
+    let resolved = resolve_repo_filter(db, repo)?;
+    let repos = db.list_repositories()?;
+    let repo = if let Some(id) = resolved {
+        repos.into_iter().find(|r| r.id == id)
+    } else {
+        repos.into_iter().next()
+    };
+    repo.ok_or_else(|| FactbaseError::NotFound(
+        "No repository found. Initialize one first with factbase init or scan.".into(),
+    ))
+}
+
 /// Build temporal stats JSON from document content.
 pub(crate) fn build_temporal_stats_json(content: &str) -> Value {
     let fact_stats = calculate_fact_stats(content);
@@ -695,5 +715,30 @@ mod tests {
         let (db, _tmp) = crate::database::tests::test_db();
         let result = resolve_repo_filter(&db, Some("nonexistent"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_repo_none_returns_first() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        let repo = resolve_repo(&db, None).unwrap();
+        assert_eq!(repo.id, "test-repo");
+    }
+
+    #[test]
+    fn test_resolve_repo_explicit_id() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        let repo = resolve_repo(&db, Some("test-repo")).unwrap();
+        assert_eq!(repo.id, "test-repo");
+    }
+
+    #[test]
+    fn test_resolve_repo_no_repos() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let result = resolve_repo(&db, None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No repository found"));
     }
 }

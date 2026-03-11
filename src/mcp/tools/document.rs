@@ -1,7 +1,7 @@
 //! Document CRUD MCP tools: create_document, update_document, delete_document, bulk_create_documents
 
 use super::helpers::resolve_doc_path;
-use super::{get_str_arg, get_str_arg_required};
+use super::{get_str_arg, get_str_arg_required, resolve_repo};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::patterns::{body_end_offset, ID_REGEX};
@@ -197,15 +197,14 @@ fn load_glossary_terms(db: &Database, repo_id: &str) -> HashSet<String> {
 /// - `FactbaseError::Parse` if file already exists or validation fails
 #[instrument(name = "mcp_create_document", skip(db, args))]
 pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg_required(args, "repo")?;
+    let repo = resolve_repo(db, get_str_arg(args, "repo"))?;
+    let repo_id = &repo.id;
     let path = get_str_arg_required(args, "path")?;
     let title = get_str_arg_required(args, "title")?;
     let content = get_str_arg(args, "content").unwrap_or("");
 
     validate_title(&title)?;
     validate_content(content)?;
-
-    let repo = db.require_repository(&repo_id)?;
 
     let processor = DocumentProcessor::new();
     let id = processor.generate_unique_id(db);
@@ -477,7 +476,8 @@ pub fn bulk_create_documents(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = get_str_arg_required(args, "repo")?;
+    let repo = resolve_repo(db, get_str_arg(args, "repo"))?;
+    let repo_id = &repo.id;
     let documents = args
         .get("documents")
         .and_then(|v| v.as_array())
@@ -492,8 +492,6 @@ pub fn bulk_create_documents(
             "Maximum 100 documents per bulk operation",
         ));
     }
-
-    let repo = db.require_repository(&repo_id)?;
 
     let processor = DocumentProcessor::new();
     let mut errors: Vec<Value> = Vec::with_capacity(documents.len() / 4); // Expect few errors
@@ -1552,5 +1550,100 @@ mod tests {
         assert!(on_disk.contains("reviewed: 2026-03-06"), "reviewed preserved: {on_disk}");
         assert!(on_disk.contains("type: people"), "type preserved: {on_disk}");
         assert!(on_disk.contains("- Updated fact"), "new content: {on_disk}");
+    }
+
+    #[test]
+    fn test_create_document_without_repo_param() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // No "repo" parameter — should auto-resolve to the single repo
+        let args = serde_json::json!({
+            "path": "test.md",
+            "title": "Test",
+            "content": "- A fact @t[2024] [^1]"
+        });
+        let result = create_document(&db, &args).unwrap();
+        assert!(result["id"].is_string());
+        assert_eq!(result["title"], "Test");
+        assert!(repo_dir.path().join("test.md").exists());
+    }
+
+    #[test]
+    fn test_create_document_no_repo_exists() {
+        use crate::database::tests::test_db;
+
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({
+            "path": "test.md",
+            "title": "Test",
+            "content": "body"
+        });
+        let result = create_document(&db, &args);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No repository found"), "error should be helpful: {err}");
+    }
+
+    #[test]
+    fn test_bulk_create_without_repo_param() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // No "repo" parameter
+        let args = serde_json::json!({
+            "documents": [
+                {"path": "a.md", "title": "A", "content": "- fact @t[2024] [^1]"},
+                {"path": "b.md", "title": "B", "content": "- fact @t[2024] [^1]"}
+            ]
+        });
+        let result = bulk_create_documents(&db, &args, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["success"], true);
+        let created = result["created"].as_array().unwrap();
+        assert_eq!(created.len(), 2);
+        assert!(repo_dir.path().join("a.md").exists());
+        assert!(repo_dir.path().join("b.md").exists());
+    }
+
+    #[test]
+    fn test_bulk_create_no_repo_exists() {
+        use crate::database::tests::test_db;
+
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({
+            "documents": [{"path": "a.md", "title": "A", "content": "body"}]
+        });
+        let result = bulk_create_documents(&db, &args, &ProgressReporter::Silent);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No repository found"), "error should be helpful: {err}");
     }
 }

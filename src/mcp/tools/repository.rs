@@ -20,15 +20,7 @@ pub async fn scan_repository(
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let repo_id = crate::mcp::tools::helpers::resolve_repo_filter(db, get_str_arg(args, "repo"))?;
-
-    let repos = db.list_repositories()?;
-    let repo = if let Some(id) = repo_id {
-        repos.into_iter().find(|r| r.id == id)
-    } else {
-        repos.into_iter().next()
-    };
-    let repo = repo.ok_or_else(|| FactbaseError::NotFound("No repository found.".into()))?;
+    let repo = crate::mcp::tools::helpers::resolve_repo(db, get_str_arg(args, "repo"))?;
 
     let config = Config::load(None).unwrap_or_default();
     let scanner = Scanner::new(&config.watcher.ignore_patterns);
@@ -221,15 +213,7 @@ pub async fn detect_links(
 ) -> Result<Value, FactbaseError> {
     use crate::scanner::orchestration::links::{run_link_detection_phase, LinkPhaseInput};
 
-    let repo_id = crate::mcp::tools::helpers::resolve_repo_filter(db, get_str_arg(args, "repo"))?;
-
-    let repos = db.list_repositories()?;
-    let repo = if let Some(id) = repo_id {
-        repos.into_iter().find(|r| r.id == id)
-    } else {
-        repos.into_iter().next()
-    };
-    let repo = repo.ok_or_else(|| FactbaseError::NotFound("No repository found.".into()))?;
+    let repo = crate::mcp::tools::helpers::resolve_repo(db, get_str_arg(args, "repo"))?;
 
     let config = Config::load(None).unwrap_or_default();
     let link_detector = LinkDetector::new();
