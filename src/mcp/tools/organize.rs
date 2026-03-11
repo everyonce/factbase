@@ -51,8 +51,9 @@ pub async fn organize<E: EmbeddingProvider>(
         "move" => organize_move(db, args),
         "retype" => organize_retype(db, args),
         "apply" => organize_apply(db, args),
+        "execute_suggestions" => organize_execute_suggestions(db, args),
         _ => Err(FactbaseError::parse(format!(
-            "Unknown organize action: '{action}'. Expected: move, retype, apply"
+            "Unknown organize action: '{action}'. Expected: move, retype, apply, execute_suggestions"
         ))),
     }
 }
@@ -336,6 +337,41 @@ fn organize_apply(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     }))
 }
 
+#[instrument(name = "mcp_organize_execute_suggestions", skip(db, args))]
+fn organize_execute_suggestions(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let repo_id = get_str_arg(args, "repo").map(String::from);
+    let dry_run = get_bool_arg(args, "dry_run", false);
+
+    let result = crate::organize::execute_suggestions(db, repo_id.as_deref(), dry_run)?;
+
+    let moves: Vec<Value> = result.moves.iter().map(|m| serde_json::json!({
+        "doc_id": m.doc_id, "old_path": m.old_path, "new_path": m.new_path, "links_updated": m.links_updated,
+    })).collect();
+    let renames: Vec<Value> = result.renames.iter().map(|r| serde_json::json!({
+        "doc_id": r.doc_id, "old_path": r.old_path, "new_path": r.new_path, "links_updated": r.links_updated,
+    })).collect();
+    let title_changes: Vec<Value> = result.title_changes.iter().map(|t| serde_json::json!({
+        "doc_id": t.doc_id, "old_title": t.old_title, "new_title": t.new_title, "links_updated": t.links_updated,
+    })).collect();
+
+    let total = moves.len() + renames.len() + title_changes.len();
+
+    Ok(serde_json::json!({
+        "dry_run": dry_run,
+        "moves": moves,
+        "renames": renames,
+        "title_changes": title_changes,
+        "errors": result.errors,
+        "message": if dry_run {
+            format!("{total} suggestion(s) would be executed ({} moves, {} renames, {} title changes)",
+                moves.len(), renames.len(), title_changes.len())
+        } else {
+            format!("Executed {total} suggestion(s): {} moves, {} renames, {} title changes. Run scan to re-index.",
+                moves.len(), renames.len(), title_changes.len())
+        }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,5 +542,242 @@ mod tests {
         });
         let ti = response["temporal_issues"].as_array().unwrap();
         assert!(ti.is_empty());
+    }
+
+    #[test]
+    fn test_update_with_suggested_move_stores_suggestion() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        // Create a file on disk
+        let file_path = tmp.path().join("doc.md");
+        std::fs::write(&file_path, "<!-- factbase:aaa111 -->\n# Test\n\nContent").unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "aaa111".to_string();
+        doc.title = "Test".to_string();
+        doc.content = "<!-- factbase:aaa111 -->\n# Test\n\nContent".to_string();
+        doc.file_path = "doc.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "id": "aaa111",
+            "suggested_move": "people/",
+        });
+        let result = crate::mcp::tools::document::update_document(&db, &args).unwrap();
+        assert!(result["suggestions_stored"].as_array().unwrap().contains(&Value::String("move".into())));
+
+        let suggestions = db.list_suggestions(None).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].suggestion_type, "move");
+        assert_eq!(suggestions[0].suggested_value, "people/");
+    }
+
+    #[test]
+    fn test_execute_suggestions_move_with_link_cascade() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        // Create source file
+        let src_dir = tmp.path().join("old");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("target.md"), "<!-- factbase:tgt001 -->\n# Target\n\nContent").unwrap();
+
+        // Create a referencing file with wikilink
+        std::fs::write(
+            tmp.path().join("ref.md"),
+            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.",
+        ).unwrap();
+
+        let mut target_doc = crate::models::Document::test_default();
+        target_doc.id = "tgt001".to_string();
+        target_doc.title = "Target".to_string();
+        target_doc.content = "<!-- factbase:tgt001 -->\n# Target\n\nContent".to_string();
+        target_doc.file_path = "old/target.md".to_string();
+        target_doc.repo_id = "test".to_string();
+        db.upsert_document(&target_doc).unwrap();
+
+        let mut ref_doc = crate::models::Document::test_default();
+        ref_doc.id = "ref001".to_string();
+        ref_doc.title = "Ref".to_string();
+        ref_doc.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.".to_string();
+        ref_doc.file_path = "ref.md".to_string();
+        ref_doc.repo_id = "test".to_string();
+        db.upsert_document(&ref_doc).unwrap();
+
+        // Insert move suggestion
+        db.insert_suggestion("tgt001", "move", "new/", "update").unwrap();
+
+        // Execute
+        let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
+        let result = organize_execute_suggestions(&db, &args).unwrap();
+
+        let moves = result["moves"].as_array().unwrap();
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0]["old_path"], "old/target.md");
+        assert_eq!(moves[0]["new_path"], "new/target.md");
+        assert_eq!(moves[0]["links_updated"], 1);
+
+        // Verify file was moved
+        assert!(!src_dir.join("target.md").exists());
+        assert!(tmp.path().join("new/target.md").exists());
+
+        // Verify wikilink was updated in referencing file
+        let ref_content = std::fs::read_to_string(tmp.path().join("ref.md")).unwrap();
+        assert!(ref_content.contains("[[new/target|Target]]"));
+        assert!(!ref_content.contains("[[old/target|Target]]"));
+
+        // Verify suggestions were consumed
+        assert!(db.list_suggestions(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_execute_suggestions_rename_with_link_cascade() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        std::fs::write(
+            tmp.path().join("old-name.md"),
+            "<!-- factbase:ren001 -->\n# Entity\n\nContent",
+        ).unwrap();
+        std::fs::write(
+            tmp.path().join("other.md"),
+            "<!-- factbase:oth001 -->\n# Other\n\nSee [[old-name|Entity]].",
+        ).unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "ren001".to_string();
+        doc.title = "Entity".to_string();
+        doc.content = "<!-- factbase:ren001 -->\n# Entity\n\nContent".to_string();
+        doc.file_path = "old-name.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let mut other = crate::models::Document::test_default();
+        other.id = "oth001".to_string();
+        other.title = "Other".to_string();
+        other.content = "<!-- factbase:oth001 -->\n# Other\n\nSee [[old-name|Entity]].".to_string();
+        other.file_path = "other.md".to_string();
+        other.repo_id = "test".to_string();
+        db.upsert_document(&other).unwrap();
+
+        db.insert_suggestion("ren001", "rename", "new-name.md", "update").unwrap();
+
+        let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
+        let result = organize_execute_suggestions(&db, &args).unwrap();
+
+        let renames = result["renames"].as_array().unwrap();
+        assert_eq!(renames.len(), 1);
+        assert_eq!(renames[0]["new_path"], "new-name.md");
+
+        assert!(!tmp.path().join("old-name.md").exists());
+        assert!(tmp.path().join("new-name.md").exists());
+
+        let other_content = std::fs::read_to_string(tmp.path().join("other.md")).unwrap();
+        assert!(other_content.contains("[[new-name|Entity]]"));
+    }
+
+    #[test]
+    fn test_execute_suggestions_title_change_updates_display() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        std::fs::write(
+            tmp.path().join("entity.md"),
+            "<!-- factbase:ent001 -->\n# Old Name\n\nContent",
+        ).unwrap();
+        std::fs::write(
+            tmp.path().join("ref.md"),
+            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[entity|Old Name]].",
+        ).unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "ent001".to_string();
+        doc.title = "Old Name".to_string();
+        doc.content = "<!-- factbase:ent001 -->\n# Old Name\n\nContent".to_string();
+        doc.file_path = "entity.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        let mut ref_doc = crate::models::Document::test_default();
+        ref_doc.id = "ref001".to_string();
+        ref_doc.title = "Ref".to_string();
+        ref_doc.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[entity|Old Name]].".to_string();
+        ref_doc.file_path = "ref.md".to_string();
+        ref_doc.repo_id = "test".to_string();
+        db.upsert_document(&ref_doc).unwrap();
+
+        db.insert_suggestion("ent001", "title", "New Name", "update").unwrap();
+
+        let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
+        let result = organize_execute_suggestions(&db, &args).unwrap();
+
+        let titles = result["title_changes"].as_array().unwrap();
+        assert_eq!(titles.len(), 1);
+        assert_eq!(titles[0]["old_title"], "Old Name");
+        assert_eq!(titles[0]["new_title"], "New Name");
+
+        let ref_content = std::fs::read_to_string(tmp.path().join("ref.md")).unwrap();
+        assert!(ref_content.contains("[[entity|New Name]]"));
+        assert!(!ref_content.contains("[[entity|Old Name]]"));
+    }
+
+    #[test]
+    fn test_execute_suggestions_dry_run() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        std::fs::write(
+            tmp.path().join("doc.md"),
+            "<!-- factbase:dry001 -->\n# Doc\n\nContent",
+        ).unwrap();
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "dry001".to_string();
+        doc.title = "Doc".to_string();
+        doc.content = "<!-- factbase:dry001 -->\n# Doc\n\nContent".to_string();
+        doc.file_path = "doc.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        db.insert_suggestion("dry001", "move", "archive/", "update").unwrap();
+
+        let args = serde_json::json!({"action": "execute_suggestions", "repo": "test", "dry_run": true});
+        let result = organize_execute_suggestions(&db, &args).unwrap();
+
+        assert_eq!(result["dry_run"], true);
+        assert_eq!(result["moves"].as_array().unwrap().len(), 1);
+
+        // File should NOT have moved
+        assert!(tmp.path().join("doc.md").exists());
+        // Suggestion should NOT have been consumed
+        assert_eq!(db.list_suggestions(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_execute_suggestions_deleted_doc_cleaned_up() {
+        let (db, tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
+
+        // Create doc, add suggestion, then delete the doc
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "del001".to_string();
+        doc.title = "Will Delete".to_string();
+        doc.content = "<!-- factbase:del001 -->\n# Will Delete\n\nContent".to_string();
+        doc.file_path = "del.md".to_string();
+        doc.repo_id = "test".to_string();
+        db.upsert_document(&doc).unwrap();
+
+        db.insert_suggestion("del001", "move", "new/", "update").unwrap();
+
+        // Soft-delete the document
+        db.mark_deleted("del001").unwrap();
+
+        let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
+        let result = organize_execute_suggestions(&db, &args).unwrap();
+
+        // Should succeed with no actions (doc deleted → suggestion cleaned up)
+        assert_eq!(result["moves"].as_array().unwrap().len(), 0);
     }
 }

@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 14;
+pub(super) const SCHEMA_VERSION: i32 = 15;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -148,6 +148,21 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );",
+    ),
+    // Version 15: Organization suggestions for deferred move/rename/title operations
+    (
+        15,
+        "Add organization_suggestions table",
+        "CREATE TABLE IF NOT EXISTS organization_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            doc_id TEXT NOT NULL,
+            suggestion_type TEXT NOT NULL,
+            suggested_value TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'update',
+            created_at TIMESTAMP NOT NULL,
+            FOREIGN KEY (doc_id) REFERENCES documents(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_org_suggestions_doc ON organization_suggestions(doc_id);",
     ),
 ];
 
@@ -282,6 +297,20 @@ impl Database {
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );",
+        )?;
+
+        // Organization suggestions for deferred move/rename/title operations
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS organization_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                doc_id TEXT NOT NULL,
+                suggestion_type TEXT NOT NULL,
+                suggested_value TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'update',
+                created_at TIMESTAMP NOT NULL,
+                FOREIGN KEY (doc_id) REFERENCES documents(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_org_suggestions_doc ON organization_suggestions(doc_id);",
         )?;
 
         // Server-side cross-validation cursor
