@@ -293,7 +293,7 @@ async fn test_all_8_mcp_tools() {
         "get_perspective should return repo info"
     );
 
-    // 5. list_repositories
+    // 5. list_repositories (removed — now returns helpful error)
     let resp = client
         .post(format!("{}/mcp", base_url))
         .json(&json!({
@@ -307,8 +307,10 @@ async fn test_all_8_mcp_tools() {
         .json::<Value>()
         .await
         .unwrap();
-    let repos = resp["result"]["repositories"].as_array().unwrap();
-    assert_eq!(repos.len(), 1, "list_repositories should return 1 repo");
+    assert!(
+        resp["error"].is_object(),
+        "list_repositories should return error (removed tool)"
+    );
 
     // 6. create_document
     let resp = client
@@ -702,18 +704,13 @@ async fn test_tools_list_endpoint() {
         .unwrap();
 
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 8, "Should have 8 MCP tools");
+    assert_eq!(tools.len(), 3, "Should have 3 MCP tools: search, workflow, factbase");
 
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
 
-    assert!(tool_names.contains(&"search_knowledge"));
-    assert!(tool_names.contains(&"get_entity"));
-    assert!(tool_names.contains(&"list_entities"));
-    assert!(tool_names.contains(&"get_perspective"));
-    assert!(tool_names.contains(&"list_repositories"));
-    assert!(tool_names.contains(&"create_document"));
-    assert!(tool_names.contains(&"update_document"));
-    assert!(tool_names.contains(&"delete_document"));
+    assert!(tool_names.contains(&"search"));
+    assert!(tool_names.contains(&"workflow"));
+    assert!(tool_names.contains(&"factbase"));
 
     shutdown_tx.send(()).ok();
 }

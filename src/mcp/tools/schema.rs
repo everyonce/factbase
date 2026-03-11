@@ -24,28 +24,41 @@ pub fn tools_list() -> Value {
 #[cfg(test)]
 pub fn legacy_tool_names() -> &'static [&'static str] {
     &[
-        "search_knowledge", "search_content",
-        "get_entity", "list_entities", "get_perspective", "list_repositories",
+        "search_knowledge",
+        "get_entity", "list_entities", "get_perspective",
         "create_document", "update_document", "delete_document", "bulk_create_documents",
         "get_review_queue", "get_deferred_items", "answer_questions",
-        "check_repository", "scan_repository", "detect_links", "init_repository",
+        "check_repository", "scan_repository", "detect_links",
         "get_authoring_guide",
         "organize_analyze", "organize",
         "embeddings_export", "embeddings_import", "embeddings_status",
-        "get_link_suggestions", "store_links", "migrate_links", "get_fact_pairs",
+        "get_link_suggestions", "store_links", "get_fact_pairs",
+    ]
+}
+
+/// Op names that were removed but return helpful errors for backward compat.
+pub fn removed_op_messages() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("repos", "'repos' op removed. Use op='perspective' instead — it returns KB config, stats, and repository info."),
+        ("init", "'init' op removed. Repositories auto-initialize on first scan. Use op='scan' with a registered repo path."),
+        ("search_content", "'search_content' op removed. Use the standalone 'search' tool with mode='content' instead."),
+    ]
+}
+
+/// Legacy tool names that were removed but return helpful errors.
+pub fn removed_legacy_tool_messages() -> &'static [(&'static str, &'static str)] {
+    &[
+        ("list_repositories", "'list_repositories' removed. Use factbase(op='perspective') instead."),
+        ("init_repository", "'init_repository' removed. Repositories auto-initialize on first scan."),
+        ("search_content", "'search_content' removed. Use the 'search' tool with mode='content' instead."),
+        ("migrate_links", "'migrate_links' removed. Link migration is no longer needed."),
     ]
 }
 
 fn search_schema() -> Value {
     serde_json::json!({
         "name": "search",
-        "description": concat!(
-            "Search the factbase. Returns matching entities with their links so agents can explore the knowledge graph in one call.\n\n",
-            "Modes:\n",
-            "- semantic (default): Find documents by meaning using embeddings\n",
-            "- content: Exact text/regex search (like grep)\n\n",
-            "Each result includes a `links` array with outgoing links (link_id + entity_name) so you can see connections without extra lookups.",
-        ),
+        "description": "Search the factbase. Returns entities with outgoing links.\nModes: semantic (default) or content (exact text/regex).\nFilters: doc_type, title_filter, as_of, during, exclude_unknown, boost_recent.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -70,7 +83,7 @@ fn search_schema() -> Value {
 fn workflow_schema() -> Value {
     serde_json::json!({
         "name": "workflow",
-        "description": "RECOMMENDED entry point for multi-step factbase tasks. Guides you through each step with the right tool calls, quality checks, and link discovery — more reliable than calling raw tools directly.\n\nUse this when the user says things like:\n- 'build a KB' / 'create a knowledge base about X' / 'design a KB for Y' → workflow='create', domain='X'\n- 'add [topic]' / 'research [X]' / 'fill gaps' → workflow='add', topic='...'\n- 'improve [doc]' / 'make X better' → workflow='add', doc_id='...'\n- 'run maintenance' / 'fix issues' / 'check quality' / 'clean up KB' → workflow='maintain'\n- 'refresh' / 'update with latest' / 'weekly update' / 'check what changed' → workflow='refresh'\n- 'fix this everywhere' / 'correct this fact' / 'propagate correction' → workflow='correct', correction='...'\n- 'X renamed to Y' / 'A merged with B' / 'handle this transition' → workflow='transition', change='...'\n- 'what can factbase do' / 'what workflows are available' → workflow='list'\n\n6 primary workflows:\n- **create**: From zero to working KB. Design schema, init, configure, create docs, scan, verify.\n- **add**: Grow the KB. topic=research new entities, doc_id=improve one doc, bare=enrich all.\n- **maintain**: Internal quality. Scan, links, check, organize, resolve questions. No external research.\n- **refresh**: Research-enabled maintenance. Actively verify/update facts against live sources.\n- **correct**: Propagate a fact correction across the entire KB. Provide correction + optional source.\n- **transition**: Handle temporal entity changes (renames, mergers, role changes). Asks how to reference going forward.\n\nAlso available: 'resolve' (advanced — just the answer loop).\n\nOld names still work as aliases: bootstrap/setup→create, update→maintain, ingest/enrich/improve→add.\n\n⚠️ ERROR HANDLING: If you get IO/body errors from answer_questions, your response was too large. Split into smaller batches and retry.\n\nCall again with the next step number to advance.",
+        "description": "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -106,39 +119,16 @@ fn workflow_schema() -> Value {
 fn factbase_schema() -> Value {
     serde_json::json!({
         "name": "factbase",
-        "description": concat!(
-            "Unified factbase operations tool. Called by workflow steps — use the workflow tool as the entry point for multi-step tasks.\n\n",
-            "Operations (op=...):\n",
-            "- get_entity: Get document by ID. Params: id (required), detail, include_preview, max_content_length\n",
-            "- list: List documents. Params: doc_type, title_filter, limit\n",
-            "- repos: List all repositories.\n",
-            "- perspective: Get repository context.\n",
-            "- create: Create document. Params: path (required), title (required), content\n",
-            "- update: Update document. Params: id (required), title, content, suggested_move, suggested_rename, suggested_title\n",
-            "- delete: Delete document. Params: id (required)\n",
-            "- bulk_create: Create multiple documents. Params: documents (required, array of {path, title, content})\n",
-            "- scan: Re-index documents + embeddings. Time-boxed — returns continue+resume for large repos. Params: force_reindex, skip_embeddings, time_budget_secs, resume\n",
-            "- check: Run quality checks. Params: doc_id, doc_ids, dry_run\n",
-            "- detect_links: Detect cross-document links. Time-boxed. Params: time_budget_secs, resume\n",
-            "- init: Initialize new repository. Params: path (required), id, name\n",
-            "- review_queue: List review questions. Params: doc_id, type, status, limit, offset\n",
-            "- answer: Answer/defer review questions. Params: doc_id, question_index, answer, confidence, answers (bulk array)\n",
-            "- deferred: Get deferred items. Params: type, limit, offset\n",
-            "- organize: Reorganize KB. action=analyze for suggestions, action=merge/split/delete/move/retype/apply/execute_suggestions for execution. Params: action, doc_id, source_id, target_id, sections, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
-            "- links: action=suggest for link suggestions, action=store to write links, action=migrate to convert existing refs to repo's link style. Params: action, min_similarity, include_types, exclude_types, limit, links (array)\n",
-            "- fact_pairs: Get similar fact pairs for cross-validation. Params: min_similarity, limit\n",
-            "- embeddings: action=export/import/status. Params: action, data, force\n",
-            "- authoring_guide: Get document format rules and templates.\n",
-        ),
+        "description": "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "op": {
                     "type": "string",
                     "enum": [
-                        "get_entity", "list", "repos", "perspective",
+                        "get_entity", "list", "perspective",
                         "create", "update", "delete", "bulk_create",
-                        "scan", "check", "detect_links", "init",
+                        "scan", "check", "detect_links",
                         "review_queue", "answer", "deferred",
                         "organize", "links", "fact_pairs", "embeddings",
                         "authoring_guide"
@@ -158,11 +148,10 @@ fn factbase_schema() -> Value {
                 "include_preview": { "type": "boolean", "description": "Include 500-char content preview" },
                 "max_content_length": { "type": "integer", "description": "Truncate content to this length" },
                 // Document CRUD
-                "path": { "type": "string", "description": "File path (create, init)" },
+                "path": { "type": "string", "description": "File path (create)" },
                 "title": { "type": "string", "description": "Document title" },
                 "content": { "type": "string", "description": "Document content" },
                 "documents": { "type": "array", "description": "Array of {path, title, content} for bulk_create (max 100)", "items": { "type": "object" } },
-                "name": { "type": "string", "description": "Display name (init)" },
                 // Organization suggestions (update op)
                 "suggested_move": { "type": "string", "description": "Advisory: target directory path for file move (stored as pending suggestion)" },
                 "suggested_rename": { "type": "string", "description": "Advisory: new filename for file rename (stored as pending suggestion)" },
@@ -252,9 +241,9 @@ mod tests {
         let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
 
         let expected = [
-            "get_entity", "list", "repos", "perspective",
+            "get_entity", "list", "perspective",
             "create", "update", "delete", "bulk_create",
-            "scan", "check", "detect_links", "init",
+            "scan", "check", "detect_links",
             "review_queue", "answer", "deferred",
             "organize", "links", "fact_pairs", "embeddings",
             "authoring_guide",
@@ -266,23 +255,36 @@ mod tests {
     }
 
     #[test]
-    fn test_factbase_description_mentions_workflow() {
+    fn test_factbase_description_is_compact() {
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
         let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
         let desc = fb["description"].as_str().unwrap();
-        assert!(desc.contains("workflow"), "factbase description should mention workflow");
+        let lines: Vec<&str> = desc.lines().collect();
+        assert!(lines.len() <= 15, "factbase description should be <=15 lines, got {}", lines.len());
+        assert!(desc.contains("op="), "factbase description should mention op=");
     }
 
     #[test]
-    fn test_workflow_schema_unchanged() {
+    fn test_search_description_is_compact() {
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
-        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
-        let desc = wf["description"].as_str().unwrap();
-        assert!(desc.contains("RECOMMENDED"));
-        let required = wf["inputSchema"]["required"].as_array().unwrap();
-        assert!(required.iter().any(|v| v == "workflow"));
+        let s = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let desc = s["description"].as_str().unwrap();
+        let lines: Vec<&str> = desc.lines().collect();
+        assert!(lines.len() <= 15, "search description should be <=15 lines, got {}", lines.len());
+    }
+
+    #[test]
+    fn test_all_descriptions_under_15_lines() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap();
+            let desc = tool["description"].as_str().unwrap();
+            let lines: Vec<&str> = desc.lines().collect();
+            assert!(lines.len() <= 15, "{name} description should be <=15 lines, got {}", lines.len());
+        }
     }
 
     #[test]
@@ -307,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn test_legacy_tool_names_covers_all_old_tools() {
+    fn test_legacy_tool_names_covers_active_tools() {
         let names = legacy_tool_names();
         assert!(names.contains(&"search_knowledge"));
         assert!(names.contains(&"scan_repository"));
@@ -315,7 +317,29 @@ mod tests {
         assert!(names.contains(&"get_entity"));
         assert!(names.contains(&"create_document"));
         assert!(names.contains(&"get_fact_pairs"));
-        assert!(names.len() >= 26, "should cover all old tool names");
+        // Removed tools should NOT be in legacy list
+        assert!(!names.contains(&"list_repositories"));
+        assert!(!names.contains(&"init_repository"));
+        assert!(!names.contains(&"search_content"));
+        assert!(!names.contains(&"migrate_links"));
+    }
+
+    #[test]
+    fn test_removed_ops_have_messages() {
+        let removed = removed_op_messages();
+        let ops: Vec<&str> = removed.iter().map(|(op, _)| *op).collect();
+        assert!(ops.contains(&"repos"));
+        assert!(ops.contains(&"init"));
+        assert!(ops.contains(&"search_content"));
+    }
+
+    #[test]
+    fn test_removed_legacy_tools_have_messages() {
+        let removed = removed_legacy_tool_messages();
+        let names: Vec<&str> = removed.iter().map(|(name, _)| *name).collect();
+        assert!(names.contains(&"list_repositories"));
+        assert!(names.contains(&"init_repository"));
+        assert!(names.contains(&"migrate_links"));
     }
 
     #[test]
@@ -367,13 +391,14 @@ mod tests {
     }
 
     #[test]
-    fn test_workflow_description_is_recommended() {
+    fn test_workflow_description_is_compact() {
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
-        assert!(desc.contains("RECOMMENDED"));
+        let lines: Vec<&str> = desc.lines().collect();
+        assert!(lines.len() <= 15, "workflow description should be <=15 lines, got {}", lines.len());
+        assert!(desc.contains("create"));
         assert!(desc.contains("maintain"));
-        assert!(desc.contains("ERROR HANDLING"));
     }
 }

@@ -112,9 +112,9 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
         1 => serde_json::json!({
             "workflow": "setup",
             "step": 1, "total_steps": total,
-            "title": "Step 1 of 6: Initialize Repository",
+            "title": "Step 1 of 6: Set Up Repository Directory",
             "instruction": resolve(wf, "setup.init", DEFAULT_SETUP_INIT_INSTRUCTION, &[("path", path)]),
-            "next_tool": "factbase", "suggested_op": "init",
+            "next_tool": "filesystem",
             "suggested_args": {"path": path},
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 6"
         }),
@@ -2021,7 +2021,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("/tmp/mushrooms"));
-        assert_eq!(step["next_tool"], "factbase");
+        assert_eq!(step["next_tool"], "filesystem");
     }
 
     #[test]
@@ -2721,13 +2721,12 @@ mod tests {
 
     #[test]
     fn test_check_repository_not_in_factbase_scan_params() {
-        // check op should not have resume/time_budget_secs — those are for scan/detect_links
+        // check op should be mentioned in the compact description
         let tools = crate::mcp::tools::schema::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
         let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
         let desc = fb["description"].as_str().unwrap();
-        // check op description should not mention resume
-        assert!(desc.contains("check: Run quality checks"), "factbase should describe check op");
+        assert!(desc.contains("check"), "factbase should mention check op");
     }
 
     #[test]
