@@ -2,7 +2,8 @@
 //!
 //! Wraps existing MCP entity tools for the web UI.
 
-use crate::mcp::tools::{get_entity, list_repositories};
+use crate::services;
+use crate::services::entity::GetEntityParams;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -36,19 +37,14 @@ pub async fn get_document(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    let mut args = serde_json::Map::new();
-    args.insert("id".to_string(), Value::String(id));
-    if let Some(preview) = query.include_preview {
-        args.insert("include_preview".to_string(), Value::Bool(preview));
-    }
-    if let Some(max_len) = query.max_content_length {
-        args.insert(
-            "max_content_length".to_string(),
-            Value::Number(max_len.into()),
-        );
-    }
+    let params = GetEntityParams {
+        id,
+        include_preview: query.include_preview.unwrap_or(false),
+        max_content_length: query.max_content_length.unwrap_or(0) as usize,
+        ..Default::default()
+    };
 
-    let result = super::run_blocking_web(move || get_entity(&db, &Value::Object(args))).await?;
+    let result = super::run_blocking_web(move || services::get_entity(&db, &params)).await?;
     Ok(Json(result))
 }
 
@@ -61,10 +57,9 @@ pub async fn get_document_links(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    // Use get_entity which already returns links_to and linked_from
-    let args = serde_json::json!({ "id": id });
+    let params = GetEntityParams { id, ..Default::default() };
 
-    let result = super::run_blocking_web(move || get_entity(&db, &args)).await?;
+    let result = super::run_blocking_web(move || services::get_entity(&db, &params)).await?;
 
     // Extract just the link fields
     let links = serde_json::json!({
@@ -82,7 +77,7 @@ pub async fn list_repos(
     State(state): State<Arc<WebAppState>>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
-    let result = super::run_blocking_web(move || list_repositories(&db)).await?;
+    let result = super::run_blocking_web(move || services::list_repositories(&db)).await?;
     Ok(Json(result))
 }
 

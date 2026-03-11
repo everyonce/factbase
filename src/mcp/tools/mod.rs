@@ -24,7 +24,7 @@ mod authoring;
 mod document;
 mod embeddings;
 mod entity;
-mod helpers;
+pub(crate) mod helpers;
 mod links;
 mod organize;
 mod repository;

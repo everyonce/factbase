@@ -5,7 +5,7 @@
 use super::errors::ApiError;
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::mcp::tools::get_review_queue;
+use crate::services::{self, ReviewQueueParams};
 use crate::organize::{detect_merge_candidates, detect_misplaced};
 use crate::ProgressReporter;
 use axum::{extract::State, http::StatusCode, Json};
@@ -90,9 +90,12 @@ fn compute_aggregate_stats(db: &Database) -> Result<AggregateStatsResponse, Fact
 
 /// Compute review queue stats.
 fn compute_review_stats(db: &Database) -> Result<ReviewStatsResponse, FactbaseError> {
-    // Use high limit to disable early termination — stats need accurate totals
-    let args = serde_json::json!({"limit": 1000000, "status": "all"});
-    let result = get_review_queue(db, &args, &ProgressReporter::Silent)?;
+    let params = ReviewQueueParams {
+        status: Some("all".to_string()),
+        limit: 1000000,
+        ..Default::default()
+    };
+    let result = services::get_review_queue(db, &params, &ProgressReporter::Silent)?;
 
     let total = result.get("total").and_then(Value::as_u64).unwrap_or(0);
     let answered = result.get("answered").and_then(Value::as_u64).unwrap_or(0);

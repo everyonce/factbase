@@ -2,7 +2,7 @@
 //!
 //! Wraps existing MCP review tools for the web UI.
 
-use crate::mcp::tools::{answer_question, bulk_answer_questions, get_review_queue};
+use crate::services::{self, ReviewQueueParams, AnswerQuestionParams, ServiceBulkAnswerItem};
 use crate::ProgressReporter;
 use axum::{
     extract::{Path, Query, State},
@@ -64,17 +64,15 @@ pub async fn list_review_queue(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    // Build args for MCP function
-    let mut args = serde_json::Map::new();
-    if let Some(repo) = query.repo {
-        args.insert("repo".to_string(), Value::String(repo));
-    }
-    if let Some(qtype) = query.question_type {
-        args.insert("type".to_string(), Value::String(qtype));
-    }
+    let params = ReviewQueueParams {
+        repo: query.repo,
+        question_type: query.question_type,
+        limit: 10,
+        ..Default::default()
+    };
 
     let result = super::run_blocking_web(move || {
-        get_review_queue(&db, &Value::Object(args), &ProgressReporter::Silent)
+        services::get_review_queue(&db, &params, &ProgressReporter::Silent)
     })
     .await?;
     Ok(Json(result))
@@ -87,12 +85,16 @@ pub async fn get_document_questions(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    // Build args with doc_id filter
-    let args = serde_json::json!({ "doc_id": doc_id });
+    let params = ReviewQueueParams {
+        doc_id: Some(doc_id),
+        limit: 10,
+        ..Default::default()
+    };
 
-    let result =
-        super::run_blocking_web(move || get_review_queue(&db, &args, &ProgressReporter::Silent))
-            .await?;
+    let result = super::run_blocking_web(move || {
+        services::get_review_queue(&db, &params, &ProgressReporter::Silent)
+    })
+    .await?;
     Ok(Json(result))
 }
 
@@ -104,13 +106,14 @@ pub async fn post_answer(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    let args = serde_json::json!({
-        "doc_id": doc_id,
-        "question_index": body.question_index,
-        "answer": body.answer
-    });
+    let params = AnswerQuestionParams {
+        doc_id,
+        question_index: body.question_index as usize,
+        answer: body.answer,
+        confidence: None,
+    };
 
-    let result = super::run_blocking_web(move || answer_question(&db, &args)).await?;
+    let result = super::run_blocking_web(move || services::answer_question(&db, &params)).await?;
     Ok(Json(result))
 }
 
@@ -121,23 +124,19 @@ pub async fn post_bulk_answer(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    // Convert to format expected by MCP function
-    let answers: Vec<Value> = body
+    let items: Vec<ServiceBulkAnswerItem> = body
         .answers
         .into_iter()
-        .map(|a| {
-            serde_json::json!({
-                "doc_id": a.doc_id,
-                "question_index": a.question_index,
-                "answer": a.answer
-            })
+        .map(|a| ServiceBulkAnswerItem {
+            doc_id: a.doc_id,
+            question_index: a.question_index as usize,
+            answer: a.answer,
+            confidence: None,
         })
         .collect();
 
-    let args = serde_json::json!({ "answers": answers });
-
     let result = super::run_blocking_web(move || {
-        bulk_answer_questions(&db, &args, &crate::ProgressReporter::Silent)
+        services::bulk_answer_questions(&db, &items, &crate::ProgressReporter::Silent)
     })
     .await?;
     Ok(Json(result))
@@ -150,20 +149,16 @@ pub async fn get_review_status(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    // Build args for MCP function - reuse get_review_queue which returns counts
-    // Use high limit + status=all to disable early termination — status needs accurate totals
-    let mut args = serde_json::Map::new();
-    args.insert("limit".to_string(), Value::Number(1000000.into()));
-    args.insert("status".to_string(), Value::String("all".to_string()));
-    if let Some(repo) = query.repo {
-        args.insert("repo".to_string(), Value::String(repo));
-    }
-    if let Some(qtype) = query.question_type {
-        args.insert("type".to_string(), Value::String(qtype));
-    }
+    let params = ReviewQueueParams {
+        repo: query.repo,
+        question_type: query.question_type,
+        status: Some("all".to_string()),
+        limit: 1000000,
+        ..Default::default()
+    };
 
     let result = super::run_blocking_web(move || {
-        get_review_queue(&db, &Value::Object(args), &ProgressReporter::Silent)
+        services::get_review_queue(&db, &params, &ProgressReporter::Silent)
     })
     .await?;
 
