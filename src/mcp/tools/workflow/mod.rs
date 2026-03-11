@@ -4204,7 +4204,7 @@ mod tests {
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
         assert!(instr.contains("IN THE CONTEXT OF THIS DOCUMENT"), "fix should instruct context-aware rephrasing");
-        assert!(instr.contains("Do NOT copy the full correction text verbatim"), "fix should prohibit verbatim copying");
+        assert!(instr.contains("AS IF THE FALSE CLAIM NEVER EXISTED"), "fix should instruct writing as if false claim never existed");
         assert!(instr.contains("read naturally"), "fix should require natural reading");
     }
 
@@ -4217,6 +4217,30 @@ mod tests {
         assert!(instr.contains("only mention what is relevant to THAT entity"), "fix should scope entity docs to relevant facts");
         assert!(instr.contains("overview/hub"), "fix should identify overview docs as the place for full explanation");
         assert!(instr.contains("cross-references"), "fix should handle cross-reference docs");
+    }
+
+    #[test]
+    fn test_correct_fix_forbids_disclaimers() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        // Must explicitly forbid disclaimer patterns
+        assert!(instr.contains("FORBIDDEN patterns"), "fix should list forbidden patterns");
+        assert!(instr.contains("Do NOT add notes, disclaimers, parentheticals"), "fix should forbid disclaimers");
+        assert!(instr.contains("deny the old claim"), "fix should forbid sentences that deny the old claim");
+    }
+
+    #[test]
+    fn test_correct_fix_shows_before_after_examples() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        // Must show correct approach with before/after examples
+        assert!(instr.contains("CORRECT approach"), "fix should show correct approach");
+        assert!(instr.contains("OLD:"), "fix should show OLD example");
+        assert!(instr.contains("WRITE:"), "fix should show WRITE example");
     }
 
     #[test]
