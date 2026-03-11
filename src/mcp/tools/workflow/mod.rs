@@ -4082,4 +4082,47 @@ mod tests {
             assert!(!instr.contains(term), "parse instruction should not contain domain term: {term}");
         }
     }
+
+    #[test]
+    fn test_correct_fix_rephrases_in_document_context() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("IN THE CONTEXT OF THIS DOCUMENT"), "fix should instruct context-aware rephrasing");
+        assert!(instr.contains("Do NOT copy the full correction text verbatim"), "fix should prohibit verbatim copying");
+        assert!(instr.contains("read naturally"), "fix should require natural reading");
+    }
+
+    #[test]
+    fn test_correct_fix_distinguishes_entity_vs_overview_docs() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("only mention what is relevant to THAT entity"), "fix should scope entity docs to relevant facts");
+        assert!(instr.contains("overview/hub"), "fix should identify overview docs as the place for full explanation");
+        assert!(instr.contains("cross-references"), "fix should handle cross-reference docs");
+    }
+
+    #[test]
+    fn test_correct_fix_still_requires_source_footnote() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test", "source": "CEO memo 2026-03-01"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("source footnote"), "fix should still require source footnote on every fixed doc");
+        assert!(instr.contains("CEO memo 2026-03-01"), "fix should include the provided source");
+    }
+
+    #[test]
+    fn test_correct_fix_domain_agnostic() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap().to_lowercase();
+        for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
+            assert!(!instr.contains(term), "fix instruction should not contain domain term: {term}");
+        }
+    }
 }
