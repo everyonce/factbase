@@ -104,6 +104,7 @@
 // Submodules
 mod compression;
 mod cross_validation;
+pub(crate) mod suggestions;
 pub use cross_validation::{CvLockResult, DEFAULT_LOCK_TIMEOUT_SECS};
 mod documents;
 mod embeddings;

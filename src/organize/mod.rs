@@ -15,6 +15,7 @@ mod snapshot;
 pub(crate) mod test_helpers;
 mod types;
 mod verify;
+pub mod suggestions;
 
 pub use detect::{
     assess_staleness, cosine_similarity, detect_duplicate_entries, detect_ghost_files,
@@ -28,6 +29,7 @@ pub use execute::{
 };
 pub use extract::extract_facts;
 pub use fs_helpers::clean_canonicalize;
+pub use suggestions::{execute_suggestions, SuggestionExecutionResult};
 pub use links::{redirect_database_links, redirect_file_links, redirect_links};
 pub use orphans::{write_orphans, OrphanOperation};
 pub use plan::{plan_merge, plan_split, MergePlan, ProposedDocument, SplitPlan};

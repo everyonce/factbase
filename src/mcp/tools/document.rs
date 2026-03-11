@@ -284,10 +284,16 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let id = get_str_arg_required(args, "id")?;
     let new_title = get_str_arg(args, "title");
     let new_content = get_str_arg(args, "content");
+    let suggested_move = get_str_arg(args, "suggested_move");
+    let suggested_rename = get_str_arg(args, "suggested_rename");
+    let suggested_title = get_str_arg(args, "suggested_title");
 
-    if new_title.is_none() && new_content.is_none() {
+    let has_suggestions = suggested_move.is_some() || suggested_rename.is_some() || suggested_title.is_some();
+    let has_content_update = new_title.is_some() || new_content.is_some();
+
+    if !has_content_update && !has_suggestions {
         return Err(FactbaseError::parse(
-            "At least one of title or content must be provided",
+            "At least one of title, content, suggested_move, suggested_rename, or suggested_title must be provided",
         ));
     }
 
@@ -299,96 +305,117 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
 
     let doc = db.require_document(&id)?;
-
     let file_path = resolve_doc_path(db, &doc)?;
-    if !file_path.exists() {
-        return Err(FactbaseError::not_found(format!(
-            "File not found: {}",
-            file_path.display()
-        )));
-    }
 
-    // When content includes a # Title line and no explicit title param was given,
-    // extract the title from the content so it isn't silently reverted to the stale DB value.
-    let extracted_title = if new_title.is_none() {
-        new_content.and_then(crate::patterns::extract_heading_title)
-    } else {
-        None
-    };
-    let title = new_title
-        .map(|t| t.to_string())
-        .or(extracted_title)
-        .unwrap_or_else(|| doc.title.clone());
-
-    let content = new_content.unwrap_or(&doc.content);
-
-    // Strip existing factbase header and title from content to avoid duplication
-    let mut body = strip_factbase_header(if new_content.is_some() {
-        content
-    } else {
-        &doc.content
-    });
-
-    // Preserve review queue: if old content had one but new content doesn't,
-    // append the old review queue so unanswered questions aren't silently dropped.
-    if new_content.is_some() {
-        let old_rq_start = body_end_offset(&doc.content);
-        let new_rq_start = body_end_offset(&body);
-        if old_rq_start < doc.content.len() && new_rq_start >= body.len() {
-            let old_review_queue = &doc.content[old_rq_start..];
-            if !body.ends_with('\n') {
-                body.push('\n');
-            }
-            body.push_str(old_review_queue);
+    let title = if has_content_update {
+        if !file_path.exists() {
+            return Err(FactbaseError::not_found(format!(
+                "File not found: {}",
+                file_path.display()
+            )));
         }
-    }
 
-    // Deduplicate inline acronym expansions (e.g. "DR (Disaster Recovery)" repeated 4x).
-    // Strip all expansions for terms defined in glossary documents.
-    if new_content.is_some() {
-        let glossary = load_glossary_terms(db, &doc.repo_id);
-        body = crate::processor::dedup_acronym_expansions(&body, &glossary);
-    }
+        // When content includes a # Title line and no explicit title param was given,
+        // extract the title from the content so it isn't silently reverted to the stale DB value.
+        let extracted_title = if new_title.is_none() {
+            new_content.and_then(crate::patterns::extract_heading_title)
+        } else {
+            None
+        };
+        let title = new_title
+            .map(|t| t.to_string())
+            .or(extracted_title)
+            .unwrap_or_else(|| doc.title.clone());
 
-    let doc_content = {
-        let repo = db.require_repository(&doc.repo_id)?;
-        let resolved_format = resolve_repo_format(&repo);
-        let doc_type = crate::processor::DocumentProcessor::new()
-            .derive_type(&file_path, &repo.path);
-        // Preserve extra frontmatter fields (e.g. reviewed, tags) from the
-        // existing document so they are not silently dropped during rebuild.
-        let mut extra = crate::processor::extract_extra_frontmatter(&doc.content);
-        // If the agent's new content also carried frontmatter, let those
-        // fields override the old ones (keyed by field name).
+        let content = new_content.unwrap_or(&doc.content);
+
+        // Strip existing factbase header and title from content to avoid duplication
+        let mut body = strip_factbase_header(if new_content.is_some() {
+            content
+        } else {
+            &doc.content
+        });
+
+        // Preserve review queue: if old content had one but new content doesn't,
+        // append the old review queue so unanswered questions aren't silently dropped.
         if new_content.is_some() {
-            let new_extra = crate::processor::extract_extra_frontmatter(content);
-            merge_frontmatter_fields(&mut extra, &new_extra);
+            let old_rq_start = body_end_offset(&doc.content);
+            let new_rq_start = body_end_offset(&body);
+            if old_rq_start < doc.content.len() && new_rq_start >= body.len() {
+                let old_review_queue = &doc.content[old_rq_start..];
+                if !body.ends_with('\n') {
+                    body.push('\n');
+                }
+                body.push_str(old_review_queue);
+            }
         }
-        let header = crate::processor::build_document_header(
-            &id,
-            &title,
-            Some(&doc_type),
-            &resolved_format,
-            &extra,
-        );
-        format!("{header}{body}")
+
+        // Deduplicate inline acronym expansions (e.g. "DR (Disaster Recovery)" repeated 4x).
+        // Strip all expansions for terms defined in glossary documents.
+        if new_content.is_some() {
+            let glossary = load_glossary_terms(db, &doc.repo_id);
+            body = crate::processor::dedup_acronym_expansions(&body, &glossary);
+        }
+
+        let doc_content = {
+            let repo = db.require_repository(&doc.repo_id)?;
+            let resolved_format = resolve_repo_format(&repo);
+            let doc_type = crate::processor::DocumentProcessor::new()
+                .derive_type(&file_path, &repo.path);
+            let mut extra = crate::processor::extract_extra_frontmatter(&doc.content);
+            if new_content.is_some() {
+                let new_extra = crate::processor::extract_extra_frontmatter(content);
+                merge_frontmatter_fields(&mut extra, &new_extra);
+            }
+            let header = crate::processor::build_document_header(
+                &id,
+                &title,
+                Some(&doc_type),
+                &resolved_format,
+                &extra,
+            );
+            format!("{header}{body}")
+        };
+        fs::write(&file_path, &doc_content)?;
+
+        let new_hash = crate::processor::content_hash(&doc_content);
+        db.update_document_content(&id, &doc_content, &new_hash)?;
+        db.update_document_title(&id, &title)?;
+
+        title
+    } else {
+        doc.title.clone()
     };
-    fs::write(&file_path, &doc_content)?;
 
-    // Sync content and title to database so subsequent tools (answer_questions,
-    // get_entity) see the current data instead of stale pre-edit values.
-    let new_hash = crate::processor::content_hash(&doc_content);
-    db.update_document_content(&id, &doc_content, &new_hash)?;
-    db.update_document_title(&id, &title)?;
+    // Store organization suggestions if provided (advisory only — not executed here)
+    let mut stored_suggestions = Vec::new();
+    let source = get_str_arg(args, "source").unwrap_or("update");
+    if let Some(mv) = suggested_move {
+        db.insert_suggestion(&id, "move", mv, source)?;
+        stored_suggestions.push("move");
+    }
+    if let Some(rn) = suggested_rename {
+        db.insert_suggestion(&id, "rename", rn, source)?;
+        stored_suggestions.push("rename");
+    }
+    if let Some(st) = suggested_title {
+        db.insert_suggestion(&id, "title", st, source)?;
+        stored_suggestions.push("title");
+    }
 
-    Ok(serde_json::json!({
+    let mut response = serde_json::json!({
         "id": id,
         "title": title,
         "file_path": file_path.to_string_lossy(),
         "title_changed": new_title.is_some(),
         "content_changed": new_content.is_some(),
         "message": format!("Document '{}' ({}) updated. Run scan to re-index.", title, id)
-    }))
+    });
+    if !stored_suggestions.is_empty() {
+        response["suggestions_stored"] = serde_json::json!(stored_suggestions);
+    }
+
+    Ok(response)
 }
 
 /// Deletes a document by ID.

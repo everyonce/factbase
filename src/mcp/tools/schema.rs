@@ -113,7 +113,7 @@ fn factbase_schema() -> Value {
             "- repos: List all repositories.\n",
             "- perspective: Get repository context. Params: repo (required)\n",
             "- create: Create document. Params: repo (required), path (required), title (required), content\n",
-            "- update: Update document. Params: id (required), title, content\n",
+            "- update: Update document. Params: id (required), title, content, suggested_move, suggested_rename, suggested_title\n",
             "- delete: Delete document. Params: id (required)\n",
             "- bulk_create: Create multiple documents. Params: repo (required), documents (required, array of {path, title, content})\n",
             "- scan: Re-index documents + embeddings. Time-boxed — returns continue+resume for large repos. Params: repo, force_reindex, skip_embeddings, time_budget_secs, resume\n",
@@ -123,7 +123,7 @@ fn factbase_schema() -> Value {
             "- review_queue: List review questions. Params: repo, doc_id, type, status, limit, offset\n",
             "- answer: Answer/defer review questions. Params: doc_id, question_index, answer, confidence, answers (bulk array)\n",
             "- deferred: Get deferred items. Params: repo, type, limit, offset\n",
-            "- organize: Reorganize KB. action=analyze for suggestions, action=move/retype/apply for execution. Params: action, repo, doc_id, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
+            "- organize: Reorganize KB. action=analyze for suggestions, action=move/retype/apply/execute_suggestions for execution. Params: action, repo, doc_id, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
             "- links: action=suggest for link suggestions, action=store to write links, action=migrate to convert existing refs to repo's link style. Params: action, repo, min_similarity, include_types, exclude_types, limit, links (array)\n",
             "- fact_pairs: Get similar fact pairs for cross-validation. Params: repo, min_similarity, limit\n",
             "- embeddings: action=export/import/status. Params: action, repo, data, force\n",
@@ -163,6 +163,10 @@ fn factbase_schema() -> Value {
                 "content": { "type": "string", "description": "Document content" },
                 "documents": { "type": "array", "description": "Array of {path, title, content} for bulk_create (max 100)", "items": { "type": "object" } },
                 "name": { "type": "string", "description": "Display name (init)" },
+                // Organization suggestions (update op)
+                "suggested_move": { "type": "string", "description": "Advisory: target directory path for file move (stored as pending suggestion)" },
+                "suggested_rename": { "type": "string", "description": "Advisory: new filename for file rename (stored as pending suggestion)" },
+                "suggested_title": { "type": "string", "description": "Advisory: new entity title (stored as pending suggestion)" },
                 // Scan
                 "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings" },
                 "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation" },
@@ -179,7 +183,7 @@ fn factbase_schema() -> Value {
                 "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "Answer confidence" },
                 "answers": { "type": "array", "description": "Bulk answers array", "items": { "type": "object" } },
                 // Organize
-                "action": { "type": "string", "description": "Sub-action: analyze/move/retype/apply (organize), suggest/store (links), export/import/status (embeddings)" },
+                "action": { "type": "string", "description": "Sub-action: analyze/move/retype/apply/execute_suggestions (organize), suggest/store (links), export/import/status (embeddings)" },
                 "to": { "type": "string", "description": "Destination folder (organize move)" },
                 "new_type": { "type": "string", "description": "New type (organize retype)" },
                 "persist": { "type": "boolean", "description": "Persist type override" },
