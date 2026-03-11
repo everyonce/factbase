@@ -5,18 +5,34 @@
 //! aliases for backward compatibility but are not listed in the schema.
 
 use serde_json::Value;
+use std::path::Path;
+
+/// Load a schema description override from `.factbase/schema/<tool>.md`.
+fn load_schema_override(tool_name: &str, repo_path: Option<&Path>) -> Option<String> {
+    let rp = repo_path?;
+    let path = rp.join(".factbase").join("schema").join(format!("{tool_name}.md"));
+    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// Returns the complete list of available MCP tools with their schemas.
+///
+/// If `repo_path` is provided, checks for schema description overrides
+/// in `.factbase/schema/<tool>.md`.
+pub fn tools_list_with_overrides(repo_path: Option<&Path>) -> Value {
+    serde_json::json!({
+        "tools": [
+            search_schema(repo_path),
+            workflow_schema(repo_path),
+            factbase_schema(repo_path),
+        ]
+    })
+}
 
 /// Returns the complete list of available MCP tools with their schemas.
 ///
 /// This is returned in response to `tools/list` requests.
 pub fn tools_list() -> Value {
-    serde_json::json!({
-        "tools": [
-            search_schema(),
-            workflow_schema(),
-            factbase_schema(),
-        ]
-    })
+    tools_list_with_overrides(None)
 }
 
 /// Returns the list of old tool names that are kept as dispatch aliases.
@@ -55,10 +71,12 @@ pub fn removed_legacy_tool_messages() -> &'static [(&'static str, &'static str)]
     ]
 }
 
-fn search_schema() -> Value {
+fn search_schema(repo_path: Option<&Path>) -> Value {
+    let default_desc = "Search the factbase. Returns entities with outgoing links.\nModes: semantic (default) or content (exact text/regex).\nFilters: doc_type, title_filter, as_of, during, exclude_unknown, boost_recent.";
+    let desc = load_schema_override("search", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
         "name": "search",
-        "description": "Search the factbase. Returns entities with outgoing links.\nModes: semantic (default) or content (exact text/regex).\nFilters: doc_type, title_filter, as_of, during, exclude_unknown, boost_recent.",
+        "description": desc,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -80,10 +98,12 @@ fn search_schema() -> Value {
     })
 }
 
-fn workflow_schema() -> Value {
+fn workflow_schema(repo_path: Option<&Path>) -> Value {
+    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.";
+    let desc = load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
         "name": "workflow",
-        "description": "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.",
+        "description": desc,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -116,10 +136,12 @@ fn workflow_schema() -> Value {
     })
 }
 
-fn factbase_schema() -> Value {
+fn factbase_schema(repo_path: Option<&Path>) -> Value {
+    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)";
+    let desc = load_schema_override("factbase", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
         "name": "factbase",
-        "description": "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)",
+        "description": desc,
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -400,5 +422,67 @@ mod tests {
         assert!(lines.len() <= 15, "workflow description should be <=15 lines, got {}", lines.len());
         assert!(desc.contains("create"));
         assert!(desc.contains("maintain"));
+    }
+
+    // --- Schema description overrides ---
+
+    #[test]
+    fn test_schema_override_no_repo_path() {
+        // Without repo path, should use defaults
+        let result = tools_list_with_overrides(None);
+        let tools = result["tools"].as_array().unwrap();
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let desc = search["description"].as_str().unwrap();
+        assert!(desc.contains("Search the factbase"));
+    }
+
+    #[test]
+    fn test_schema_override_missing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = tools_list_with_overrides(Some(dir.path()));
+        let tools = result["tools"].as_array().unwrap();
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let desc = search["description"].as_str().unwrap();
+        assert!(desc.contains("Search the factbase"));
+    }
+
+    #[test]
+    fn test_schema_override_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let schema_dir = dir.path().join(".factbase/schema");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(schema_dir.join("search.md"), "Custom search description").unwrap();
+        let result = tools_list_with_overrides(Some(dir.path()));
+        let tools = result["tools"].as_array().unwrap();
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        assert_eq!(search["description"].as_str().unwrap(), "Custom search description");
+    }
+
+    #[test]
+    fn test_schema_override_empty_file_uses_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let schema_dir = dir.path().join(".factbase/schema");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(schema_dir.join("search.md"), "  \n  ").unwrap();
+        let result = tools_list_with_overrides(Some(dir.path()));
+        let tools = result["tools"].as_array().unwrap();
+        let search = tools.iter().find(|t| t["name"] == "search").unwrap();
+        let desc = search["description"].as_str().unwrap();
+        assert!(desc.contains("Search the factbase"), "Empty file should fall back to default");
+    }
+
+    #[test]
+    fn test_schema_override_partial() {
+        // Override only one tool, others keep defaults
+        let dir = tempfile::tempdir().unwrap();
+        let schema_dir = dir.path().join(".factbase/schema");
+        std::fs::create_dir_all(&schema_dir).unwrap();
+        std::fs::write(schema_dir.join("workflow.md"), "Custom workflow desc").unwrap();
+        let result = tools_list_with_overrides(Some(dir.path()));
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        assert_eq!(wf["description"].as_str().unwrap(), "Custom workflow desc");
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        assert!(fb["description"].as_str().unwrap().contains("op="), "factbase should keep default");
     }
 }
