@@ -1250,6 +1250,7 @@ mod tests {
                     review_callout: None,
                     reviewed_in_frontmatter: None,
                 }),
+                link_match_mode: None,
             }),
             created_at: chrono::Utc::now(),
             last_indexed_at: None,

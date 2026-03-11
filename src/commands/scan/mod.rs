@@ -180,7 +180,15 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         db.set_embedding_info(&config.embedding.model, provider_dim)?;
     }
 
-    let link_detector = factbase::link_detection::LinkDetector::new();
+    let link_detector = {
+        let mode = target_repos
+            .first()
+            .and_then(|r| r.perspective.as_ref())
+            .and_then(|p| p.link_match_mode.as_deref())
+            .map(|s| factbase::link_detection::LinkMatchMode::from_str_opt(Some(s)))
+            .unwrap_or_default();
+        factbase::link_detection::LinkDetector::new().with_match_mode(mode)
+    };
 
     let batch_size = args
         .batch_size

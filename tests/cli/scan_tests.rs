@@ -189,6 +189,7 @@ async fn test_init_scan_search_workflow() {
             allowed_types: None,
             review: None,
             format: None,
+            link_match_mode: None,
         }),
         created_at: Utc::now(),
         last_indexed_at: None,

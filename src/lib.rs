@@ -131,7 +131,7 @@ pub use embeddings_io::{
 #[deprecated(note = "use factbase::error::*")]
 pub use error::{format_user_error, format_warning, repo_not_found, FactbaseError};
 #[deprecated(note = "use factbase::link_detection::*")]
-pub use link_detection::{DetectedLink, LinkDetector};
+pub use link_detection::{DetectedLink, LinkDetector, LinkMatchMode};
 #[cfg(feature = "mcp")]
 #[deprecated(note = "use factbase::mcp::McpServer")]
 pub use mcp::McpServer;

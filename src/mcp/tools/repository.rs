@@ -75,7 +75,10 @@ pub async fn scan_repository(
 
     // Link detection uses string matching only (no LLM required).
     // Manual [[id]] links and fuzzy title matches are detected.
-    let link_detector = LinkDetector::new();
+    let match_mode = crate::link_detection::LinkMatchMode::from_str_opt(
+        repo.perspective.as_ref().and_then(|p| p.link_match_mode.as_deref()),
+    );
+    let link_detector = LinkDetector::new().with_match_mode(match_mode);
 
     // Acquire write guard right before full_scan — setup above is read-only
     let _guard = WriteGuard::try_acquire()?;
@@ -216,7 +219,10 @@ pub async fn detect_links(
     let repo = crate::mcp::tools::helpers::resolve_repo(db, get_str_arg(args, "repo"))?;
 
     let config = Config::load(None).unwrap_or_default();
-    let link_detector = LinkDetector::new();
+    let match_mode = crate::link_detection::LinkMatchMode::from_str_opt(
+        repo.perspective.as_ref().and_then(|p| p.link_match_mode.as_deref()),
+    );
+    let link_detector = LinkDetector::new().with_match_mode(match_mode);
 
     // Resume support
     let doc_offset = get_str_arg(args, "resume")

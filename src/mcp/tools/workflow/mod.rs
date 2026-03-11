@@ -1415,6 +1415,7 @@ mod tests {
                 glossary_types: None,
             }),
             format: None,
+            link_match_mode: None,
         })
     }
 
