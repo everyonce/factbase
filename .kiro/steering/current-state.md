@@ -2,7 +2,7 @@
 
 ## Project Status
 
-**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v51.3.0.
+**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v51.12.0.
 
 ### Active Work
 - No active phases. All work through Phase 50 is complete.
