@@ -56,7 +56,7 @@ sleep 1
 
 # Tool call
 echo "→ Sending tool call..."
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}' >&3
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"factbase","arguments":{"op":"perspective"}}}' >&3
 sleep 2
 
 if ! kill -0 $MCP_PID 2>/dev/null; then
@@ -89,7 +89,7 @@ echo ""
 
 # Second tool call
 echo "→ Sending second tool call..."
-echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}' >&3
+echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"factbase","arguments":{"op":"perspective"}}}' >&3
 sleep 2
 
 if ! kill -0 $MCP_PID 2>/dev/null; then

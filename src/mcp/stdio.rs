@@ -806,9 +806,9 @@ mod tests {
         let ping_id = AtomicU64::new(1);
         let mut output = Vec::new();
 
-        // Call list_repositories (fast, no progress token) — exercises the
+        // Call get_perspective (fast, no progress token) — exercises the
         // no-progress keepalive select loop added to fix Transport closed.
-        let line = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}"#;
+        let line = r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"factbase","arguments":{"op":"authoring_guide"}}}"#;
         handle_message(&db, &embedding, line, &mut output, &ping_id)
             .await
             .unwrap();
@@ -893,7 +893,7 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#,
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
             // A tool call that exercises handle_message
-            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_repositories","arguments":{}}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"factbase","arguments":{"op":"authoring_guide"}}}"#,
         ]
         .join("\n");
 

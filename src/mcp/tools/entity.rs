@@ -40,6 +40,7 @@ pub fn get_perspective(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 }
 
 /// Lists all registered repositories with document counts.
+#[allow(dead_code)] // Kept for backward compat; removed from MCP dispatch, still used by web API via services layer
 #[instrument(name = "mcp_list_repositories", skip(db))]
 pub fn list_repositories(db: &Database) -> Result<Value, FactbaseError> {
     services::list_repositories(db)

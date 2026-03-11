@@ -315,6 +315,7 @@ pub fn store_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> 
 ///
 /// Rewrites `References:` and `Referenced by:` blocks in every document file.
 /// Useful when switching a repo from factbase IDs to wikilink (obsidian) format.
+#[allow(dead_code)] // Kept for backward compat testing; removed from MCP dispatch
 pub fn migrate_repo_links(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let repo_id = args
         .get("repo")

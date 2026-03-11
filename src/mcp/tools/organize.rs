@@ -642,8 +642,8 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let fb = tools.iter().find(|s| s["name"] == "factbase").unwrap();
         let desc = fb["description"].as_str().unwrap();
-        // organize op description should not mention resume
-        assert!(desc.contains("organize: Reorganize KB"));
+        // organize op should be mentioned in the compact description
+        assert!(desc.contains("ORGANIZE:"));
     }
 
     #[test]

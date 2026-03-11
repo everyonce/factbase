@@ -44,10 +44,10 @@ use serde_json::Value;
 pub use authoring::get_authoring_guide;
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
 pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_tool};
-pub use entity::{get_entity, get_perspective, list_entities, list_repositories};
-pub use links::{get_link_suggestions, migrate_repo_links, store_links};
+pub use entity::{get_entity, get_perspective, list_entities};
+pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
-pub use repository::{detect_links, init_repository, scan_repository};
+pub use repository::{detect_links, scan_repository};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions,
     generate_questions, get_deferred_items, get_review_queue, check_repository,
@@ -150,24 +150,28 @@ async fn dispatch_tool<E: EmbeddingProvider>(
     args: &Value,
     reporter: &crate::ProgressReporter,
 ) -> Result<Value, FactbaseError> {
+    // Check for removed tools first (backward compat grace period)
+    for (name, msg) in schema::removed_legacy_tool_messages() {
+        if tool_name == *name {
+            return Err(FactbaseError::Config(msg.to_string()));
+        }
+    }
+
     match tool_name {
         "search_knowledge" => search_knowledge(db, embedding, args).await,
         "get_entity" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_entity(&db, &a)).await }
         "list_entities" => { let db = db.clone(); let a = args.clone(); run_blocking(move || list_entities(&db, &a)).await }
         "get_perspective" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_perspective(&db, &a)).await }
-        "list_repositories" => { let db = db.clone(); run_blocking(move || list_repositories(&db)).await }
         "create_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || create_document(&db, &a)).await }
         "update_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || update_document(&db, &a)).await }
         "delete_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || delete_document(&db, &a)).await }
         "bulk_create_documents" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || bulk_create_documents(&db, &a, &r)).await }
-        "search_content" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || search_content(&db, &a, &r)).await }
         "get_review_queue" => get_review_queue(db, args, reporter),
         "get_deferred_items" => get_deferred_items(db, args, reporter),
         "answer_questions" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || answer_questions(&db, &a, &r)).await }
         "check_repository" => check_repository(db, embedding, args, reporter).await,
         "scan_repository" => scan_repository(db, embedding, args, reporter).await,
         "detect_links" => detect_links(db, args, reporter).await,
-        "init_repository" => { let db = db.clone(); let a = args.clone(); run_blocking(move || init_repository(&db, &a)).await }
         "organize_analyze" => organize_analyze(db, embedding, args, reporter).await,
         "organize" => organize(db, embedding, args, reporter).await,
         "get_authoring_guide" => Ok(get_authoring_guide()),
@@ -176,7 +180,6 @@ async fn dispatch_tool<E: EmbeddingProvider>(
         "embeddings_status" => { let db = db.clone(); run_blocking(move || embeddings_status_tool(&db)).await }
         "get_link_suggestions" => get_link_suggestions(db, embedding, args).await,
         "store_links" => { let db = db.clone(); let a = args.clone(); run_blocking(move || store_links(&db, &a)).await }
-        "migrate_links" => { let db = db.clone(); let a = args.clone(); run_blocking(move || migrate_repo_links(&db, &a)).await }
         "get_fact_pairs" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_fact_pairs(&db, &a)).await }
         "workflow" => {
             let is_bootstrap = args.get("workflow").and_then(|v| v.as_str()) == Some("bootstrap");
@@ -196,7 +199,6 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
     Some(match op {
         "get_entity" => "get_entity",
         "list" => "list_entities",
-        "repos" => "list_repositories",
         "perspective" => "get_perspective",
         "create" => "create_document",
         "update" => "update_document",
@@ -205,7 +207,6 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
         "scan" => "scan_repository",
         "check" => "check_repository",
         "detect_links" => "detect_links",
-        "init" => "init_repository",
         "review_queue" => "get_review_queue",
         "answer" => "answer_questions",
         "deferred" => "get_deferred_items",
@@ -235,7 +236,10 @@ async fn handle_search_tool<E: EmbeddingProvider>(
                     }
                 }
             }
-            dispatch_tool(db, embedding, "search_content", &a, reporter).await?
+            // Call search_content directly (not via dispatch — it's removed from the public tool list)
+            let db2 = db.clone();
+            let r = reporter.clone();
+            run_blocking(move || search_content(&db2, &a, &r)).await?
         }
         _ => dispatch_tool(db, embedding, "search_knowledge", args, reporter).await?,
     };
@@ -345,12 +349,14 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
                 dispatch_tool(db, embedding, "organize", args, reporter).await
             }
         }
-        // links: action=suggest, action=store, or action=migrate
+        // links: action=suggest or action=store
         "links" => {
             let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("suggest");
             match action {
                 "store" => dispatch_tool(db, embedding, "store_links", args, reporter).await,
-                "migrate" => dispatch_tool(db, embedding, "migrate_links", args, reporter).await,
+                "migrate" => Err(FactbaseError::Config(
+                    "links action='migrate' removed. Link migration is no longer needed.".into()
+                )),
                 _ => dispatch_tool(db, embedding, "get_link_suggestions", args, reporter).await,
             }
         }
@@ -363,7 +369,15 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
                 _ => dispatch_tool(db, embedding, "embeddings_status", args, reporter).await,
             }
         }
-        _ => Err(FactbaseError::Config(format!("Unknown factbase op: {op}"))),
+        _ => {
+            // Check for removed ops (backward compat grace period)
+            for (removed_op, msg) in schema::removed_op_messages() {
+                if op == *removed_op {
+                    return Err(FactbaseError::Config(msg.to_string()));
+                }
+            }
+            Err(FactbaseError::Config(format!("Unknown factbase op: {op}")))
+        }
     }
 }
 
@@ -549,7 +563,7 @@ mod tests {
 
         // All legacy tool names should still be dispatchable (tested via integration tests)
         let legacy = schema::legacy_tool_names();
-        assert!(legacy.len() >= 26, "should have all legacy tool names as aliases");
+        assert!(legacy.len() >= 23, "should have active legacy tool names as aliases, got {}", legacy.len());
     }
 
     #[test]

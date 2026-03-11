@@ -69,22 +69,29 @@ pub fn list_entities(db: &Database, params: &ListEntitiesParams) -> Result<Value
     Ok(serde_json::json!({ "entities": items }))
 }
 
-/// Gets repository perspective.
+/// Gets repository perspective, including all repos info (replaces list_repositories).
 #[instrument(name = "svc_get_perspective", skip(db))]
 pub fn get_perspective(db: &Database, repo_id: Option<&str>) -> Result<Value, FactbaseError> {
     let repo_filter = resolve_repo_filter(db, repo_id)?;
     let repos = db.list_repositories_with_stats()?;
     let (repo, doc_count) = if let Some(id) = repo_filter {
-        repos.into_iter().find(|(r, _)| r.id == id)
+        repos.iter().find(|(r, _)| r.id == id).cloned()
     } else {
-        repos.into_iter().next()
+        repos.first().cloned()
     }
     .ok_or_else(|| FactbaseError::not_found("No repository found"))?;
 
     let mut json = repo.to_summary_json(doc_count);
     let perspective = repo.perspective.or_else(|| load_perspective_from_file(&repo.path));
-    json.as_object_mut().expect("to_summary_json returns object")
-        .insert("perspective".into(), serde_json::json!(perspective));
+    let obj = json.as_object_mut().expect("to_summary_json returns object");
+    obj.insert("perspective".into(), serde_json::json!(perspective));
+
+    // Include all repos summary (replaces the removed list_repositories/repos op)
+    if repos.len() > 1 {
+        let all_repos: Vec<Value> = repos.iter().map(|(r, c)| r.to_summary_json(*c)).collect();
+        obj.insert("all_repositories".into(), serde_json::json!(all_repos));
+    }
+
     Ok(json)
 }
 
