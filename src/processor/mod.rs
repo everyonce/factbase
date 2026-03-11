@@ -13,7 +13,7 @@
 //! - `core` - Document identity: ID extraction/injection, title, type, hash
 //! - `temporal` - Temporal tag parsing (`@t[...]`) and validation
 //! - `sources` - Source reference parsing (footnotes)
-//! - `review` - Review question parsing (`@q[...]`)
+//! - `review` - Review question parsing (`@q[...]`), normalization, and management
 //! - `chunks` - Document chunking for large documents
 //! - `stats` - Fact statistics calculation
 //!
@@ -101,6 +101,6 @@ pub use format::{build_document_header, format_link, format_references_line, wik
 // - core.rs: 16 tests (ID, title, type, hash)
 // - temporal.rs: 24 tests (temporal tag parsing)
 // - sources.rs: 31 tests (source reference parsing)
-// - review.rs: 17 tests (review queue parsing)
+// - review/: 81 tests (review queue parsing, normalization, pruning, appending, callout)
 // - chunks.rs: 5 tests (document chunking)
 // - stats.rs: 15 tests (fact statistics)
