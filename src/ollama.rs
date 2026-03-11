@@ -234,7 +234,7 @@ fn format_ollama_error(
         ),
     };
 
-    FactbaseError::ollama(format!("{summary} ({last_error})\nhint: {suggestion}"))
+    FactbaseError::embedding(format!("{summary} ({last_error})\nhint: {suggestion}"))
 }
 
 #[cfg(test)]

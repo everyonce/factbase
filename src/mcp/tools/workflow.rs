@@ -82,28 +82,6 @@ pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the ne
 
 pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run factbase(op='scan') afterward to re-index.";
 
-// --- Update workflow (legacy — kept for test coverage, aliased to maintain in production) ---
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
-
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence\n\n⚠️ TEMPORAL QUESTION FILTERING: After check completes, review the generated temporal questions. Some will have confidence='low' with a reason. Dismiss low-confidence temporal questions about:\n- Stable feature descriptions or capability lists\n- Glossary definitions or reference material\n- Facts sourced from official documentation pages that describe current capabilities\nOnly keep temporal questions about claims that could genuinely become outdated. Dismiss the rest via factbase(op='answer') with answer='dismiss: [reason]'.";
-
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE — you'll compare after link suggestions{ctx}";
-
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call factbase(op='fact_pairs') to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call factbase(op='answer') with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} — {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
-
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call factbase(op='links') TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type (e.g., exclude_types=[\"person\"] if reviewing people docs) with min_similarity=0.5. This finds connections between different entity types.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7. This finds related entities of the same kind.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs.\n   - factbase(op='links', action='store') writes `References:` to source files and `Referenced by:` to target files, and updates the database.\n4. Record: links_added, documents_modified";
-
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call factbase(op='organize', action='analyze') (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly — telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
-
-#[allow(dead_code)]
-pub(crate) const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] — each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
-
 // --- Resolve workflow ---
 pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Process types in recommended_order (fewest questions first = quick wins). Start with: workflow resolve step=2 question_type=<first_type>. Clear each type completely before moving to the next. Skip types with 0 questions.{ctx}{deferred_note}";
 
@@ -586,117 +564,6 @@ fn detect_full_rebuild(db: &Database) -> Option<(String, usize)> {
     }
 
     None
-}
-
-#[allow(dead_code)]
-fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig, db: &Database) -> Value {
-    let ctx = perspective_context(perspective);
-    let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
-    // Steps: 1=scan, 2=detect_links, 3=check, 4=links, 5=cross_validate (if enabled), 6=organize, 7=summary
-    let total = if do_cv { 7 } else { 6 };
-    match step {
-        1 => {
-            let mut resp = serde_json::json!({
-                "workflow": "update",
-                "step": 1, "total_steps": total,
-                "instruction": resolve(wf, "update.scan", DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
-                "next_tool": "factbase", "suggested_op": "scan",
-                "when_done": "Call workflow with workflow='update', step=2"
-            });
-            if let Some((reason, doc_count)) = detect_full_rebuild(db) {
-                let est_secs = doc_count * 2; // rough estimate: ~2s per doc
-                let est_display = if est_secs >= 60 {
-                    format!("~{} minutes", est_secs / 60)
-                } else {
-                    format!("~{est_secs} seconds")
-                };
-                resp["requires_confirmation"] = Value::Bool(true);
-                resp["confirmation_reason"] = Value::String(format!("full embedding rebuild"));
-                resp["confirmation_details"] = Value::String(format!(
-                    "All {doc_count} documents need re-embedding because {reason}. Estimated time: {est_display}."
-                ));
-                resp["instruction"] = Value::String(format!(
-                    "⚠️ Embedding rebuild required: {doc_count} documents need re-embedding ({reason}). \
-                     Estimated time: {est_display}.\n\n\
-                     If the user has already confirmed (e.g., said \"go ahead\" or \"re-embed\"), proceed immediately \
-                     by calling factbase(op='scan') with force_reindex=true and time_budget_secs=120.\n\n\
-                     Otherwise, ask the user to confirm before proceeding.\n\n\
-                     For incremental updates after confirmation, call workflow(workflow='update', step=2) when done."
-                ));
-            }
-            resp
-        }
-        2 => serde_json::json!({
-            "workflow": "update",
-            "step": 2, "total_steps": total,
-            "instruction": resolve(wf, "update.detect_links", DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION, &[("ctx", &ctx)]),
-            "next_tool": "factbase", "suggested_op": "detect_links",
-            "when_done": "Call workflow with workflow='update', step=3"
-        }),
-        3 => serde_json::json!({
-            "workflow": "update",
-            "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "check",
-            "when_done": "Call workflow with workflow='update', step=4"
-        }),
-        4 => serde_json::json!({
-            "workflow": "update",
-            "step": 4, "total_steps": total,
-            "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "links",
-            "when_done": "Call workflow with workflow='update', step=5"
-        }),
-        5 => {
-            if do_cv {
-                serde_json::json!({
-                    "workflow": "update",
-                    "step": 5, "total_steps": total,
-                    "instruction": resolve(wf, "update.cross_validate", DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION, &[]),
-                    "next_tool": "factbase", "suggested_op": "fact_pairs",
-                    "when_done": "Call workflow with workflow='update', step=6"
-                })
-            } else {
-                // Skip cross-validation, advance to organize
-                serde_json::json!({
-                    "workflow": "update",
-                    "step": 5, "total_steps": total,
-                    "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
-                    "next_tool": "factbase", "suggested_op": "organize",
-                    "when_done": format!("Call workflow with workflow='update', step={}", total)
-                })
-            }
-        }
-        6 => {
-            if do_cv {
-                serde_json::json!({
-                    "workflow": "update",
-                    "step": 6, "total_steps": total,
-                    "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
-                    "next_tool": "factbase", "suggested_op": "organize",
-                    "when_done": "Call workflow with workflow='update', step=7"
-                })
-            } else {
-                serde_json::json!({
-                    "workflow": "update",
-                    "step": 6, "total_steps": total,
-                    "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
-                    "complete": true
-                })
-            }
-        }
-        7 if do_cv => serde_json::json!({
-            "workflow": "update",
-            "step": 7, "total_steps": total,
-            "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
-            "complete": true
-        }),
-        _ => serde_json::json!({
-            "workflow": "update",
-            "complete": true,
-            "instruction": "Workflow complete."
-        }),
-    }
 }
 
 /// Minimum group size to surface as a repetitive pattern.
@@ -1944,6 +1811,124 @@ mod tests {
     use crate::database::tests::test_db;
     use crate::models::{Perspective, ReviewPerspective};
     use std::collections::HashMap;
+
+    // Legacy update workflow constants — kept for test coverage only.
+    const DEFAULT_UPDATE_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   \u{26a0}\u{fe0f} PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations \u{2014} that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
+    const DEFAULT_UPDATE_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call \u{2014} no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale \u{2192} KB is aging, needs fresh sources\n   - Mostly temporal \u{2192} facts lack dates, timeline is murky\n   - Mostly missing \u{2192} claims lack evidence\n\n\u{26a0}\u{fe0f} TEMPORAL QUESTION FILTERING: After check completes, review the generated temporal questions. Some will have confidence='low' with a reason. Dismiss low-confidence temporal questions about:\n- Stable feature descriptions or capability lists\n- Glossary definitions or reference material\n- Facts sourced from official documentation pages that describe current capabilities\nOnly keep temporal questions about claims that could genuinely become outdated. Dismiss the rest via factbase(op='answer') with answer='dismiss: [reason]'.";
+    const DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   \u{26a0}\u{fe0f} PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed\n3. Save links_detected as LINKS_BEFORE \u{2014} you'll compare after link suggestions{ctx}";
+    const DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION: &str = "Review cross-document fact pairs to find contradictions between documents.\n\n1. Call factbase(op='fact_pairs') to retrieve embedding-similar fact pairs across documents.\n   - Each pair contains two facts from different documents with their text, line numbers, and similarity score.\n   - Pairs where a cross-check question already exists are excluded.\n\n2. For each pair, classify the relationship:\n   - CONSISTENT: Facts are compatible or about different aspects\n   - CONTRADICTS: Facts give different answers to the same question about the same entity\n   - SUPERSEDES: One fact provides newer information that replaces the other\n\n3. For CONTRADICTS or SUPERSEDES pairs, create a review question:\n   - Call factbase(op='answer') with the target doc_id, the fact's line number as question_index context,\n     and a description like: \"Cross-check with {other_doc_title}: {fact_text} \u{2014} {reason}\"\n   - Use @q[conflict] for contradictions, @q[stale] for superseded facts\n\n4. Record: pairs_reviewed, conflicts_found";
+    const DEFAULT_UPDATE_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call factbase(op='links') TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type (e.g., exclude_types=[\"person\"] if reviewing people docs) with min_similarity=0.5. This finds connections between different entity types.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7. This finds related entities of the same kind.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs.\n   - factbase(op='links', action='store') writes `References:` to source files and `Referenced by:` to target files, and updates the database.\n4. Record: links_added, documents_modified";
+    const DEFAULT_UPDATE_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call factbase(op='organize', action='analyze') (one call \u{2014} no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly \u{2014} telling the same story twice\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes \u{2014} just record what you find";
+    const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] \u{2014} each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
+
+    /// Legacy update_step — kept for test coverage of the update workflow instruction content.
+    fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig, db: &Database) -> Value {
+        let ctx = perspective_context(perspective);
+        let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
+        let total = if do_cv { 7 } else { 6 };
+        match step {
+            1 => {
+                let mut resp = serde_json::json!({
+                    "workflow": "update",
+                    "step": 1, "total_steps": total,
+                    "instruction": resolve(wf, "update.scan", DEFAULT_UPDATE_SCAN_INSTRUCTION, &[("ctx", &ctx)]),
+                    "next_tool": "factbase", "suggested_op": "scan",
+                    "when_done": "Call workflow with workflow='update', step=2"
+                });
+                if let Some((reason, doc_count)) = detect_full_rebuild(db) {
+                    let est_secs = doc_count * 2;
+                    let est_display = if est_secs >= 60 {
+                        format!("~{} minutes", est_secs / 60)
+                    } else {
+                        format!("~{est_secs} seconds")
+                    };
+                    resp["requires_confirmation"] = Value::Bool(true);
+                    resp["confirmation_reason"] = Value::String("full embedding rebuild".into());
+                    resp["confirmation_details"] = Value::String(format!(
+                        "All {doc_count} documents need re-embedding because {reason}. Estimated time: {est_display}."
+                    ));
+                    resp["instruction"] = Value::String(format!(
+                        "\u{26a0}\u{fe0f} Embedding rebuild required: {doc_count} documents need re-embedding ({reason}). \
+                         Estimated time: {est_display}.\n\n\
+                         If the user has already confirmed (e.g., said \"go ahead\" or \"re-embed\"), proceed immediately \
+                         by calling factbase(op='scan') with force_reindex=true and time_budget_secs=120.\n\n\
+                         Otherwise, ask the user to confirm before proceeding.\n\n\
+                         For incremental updates after confirmation, call workflow(workflow='update', step=2) when done."
+                    ));
+                }
+                resp
+            }
+            2 => serde_json::json!({
+                "workflow": "update",
+                "step": 2, "total_steps": total,
+                "instruction": resolve(wf, "update.detect_links", DEFAULT_UPDATE_DETECT_LINKS_INSTRUCTION, &[("ctx", &ctx)]),
+                "next_tool": "factbase", "suggested_op": "detect_links",
+                "when_done": "Call workflow with workflow='update', step=3"
+            }),
+            3 => serde_json::json!({
+                "workflow": "update",
+                "step": 3, "total_steps": total,
+                "instruction": resolve(wf, "update.check", DEFAULT_UPDATE_CHECK_INSTRUCTION, &[]),
+                "next_tool": "factbase", "suggested_op": "check",
+                "when_done": "Call workflow with workflow='update', step=4"
+            }),
+            4 => serde_json::json!({
+                "workflow": "update",
+                "step": 4, "total_steps": total,
+                "instruction": resolve(wf, "update.links", DEFAULT_UPDATE_LINKS_INSTRUCTION, &[]),
+                "next_tool": "factbase", "suggested_op": "links",
+                "when_done": "Call workflow with workflow='update', step=5"
+            }),
+            5 => {
+                if do_cv {
+                    serde_json::json!({
+                        "workflow": "update",
+                        "step": 5, "total_steps": total,
+                        "instruction": resolve(wf, "update.cross_validate", DEFAULT_UPDATE_CROSS_VALIDATE_INSTRUCTION, &[]),
+                        "next_tool": "factbase", "suggested_op": "fact_pairs",
+                        "when_done": "Call workflow with workflow='update', step=6"
+                    })
+                } else {
+                    serde_json::json!({
+                        "workflow": "update",
+                        "step": 5, "total_steps": total,
+                        "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
+                        "next_tool": "factbase", "suggested_op": "organize",
+                        "when_done": format!("Call workflow with workflow='update', step={}", total)
+                    })
+                }
+            }
+            6 => {
+                if do_cv {
+                    serde_json::json!({
+                        "workflow": "update",
+                        "step": 6, "total_steps": total,
+                        "instruction": resolve(wf, "update.organize", DEFAULT_UPDATE_ORGANIZE_INSTRUCTION, &[]),
+                        "next_tool": "factbase", "suggested_op": "organize",
+                        "when_done": "Call workflow with workflow='update', step=7"
+                    })
+                } else {
+                    serde_json::json!({
+                        "workflow": "update",
+                        "step": 6, "total_steps": total,
+                        "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
+                        "complete": true
+                    })
+                }
+            }
+            7 if do_cv => serde_json::json!({
+                "workflow": "update",
+                "step": 7, "total_steps": total,
+                "instruction": resolve(wf, "update.summary", DEFAULT_UPDATE_SUMMARY_INSTRUCTION, &[]),
+                "complete": true
+            }),
+            _ => serde_json::json!({
+                "workflow": "update",
+                "complete": true,
+                "instruction": "Workflow complete."
+            }),
+        }
+    }
 
     fn wf() -> WorkflowsConfig {
         WorkflowsConfig::default()

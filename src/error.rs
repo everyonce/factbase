@@ -34,12 +34,6 @@ pub enum FactbaseError {
 
     #[error("Embedding error: {0}")]
     Embedding(String),
-
-    #[error("LLM error: {0}")]
-    Llm(String),
-
-    #[error("Ollama error: {0}")]
-    Ollama(String),
 }
 
 impl FactbaseError {
@@ -66,16 +60,6 @@ impl FactbaseError {
     /// Shorthand for `FactbaseError::Embedding(msg.into())`
     pub fn embedding(msg: impl Into<String>) -> Self {
         Self::Embedding(msg.into())
-    }
-
-    /// Shorthand for `FactbaseError::Llm(msg.into())`
-    pub fn llm(msg: impl Into<String>) -> Self {
-        Self::Llm(msg.into())
-    }
-
-    /// Shorthand for `FactbaseError::Ollama(msg.into())`
-    pub fn ollama(msg: impl Into<String>) -> Self {
-        Self::Ollama(msg.into())
     }
 }
 
@@ -164,8 +148,6 @@ mod tests {
             (FactbaseError::internal("something broke"), "something broke"),
             (FactbaseError::config("missing value"), "missing value"),
             (FactbaseError::embedding("no response"), "no response"),
-            (FactbaseError::llm("no output"), "no output"),
-            (FactbaseError::ollama("empty response"), "empty response"),
         ];
         for (err, expected) in &cases {
             assert!(err.to_string().contains(expected), "Error '{}' should contain '{}'", err, expected);
@@ -176,8 +158,6 @@ mod tests {
         assert!(matches!(FactbaseError::internal("x"), FactbaseError::Internal(_)));
         assert!(matches!(FactbaseError::config("x"), FactbaseError::Config(_)));
         assert!(matches!(FactbaseError::embedding("x"), FactbaseError::Embedding(_)));
-        assert!(matches!(FactbaseError::llm("x"), FactbaseError::Llm(_)));
-        assert!(matches!(FactbaseError::ollama("x"), FactbaseError::Ollama(_)));
     }
 
     #[test]

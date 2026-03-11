@@ -12,18 +12,12 @@ use crate::processor::{
 };
 use serde_json::Value;
 
-use super::helpers::{get_str_arg, get_u64_arg, resolve_repo_filter, run_blocking};
+use super::helpers::{get_str_arg, get_str_array_arg as get_str_array_arg_opt, get_u64_arg, resolve_repo_filter, run_blocking};
 
-/// Parse a JSON string array argument.
-fn get_str_array_arg(args: &Value, key: &str) -> Vec<String> {
-    args.get(key)
-        .and_then(Value::as_array)
-        .map(|arr| {
-            arr.iter()
-                .filter_map(Value::as_str)
-                .map(|s| s.to_lowercase())
-                .collect()
-        })
+/// Parse a JSON string array argument, lowercasing values.
+fn get_str_array_arg_lower(args: &Value, key: &str) -> Vec<String> {
+    get_str_array_arg_opt(args, key)
+        .map(|v| v.into_iter().map(|s| s.to_lowercase()).collect())
         .unwrap_or_default()
 }
 
@@ -40,8 +34,8 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
         .and_then(Value::as_f64)
         .unwrap_or(0.6) as f32;
     let limit = get_u64_arg(args, "limit", 50) as usize;
-    let include_types = get_str_array_arg(args, "include_types");
-    let exclude_types = get_str_array_arg(args, "exclude_types");
+    let include_types = get_str_array_arg_lower(args, "include_types");
+    let exclude_types = get_str_array_arg_lower(args, "exclude_types");
 
     // Get all docs with link counts and types
     let db2 = db.clone();
@@ -578,21 +572,21 @@ mod tests {
     #[test]
     fn test_get_str_array_arg_present() {
         let args = serde_json::json!({"types": ["person", "Project"]});
-        let result = get_str_array_arg(&args, "types");
+        let result = get_str_array_arg_lower(&args, "types");
         assert_eq!(result, vec!["person", "project"]); // lowercased
     }
 
     #[test]
     fn test_get_str_array_arg_missing() {
         let args = serde_json::json!({});
-        let result = get_str_array_arg(&args, "types");
+        let result = get_str_array_arg_lower(&args, "types");
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_get_str_array_arg_empty() {
         let args = serde_json::json!({"types": []});
-        let result = get_str_array_arg(&args, "types");
+        let result = get_str_array_arg_lower(&args, "types");
         assert!(result.is_empty());
     }
 
