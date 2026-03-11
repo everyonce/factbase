@@ -800,4 +800,47 @@ mod tests {
         let review_pos = result.find("> [!info]- Review Queue").unwrap();
         assert!(refs_pos < review_pos);
     }
+
+    // --- Edge cases: footnotes + review section combined ---
+
+    #[test]
+    fn test_append_links_with_footnotes_and_review_section() {
+        let content = "<!-- factbase:aaa111 -->\n# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let result = append_links_to_content(content, &["abc123"]);
+        assert!(result.contains("References: [[abc123]]"));
+        assert!(result.contains("[^1]: Source"));
+        let footnote_pos = result.find("[^1]: Source").unwrap();
+        let refs_pos = result.find("References:").unwrap();
+        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        assert!(refs_pos > footnote_pos, "References should be after footnotes");
+        assert!(refs_pos < review_pos, "References should be before review section");
+    }
+
+    #[test]
+    fn test_append_links_empty_content() {
+        let result = append_links_to_content("", &["abc123"]);
+        assert!(result.contains("References: [[abc123]]"));
+    }
+
+    #[test]
+    fn test_append_links_no_ids() {
+        let content = "# Title\n\nContent.";
+        let result = append_links_to_content(content, &[]);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_migrate_links_to_factbase_style() {
+        let content = "# Title\n\nReferences: [[abc123]]";
+        let result = migrate_links(
+            content,
+            crate::models::format::LinkStyle::Factbase,
+            |id| match id {
+                "abc123" => Some(("Doc".into(), "notes/doc.md".into())),
+                _ => None,
+            },
+        );
+        // Factbase style keeps [[id]] format
+        assert!(result.contains("[[abc123]]"));
+    }
 }

@@ -1144,4 +1144,104 @@ mod tests {
         // Frontmatter date (March) is later than inline (Feb), so it wins
         assert_eq!(latest, Some(chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()));
     }
+
+    // --- Robustness / edge case tests ---
+
+    #[test]
+    fn test_content_body_empty_string() {
+        assert_eq!(content_body(""), "");
+    }
+
+    #[test]
+    fn test_content_body_only_review_marker() {
+        let content = "<!-- factbase:review -->\n## Review Queue\n- [ ] @q[temporal] When?";
+        let body = content_body(content);
+        assert!(body.is_empty() || !body.contains("@q["));
+    }
+
+    #[test]
+    fn test_body_end_offset_no_review() {
+        let content = "# Title\n\nSome content.";
+        assert_eq!(body_end_offset(content), content.len());
+    }
+
+    #[test]
+    fn test_body_end_offset_with_callout_review() {
+        let content = "# Title\n\nContent.\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let offset = body_end_offset(content);
+        assert!(offset < content.len());
+        assert!(!content[..offset].contains("@q["));
+    }
+
+    #[test]
+    fn test_fact_line_regex_various_bullets() {
+        assert!(FACT_LINE_REGEX.is_match("- Simple fact"));
+        assert!(FACT_LINE_REGEX.is_match("* Star bullet fact"));
+        assert!(FACT_LINE_REGEX.is_match("  - Indented fact"));
+        assert!(!FACT_LINE_REGEX.is_match("# Heading"));
+        assert!(!FACT_LINE_REGEX.is_match(""));
+        assert!(!FACT_LINE_REGEX.is_match("Plain paragraph text"));
+    }
+
+    #[test]
+    fn test_doc_id_regex_boundary() {
+        assert!(DOC_ID_REGEX.is_match("abcdef"));
+        assert!(DOC_ID_REGEX.is_match("000000"));
+        assert!(DOC_ID_REGEX.is_match("ffffff"));
+        assert!(!DOC_ID_REGEX.is_match("abcde"));   // too short
+        assert!(!DOC_ID_REGEX.is_match("abcdefg")); // too long
+        assert!(!DOC_ID_REGEX.is_match("ABCDEF"));  // uppercase
+        assert!(!DOC_ID_REGEX.is_match("abcdeg"));  // 'g' not hex
+    }
+
+    #[test]
+    fn test_extract_heading_title_various() {
+        assert_eq!(extract_heading_title("# Title"), Some("Title".into()));
+        assert_eq!(extract_heading_title("# Title\n\nContent"), Some("Title".into()));
+        assert_eq!(extract_heading_title("<!-- factbase:abc123 -->\n# Title"), Some("Title".into()));
+        assert_eq!(extract_heading_title("No heading here"), None);
+        assert_eq!(extract_heading_title(""), None);
+    }
+
+    #[test]
+    fn test_clean_title_edge_cases() {
+        assert_eq!(clean_title("Title [^1]"), "Title");
+        assert_eq!(clean_title("Title"), "Title");
+        assert_eq!(clean_title(""), "");
+        assert_eq!(clean_title("Title [^1] [^2]"), "Title");
+    }
+
+    #[test]
+    fn test_has_corruption_artifacts_clean_doc() {
+        assert!(!has_corruption_artifacts("# Title\n\n- Normal fact @t[2024]\n"));
+    }
+
+    #[test]
+    fn test_is_reference_doc_with_marker() {
+        assert!(is_reference_doc("<!-- factbase:reference -->\n# Glossary\n\nTerms here."));
+        assert!(!is_reference_doc("# Normal Doc\n\nContent."));
+    }
+
+    #[test]
+    fn test_extract_reviewed_date_invalid() {
+        assert!(extract_reviewed_date("- Fact <!-- reviewed:not-a-date -->").is_none());
+        assert!(extract_reviewed_date("- Fact without marker").is_none());
+    }
+
+    #[test]
+    fn test_extract_frontmatter_reviewed_date_missing() {
+        assert!(extract_frontmatter_reviewed_date("# Title\n\nContent").is_none());
+    }
+
+    #[test]
+    fn test_manual_link_regex() {
+        assert!(MANUAL_LINK_REGEX.is_match("[[abc123]]"));
+        assert!(!MANUAL_LINK_REGEX.is_match("[[not_hex]]"));
+    }
+
+    #[test]
+    fn test_wikilink_regex() {
+        assert!(WIKILINK_REGEX.is_match("[[Some Name]]"));
+        assert!(WIKILINK_REGEX.is_match("[[path/to/file|Display Name]]"));
+    }
 }

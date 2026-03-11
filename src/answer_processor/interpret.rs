@@ -1195,4 +1195,79 @@ mod tests {
         assert!(matches!(classify_answer("deferred: later"), AnswerType::Deferral));
         assert!(matches!(classify_answer("deferred later"), AnswerType::Deferral));
     }
+
+    // --- Unicode edge cases ---
+
+    #[test]
+    fn test_classify_unicode_whitespace() {
+        // Non-breaking space, em space, etc.
+        assert_eq!(classify_answer("  dismiss  "), AnswerType::Dismissal);
+        assert_eq!(classify_answer("\tdismiss\n"), AnswerType::Dismissal);
+    }
+
+    #[test]
+    fn test_classify_unicode_quotes_in_correction() {
+        // Smart quotes (curly quotes) should still be treated as correction
+        let result = classify_answer("correct: title is now \u{201C}Senior VP\u{201D}");
+        assert!(matches!(result, AnswerType::Correction { .. }));
+    }
+
+    #[test]
+    fn test_classify_empty_and_whitespace_only() {
+        // Empty string → falls through to Correction fallback
+        let result = classify_answer("");
+        assert!(matches!(result, AnswerType::Correction { ref detail } if detail.is_empty()));
+
+        let result = classify_answer("   ");
+        assert!(matches!(result, AnswerType::Correction { ref detail } if detail.is_empty()));
+    }
+
+    #[test]
+    fn test_classify_mixed_case_keywords() {
+        assert_eq!(classify_answer("DISMISS"), AnswerType::Dismissal);
+        assert_eq!(classify_answer("Confirmed"), AnswerType::Confirmation);
+        assert_eq!(classify_answer("DELETE"), AnswerType::Deletion);
+        assert_eq!(classify_answer("DEFER"), AnswerType::Deferral);
+    }
+
+    #[test]
+    fn test_classify_accented_characters() {
+        // Accented text should fall through to correction
+        let result = classify_answer("Résumé updated 2024-06");
+        assert!(matches!(result, AnswerType::SourceCitation { .. } | AnswerType::Correction { .. }));
+    }
+
+    #[test]
+    fn test_classify_emoji_in_answer() {
+        let result = classify_answer("✅ confirmed");
+        // Should be correction (doesn't match exact "confirmed")
+        assert!(matches!(result, AnswerType::Correction { .. }));
+    }
+
+    #[test]
+    fn test_classify_very_long_answer() {
+        let long = "x".repeat(10_000);
+        let result = classify_answer(&long);
+        assert!(matches!(result, AnswerType::Correction { .. }));
+    }
+
+    #[test]
+    fn test_extract_quoted_text_unicode() {
+        let desc = r#""Ünïcödé text" - when?"#;
+        let result = extract_quoted_text(desc);
+        assert_eq!(result, Some("Ünïcödé text".to_string()));
+    }
+
+    #[test]
+    fn test_extract_temporal_tag_from_description() {
+        let desc = r#""Fact @t[2020..2023]" - still valid?"#;
+        let result = extract_temporal_tag(desc);
+        assert_eq!(result, Some("@t[2020..2023]".to_string()));
+    }
+
+    #[test]
+    fn test_extract_temporal_tag_none() {
+        let desc = "No temporal tag here";
+        assert!(extract_temporal_tag(desc).is_none());
+    }
 }
