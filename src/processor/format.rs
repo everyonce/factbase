@@ -5,7 +5,54 @@
 
 use crate::models::format::{IdPlacement, LinkStyle, ResolvedFormat};
 
+/// YAML frontmatter field keys managed by factbase — these are written by
+/// `build_document_header` and must not be duplicated from extra fields.
+const MANAGED_FIELDS: &[&str] = &["factbase_id", "type"];
+
+/// Extract extra (non-managed) YAML frontmatter fields from document content.
+///
+/// Returns raw YAML lines (e.g. `"reviewed: 2026-02-21"`) for all fields that
+/// are NOT managed by factbase (`factbase_id`, `type`).  Returns an empty vec
+/// when the content has no frontmatter block.
+pub fn extract_extra_frontmatter(content: &str) -> Vec<String> {
+    let mut lines = content.lines();
+
+    // Skip optional HTML comment header (<!-- factbase:... -->)
+    let first = match lines.next() {
+        Some(l) => l,
+        None => return Vec::new(),
+    };
+    let fm_start = if crate::patterns::ID_REGEX.is_match(first) {
+        match lines.next() {
+            Some(l) => l,
+            None => return Vec::new(),
+        }
+    } else {
+        first
+    };
+
+    if fm_start.trim() != "---" {
+        return Vec::new();
+    }
+
+    let mut extra = Vec::new();
+    for line in lines {
+        if line.trim() == "---" {
+            break;
+        }
+        let key = line.split(':').next().unwrap_or("").trim();
+        if !MANAGED_FIELDS.contains(&key) && !key.is_empty() {
+            extra.push(line.to_string());
+        }
+    }
+    extra
+}
+
 /// Build a document header (ID + title) according to format config.
+///
+/// `extra_fields` are raw YAML lines (e.g. `"reviewed: 2026-02-21"`) that will
+/// be included in the frontmatter block.  They are ignored when the format does
+/// not use frontmatter.
 ///
 /// For `IdPlacement::Comment`: `<!-- factbase:id -->\n# Title\n\n`
 /// For `IdPlacement::Frontmatter`: `---\nfactbase_id: id\ntype: ...\n---\n# Title\n\n`
@@ -14,6 +61,7 @@ pub fn build_document_header(
     title: &str,
     doc_type: Option<&str>,
     format: &ResolvedFormat,
+    extra_fields: &[String],
 ) -> String {
     match format.id_placement {
         IdPlacement::Comment => {
@@ -25,6 +73,10 @@ pub fn build_document_header(
                 if let Some(t) = doc_type {
                     fm.push_str("type: ");
                     fm.push_str(t);
+                    fm.push('\n');
+                }
+                for field in extra_fields {
+                    fm.push_str(field);
                     fm.push('\n');
                 }
                 fm.push_str("---\n# ");
@@ -42,6 +94,10 @@ pub fn build_document_header(
             if let Some(t) = doc_type {
                 fm.push_str("type: ");
                 fm.push_str(t);
+                fm.push('\n');
+            }
+            for field in extra_fields {
+                fm.push_str(field);
                 fm.push('\n');
             }
             fm.push_str("---\n# ");
@@ -111,7 +167,7 @@ mod tests {
     #[test]
     fn test_build_header_default() {
         let fmt = ResolvedFormat::default();
-        let h = build_document_header("abc123", "Test Title", None, &fmt);
+        let h = build_document_header("abc123", "Test Title", None, &fmt, &[]);
         assert_eq!(h, "<!-- factbase:abc123 -->\n# Test Title\n\n");
     }
 
@@ -122,7 +178,7 @@ mod tests {
             frontmatter: true,
             ..Default::default()
         };
-        let h = build_document_header("abc123", "Test Title", Some("person"), &fmt);
+        let h = build_document_header("abc123", "Test Title", Some("person"), &fmt, &[]);
         assert!(h.starts_with("---\n"));
         assert!(h.contains("factbase_id: abc123\n"));
         assert!(h.contains("type: person\n"));
@@ -136,7 +192,7 @@ mod tests {
             id_placement: IdPlacement::Frontmatter,
             ..Default::default()
         };
-        let h = build_document_header("abc123", "Test", None, &fmt);
+        let h = build_document_header("abc123", "Test", None, &fmt, &[]);
         assert!(h.contains("factbase_id: abc123\n"));
         assert!(!h.contains("type:"));
     }
@@ -148,7 +204,7 @@ mod tests {
             frontmatter: true,
             ..Default::default()
         };
-        let h = build_document_header("abc123", "Test", Some("note"), &fmt);
+        let h = build_document_header("abc123", "Test", Some("note"), &fmt, &[]);
         assert!(h.starts_with("<!-- factbase:abc123 -->\n---\n"));
         assert!(h.contains("type: note\n"));
         assert!(h.contains("---\n# Test\n\n"));
@@ -233,5 +289,78 @@ mod tests {
         assert_eq!(wikilink_path("people/john.md"), "people/john");
         assert_eq!(wikilink_path("notes.md"), "notes");
         assert_eq!(wikilink_path("no-extension"), "no-extension");
+    }
+
+    // --- extract_extra_frontmatter tests ---
+
+    #[test]
+    fn test_extract_extra_frontmatter_no_frontmatter() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n\nBody";
+        assert!(extract_extra_frontmatter(content).is_empty());
+    }
+
+    #[test]
+    fn test_extract_extra_frontmatter_only_managed_fields() {
+        let content = "---\nfactbase_id: abc123\ntype: person\n---\n# Title\n";
+        assert!(extract_extra_frontmatter(content).is_empty());
+    }
+
+    #[test]
+    fn test_extract_extra_frontmatter_preserves_extra_fields() {
+        let content = "---\nfactbase_id: abc123\nreviewed: 2026-02-21\ntype: person\ntags: important\n---\n# Title\n";
+        let extra = extract_extra_frontmatter(content);
+        assert_eq!(extra, vec!["reviewed: 2026-02-21", "tags: important"]);
+    }
+
+    #[test]
+    fn test_extract_extra_frontmatter_with_comment_header() {
+        let content = "<!-- factbase:abc123 -->\n---\ntype: person\nreviewed: 2026-03-06\n---\n# Title\n";
+        let extra = extract_extra_frontmatter(content);
+        assert_eq!(extra, vec!["reviewed: 2026-03-06"]);
+    }
+
+    #[test]
+    fn test_extract_extra_frontmatter_empty_content() {
+        assert!(extract_extra_frontmatter("").is_empty());
+    }
+
+    // --- build_document_header with extra_fields tests ---
+
+    #[test]
+    fn test_build_header_frontmatter_with_extra_fields() {
+        let fmt = ResolvedFormat {
+            id_placement: IdPlacement::Frontmatter,
+            frontmatter: true,
+            ..Default::default()
+        };
+        let extra = vec!["reviewed: 2026-02-21".to_string()];
+        let h = build_document_header("abc123", "Test", Some("person"), &fmt, &extra);
+        assert!(h.contains("factbase_id: abc123\n"));
+        assert!(h.contains("type: person\n"));
+        assert!(h.contains("reviewed: 2026-02-21\n"));
+        assert!(h.contains("---\n# Test\n\n"));
+    }
+
+    #[test]
+    fn test_build_header_comment_frontmatter_with_extra_fields() {
+        let fmt = ResolvedFormat {
+            id_placement: IdPlacement::Comment,
+            frontmatter: true,
+            ..Default::default()
+        };
+        let extra = vec!["reviewed: 2026-02-21".to_string(), "tags: important".to_string()];
+        let h = build_document_header("abc123", "Test", Some("note"), &fmt, &extra);
+        assert!(h.contains("type: note\n"));
+        assert!(h.contains("reviewed: 2026-02-21\n"));
+        assert!(h.contains("tags: important\n"));
+    }
+
+    #[test]
+    fn test_build_header_comment_no_frontmatter_ignores_extra() {
+        let fmt = ResolvedFormat::default(); // Comment, no frontmatter
+        let extra = vec!["reviewed: 2026-02-21".to_string()];
+        let h = build_document_header("abc123", "Test", None, &fmt, &extra);
+        assert_eq!(h, "<!-- factbase:abc123 -->\n# Test\n\n");
+        assert!(!h.contains("reviewed"));
     }
 }

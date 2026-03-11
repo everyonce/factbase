@@ -58,6 +58,18 @@ fn resolve_repo_format(repo: &crate::models::Repository) -> crate::models::Resol
         .unwrap_or_default()
 }
 
+/// Merge new frontmatter fields into an existing set, overriding by key.
+fn merge_frontmatter_fields(base: &mut Vec<String>, overrides: &[String]) {
+    for new_line in overrides {
+        let new_key = new_line.split(':').next().unwrap_or("").trim();
+        if let Some(pos) = base.iter().position(|l| l.split(':').next().unwrap_or("").trim() == new_key) {
+            base[pos] = new_line.clone();
+        } else {
+            base.push(new_line.clone());
+        }
+    }
+}
+
 /// Strip the `<!-- factbase:ID -->` header, YAML frontmatter, and first `# Title` line
 /// from content, returning only the body.
 fn strip_factbase_header(content: &str) -> String {
@@ -214,6 +226,7 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         &title,
         Some(&doc_type),
         &resolved_format,
+        &[],
     );
     let doc_content = format!("{header}{content_deduped}");
 
@@ -342,11 +355,21 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         let resolved_format = resolve_repo_format(&repo);
         let doc_type = crate::processor::DocumentProcessor::new()
             .derive_type(&file_path, &repo.path);
+        // Preserve extra frontmatter fields (e.g. reviewed, tags) from the
+        // existing document so they are not silently dropped during rebuild.
+        let mut extra = crate::processor::extract_extra_frontmatter(&doc.content);
+        // If the agent's new content also carried frontmatter, let those
+        // fields override the old ones (keyed by field name).
+        if new_content.is_some() {
+            let new_extra = crate::processor::extract_extra_frontmatter(content);
+            merge_frontmatter_fields(&mut extra, &new_extra);
+        }
         let header = crate::processor::build_document_header(
             &id,
             &title,
             Some(&doc_type),
             &resolved_format,
+            &extra,
         );
         format!("{header}{body}")
     };
@@ -539,6 +562,7 @@ pub fn bulk_create_documents(
             validated.title,
             Some(&doc_type),
             &resolved_format,
+            &[],
         );
         let doc_content = format!("{header}{content_deduped}");
 
@@ -687,6 +711,22 @@ mod tests {
             strip_factbase_header(content),
             "<!-- not a factbase header -->\n# Title\n\n- fact 1"
         );
+    }
+
+    #[test]
+    fn test_merge_frontmatter_fields_override() {
+        let mut base = vec!["reviewed: 2026-01-01".into(), "tags: old".into()];
+        let overrides = vec!["tags: new".into()];
+        merge_frontmatter_fields(&mut base, &overrides);
+        assert_eq!(base, vec!["reviewed: 2026-01-01", "tags: new"]);
+    }
+
+    #[test]
+    fn test_merge_frontmatter_fields_add_new() {
+        let mut base = vec!["reviewed: 2026-01-01".into()];
+        let overrides = vec!["custom: value".into()];
+        merge_frontmatter_fields(&mut base, &overrides);
+        assert_eq!(base, vec!["reviewed: 2026-01-01", "custom: value"]);
     }
 
     #[test]
@@ -1377,5 +1417,113 @@ mod tests {
         // Default format: HTML comment, no frontmatter
         assert!(on_disk.starts_with("<!-- factbase:"), "should start with HTML comment: {on_disk}");
         assert!(!on_disk.contains("---\n"), "should NOT have frontmatter: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_preserves_extra_frontmatter() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, FormatConfig, Perspective, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    preset: Some("obsidian".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let original = "---\nfactbase_id: abc123\nreviewed: 2026-02-21\ntype: people\ntags: important\n---\n# Test Entity\n\n- Old fact";
+        let file = repo_dir.path().join("people/test.md");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, original).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "people/test.md".into(),
+            title: "Test Entity".into(),
+            content: original.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "- New fact\n- Another fact"
+        });
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("reviewed: 2026-02-21"), "reviewed field preserved: {on_disk}");
+        assert!(on_disk.contains("tags: important"), "tags field preserved: {on_disk}");
+        assert!(on_disk.contains("factbase_id: abc123"), "factbase_id preserved: {on_disk}");
+        assert!(on_disk.contains("type: people"), "type preserved: {on_disk}");
+        assert!(on_disk.contains("- New fact"), "new content present: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_preserves_frontmatter_comment_format() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, FormatConfig, Perspective, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    frontmatter: Some(true),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let original = "<!-- factbase:abc123 -->\n---\ntype: people\nreviewed: 2026-03-06\n---\n# Entity\n\n- Old fact";
+        let file = repo_dir.path().join("people/test.md");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, original).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "people/test.md".into(),
+            title: "Entity".into(),
+            content: original.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "- Updated fact"
+        });
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        assert!(on_disk.contains("reviewed: 2026-03-06"), "reviewed preserved: {on_disk}");
+        assert!(on_disk.contains("type: people"), "type preserved: {on_disk}");
+        assert!(on_disk.contains("- Updated fact"), "new content: {on_disk}");
     }
 }
