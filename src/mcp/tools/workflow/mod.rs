@@ -67,6 +67,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
         "maintain" => Ok(maintain_step(step, args, &perspective, deferred(), db, &wf_config)),
         "refresh" => Ok(refresh_step(step, args, &perspective, deferred(), db, &wf_config)),
         "correct" => Ok(correct_step(step, args, &wf_config)),
+        "transition" => Ok(transition_step(step, args, &wf_config)),
 
         // --- Standalone (power user) ---
         "resolve" => Ok(resolve_step(step, args, &perspective, deferred(), db, &wf_config)),
@@ -89,6 +90,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "maintain", "description": "Internal quality maintenance: scan, detect links, check quality, link suggestions, organize analysis, resolve all questions, cleanup scan, report. Answers from existing knowledge only — no external research. With doc_id: maintain just that document."},
                 {"name": "refresh", "description": "Research-enabled maintenance: scan, check, then actively research entities using available tools (web search, etc.) to find latest info, update facts, add temporal tags, resolve questions, cleanup, report. Designed for automation (e.g. weekly cron). Optional filters: doc_type, doc_id, staleness threshold."},
                 {"name": "correct", "description": "Propagate a fact correction across the entire KB. Provide correction='what is wrong and what is true' and optional source='who said it, when'. Finds all documents containing the false claim and fixes them with an audit trail."},
+                {"name": "transition", "description": "Handle temporal entity changes — renames, mergers, acquisitions, role changes. Unlike correct (which fixes false claims), transition handles things that WERE true and CHANGED. Asks how to reference the entity going forward before making changes. Provide change='what changed' and optional effective_date, source."},
                 {"name": "resolve", "description": "(Advanced) Answer existing review queue questions, apply changes, cleanup. Use maintain instead for full maintenance. Optionally pass question_type to filter by type."},
             ],
             "aliases": {
@@ -1151,6 +1153,112 @@ fn correct_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "instruction": resolve(wf, "correct.cleanup", DEFAULT_CORRECT_CLEANUP_INSTRUCTION,
                 &[("correction", correction), ("source", source)]),
             "next_tool": "factbase", "suggested_op": "scan",
+            "complete": true
+        }),
+    }
+}
+
+fn transition_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
+    let change = get_str_arg(args, "change").unwrap_or("(no change provided)");
+    let source = get_str_arg(args, "source").unwrap_or("(not specified)");
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let effective_date = get_str_arg(args, "effective_date")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| today.clone());
+    let nomenclature = get_str_arg(args, "nomenclature");
+    let source_note = if source != "(not specified)" {
+        format!("Source: {source}")
+    } else {
+        String::new()
+    };
+    let source_footnote = if source != "(not specified)" {
+        format!("\n   - Add source footnote: \"{source}\"")
+    } else {
+        String::new()
+    };
+    let nom_for_report = nomenclature.unwrap_or("(not specified)").to_string();
+    let total = 7;
+    match step {
+        1 => serde_json::json!({
+            "workflow": "transition",
+            "step": 1, "total_steps": total,
+            "instruction": resolve(wf, "transition.parse", DEFAULT_TRANSITION_PARSE_INSTRUCTION,
+                &[("change", change), ("source_note", &source_note), ("today", &today)]),
+            "change": change,
+            "source": source,
+            "effective_date": effective_date,
+            "when_done": "Call workflow with workflow='transition', step=2"
+        }),
+        2 => {
+            if let Some(nom) = nomenclature {
+                // User provided their choice — proceed to search (step 3)
+                serde_json::json!({
+                    "workflow": "transition",
+                    "step": 3, "total_steps": total,
+                    "instruction": resolve(wf, "transition.search", DEFAULT_TRANSITION_NOMENCLATURE_CONFIRMED,
+                        &[("nomenclature", nom), ("change", change)]),
+                    "nomenclature": nom,
+                    "next_tool": "factbase", "suggested_op": "search",
+                    "when_done": "Call workflow with workflow='transition', step=4"
+                })
+            } else {
+                // Ask the user for nomenclature preference
+                serde_json::json!({
+                    "workflow": "transition",
+                    "step": 2, "total_steps": total,
+                    "instruction": resolve(wf, "transition.nomenclature_question", DEFAULT_TRANSITION_NOMENCLATURE_QUESTION,
+                        &[("change", change)]),
+                    "awaiting_input": true,
+                    "input_param": "nomenclature",
+                    "when_done": "Ask the user which option they prefer, then call workflow with workflow='transition', step=2, nomenclature='<their choice>'"
+                })
+            }
+        }
+        3 => {
+            let nom = nomenclature.unwrap_or("(not yet specified)");
+            serde_json::json!({
+                "workflow": "transition",
+                "step": 3, "total_steps": total,
+                "instruction": resolve(wf, "transition.search", DEFAULT_TRANSITION_NOMENCLATURE_CONFIRMED,
+                    &[("nomenclature", nom), ("change", change)]),
+                "nomenclature": nom,
+                "next_tool": "factbase", "suggested_op": "search",
+                "when_done": "Call workflow with workflow='transition', step=4"
+            })
+        }
+        4 => {
+            let nom = nomenclature.unwrap_or("(not yet specified)");
+            serde_json::json!({
+                "workflow": "transition",
+                "step": 4, "total_steps": total,
+                "instruction": resolve(wf, "transition.apply", DEFAULT_TRANSITION_APPLY_INSTRUCTION,
+                    &[("change", change), ("nomenclature", nom),
+                      ("effective_date", &effective_date), ("source_note", &source_note),
+                      ("source_footnote", &source_footnote)]),
+                "next_tool": "factbase", "suggested_op": "get_entity",
+                "when_done": "Call workflow with workflow='transition', step=5"
+            })
+        }
+        5 => serde_json::json!({
+            "workflow": "transition",
+            "step": 5, "total_steps": total,
+            "instruction": resolve(wf, "transition.organize", DEFAULT_TRANSITION_ORGANIZE_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "organize",
+            "when_done": "Call workflow with workflow='transition', step=6"
+        }),
+        6 => serde_json::json!({
+            "workflow": "transition",
+            "step": 6, "total_steps": total,
+            "instruction": resolve(wf, "transition.maintain", DEFAULT_TRANSITION_MAINTAIN_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "scan",
+            "when_done": "Call workflow with workflow='transition', step=7"
+        }),
+        _ => serde_json::json!({
+            "workflow": "transition",
+            "step": 7, "total_steps": total,
+            "instruction": resolve(wf, "transition.report", DEFAULT_TRANSITION_REPORT_INSTRUCTION,
+                &[("change", change), ("effective_date", &effective_date),
+                  ("source", source), ("nomenclature", &nom_for_report)]),
             "complete": true
         }),
     }
@@ -3983,7 +4091,7 @@ mod tests {
         let result = workflow(&db, &args).unwrap();
         let workflows = result["workflows"].as_array().unwrap();
         let names: Vec<&str> = workflows.iter().filter_map(|w| w["name"].as_str()).collect();
-        assert_eq!(names, vec!["create", "add", "maintain", "refresh", "correct", "resolve"]);
+        assert_eq!(names, vec!["create", "add", "maintain", "refresh", "correct", "transition", "resolve"]);
         assert!(result["aliases"].is_object());
     }
 
@@ -4124,5 +4232,224 @@ mod tests {
         for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
             assert!(!instr.contains(term), "fix instruction should not contain domain term: {term}");
         }
+    }
+
+    // --- Transition workflow tests ---
+
+    #[test]
+    fn test_transition_step1_parses_change() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "XSOLIS renamed to PRIMA-X"});
+        let result = transition_step(1, &args, &wf);
+        assert_eq!(result["workflow"], "transition");
+        assert_eq!(result["step"], 1);
+        assert_eq!(result["total_steps"], 7);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("XSOLIS renamed to PRIMA-X"));
+        assert!(instr.contains("Change type:"));
+        assert!(instr.contains("rename"));
+        assert!(instr.contains("merger"));
+        assert!(instr.contains("role_change"));
+        assert!(instr.contains("Old value:"));
+        assert!(instr.contains("New value:"));
+        assert!(instr.contains("Effective date:"));
+        assert!(instr.contains("Search terms:"));
+    }
+
+    #[test]
+    fn test_transition_step1_includes_effective_date_default() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test"});
+        let result = transition_step(1, &args, &wf);
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains(&today), "parse should include today as fallback date");
+    }
+
+    #[test]
+    fn test_transition_step1_preserves_source() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test", "source": "CEO announcement 2026-03-11"});
+        let result = transition_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("CEO announcement 2026-03-11"));
+    }
+
+    #[test]
+    fn test_transition_step2_without_nomenclature_asks_question() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test"});
+        let result = transition_step(2, &args, &wf);
+        assert_eq!(result["step"], 2);
+        assert_eq!(result["awaiting_input"], true);
+        assert_eq!(result["input_param"], "nomenclature");
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("Replace with context"));
+        assert!(instr.contains("Replace clean"));
+        assert!(instr.contains("Keep old in history"));
+        assert!(instr.contains("Custom"));
+    }
+
+    #[test]
+    fn test_transition_step2_with_nomenclature_proceeds_to_search() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test", "nomenclature": "PRIMA-X (formerly XSOLIS)"});
+        let result = transition_step(2, &args, &wf);
+        // Should jump to step 3 (search)
+        assert_eq!(result["step"], 3);
+        assert_eq!(result["nomenclature"], "PRIMA-X (formerly XSOLIS)");
+        assert!(result.get("awaiting_input").is_none());
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("PRIMA-X (formerly XSOLIS)"));
+        assert!(instr.contains("search"));
+    }
+
+    #[test]
+    fn test_transition_step4_apply_includes_temporal_boundaries() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({
+            "change": "test rename",
+            "effective_date": "2026-03-11",
+            "nomenclature": "New Name (formerly Old Name)"
+        });
+        let result = transition_step(4, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("@t[..2026-03-11]"), "apply should add end-date on old value");
+        assert!(instr.contains("@t[2026-03-11..]"), "apply should add start-date on new value");
+    }
+
+    #[test]
+    fn test_transition_step4_apply_with_source_footnote() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({
+            "change": "test",
+            "source": "Board memo 2026-03-11",
+            "nomenclature": "new"
+        });
+        let result = transition_step(4, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("Board memo 2026-03-11"), "apply should include source footnote");
+    }
+
+    #[test]
+    fn test_transition_step4_distinguishes_doc_types() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test", "nomenclature": "new"});
+        let result = transition_step(4, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("Entity overview doc"), "apply should handle entity overview docs");
+        assert!(instr.contains("Current reference docs"), "apply should handle current reference docs");
+        assert!(instr.contains("Historical reference docs"), "apply should handle historical docs");
+    }
+
+    #[test]
+    fn test_transition_step4_preserves_historical_references() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test", "nomenclature": "new"});
+        let result = transition_step(4, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("historical footnotes"), "apply should preserve historical references");
+        assert!(instr.contains("correct at the time"), "apply should acknowledge old info was valid");
+    }
+
+    #[test]
+    fn test_transition_step5_executes_org_suggestions() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test"});
+        let result = transition_step(5, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("execute_suggestions"), "step 5 should execute org suggestions");
+    }
+
+    #[test]
+    fn test_transition_step6_runs_maintain() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test"});
+        let result = transition_step(6, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("scan"), "step 6 should scan");
+        assert!(instr.contains("check"), "step 6 should check");
+    }
+
+    #[test]
+    fn test_transition_step7_report_complete() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({
+            "change": "XSOLIS renamed to PRIMA-X",
+            "effective_date": "2026-03-11",
+            "source": "CEO memo",
+            "nomenclature": "PRIMA-X (formerly XSOLIS)"
+        });
+        let result = transition_step(7, &args, &wf);
+        assert_eq!(result["complete"], true);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("XSOLIS renamed to PRIMA-X"));
+        assert!(instr.contains("2026-03-11"));
+        assert!(instr.contains("CEO memo"));
+        assert!(instr.contains("PRIMA-X (formerly XSOLIS)"));
+    }
+
+    #[test]
+    fn test_transition_effective_date_defaults_to_today() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test"});
+        let result = transition_step(1, &args, &wf);
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        assert_eq!(result["effective_date"].as_str().unwrap(), today);
+    }
+
+    #[test]
+    fn test_transition_effective_date_uses_provided() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test", "effective_date": "2025-06-15"});
+        let result = transition_step(1, &args, &wf);
+        assert_eq!(result["effective_date"].as_str().unwrap(), "2025-06-15");
+    }
+
+    #[test]
+    fn test_transition_domain_agnostic() {
+        // Mushroom test: instructions should not reference any specific domain
+        let wf = WorkflowsConfig::default();
+        for step in 1..=7 {
+            let args = serde_json::json!({"change": "test", "nomenclature": "new"});
+            let result = transition_step(step, &args, &wf);
+            let instr = result["instruction"].as_str().unwrap().to_lowercase();
+            for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
+                assert!(!instr.contains(term), "step {step} instruction should not contain domain term: {term}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_transition_dispatches_from_workflow() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "transition", "change": "test rename"});
+        let result = workflow(&db, &args).unwrap();
+        assert_eq!(result["workflow"], "transition");
+        assert_eq!(result["step"], 1);
+    }
+
+    #[test]
+    fn test_transition_in_workflow_list() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "list"});
+        let result = workflow(&db, &args).unwrap();
+        let workflows = result["workflows"].as_array().unwrap();
+        let transition = workflows.iter().find(|w| w["name"] == "transition").unwrap();
+        let desc = transition["description"].as_str().unwrap();
+        assert!(desc.contains("temporal entity changes"));
+        assert!(desc.contains("rename"));
+        assert!(desc.contains("merger"));
+    }
+
+    #[test]
+    fn test_transition_nomenclature_options_are_generic() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"change": "test"});
+        let result = transition_step(2, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        // Options should use generic placeholders, not domain-specific examples
+        assert!(instr.contains("<new value>") || instr.contains("<old value>") || instr.contains("new value"),
+            "nomenclature options should use generic placeholders");
     }
 }
