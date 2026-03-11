@@ -61,12 +61,6 @@ impl Setup {
         self
     }
 
-    /// Alias for `require_repo` — kept for backward compatibility with callers
-    /// that used to resolve multiple repos.
-    pub fn resolve_repos(self, _filter: Option<&str>) -> Self {
-        self.require_repo(None)
-    }
-
     pub fn build(self) -> anyhow::Result<SetupContext> {
         let config = Config::load(None)?;
         let dir = std::env::current_dir()?;
@@ -127,16 +121,6 @@ impl SetupContext {
     pub fn take_repo(self) -> (Config, Database, Repository) {
         let repo = self.repo.expect("require_repo() was not called on Setup builder");
         (self.config, self.db, repo)
-    }
-
-    /// Get the resolved repositories (returns single repo in a slice).
-    /// Kept for backward compatibility.
-    pub fn repos(&self) -> &[Repository] {
-        // Return the single repo as a slice, or empty
-        match &self.repo {
-            Some(r) => std::slice::from_ref(r),
-            None => &[],
-        }
     }
 }
 
@@ -336,12 +320,6 @@ mod tests {
     #[test]
     fn test_setup_builder_require_repo() {
         let setup = Setup::new().require_repo(Some("test"));
-        assert!(setup.require_repo);
-    }
-
-    #[test]
-    fn test_setup_builder_resolve_repos_aliases_require_repo() {
-        let setup = Setup::new().resolve_repos(None);
         assert!(setup.require_repo);
     }
 
