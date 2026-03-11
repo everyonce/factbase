@@ -66,6 +66,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
         }
         "maintain" => Ok(maintain_step(step, args, &perspective, deferred(), db, &wf_config)),
         "refresh" => Ok(refresh_step(step, args, &perspective, deferred(), db, &wf_config)),
+        "correct" => Ok(correct_step(step, args, &wf_config)),
 
         // --- Standalone (power user) ---
         "resolve" => Ok(resolve_step(step, args, &perspective, deferred(), db, &wf_config)),
@@ -87,6 +88,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "add", "description": "Grow the knowledge base. With topic='X': research and create new entities. With doc_id='X': improve that specific document. With neither: scan for gaps and enrich existing docs."},
                 {"name": "maintain", "description": "Internal quality maintenance: scan, detect links, check quality, link suggestions, organize analysis, resolve all questions, cleanup scan, report. Answers from existing knowledge only — no external research. With doc_id: maintain just that document."},
                 {"name": "refresh", "description": "Research-enabled maintenance: scan, check, then actively research entities using available tools (web search, etc.) to find latest info, update facts, add temporal tags, resolve questions, cleanup, report. Designed for automation (e.g. weekly cron). Optional filters: doc_type, doc_id, staleness threshold."},
+                {"name": "correct", "description": "Propagate a fact correction across the entire KB. Provide correction='what is wrong and what is true' and optional source='who said it, when'. Finds all documents containing the false claim and fixes them with an audit trail."},
                 {"name": "resolve", "description": "(Advanced) Answer existing review queue questions, apply changes, cleanup. Use maintain instead for full maintenance. Optionally pass question_type to filter by type."},
             ],
             "aliases": {
@@ -1096,6 +1098,62 @@ fn improve_step(
         }
     }
     result
+}
+
+fn correct_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
+    let correction = get_str_arg(args, "correction").unwrap_or("(no correction provided)");
+    let source = get_str_arg(args, "source").unwrap_or("(not specified)");
+    let source_note = if source != "(not specified)" {
+        format!("Source: {source}")
+    } else {
+        String::new()
+    };
+    let source_footnote = if source != "(not specified)" {
+        format!("\n   e. Footnote text: \"{source}\"")
+    } else {
+        String::new()
+    };
+    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let temporal_hint = format!(
+        " @t[=<date>] using the correction date. If no temporal context was identified in step 1, fall back to today's date: @t[={today}]"
+    );
+    let total = 4;
+    match step {
+        1 => serde_json::json!({
+            "workflow": "correct",
+            "step": 1, "total_steps": total,
+            "instruction": resolve(wf, "correct.parse", DEFAULT_CORRECT_PARSE_INSTRUCTION,
+                &[("correction", correction), ("source_note", &source_note)]),
+            "correction": correction,
+            "source": source,
+            "when_done": "Call workflow with workflow='correct', step=2"
+        }),
+        2 => serde_json::json!({
+            "workflow": "correct",
+            "step": 2, "total_steps": total,
+            "instruction": resolve(wf, "correct.search", DEFAULT_CORRECT_SEARCH_INSTRUCTION,
+                &[("correction", correction)]),
+            "next_tool": "factbase", "suggested_op": "search",
+            "when_done": "Call workflow with workflow='correct', step=3"
+        }),
+        3 => serde_json::json!({
+            "workflow": "correct",
+            "step": 3, "total_steps": total,
+            "instruction": resolve(wf, "correct.fix", DEFAULT_CORRECT_FIX_INSTRUCTION,
+                &[("correction", correction), ("source_note", &source_note),
+                  ("source_footnote", &source_footnote), ("temporal_hint", &temporal_hint)]),
+            "next_tool": "factbase", "suggested_op": "get_entity",
+            "when_done": "Call workflow with workflow='correct', step=4"
+        }),
+        _ => serde_json::json!({
+            "workflow": "correct",
+            "step": 4, "total_steps": total,
+            "instruction": resolve(wf, "correct.cleanup", DEFAULT_CORRECT_CLEANUP_INSTRUCTION,
+                &[("correction", correction), ("source", source)]),
+            "next_tool": "factbase", "suggested_op": "scan",
+            "complete": true
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -3925,7 +3983,7 @@ mod tests {
         let result = workflow(&db, &args).unwrap();
         let workflows = result["workflows"].as_array().unwrap();
         let names: Vec<&str> = workflows.iter().filter_map(|w| w["name"].as_str()).collect();
-        assert_eq!(names, vec!["create", "add", "maintain", "refresh", "resolve"]);
+        assert_eq!(names, vec!["create", "add", "maintain", "refresh", "correct", "resolve"]);
         assert!(result["aliases"].is_object());
     }
 
@@ -3940,5 +3998,88 @@ mod tests {
         assert_eq!(rebranded["workflow"], "add");
         assert!(rebranded["instruction"].as_str().unwrap().contains("workflow='add'"));
         assert!(rebranded["when_done"].as_str().unwrap().contains("workflow='add'"));
+    }
+
+    // --- Correct workflow: parse dimension tests ---
+
+    #[test]
+    fn test_correct_parse_extracts_temporal_context() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "The migration completed in January, not March"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("Temporal context"), "parse should ask for temporal context");
+        assert!(instr.contains("dates, date ranges, or temporal markers"), "parse should explain what temporal context means");
+        assert!(instr.contains("\"none\""), "parse should handle no-temporal case");
+    }
+
+    #[test]
+    fn test_correct_parse_identifies_correction_types() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        for ty in &["relational", "temporal", "factual", "status", "identity", "classification"] {
+            assert!(instr.contains(ty), "parse should list correction type: {ty}");
+        }
+        assert!(instr.contains("Correction type:"), "parse output should include Correction type field");
+    }
+
+    #[test]
+    fn test_correct_parse_has_old_new_value_and_scope() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("Old value:"), "parse output should include Old value");
+        assert!(instr.contains("New value:"), "parse output should include New value");
+        assert!(instr.contains("Scope:"), "parse output should include Scope");
+        assert!(instr.contains("single"), "scope should mention single");
+        assert!(instr.contains("systemic"), "scope should mention systemic");
+    }
+
+    #[test]
+    fn test_correct_parse_still_has_entities_and_search_terms() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("Entities:"), "parse should still extract entities");
+        assert!(instr.contains("False claim:"), "parse should still extract false claim");
+        assert!(instr.contains("True fact:"), "parse should still extract true fact");
+        assert!(instr.contains("Search terms:"), "parse should still extract search terms");
+    }
+
+    #[test]
+    fn test_correct_fix_uses_temporal_context_over_today() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(instr.contains("correction date"), "fix should prefer correction date for @t tag");
+        assert!(instr.contains("temporal context"), "fix should reference temporal context from step 1");
+        assert!(instr.contains("fall back to today"), "fix should fall back to today when no temporal context");
+    }
+
+    #[test]
+    fn test_correct_fix_fallback_contains_today_date() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(3, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        assert!(instr.contains(&today), "fix fallback should contain today's date");
+    }
+
+    #[test]
+    fn test_correct_parse_domain_agnostic() {
+        // Mushroom test: instruction should not reference any specific domain
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap().to_lowercase();
+        for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
+            assert!(!instr.contains(term), "parse instruction should not contain domain term: {term}");
+        }
     }
 }
