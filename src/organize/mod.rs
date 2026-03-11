@@ -3,7 +3,6 @@
 //! This module provides fact-level tracking for reorganization operations
 //! (merge, split, move, retype) to ensure no data is silently lost.
 
-mod audit;
 pub mod detect;
 pub mod execute;
 mod extract;
@@ -17,12 +16,6 @@ pub(crate) mod test_helpers;
 mod types;
 mod verify;
 
-#[allow(unused_imports)] // operational utility — not yet wired to CLI/MCP
-pub(crate) use audit::{
-    audit_log_dir, list_audit_logs, read_audit_log, write_audit_log, AuditEntry, FactMapping,
-    FactSummary, MergeDetails, MoveDetails, OperationDetails, OperationType, RetypeDetails,
-    SplitDetails,
-};
 pub use detect::{
     assess_staleness, cosine_similarity, detect_duplicate_entries, detect_ghost_files,
     detect_merge_candidates, detect_misplaced, detect_split_candidates, discover_entities,
