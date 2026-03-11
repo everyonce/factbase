@@ -35,6 +35,9 @@ pub struct Perspective {
     /// Output format configuration (link style, frontmatter, etc.)
     #[serde(default)]
     pub format: Option<FormatConfig>,
+    /// Link detection mode: "exact" (original) or "fuzzy" (default, enhanced matching)
+    #[serde(default)]
+    pub link_match_mode: Option<String>,
 }
 
 /// Default perspective.yaml template created by init commands.
@@ -53,6 +56,10 @@ pub const PERSPECTIVE_TEMPLATE: &str = "\
 #   allowed_types: [species, habitat, region]           # biology\n\
 #   allowed_types: [civilization, event, artifact]       # history\n\
 #   allowed_types: [person, company, project]            # business\n\
+\n\
+# Link detection mode: 'fuzzy' (default) or 'exact'\n\
+# Fuzzy adds normalized matching (diacritics, prefix stripping like St./Mt.)\n\
+# link_match_mode: fuzzy\n\
 \n\
 # Output format (optional — omit for factbase defaults)\n\
 # format:\n\
@@ -112,6 +119,7 @@ pub fn load_perspective_from_file(repo_root: &Path) -> Option<Perspective> {
                 || !p.type_name.is_empty()
                 || p.review.is_some()
                 || p.format.is_some()
+                || p.link_match_mode.is_some()
             {
                 Some(p)
             } else {
@@ -326,5 +334,29 @@ mod tests {
         assert_eq!(r.link_style, super::super::format::LinkStyle::Wikilink);
         assert!(r.frontmatter);
         assert_eq!(r.id_placement, super::super::format::IdPlacement::Frontmatter);
+    }
+
+    #[test]
+    fn test_load_perspective_with_link_match_mode() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "link_match_mode: exact\n",
+        )
+        .unwrap();
+        let p = load_perspective_from_file(tmp.path()).unwrap();
+        assert_eq!(p.link_match_mode.as_deref(), Some("exact"));
+    }
+
+    #[test]
+    fn test_load_perspective_link_match_mode_fuzzy() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "link_match_mode: fuzzy\n",
+        )
+        .unwrap();
+        let p = load_perspective_from_file(tmp.path()).unwrap();
+        assert_eq!(p.link_match_mode.as_deref(), Some("fuzzy"));
     }
 }

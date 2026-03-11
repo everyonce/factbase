@@ -51,6 +51,7 @@ fn create_test_repo(temp_dir: &TempDir) -> (Repository, std::path::PathBuf) {
             allowed_types: None,
             review: None,
             format: None,
+            link_match_mode: None,
         }),
         created_at: Utc::now(),
         last_indexed_at: None,
