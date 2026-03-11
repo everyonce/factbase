@@ -4,7 +4,7 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::mcp::tools::helpers::resolve_doc_path;
 use crate::mcp::tools::{get_str_arg, get_str_arg_required, get_u64_arg_required};
-use crate::processor::{content_hash, parse_review_queue};
+use crate::processor::{content_hash, is_callout_review, parse_review_queue, unwrap_review_callout, wrap_review_callout};
 use crate::ProgressReporter;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -196,6 +196,13 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         }));
     }
 
+    // Unwrap callout format so modify_question_in_queue sees plain lines
+    let was_callout = is_callout_review(&content);
+    if was_callout {
+        let (unwrapped, _) = unwrap_review_callout(&content);
+        content = unwrapped;
+    }
+
     // Find and modify the question in the document content
     let marker_pos = content
         .find(marker)
@@ -209,8 +216,11 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         modify_question_in_queue(queue_content, question_index, &answer_text, defer)
             .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
-    // Reconstruct the document
-    let new_content = format!("{before_marker}{marker}{modified_queue}");
+    // Reconstruct the document, re-wrapping callout if needed
+    let mut new_content = format!("{before_marker}{marker}{modified_queue}");
+    if was_callout {
+        new_content = wrap_review_callout(&new_content);
+    }
 
     fs::write(&file_path, &new_content)?;
 
@@ -422,6 +432,13 @@ pub fn bulk_answer_questions(
         let mut content = disk_content.clone();
         let marker = "<!-- factbase:review -->";
 
+        // Unwrap callout format so modify_question_in_queue sees plain lines
+        let was_callout = is_callout_review(&content);
+        if was_callout {
+            let (unwrapped, _) = unwrap_review_callout(&content);
+            content = unwrapped;
+        }
+
         for (question_index, answer_text, confidence) in &actionable {
             let marker_pos = content
                 .find(marker)
@@ -437,6 +454,11 @@ pub fn bulk_answer_questions(
                     .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
 
             content = format!("{before_marker}{marker}{modified_queue}");
+        }
+
+        // Re-wrap callout if it was originally in callout format
+        if was_callout {
+            content = wrap_review_callout(&content);
         }
 
         pending_writes.push((doc_id.clone(), file_path.clone(), content));
@@ -1048,6 +1070,134 @@ Some footer text.
         assert!(doc_a.content.contains("[x]"), "Doc A should have answered question in DB");
         let doc_b = db.get_document("bbb222").unwrap().unwrap();
         assert!(doc_b.content.contains("[x]"), "Doc B should have answered question in DB");
+    }
+
+    #[test]
+    fn test_answer_question_callout_format() {
+        // When the review section uses callout format (> prefixed lines),
+        // answer_question should still work correctly.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let doc_file = repo_dir.join("test.md");
+
+        // Callout format: review section lines prefixed with `> `
+        let content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+> [!info]- Review Queue\n\
+> <!-- factbase:review -->\n\
+> - [ ] `@q[temporal]` Line 4: When was this true?\n\
+>   > \n\
+> - [ ] `@q[missing]` Line 4: What is the source?\n\
+>   > \n";
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test Entity".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "doc_id": "abc123",
+            "question_index": 0,
+            "answer": "@t[=2024-01] confirmed"
+        });
+        let result = answer_question(&db, &args).unwrap();
+        assert_eq!(result["success"], true);
+        assert!(result.get("skipped").is_none(), "should not be skipped");
+
+        // Verify the disk file is still in callout format with the answer applied
+        let updated = std::fs::read_to_string(&doc_file).unwrap();
+        assert!(updated.contains("> <!-- factbase:review -->"), "should preserve callout format");
+        // The answered question should be parseable
+        let questions = parse_review_queue(&updated).unwrap();
+        assert_eq!(questions.len(), 2);
+        assert!(questions[0].answered, "question 0 should be answered");
+        assert!(!questions[1].answered, "question 1 should remain unanswered");
+    }
+
+    #[test]
+    fn test_bulk_answer_callout_format() {
+        // Bulk answering should work with callout-format review sections.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let doc_file = repo_dir.join("test.md");
+
+        let content = "\
+<!-- factbase:abc123 -->\n\
+# Test Entity\n\
+\n\
+- Some fact\n\
+\n\
+> [!info]- Review Queue\n\
+> <!-- factbase:review -->\n\
+> - [ ] `@q[temporal]` Line 4: When?\n\
+>   > \n\
+> - [ ] `@q[missing]` Line 4: Source?\n\
+>   > \n";
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test Entity".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "answers": [
+                {"doc_id": "abc123", "question_index": 0, "answer": "@t[2020..2022]"},
+                {"doc_id": "abc123", "question_index": 1, "answer": "LinkedIn profile"}
+            ]
+        });
+        let result = bulk_answer_questions(&db, &args, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["success"], true);
+        assert_eq!(result["answered"], 2);
+
+        // Verify callout format preserved and both questions answered
+        let updated = std::fs::read_to_string(&doc_file).unwrap();
+        assert!(updated.contains("> <!-- factbase:review -->"), "should preserve callout format");
+        let questions = parse_review_queue(&updated).unwrap();
+        assert_eq!(questions.len(), 2);
+        assert!(questions[0].answered, "question 0 should be answered");
+        assert!(questions[1].answered, "question 1 should be answered");
     }
 
     #[test]
