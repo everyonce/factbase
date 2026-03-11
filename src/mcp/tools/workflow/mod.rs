@@ -7,152 +7,28 @@
 //! Workflows read the repository perspective to tailor instructions
 //! to the knowledge base's purpose and policies.
 
+
+mod instructions;
+mod variants;
+pub(crate) mod helpers;
+
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::models::{Document, Perspective, QuestionType};
+use crate::models::{Perspective, QuestionType};
+use serde_json::Value;
+use std::collections::HashMap;
+
+use crate::config::workflows::WorkflowsConfig;
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
-
-use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
-use super::helpers::{build_quality_stats, detect_weak_identification, load_perspective, resolve_repo_filter};
-use super::review::format_question_json;
+use super::helpers::load_perspective;
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
+use super::review::format_question_json;
+use helpers::*;
+use instructions::*;
+use variants::*;
 
-/// Resolve the filesystem path for a repository (first repo if none specified).
-fn resolve_repo_path(db: &Database, repo_id: Option<&str>) -> Option<std::path::PathBuf> {
-    let repos = db.list_repositories().ok()?;
-    let repo = if let Some(id) = repo_id {
-        repos.into_iter().find(|r| r.id == id)
-    } else {
-        repos.into_iter().next()
-    };
-    repo.map(|r| r.path)
-}
-
-/// Compact format rules inlined into workflow steps so weaker models don't need a separate get_authoring_guide call.
-const FORMAT_RULES: &str = "\n\n**⚠️ FORMAT RULES — read carefully:**\n\n**Temporal tags** — ONLY dates/years go inside @t[...]. NEVER put names, descriptions, statuses, or any other text inside.\n- ✅ CORRECT: `@t[=2024]` `@t[~2024]` `@t[2020..2023]` `@t[2024..]` `@t[?]` `@t[=331 BCE]` `@t[=-0490]`\n- ❌ WRONG (entity names): `@t[Wolfgang Amadeus Mozart]` `@t[Mount Vesuvius]`\n- ❌ WRONG (descriptions): `@t[Complex counterpoint and fugal writing]` `@t[bright red when young]`\n- ❌ WRONG (statuses): `@t[Active Production Status: Ongoing]` `@t[No significant seismic activity]`\n- ❌ WRONG (statistics): `@t[Total Produced: 650+]` `@t[Population: 12000]`\n- ❌ WRONG (vague time words): `@t[seasonal]` `@t[since ancient times]` `@t[traditional..modern]`\n- Syntax: `@t[=YYYY]` exact date, `@t[~YYYY]` approximate, `@t[YYYY..YYYY]` range, `@t[YYYY..]` ongoing, `@t[?]` unknown\n- BCE dates: `@t[=331 BCE]` or `@t[=-331]` or `@t[=-0331]` — all equivalent\n- Place the tag AFTER the fact text: `- Cap color: red to orange @t[~2024] [^1]`\n- If you don't know the date, use `@t[?]` — NEVER put text descriptions inside the brackets\n\n**Source footnotes** on every fact: `[^1]` inline, then `---\\n[^1]: Author, Title, Date` at bottom\n\nCall factbase(op='authoring_guide') for the full format reference";
-
-// ---------------------------------------------------------------------------
-// Default instruction templates for each workflow step.
-// Use {placeholder} syntax for dynamic parts; resolved via config overrides.
-// ---------------------------------------------------------------------------
-
-/// Build the sub-agent fanout hint. For large queues (>200) the language is
-/// directive ("DO IT NOW"); for smaller queues it remains a strong suggestion.
-fn subagent_fanout_hint(total_questions: usize, type_dist: &[(String, usize)]) -> String {
-    let workers: String = type_dist
-        .iter()
-        .filter(|(_, c)| *c > 0)
-        .enumerate()
-        .map(|(i, (qt, _))| format!("- Worker {}: workflow(workflow='resolve', step=2, question_type='{qt}')", i + 1))
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    if total_questions > 200 {
-        format!(
-            "\n\n🚀 PARALLEL DISPATCH (MANDATORY for {total_questions} questions): If you have a use_subagent or delegate tool, USE IT NOW to spawn parallel workers. \
-Spawn one worker per question type. This is the fastest path to clearing the queue.\n\
-{workers}\n\
-Each worker processes its type independently. Do NOT work serially — fan out immediately."
-        )
-    } else {
-        format!(
-            "\n\n🚀 PARALLEL DISPATCH: If you have a use_subagent or delegate tool, spawn one worker per question type — \
-this is significantly faster than serial processing.\n\
-{workers}\n\
-Each worker processes its type independently."
-        )
-    }
-}
-
-// --- Setup workflow ---
-pub(crate) const DEFAULT_SETUP_INIT_INSTRUCTION: &str = "Initialize a new factbase repository at '{path}'. Call factbase(op='init') with path='{path}'.\n\nAfter initialization, the directory will contain a perspective.yaml file that needs to be configured in the next step.\n\nTip: If you're unsure what document types and folder structure to use for this domain, call workflow='bootstrap' with a domain description first — it will generate tailored suggestions.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=2)";
-
-pub(crate) const DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION: &str = "Configure the repository's perspective. Write the file `{path}/perspective.yaml` with YAML content like this:\n\n```yaml\nfocus: \"What this knowledge base is about\"\norganization: \"Who maintains it (optional)\"\nallowed_types:\n  - type1\n  - type2\n  - type3\nreview:\n  stale_days: 180\n  required_fields:\n    type1: [field1, field2]\n    type2: [field1, field2]\n```\n\nIf you ran bootstrap first, use the perspective values it suggested. Otherwise choose values appropriate for the domain.\n\n⚠️ This MUST be valid YAML written to `perspective.yaml` (not .md, not .json). The file goes in the repository root, not in .factbase/.\n\nAlso plan the folder structure — each allowed_type becomes a top-level folder. Documents are placed in type folders (e.g., `species/amanita-muscaria.md`).\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=3)";
-
-pub(crate) const DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION: &str = "✅ perspective.yaml parsed successfully:\n  {detail}\n\nIf this looks correct, proceed to the next step.\n\n⚠️ NEXT: Call workflow(workflow='setup', step=4)";
-
-pub(crate) const DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION: &str = "❌ {detail}\n\n⚠️ NEXT: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again to re-validate.";
-
-pub(crate) const DEFAULT_SETUP_CREATE_INSTRUCTION: &str = "Create 2-3 example documents using factbase(op='create').\n\nIMPORTANT: First call factbase(op='authoring_guide') to learn the required document format (temporal tags, footnotes, structure).\n\nTips for first documents:\n- Place each in the appropriate type folder (e.g., 'species/amanita-muscaria.md')\n- Start with a clear # Title\n- Use exact entity names that match other document titles for automatic cross-linking\n- A definitions/ document for domain terminology is a good first document{format_rules}\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=5)";
-
-pub(crate) const DEFAULT_SETUP_SCAN_INSTRUCTION: &str = "Index and verify the new repository.\n\n1. Call factbase(op='scan') with time_budget_secs=120 to generate document embeddings and detect links.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response. Do NOT stop early.\n2. Call factbase(op='check') to run quality checks and see initial issues.\n3. Report what the scan found: how many documents were indexed, how many links were detected, and any quality issues from the check.\n\n⚠️ NEXT: When done, you MUST call: workflow(workflow='setup', step=6)";
-
-pub(crate) const DEFAULT_SETUP_COMPLETE_INSTRUCTION: &str = "The repository is set up! Summarize what was created and suggest next steps:\n\n- **Add more content**: Use workflow='ingest' with a topic to research and add documents\n- **Fill gaps**: Use workflow='enrich' to find and fill missing information\n- **Quality check**: Use workflow='update' periodically to scan, check quality, and detect reorganization opportunities\n- **Fix issues**: Use workflow='resolve' to address any review questions\n- **Improve a document**: Use workflow='improve' with a doc_id to improve a specific document end-to-end\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run factbase(op='scan') afterward to re-index.";
-
-// --- Resolve workflow ---
-pub(crate) const DEFAULT_RESOLVE_QUEUE_INSTRUCTION: &str = "Process types in recommended_order (fewest questions first = quick wins). Start with: workflow resolve step=2 question_type=<first_type>. Clear each type completely before moving to the next. Skip types with 0 questions.{ctx}{deferred_note}";
-
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source (URL, document ID, book, API result, or other verifiable reference). 'Well-known historical fact', 'still accurate', or 'training data' are NOT acceptable evidence. If you cannot find an external source confirming the claim, DEFER — that is the correct action.\n\nCONFIDENCE LEVELS:\n- **verified**: You consulted an external source and found confirmation. Include the source reference (URL, document ID, API response, etc.). Use confidence='verified' (or omit — it's the default). These answers WILL be applied.\n- **believed**: You are confident from training data but did NOT find external confirmation. Use confidence='believed'. These answers stay in the queue for human review and are NOT applied.\n- **defer**: You researched and could not confirm. Prefix with 'defer:' and explain what you tried. A good defer with reasoning is better than a confident guess without evidence. Deferring means you did your job — you researched and couldn't confirm.\n\nANSWER FORMAT BY TYPE:\n\nTEMPORAL — fact line has no @t[...] tag.\n→ MUST include the tag: \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n→ WRONG: \"well-known\", \"static\", \"doesn't change\" — rejected, no audit trail\n\nMISSING — fact has no source citation.\n→ \"Source: [name] ([reference]), [date]\"\n\nSTALE — source older than {stale} days.\n→ Research \"{entity} {fact} {current year}\"\n→ Still true: \"Still accurate per [source] ([reference]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([reference])\"\n\nCONFLICT — two facts disagree. Read the [pattern:...] tag.\n→ Both valid (parallel, different entities): \"Not a conflict: [reason]\"\n→ One supersedes: \"Transition: adjust end date to [date] per [source]\"\n→ One wrong: \"[correct fact] per [source], remove [wrong fact]\"\n→ Cross-doc: call factbase(op='get_entity') on referenced doc for context\n\nAMBIGUOUS → clarify or create definitions/ file\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\nPRECISION → replace vague term with specific value: \"heavy losses\" → \"~500 casualties\" per [source]\nWEAK-SOURCE → use your tools to find the actual source. Update the footnote with a specific reference (URL, path, page, ISBN, RFC, channel/thread+date). If you cannot find it, change to '[^N]: UNVERIFIED — original claim: <text>'. Do not invent specific-looking citations.\n\nEXAMPLES:\n\n✅ GOOD verified answer: \"@t[2019..2023] per Wikipedia (https://en.wikipedia.org/wiki/Example); verified 2026-02-28\"\n✅ GOOD verified answer: \"@t[=2024-03] per internal doc fb:3a2c1e; verified 2026-02-28\"\n✅ GOOD defer: \"defer: Researched 'entity role 2026' using available tools — no results confirming current status\"\n❌ BAD answer: \"Still accurate, well-documented historical fact\" (no source, no evidence)\n❌ BAD answer: \"This is common knowledge\" (not verifiable)\n\nCan't find a source? → defer: researched [what], found [nothing/insufficient]. This is the RIGHT answer when evidence is lacking.\n\n⚠️ ERROR HANDLING: If you get an IO/body error from factbase(op='answer'), your response was too large. Reduce the number of answers per call (split into smaller groups) and retry.{ctx}";
-
-pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANSWER questions, not analyze them. Answer from knowledge first. Only research if you genuinely cannot answer. Every tool call that is not factbase(op='answer') is reducing your throughput. Minimize research calls.\n\nAnswer the questions in this batch. For each question: call factbase(op='answer') with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed' (stays in queue for human review)\n- Researched and found nothing? → 'defer: researched [what], found [nothing]' — this is the correct action\n\nDo not spend context on statistics, breakdowns, or pattern analysis — spend it on factbase(op='answer') calls.\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call factbase(op='scan') or factbase(op='check') — those belong to the update workflow. Stay focused on the current batch.\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context. Just call step=2 immediately.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to (actual context limit error, timeout). If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
-
-// --- Variant A: Type-specific evidence standards ---
-pub(crate) const VARIANT_TYPE_EVIDENCE_INTRO: &str = "You are resolving review questions in batches. The system feeds you 15 questions at a time. You will receive multiple batches. Answer each batch and call step 2 again. The system will tell you when all questions are resolved.\n\n⚠️ EVIDENCE REQUIREMENT — varies by question type:\n\nSTALE: Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.\n→ Still true: \"Still accurate per [source] ([URL]), verified [date]\"\n→ Changed: \"Updated: [new info] per [source] ([URL])\"\n\nTEMPORAL: Search for the specific event date. Cite a URL with the date.\n→ Format: \"@t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD\"\n→ Ranges: @t[YYYY..YYYY], ongoing: @t[YYYY..], BCE: @t[=-480] or @t[=480 BCE]\n→ Unknown date: @t[?] (only when truly unfindable)\n\nAMBIGUOUS: Check the KB first (factbase(op='get_entity'), read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.\n→ KB has answer: \"Clarified per [doc_id]: [definition]\"\n→ External: \"Clarified per [source] ([URL]): [definition]\"\n\nCONFLICT: Read BOTH referenced documents (factbase(op='get_entity')). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.\n→ Both valid: \"Not a conflict: [reason] per [source]\"\n→ One supersedes: \"[correct fact] per [source], supersedes [old fact]\"\n→ Unresolvable: \"defer: [analysis of both sides with sources]\"\n\nPRECISION: Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.\n→ Found: \"[specific value] per [source] ([URL])\"\n→ Not found: \"defer: searched for specific value, no authoritative source found\"\n\nMISSING: Find a source citation for the unsourced fact.\n→ \"Source: [name] ([URL]), [date]\"\n\nDUPLICATE: Identify the canonical entry.\n→ \"Duplicate of [doc_id], remove from here\"\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nEXAMPLES:\n✅ GOOD: \"@t[1942-06-04..1942-06-07] per Wikipedia (https://en.wikipedia.org/wiki/Battle_of_Midway); verified 2026-03-01\"\n✅ GOOD defer: \"defer: Searched 'entity role 2026' — no results confirming current status\"\n❌ BAD: \"Well-known historical fact\" (no source)\n\nCan't find a source? → defer. This is the correct action.{ctx}";
-
-pub(crate) const VARIANT_TYPE_EVIDENCE_ANSWER: &str = "Answer the questions in this batch. Each question has an `evidence_guidance` field with type-specific research instructions — follow them.\n\nFor each question: follow the evidence_guidance, research, then call factbase(op='answer') with doc_id, question_index, answer, and confidence.\n- Found a source? → confidence='verified' (or omit), include the source reference\n- Confident but no source found? → confidence='believed'\n- Researched and found nothing? → 'defer: researched [what], found [nothing]'\n\n⚠️ SCOPE: The resolve workflow is ONLY for answering existing questions. Do NOT call factbase(op='scan') or factbase(op='check').\n\n⚠️ CONTINUATION: After answering this batch, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
-
-// --- Variant B: Research-then-batch ---
-pub(crate) const VARIANT_RESEARCH_BATCH_INTRO: &str = "You are resolving review questions using a research-first approach. Questions are grouped by document. For each document group:\n\nPHASE 1 — RESEARCH: Call factbase(op='get_entity') to read the full document. Then do ONE comprehensive search covering all its questions. Gather all evidence before answering anything.\n\nPHASE 2 — ANSWER: Answer ALL questions for that document in one factbase(op='answer') call, citing the research from Phase 1.\n\nThis reduces redundant searches — multiple questions about the same document/topic share research.\n\n⚠️ EVIDENCE REQUIREMENT: Every answer MUST cite an external source. If you cannot find evidence, DEFER.\n\nCONFIDENCE LEVELS:\n- **verified**: External source found and cited. These answers WILL be applied.\n- **believed**: Confident but no external source. Stays in queue for human review.\n- **defer**: Researched and could not confirm. A good defer is better than a guess.\n\nANSWER FORMAT BY TYPE:\nTEMPORAL → \"@t[YYYY] per [source] ([reference]); verified YYYY-MM-DD\"\nSTALE → \"Still accurate per [source] ([reference]), verified [date]\" or \"Updated: [new info] per [source]\"\nCONFLICT → Read [pattern:...] tag. Both valid: \"Not a conflict: [reason]\". One wrong: cite source.\nMISSING → \"Source: [name] ([reference]), [date]\"\nAMBIGUOUS → clarify with KB context or external source\nPRECISION → replace vague term with specific value per source\nDUPLICATE → \"Duplicate of [doc_id], remove from here\"\n\nCan't find a source? → defer. This is the correct action.{ctx}";
-
-pub(crate) const VARIANT_RESEARCH_BATCH_ANSWER: &str = "Process this batch using the research-first approach:\n\n1. For each document group below, call factbase(op='get_entity') with the doc_id to read the full document\n2. Do ONE comprehensive search covering all questions for that document\n3. Answer ALL questions for that document in one factbase(op='answer') call\n4. Move to the next document group\n\nDo not answer from memory alone. Research each document thoroughly before answering any of its questions.\n\n⚠️ SCOPE: Do NOT call factbase(op='scan') or factbase(op='check').\n\n⚠️ CONTINUATION: After answering all groups, call workflow(workflow='resolve', step=2) to get the next batch. The workflow returns continue=true when more batches remain. DO NOT STOP between batches to summarize or report progress — that wastes context.\n\nDO NOT STOP after answering a batch. Call workflow(workflow='resolve', step=2) immediately. Answered questions are tracked in the DB and won't reappear — your progress is safe. Only stop if your runtime forces you to. If you must stop, commit your work (git add/commit) so the next session continues where you left off.{ctx}";
-
-pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers by rewriting the documents directly.\n\nFor each document you answered questions about:\n1. Call factbase(op='get_entity') to read the current content\n2. Apply your answers: insert @t[...] tags, add source footnotes, resolve conflicts, etc.\n3. Call factbase(op='update') with the modified content\n\nThis gives you full control over the edits — no LLM intermediary.";
-
-pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call factbase(op='check') with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
-
-pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run factbase(op='scan') to re-index all documents. This prunes answered [x] questions and re-indexes modified files. Do NOT run check — resolve only cleans up, it does not generate new work.";
-
-// --- Ingest workflow ---
-pub(crate) const DEFAULT_INGEST_SEARCH_INSTRUCTION: &str = "Search factbase to see what already exists about '{topic}'. Call search(query='...') with a relevant query. Also try factbase(op='list') to browse by type.{ctx}";
-
-pub(crate) const DEFAULT_INGEST_RESEARCH_INSTRUCTION: &str = "Research '{topic}' using your available tools. Strategies:\n- **Search**: Use available research tools for recent, authoritative information. Try specific queries like '{entity name} {fact type} {year}' rather than broad searches.\n- **Multiple sources**: Cross-reference findings across at least 2 sources before adding facts.\n- **Gather specifics**: Collect dates, numbers, names, and citations — not just summaries.\n- **Note your sources**: Track the reference (URL, document ID, publication, etc.), author, and date for every fact you find — you'll need these for footnotes.\n\nOrganize what you find by entity and section before proceeding to document creation.{ctx}";
-
-pub(crate) const DEFAULT_INGEST_CREATE_INSTRUCTION: &str = "Create or update factbase documents with your findings. Use factbase(op='bulk_create') for multiple new entities (up to 100 at a time), create_document for a single entity, or update_document for existing ones.\n\nDocument rules:\n- Place in typed folders: people/, companies/, projects/, definitions/, etc.\n- First # Heading = document title\n- Use exact entity names matching other document titles for cross-linking\n- For acronyms or domain terms, create/update a definitions/ file\n- Never use 'Author knowledge' as a source — that's reserved for human-authored author-knowledge/ files\n- Never modify <!-- factbase:XXXXXX --> headers\n- If existing files are in the wrong folder or poorly named, feel free to rename/move them — just run factbase(op='scan') afterward\n- Entity discovery: while researching, if you discover an entity that fits the KB's allowed types (check the perspective) and is mentioned across multiple existing documents or is significant enough to warrant its own entry, create a new document for it\n- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header. These are available for linking but won't be quality-checked.\n\n⚠️ SOURCE REQUIREMENT: Every fact must have a footnote with a specific, independently verifiable source. Before writing a fact, verify it with one of your available tools and cite the specific result.\n- If you found it via web search: cite the URL\n- If you found it in a file: cite the file path\n- If you found it in email/Slack: cite the channel, thread, date, and participants\n- If you cannot verify a fact with your tools: do NOT add it. Unverified claims degrade the knowledge base.\n- NEVER cite vague sources like 'AWS documentation', 'internal docs', 'Wikipedia' (without article URL), or 'author knowledge' without specifics.\n- GOOD citations: URL, file path, book+page, email with subject+date, Slack channel+thread+date, RFC number, ISBN\n- BAD citations: 'AWS documentation', 'internal docs', 'author knowledge', 'Wikipedia' without article name/URL\n\nKeep track of all document IDs you create — you'll need them for the verify step.{fields}{format_rules}\n\n⚠️ NEXT: When done creating documents, you MUST call: workflow(workflow='ingest', step=4)";
-
-pub(crate) const DEFAULT_INGEST_VERIFY_INSTRUCTION: &str = "Verify the quality of your new documents.\n\n1. Call factbase(op='check') with doc_ids=[list of all document IDs you created] to run quality checks on them.\n2. Review the results — questions indicate quality issues:\n   - Missing @t[] tags: add temporal context (when was this verified? what year?)\n   - Missing sources: add footnotes for any unsourced claims\n   - Ambiguous terms: clarify or create definitions/ entries\n3. Fix what you can NOW using factbase(op='update'). The rest stays in the review queue for resolve.\n4. Run factbase(op='scan') to re-index after any fixes.\n\nAlso note any frequently-mentioned names that don't have their own documents — these are candidates for new entities.\n\n⚠️ NEXT: When done verifying, you MUST call: workflow(workflow='ingest', step=5)";
-
-pub(crate) const DEFAULT_INGEST_LINKS_INSTRUCTION: &str = "Discover cross-references for your new documents.\n\n1. Call factbase(op='links') with exclude_types matching the new document types (cross-type discovery, min_similarity=0.5).\n2. Review suggestions: does the candidate genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs. factbase(op='links', action='store') writes References: to source files AND Referenced by: to target files automatically.\n4. Bidirectional discovery: for each existing document your new docs link TO, check if that existing document's content mentions any of your new document titles. If so, store the reverse link too (existing → new) via store_links.\n5. Record: links_added, documents_modified";
-
-// --- Enrich workflow ---
-pub(crate) const DEFAULT_ENRICH_REVIEW_INSTRUCTION: &str = "Review the entity_quality list (sorted by attention_score, highest first). Reference entities are excluded — they exist for linking, not enrichment.\nPick the top 3-5 entities that need work. You will enrich them ONE AT A TIME — fully completing each before moving to the next.\n\nCall factbase(op='get_entity') on the first entity to begin.{ctx}";
-
-pub(crate) const DEFAULT_ENRICH_GAPS_INSTRUCTION: &str = "Score this document before researching:\n\n1. Temporal: X of Y fact lines have @t tags = Z%\n2. Sources: X of Y fact lines have [^N] citations = Z%\n3. Missing fields: [list any required by perspective]{fields}\n4. Review questions: X unanswered\n5. Gaps: list ALL areas where you could add substantive facts — sections that are thin, topics mentioned but not developed, missing context or history\n\nResearch the LOWEST coverage area first, then continue through all gaps.";
-
-pub(crate) const DEFAULT_ENRICH_RESEARCH_INSTRUCTION: &str = "Research and update THIS document. Work through ALL gaps you identified — don't stop at 3-5.\n\nFor each gap:\n1. Search specifically: \"{entity name} {fact}\" — targeted beats broad\n2. Read the full page, not just snippets\n3. Every new fact MUST have BOTH @t[YYYY] AND [^N] citation — no exceptions\n4. Mention related KB entities by exact title in prose (enables link detection)\n\n⚠️ SOURCE REQUIREMENT: Every footnote must be specific enough that someone else could independently find the same source.\n- Before writing a fact, verify it with one of your available tools and cite the specific result (URL, file path, etc.)\n- If you cannot verify a fact with your tools: do NOT add it.\n- When enriching, check existing citations. If a citation is vague (e.g. 'AWS documentation' without a URL, 'Wikipedia' without article name), look up the actual source with your tools and update the footnote with the specific URL or reference.\n- GOOD: URL, file path, book+page, email with subject+date, Slack channel+thread+date, RFC number, ISBN\n- BAD: 'AWS documentation', 'internal docs', 'author knowledge', 'Wikipedia' without article name/URL\n\nKeep going until you've exhausted your research for this document. More well-sourced facts = better.\n\nCall factbase(op='update') with the enriched content. Then verify: call factbase(op='check') with doc_id and dry_run=true.\n\nRecord: facts added, sources added, @t tags added, issues from verify.\n\n⚠️ REPEAT for the next document:\n1. Call factbase(op='get_entity') on the next entity from your list\n2. Score it (same as step 2)\n3. Research + update + verify (same as this step)\nContinue until all documents are done.\n\nRules:\n- Preserve ALL existing content — add, don't replace\n- Resolve review questions when your research provides answers\n- Create documents for significant missing entities{ctx}{format_rules}";
-
-pub(crate) const DEFAULT_ENRICH_VERIFY_INSTRUCTION: &str = "Report totals across all documents enriched:\n\n| Document | +Facts | +Sources | +@t | Issues |\n|----------|--------|----------|-----|--------|\n| ... | ... | ... | ... | ... |\n\nTotals: X facts, X sources, X @t tags added. X questions resolved. X new issues.\nAssessment: biggest improvement, remaining gaps, recommended next step.";
-
-// --- Improve workflow ---
-pub(crate) const DEFAULT_IMPROVE_CLEANUP_INSTRUCTION: &str = "Read the document and fix any issues{doc_hint}. Call factbase(op='get_entity') with the doc_id to read its full content.\n\nCheck for and fix:\n- Corruption artifacts (malformed review queue sections, broken markdown)\n- Duplicate entries (same fact stated multiple times)\n- Formatting inconsistencies (inconsistent heading levels, missing blank lines)\n- Orphaned footnote references or definitions\n\nIf issues are found, call factbase(op='update') to fix them. If the document looks clean, move to the next step.{ctx}";
-
-pub(crate) const DEFAULT_IMPROVE_RESOLVE_INSTRUCTION: &str = "Resolve outstanding review questions{doc_hint}. Call factbase(op='review_queue') with doc_id to see pending questions.\n\nFor each unanswered question:\n- stale: Source is older than {stale} days. Search for current info\n- missing: Find a source citation\n- conflict: Check the [pattern:...] tag — parallel_overlap, same_entity_transition, date_imprecision are often not real conflicts\n- temporal: The fact line is MISSING an @t[...] temporal tag — that is what this question means. Your answer MUST include the @t[...] tag to add, plus a source. Answer: '@t[YYYY] per [source] ([URL]); verified [YYYY-MM-DD]' or '@t[YYYY..YYYY] per [source]' for ranges. Just citing a source in prose does NOT resolve it — the @t[...] tag must appear in your answer. Use @t[?] only when no date is findable. Every datable fact gets a tag regardless of domain or era. Never answer with bare dismissals like 'static fact', 'well-known', or 'historical constant' — these provide no audit trail\n- ambiguous: Clarify the term or create a definitions document\n- precision: Replace vague qualifier with a specific value or measurement, e.g. 'heavy losses' → '~500 casualties'\n- duplicate: Identify the canonical entry\n\nCall factbase(op='answer') with your answers. If you can't resolve a question, defer it with a note about what you tried.\n\nAfter answering, apply your changes directly: call factbase(op='get_entity') to read the document, apply the edits (insert @t tags, add footnotes, etc.), then call factbase(op='update') with the modified content.{ctx}";
-
-pub(crate) const DEFAULT_IMPROVE_ENRICH_INSTRUCTION: &str = "Enrich the document with new information{doc_hint}. Call factbase(op='get_entity') to read the current content (it may have changed from earlier steps).\n\nIdentify gaps:\n- Dynamic facts missing temporal tags\n- Facts without source citations\n- Sparse sections that could be expanded\n- Missing standard fields for the document type\n- Weak identification: if the title is an alias, abbreviation, or partial label and a fuller canonical name exists, update the title\n- Poor file organization: if the file is in the wrong folder or has an unclear name, rename/move it with file tools{fields}\n\nResearch the gaps using your available tools:\n- Use available research tools for current data on each gap — use specific queries per entity/fact\n- Read full pages when snippets look relevant\n- Cross-reference important facts across multiple sources\n\nThen call factbase(op='update') to add findings.\n\nRules:\n- Preserve all existing content — add to it, don't replace\n- Always add temporal tags and source footnotes on new facts\n- Don't add speculative information — only add what you can source\n- Use @t[?] for facts you found but can't date precisely\n- If you rename or move any files, run factbase(op='scan') afterward to re-index{ctx}";
-
-pub(crate) const DEFAULT_IMPROVE_CHECK_INSTRUCTION: &str = "Verify the document quality{doc_hint}. Call factbase(op='check') with doc_id and dry_run=true to check for any remaining or newly introduced issues.\n\nReport what you find:\n- How many questions remain vs. how many were resolved\n- Any new issues introduced during enrichment\n- Overall document health assessment{compare_note}";
-
-/// Patch the `workflow` and `when_done` fields in a step response to use a different workflow name.
-fn rebrand_step(mut val: Value, old_name: &str, new_name: &str) -> Value {
-    if let Some(obj) = val.as_object_mut() {
-        obj.insert("workflow".into(), Value::String(new_name.into()));
-        if let Some(wd) = obj.get("when_done").and_then(|v| v.as_str()).map(String::from) {
-            obj.insert("when_done".into(), Value::String(wd.replace(
-                &format!("workflow='{old_name}'"),
-                &format!("workflow='{new_name}'"),
-            )));
-        }
-        if let Some(instr) = obj.get("instruction").and_then(|v| v.as_str()).map(String::from) {
-            obj.insert("instruction".into(), Value::String(instr.replace(
-                &format!("workflow='{old_name}'"),
-                &format!("workflow='{new_name}'"),
-            )));
-        }
-    }
-    val
-}
+use super::helpers::resolve_repo_filter;
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -223,57 +99,6 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             "error": format!("Unknown workflow '{}'. Call workflow with workflow='list' to see available workflows.", workflow_name)
         })),
     }
-}
-
-/// Build a context string from perspective for embedding in instructions.
-fn perspective_context(p: &Option<Perspective>) -> String {
-    let Some(p) = p else { return String::new() };
-    let mut parts = Vec::new();
-    if let Some(ref org) = p.organization {
-        parts.push(format!("Organization: {org}"));
-    }
-    if let Some(ref focus) = p.focus {
-        parts.push(format!("Focus: {focus}"));
-    }
-    if parts.is_empty() {
-        return String::new();
-    }
-    format!("\n\nKnowledge base context: {}", parts.join(". "))
-}
-
-fn stale_days(p: &Option<Perspective>) -> i64 {
-    p.as_ref()
-        .and_then(|p| p.review.as_ref())
-        .and_then(|r| r.stale_days)
-        .map_or(365, |d| d as i64)
-}
-
-fn required_fields_hint(p: &Option<Perspective>) -> String {
-    let Some(fields) = p
-        .as_ref()
-        .and_then(|p| p.review.as_ref())
-        .and_then(|r| r.required_fields.as_ref())
-    else {
-        return String::new();
-    };
-    let hints: Vec<String> = fields
-        .iter()
-        .map(|(doc_type, fields)| {
-            format!("  - {} docs should have: {}", doc_type, fields.join(", "))
-        })
-        .collect();
-    if hints.is_empty() {
-        return String::new();
-    }
-    format!(
-        "\n\nRequired fields per document type:\n{}",
-        hints.join("\n")
-    )
-}
-
-/// Resolve a workflow instruction with config override support.
-fn resolve(wf: &WorkflowsConfig, key: &str, default: &str, vars: &[(&str, &str)]) -> String {
-    resolve_workflow_text(wf, key, default, vars)
 }
 
 fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
@@ -362,46 +187,6 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
 }
 
 /// Default template for the bootstrap prompt.
-const DEFAULT_BOOTSTRAP_PROMPT: &str = r##"Design a knowledge base structure for: "{domain}"{entity_types}
-
-Return a JSON object with exactly these 4 fields:
-
-1. "document_types": array of {"name": "lowercase-hyphenated", "description": "one line"}
-   — 3-5 types that reflect how practitioners organize knowledge in this domain.
-
-2. "folder_structure": array of folder paths (e.g. ["airlines/", "airports/", "definitions/"])
-
-3. "templates": object mapping each type name to a markdown template. Each template:
-   - Starts with # placeholder title
-   - Has 2-3 section headings suited to the type
-   - Shows example bullets with @t[YYYY] or @t[YYYY..YYYY] temporal tags on time-sensitive facts
-   - CRITICAL: @t[...] tags contain ONLY dates — NEVER names, descriptions, or non-date content
-     ✅ @t[=2024], @t[~2024-03], @t[2020..2023], @t[2024..], @t[?], @t[=331 BCE]
-     ❌ @t[Wolfgang Amadeus Mozart], @t[Complex counterpoint], @t[Active Production Status: Ongoing]
-   - Includes [^1] footnote references and a --- section with source definitions
-   - Is realistic for the domain
-
-4. "perspective": {"focus": "one-line mission", "allowed_types": ["your type names"]}
-
-Return ONLY valid JSON, no markdown fences or explanation."##;
-
-/// Build the LLM prompt for domain-aware KB structure generation.
-fn build_bootstrap_prompt(
-    domain: &str,
-    entity_types: Option<&str>,
-    prompts: &crate::config::PromptsConfig,
-) -> String {
-    let entity_hint = entity_types
-        .map(|t| format!("\nThe user has suggested these entity types: {t}"))
-        .unwrap_or_default();
-
-    crate::config::prompts::resolve_prompt(
-        prompts,
-        "bootstrap",
-        DEFAULT_BOOTSTRAP_PROMPT,
-        &[("domain", domain), ("entity_types", &entity_hint)],
-    )
-}
 
 /// Run the bootstrap workflow: return instructions for the agent to generate domain-specific KB structure.
 pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
@@ -428,10 +213,6 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
         "when_done": "⚠️ REQUIRED: Call workflow(workflow='create', step=2) to continue"
     }))
 }
-
-// --- Create workflow (combines bootstrap + setup) ---
-
-pub(crate) const DEFAULT_CREATE_COMPLETE_INSTRUCTION: &str = "The knowledge base is set up! Summarize what was created and suggest next steps:\n\n- **Add content**: Use workflow='add' with topic='X' to research and add new entities\n- **Fill gaps**: Use workflow='add' (no topic) to find and fill missing information\n- **Quality check**: Use workflow='maintain' to scan, check quality, and resolve issues\n- **Research refresh**: Use workflow='refresh' to update entities with latest information from external sources\n- **Improve a document**: Use workflow='add' with doc_id='X' to improve a specific document\n\nThe knowledge base is ready for use. Any markdown editor can modify files directly — just run factbase(op='scan') afterward to re-index.";
 
 fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
     let domain = get_str_arg(args, "domain");
@@ -518,164 +299,6 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 })
             }
         }
-    }
-}
-
-/// Detect whether a full embedding rebuild is needed (not just incremental updates).
-/// Returns `None` for incremental, or `Some((reason, doc_count))` for full rebuild.
-fn detect_full_rebuild(db: &Database) -> Option<(String, usize)> {
-    let config = crate::Config::load(None).unwrap_or_default();
-    let doc_count = db.get_all_document_ids().ok()?.len();
-    if doc_count == 0 {
-        return None;
-    }
-
-    // Check dimension mismatch
-    if let Ok(Some(stored_dim)) = db.get_stored_embedding_dim() {
-        if stored_dim != config.embedding.dimension {
-            return Some((
-                format!(
-                    "embedding dimension changed ({stored_dim} → {})",
-                    config.embedding.dimension
-                ),
-                doc_count,
-            ));
-        }
-    }
-
-    // Check model change
-    if let Ok(Some(stored_model)) = db.get_stored_embedding_model() {
-        if stored_model != config.embedding.model {
-            return Some((
-                format!(
-                    "embedding model changed ({stored_model} → {})",
-                    config.embedding.model
-                ),
-                doc_count,
-            ));
-        }
-    }
-
-    // Check empty embeddings with existing documents
-    if let Ok(chunk_count) = db.count_embedding_chunks() {
-        if chunk_count == 0 {
-            return Some(("no embeddings exist yet (first-time generation)".into(), doc_count));
-        }
-    }
-
-    None
-}
-
-/// Minimum group size to surface as a repetitive pattern.
-const PATTERN_MIN_COUNT: usize = 4;
-
-/// Normalize a question description by replacing variable parts with placeholders.
-/// This groups questions that follow the same template (e.g., same weak-source wording
-/// across hundreds of documents differing only in footnote number and source text).
-fn normalize_question_text(desc: &str) -> String {
-    use regex::Regex;
-    use std::sync::LazyLock;
-    static RE_FOOTNOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\^(\d+)\]").unwrap());
-    static RE_QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]+""#).unwrap());
-    static RE_DATE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\b\d{4}(?:-\d{2}(?:-\d{2})?)?\b").unwrap());
-    static RE_TEMPORAL: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"@t\[[^\]]+\]").unwrap());
-    static RE_LINE_REF: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"\(line \d+\)").unwrap());
-
-    let s = RE_FOOTNOTE.replace_all(desc, "[^_]");
-    let s = RE_QUOTED.replace_all(&s, "\"_\"");
-    let s = RE_TEMPORAL.replace_all(&s, "@t[_]");
-    let s = RE_DATE.replace_all(&s, "_DATE_");
-    let s = RE_LINE_REF.replace_all(&s, "(line _)");
-    s.into_owned()
-}
-
-/// Detect repetitive question patterns from a list of unanswered question JSON values.
-/// Returns a JSON array of patterns where count_total > PATTERN_MIN_COUNT.
-fn detect_question_patterns(all_questions: &[Value], batch: &[Value]) -> Vec<Value> {
-    // Group all questions by (type, normalized description)
-    let mut totals: HashMap<(String, String), (usize, String)> = HashMap::new();
-    for q in all_questions {
-        let qtype = q["type"].as_str().unwrap_or("").to_string();
-        let desc = q["description"].as_str().unwrap_or("");
-        let key = (qtype, normalize_question_text(desc));
-        totals
-            .entry(key)
-            .and_modify(|(c, _)| *c += 1)
-            .or_insert((1, desc.to_string()));
-    }
-
-    // Count per-batch occurrences for patterns that exceed threshold
-    let mut batch_counts: HashMap<(String, String), usize> = HashMap::new();
-    for q in batch {
-        let qtype = q["type"].as_str().unwrap_or("").to_string();
-        let desc = q["description"].as_str().unwrap_or("");
-        let key = (qtype, normalize_question_text(desc));
-        *batch_counts.entry(key).or_insert(0) += 1;
-    }
-
-    let mut patterns: Vec<Value> = totals
-        .iter()
-        .filter(|(_, (count, _))| *count >= PATTERN_MIN_COUNT)
-        .map(|((qtype, normalized), (count_total, example))| {
-            let count_in_batch = batch_counts
-                .get(&(qtype.clone(), normalized.clone()))
-                .copied()
-                .unwrap_or(0);
-            serde_json::json!({
-                "pattern": normalized,
-                "question_type": qtype,
-                "count_in_batch": count_in_batch,
-                "count_total": count_total,
-                "example": example,
-                "suggestion": format!(
-                    "These {} questions all follow the same pattern. \
-                     Consider applying a consistent answer to all of them.",
-                    count_total
-                ),
-            })
-        })
-        .collect();
-
-    // Sort by count descending for readability
-    patterns.sort_by(|a, b| {
-        b["count_total"]
-            .as_u64()
-            .cmp(&a["count_total"].as_u64())
-    });
-    patterns
-}
-
-/// Priority ordering for question types within a batch.
-/// Lower number = higher priority (processed first).
-fn question_type_priority(qt: &QuestionType) -> u8 {
-    match qt {
-        QuestionType::Temporal => 0,
-        QuestionType::Missing => 1,
-        QuestionType::Stale => 2,
-        QuestionType::Conflict => 3,
-        QuestionType::Ambiguous => 4,
-        QuestionType::Precision => 5,
-        QuestionType::Duplicate => 6,
-        QuestionType::Corruption => 7,
-        QuestionType::WeakSource => 8,
-    }
-}
-
-/// Returns type-specific evidence guidance for Variant A.
-fn type_evidence_guidance(qt: &QuestionType) -> &'static str {
-    match qt {
-        QuestionType::Stale => "Search for the claim + current year. Cite a URL confirming or updating it. Wikipedia is acceptable for well-established facts.",
-        QuestionType::Temporal => "Search for the specific event date. Cite a URL with the date. Format: @t[YYYY-MM-DD] per [source] ([URL]); verified YYYY-MM-DD",
-        QuestionType::Ambiguous => "Check the KB first (factbase(op='get_entity'), read other docs). If the term is defined elsewhere in the KB, cite that doc. Only search externally if KB has no answer.",
-        QuestionType::Conflict => "Read BOTH referenced documents (factbase(op='get_entity')). Search for the specific claim in each. Compare sources by recency and authority. If genuinely unresolvable, defer with analysis of both sides.",
-        QuestionType::Precision => "Search for a quantitative replacement. If no specific number exists in sources, defer — do not guess.",
-        QuestionType::Missing => "Find a source citation for this unsourced fact. Search for the specific claim and cite a URL.",
-        QuestionType::Duplicate => "Identify the canonical entry by reading both documents. Cite which one should be kept.",
-        QuestionType::Corruption => "Read the document to identify the corruption. Describe what needs to be fixed.",
-        QuestionType::WeakSource => "Find the specific source using your available tools. Update the footnote with a specific, independently verifiable reference: URL, document path, page number, ISBN, RFC, channel/thread ID, etc. If you cannot find the source, change the footnote to '[^N]: UNVERIFIED — original claim: <original text>'. Do not invent specific-looking citations.",
     }
 }
 
@@ -771,19 +394,6 @@ fn resolve_step(
 
 // --- Maintain workflow ---
 
-const DEFAULT_MAINTAIN_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n   This may take many iterations — that is normal. Do NOT stop early, skip ahead, or report partial results.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
-
-const DEFAULT_MAINTAIN_DETECT_LINKS_INSTRUCTION: &str = "Detect cross-document links via title string matching.\n\n1. Call factbase(op='detect_links') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for large repositories.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: links_detected, docs_processed{ctx}";
-
-const DEFAULT_MAINTAIN_CHECK_INSTRUCTION: &str = "Run quality checks to find stale facts, missing sources, temporal gaps, and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type (stale, conflict, temporal, missing)\n   - Mostly stale → KB is aging, needs fresh sources\n   - Mostly temporal → facts lack dates, timeline is murky\n   - Mostly missing → claims lack evidence\n\n⚠️ TEMPORAL QUESTION FILTERING: After check completes, review the generated temporal questions. Some will have confidence='low' with a reason. Dismiss low-confidence temporal questions about:\n- Stable feature descriptions or capability lists\n- Glossary definitions or reference material\n- Facts sourced from official documentation pages that describe current capabilities\nOnly keep temporal questions about claims that could genuinely become outdated. Dismiss the rest via factbase(op='answer') with answer='dismiss: [reason]'.";
-
-const DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION: &str = "Resolve all review questions. Run the full resolve workflow now:\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Call workflow(workflow='resolve', step=2) to get the first batch of questions\n3. Answer the batch, then call workflow(workflow='resolve', step=2) again\n\nLOOP: Resolve step 2 returns `continue: true` with a `completion_gate` showing progress (e.g. '450/3551 resolved'). You MUST keep calling step=2 until `continue` is false. You do not decide when to stop — not context size, not your judgment, not batch count. Your runtime compacts automatically. This may take hundreds of iterations for large KBs.\n\n4. When step 2 returns `continue: false`, call workflow(workflow='resolve', step=3) to apply answers\n5. Follow steps 4-6 (verify, cleanup) until resolve reports complete=true\n6. Then call workflow(workflow='maintain', step=7) to continue maintenance\n\n⚠️ ERROR HANDLING: If you get IO/body errors from factbase(op='answer'), your response was too large. Split into smaller batches and retry.{ctx}";
-
-const DEFAULT_MAINTAIN_LINKS_INSTRUCTION: &str = "Review link suggestions to improve cross-document connectivity.\n\n1. Call factbase(op='links') TWICE for better coverage:\n   a. Cross-type discovery: use exclude_types matching the most common doc type with min_similarity=0.5.\n   b. Same-type discovery: use include_types matching a specific type with min_similarity=0.7.\n2. Review each suggestion: does the candidate document genuinely relate to the source?\n3. For confirmed links, call factbase(op='links', action='store') with the source_id and target_id pairs.\n4. Record: links_added, documents_modified";
-
-const DEFAULT_MAINTAIN_ORGANIZE_INSTRUCTION: &str = "Analyze the knowledge base structure for improvement opportunities.\n\n1. Call factbase(op='organize', action='analyze') (one call — no paging needed).\n2. Record candidates:\n   - Merge: documents that overlap significantly\n   - Split: documents covering multiple distinct topics\n   - Misplaced: documents whose type doesn't match their content\n   - Duplicates: repeated facts across documents\n3. Do NOT execute changes — just record what you find";
-
-const DEFAULT_MAINTAIN_REPORT_INSTRUCTION: &str = "Write a final maintenance report.\n\n## Maintenance Summary\n- Documents scanned: X\n- Links detected: X\n- Link suggestions applied: X\n- Organize candidates: X (merge/split/misplaced/duplicates)\n- Questions found: X\n- Questions resolved: X\n- Questions deferred: X (need human attention)\n- Remaining questions: X\n\n## Health Assessment\nOne paragraph: overall KB health after maintenance, what was fixed, and any remaining issues that need human attention.\n\nIf deferred items exist, remind the user to review them with factbase(op='deferred').";
 
 fn maintain_step(
     step: usize,
@@ -888,17 +498,6 @@ fn maintain_step(
 
 // --- Refresh workflow (research-enabled maintenance) ---
 
-const DEFAULT_REFRESH_SCAN_INSTRUCTION: &str = "Re-index the factbase to pick up file changes.\n\n1. Call factbase(op='scan') with time_budget_secs=120.\n   ⚠️ PAGING: This tool is time-boxed. It WILL return `continue: true` with a `resume` token for any non-trivial repository.\n   When it does, you MUST call it again passing the resume token until `continue` is no longer in the response.\n2. Record: documents_total, temporal_coverage_pct, source_coverage_pct{ctx}";
-
-const DEFAULT_REFRESH_CHECK_INSTRUCTION: &str = "Run quality checks to identify stale facts and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type\n3. Pay special attention to stale questions — these are the primary targets for refresh";
-
-const DEFAULT_REFRESH_RESEARCH_INSTRUCTION: &str = "Research and update entities with latest information.\n\nFor each entity that needs refreshing (prioritize stale facts, then low temporal/source coverage):\n\n1. Call factbase(op='get_entity') to read the current document\n2. Use your available tools (web search, local search, etc.) to find the latest information about this entity\n3. Compare findings with existing facts:\n   - Facts that changed: update the fact text, add new @t[...] tag with current date, update source footnote\n   - Facts confirmed current: update the @t[~YYYY-MM] tag to show when last verified, update source\n   - New facts discovered: add with @t[...] tag and source footnote\n   - Entities discovered during research: create new documents if they fit the KB's allowed types\n4. Call factbase(op='update') with the modified content\n\nWork through entities systematically. After updating each entity, move to the next.\n\n⚠️ SOURCE REQUIREMENT: Every update MUST cite a specific, verifiable source. Do not update facts without evidence.{ctx}{format_rules}";
-
-const DEFAULT_REFRESH_RESOLVE_INSTRUCTION: &str = "Resolve any review questions generated during the refresh.\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Process questions using the resolve workflow (step=2 loop)\n3. Apply answers and verify\n\nSince you just researched these entities, you should be able to answer most questions from your recent findings.{ctx}";
-
-const DEFAULT_REFRESH_CLEANUP_INSTRUCTION: &str = "Clean up after refresh. Run factbase(op='scan') to re-index all modified documents and prune answered questions.";
-
-const DEFAULT_REFRESH_REPORT_INSTRUCTION: &str = "Write a refresh report.\n\n## Refresh Summary\n- Entities researched: X\n- Facts updated: X\n- Facts confirmed current: X\n- New facts added: X\n- New entities created: X\n- Questions resolved: X\n- Questions deferred: X\n\n## Changes\nList the most significant changes discovered during refresh.\n\n## Health Assessment\nOverall KB freshness after refresh, and any entities that could not be verified.";
 
 fn refresh_step(
     step: usize,
@@ -987,204 +586,6 @@ fn refresh_step(
                 "complete": true
             })
         }
-    }
-}
-
-/// Load all documents with their disk content (preferred) or DB content (fallback),
-/// filtered to only those that have a review queue section.
-///
-/// The `has_review_queue` DB flag can be stale when files are edited externally or
-/// when check_repository writes questions to disk but the DB update is lost.
-/// Reading from disk ensures the resolve workflow sees the filesystem truth.
-fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
-    // Build repo_id → repo_path map
-    let repos = db.list_repositories().unwrap_or_default();
-    let repo_paths: HashMap<String, std::path::PathBuf> = repos
-        .into_iter()
-        .map(|r| (r.id.clone(), r.path))
-        .collect();
-
-    // Load ALL documents (not just has_review_queue=TRUE)
-    let mut all_docs = Vec::new();
-    for repo_id in repo_paths.keys() {
-        if let Ok(docs) = db.get_documents_for_repo(repo_id) {
-            all_docs.extend(docs.into_values().filter(|d| !d.is_deleted));
-        }
-    }
-
-    // For each document, prefer disk content; keep only those with review queues
-    all_docs
-        .into_iter()
-        .filter_map(|mut doc| {
-            let abs_path = repo_paths.get(&doc.repo_id).map(|rp| rp.join(&doc.file_path));
-            if let Some(disk) = abs_path.and_then(|p| std::fs::read_to_string(p).ok()) {
-                doc.content = disk;
-            }
-            if doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
-                Some(doc)
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-/// Compute unanswered question type distribution from the review queue.
-fn compute_type_distribution(db: &Database) -> Vec<(QuestionType, usize)> {
-    let docs = load_review_docs_from_disk(db);
-    let (counts, _) = crate::mcp::tools::review::count_question_types(&docs);
-    let mut sorted: Vec<_> = counts.into_iter().collect();
-    sorted.sort_by(|a, b| b.1.cmp(&a.1));
-    sorted
-}
-
-/// Compute recommended type processing order: fewest questions first (quick wins),
-/// with difficulty as tiebreaker for equal counts.
-fn recommended_resolve_order(dist: &[(QuestionType, usize)]) -> Vec<String> {
-    let mut with_questions: Vec<_> = dist.iter().filter(|(_, c)| *c > 0).collect();
-    with_questions.sort_by(|a, b| {
-        a.1.cmp(&b.1)
-            .then_with(|| question_type_priority(&a.0).cmp(&question_type_priority(&b.0)))
-    });
-    with_questions.iter().map(|(qt, _)| qt.to_string()).collect()
-}
-
-/// Load glossary terms from all repositories.
-fn load_all_glossary_terms(db: &Database) -> HashSet<String> {
-    let types = ["definition", "glossary", "reference"];
-    let mut terms = HashSet::new();
-    for t in &types {
-        if let Ok(docs) = db.list_documents(Some(t), None, None, 100) {
-            for doc in &docs {
-                terms.extend(crate::extract_defined_terms(&doc.content));
-            }
-        }
-    }
-    terms
-}
-
-/// Auto-dismiss a single question by marking it answered in the document.
-fn auto_dismiss_question(db: &Database, doc_id: &str, question_index: usize) -> Result<(), FactbaseError> {
-    let doc = db.require_document(doc_id)?;
-    let marker = "<!-- factbase:review -->";
-    let Some(marker_pos) = doc.content.find(marker) else {
-        return Ok(());
-    };
-    let (before, after) = doc.content.split_at(marker_pos);
-    let queue_content = &after[marker.len()..];
-
-    // Mark the question as answered with a glossary note
-    let answer = "Defined in glossary — auto-resolved";
-    let Some(modified) = super::review::answer::modify_question_in_queue(queue_content, question_index, answer, false) else {
-        return Ok(());
-    };
-    let new_content = format!("{before}{marker}{modified}");
-    let new_hash = crate::processor::content_hash(&new_content);
-    db.update_document_content(doc_id, &new_content, &new_hash)?;
-
-    // Also write to disk if possible
-    if let Ok(file_path) = super::helpers::resolve_doc_path(db, &doc) {
-        let _ = std::fs::write(&file_path, &new_content);
-    }
-    Ok(())
-}
-
-/// Build the step 2 response with inline question batching.
-///
-/// Reads the actual review queue from the DB, collects unanswered questions,
-/// sorts them (grouped by document, then by type priority), and returns the
-/// next batch. The agent just answers what it sees and calls step 2 again.
-/// Build directive continuation guidance based on queue size and type distribution.
-#[cfg(test)]
-fn build_continuation_guidance(
-    remaining: usize,
-    resolved_so_far: usize,
-    batch_size: usize,
-    type_distribution: &HashMap<QuestionType, usize>,
-    type_filter: &[QuestionType],
-) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-
-    // Check if the currently-filtered type is fully cleared
-    if !type_filter.is_empty() {
-        let filtered_remaining: usize = type_filter
-            .iter()
-            .filter_map(|t| type_distribution.get(t))
-            .sum();
-        if filtered_remaining == 0 {
-            // Find next type with remaining questions
-            let active_filter_str = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
-            let mut others: Vec<_> = type_distribution
-                .iter()
-                .filter(|(qt, c)| **c > 0 && !type_filter.contains(qt))
-                .collect();
-            others.sort_by(|a, b| b.1.cmp(a.1));
-            if let Some((next_type, next_count)) = others.first() {
-                parts.push(format!(
-                    "✅ {active_filter_str}: 0 remaining. Move to next type: {next_type} ({next_count} remaining). Call step=2 question_type={next_type}."
-                ));
-            }
-        }
-    }
-
-    // Check if only weak-source remains
-    let non_weak: usize = type_distribution
-        .iter()
-        .filter(|(qt, _)| **qt != QuestionType::WeakSource)
-        .map(|(_, c)| c)
-        .sum();
-    let weak_count = type_distribution.get(&QuestionType::WeakSource).copied().unwrap_or(0);
-    if non_weak == 0 && weak_count > 0 {
-        parts.push(format!(
-            "Only weak-source remains ({weak_count}). These follow repetitive patterns — maintain a consistent answer format to maximize throughput."
-        ));
-    }
-
-    // Assertive continuation directive — agents quit too early without strong language
-    if remaining > 500 {
-        let batches_left = remaining.div_ceil(batch_size);
-        let filter_hint = if type_filter.is_empty() {
-            String::new()
-        } else {
-            let f = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
-            format!(" with question_type={f}")
-        };
-        parts.push(format!(
-            "⚠️ DO NOT STOP. {remaining} questions remain (~{batches_left} batches). Call step=2{filter_hint} immediately. You have cleared {resolved_so_far} — the DB tracks your progress, nothing is lost. Only stop if your runtime forces you to."
-        ));
-    } else if remaining > 100 {
-        let filter_hint = if type_filter.is_empty() {
-            String::new()
-        } else {
-            let f = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
-            format!(" with question_type={f}")
-        };
-        parts.push(format!(
-            "⚠️ DO NOT STOP. {remaining} questions remain. Call step=2{filter_hint} immediately. You have cleared {resolved_so_far} — keep going. Only stop if your runtime forces you to."
-        ));
-    }
-
-    // Always add anti-early-stopping directive when there are remaining questions
-    if remaining > 0 {
-        parts.push("⚠️ Agents commonly quit too early. Unless your runtime is forcing you to stop, keep calling step 2. The DB tracks your progress — nothing is lost if you eventually hit a limit.".to_string());
-    }
-
-    // Context management hint — runtime-agnostic advice for long sessions
-    if resolved_so_far > batch_size * 8 && remaining > batch_size * 2 {
-        parts.push(
-            "💡 CONTEXT MANAGEMENT: If your context is getting full, you can safely compact/summarize your earlier work. \
-            Your progress is saved in the DB — answered questions never reappear. You only need to retain: \
-            (1) call workflow(workflow='resolve', step=2) to get the next batch, \
-            (2) answer each question with doc_id, question_index, answer, confidence. \
-            Everything else (earlier batches, analysis, commentary) can be discarded."
-                .to_string(),
-        );
-    }
-
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(" "))
     }
 }
 
@@ -1545,77 +946,6 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
     }
 }
 
-/// Build quality stats JSON for a single entity by doc_id.
-fn entity_quality(db: &Database, doc_id: &str) -> Option<Value> {
-    let doc = db.get_document(doc_id).ok()??;
-    let outgoing_links = db.get_links_from(doc_id).unwrap_or_default();
-    let incoming_links = db.get_links_to(doc_id).unwrap_or_default();
-    let mut stats = build_quality_stats(&doc.content, outgoing_links.len(), incoming_links.len());
-    let contexts: Vec<&str> = incoming_links
-        .iter()
-        .filter_map(|l| l.context.as_deref())
-        .filter(|c| !c.is_empty())
-        .collect();
-    if let Some(suggested) = detect_weak_identification(&doc.title, &doc.content, &contexts) {
-        let obj = stats.as_object_mut().unwrap();
-        obj.insert("weak_identification".into(), Value::String(suggested));
-        let score = obj["attention_score"].as_u64().unwrap_or(0);
-        obj.insert("attention_score".into(), Value::Number((score + 3).into()));
-    }
-    Some(stats)
-}
-
-/// Build a bulk quality summary for all entities, sorted by attention_score descending.
-fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&str>) -> Value {
-    let docs = match db.list_documents(doc_type, repo, None, 200) {
-        Ok(d) => d,
-        Err(_) => return Value::Null,
-    };
-    if docs.is_empty() {
-        return serde_json::json!([]);
-    }
-    let doc_ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
-    let links_map = db.get_links_for_documents(&doc_ids).unwrap_or_default();
-
-    let mut items: Vec<Value> = docs
-        .iter()
-        .filter(|doc| !crate::patterns::is_reference_doc(&doc.content))
-        .map(|doc| {
-            let empty = (Vec::new(), Vec::new());
-            let (outgoing, incoming) = links_map
-                .get(&doc.id)
-                .unwrap_or(&empty);
-            let mut stats = build_quality_stats(&doc.content, outgoing.len(), incoming.len());
-            let obj = stats.as_object_mut().unwrap();
-            obj.insert("id".into(), Value::String(doc.id.clone()));
-            obj.insert("title".into(), Value::String(doc.title.clone()));
-            if let Some(ref t) = doc.doc_type {
-                obj.insert("type".into(), Value::String(t.clone()));
-            }
-            let contexts: Vec<&str> = incoming
-                .iter()
-                .filter_map(|l| l.context.as_deref())
-                .filter(|c| !c.is_empty())
-                .collect();
-            if let Some(suggested) =
-                detect_weak_identification(&doc.title, &doc.content, &contexts)
-            {
-                obj.insert("weak_identification".into(), Value::String(suggested));
-                let score = obj["attention_score"].as_u64().unwrap_or(0);
-                obj.insert("attention_score".into(), Value::Number((score + 3).into()));
-            }
-            stats
-        })
-        .collect();
-
-    items.sort_by(|a, b| {
-        let sa = a["attention_score"].as_u64().unwrap_or(0);
-        let sb = b["attention_score"].as_u64().unwrap_or(0);
-        sb.cmp(&sa)
-    });
-    Value::Array(items)
-}
-
 fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database, repo: Option<&str>, wf: &WorkflowsConfig) -> Value {
     let doc_type = get_str_arg(args, "doc_type").unwrap_or("all types");
     let ctx = perspective_context(perspective);
@@ -1662,32 +992,6 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
             "instruction": "Workflow complete. Documents have been enriched."
         }),
     }
-}
-
-/// Parse the `skip` parameter into a list of step names to skip.
-fn parse_skip_steps(args: &Value) -> Vec<String> {
-    if let Some(arr) = args.get("skip").and_then(|v| v.as_array()) {
-        arr.iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
-            .collect()
-    } else if let Some(s) = get_str_arg(args, "skip") {
-        s.split(',').map(|s| s.trim().to_lowercase()).collect()
-    } else {
-        Vec::new()
-    }
-}
-
-/// Map logical step names to their step numbers for the improve workflow.
-const IMPROVE_STEPS: &[&str] = &["cleanup", "resolve", "enrich", "check"];
-
-/// Compute the effective step sequence, skipping any steps in `skip`.
-fn effective_steps(skip: &[String]) -> Vec<(usize, &'static str)> {
-    IMPROVE_STEPS
-        .iter()
-        .enumerate()
-        .filter(|(_, name)| !skip.contains(&name.to_string()))
-        .map(|(i, name)| (i + 1, *name))
-        .collect()
 }
 
 fn improve_step(
