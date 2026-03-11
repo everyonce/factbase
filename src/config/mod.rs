@@ -73,7 +73,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             database: DatabaseConfig {
-                path: shellexpand::tilde("~/.config/factbase/factbase.db").to_string(),
+                path: ".factbase/factbase.db".to_string(),
                 pool_size: default_pool_size(),
                 compression: default_compression(),
             },
@@ -115,28 +115,9 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Get the default config file path
-    pub fn default_path() -> PathBuf {
-        let home = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        home.join("factbase").join("config.yaml")
-    }
-
-    /// Check if the default config file exists
-    pub fn config_file_exists() -> bool {
-        Self::default_path().exists()
-    }
-
     pub fn load(path: Option<&Path>) -> Result<Self, FactbaseError> {
         let config_path = path.map_or_else(
-            || {
-                // Check for local .factbase/config.yaml first, then global
-                let local = PathBuf::from(".factbase/config.yaml");
-                if local.exists() {
-                    local
-                } else {
-                    Self::default_path()
-                }
-            },
+            || PathBuf::from(".factbase/config.yaml"),
             PathBuf::from,
         );
 

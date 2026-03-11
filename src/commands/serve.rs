@@ -2,7 +2,6 @@ use super::{
     auto_init_repo, setup_cached_embedding, setup_embedding,
 };
 use crate::commands::setup::Setup;
-use crate::commands::utils::resolve_repos;
 use anyhow::Context;
 use clap::Parser;
 #[cfg(feature = "web")]
@@ -53,7 +52,10 @@ pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
         return run_health_check(&config).await;
     }
 
-    let repos = resolve_repos(db.list_repositories()?, None)?;
+    let repos = db.list_repositories()?;
+    if repos.is_empty() {
+        anyhow::bail!("No repository found");
+    }
 
     let host = args.host.unwrap_or_else(|| config.server.host.clone());
     let port = args.port.unwrap_or(config.server.port);

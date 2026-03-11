@@ -22,12 +22,12 @@ mod verify;
 
 pub use args::ScanArgs;
 
-use super::{parse_since, resolve_repos, setup_embedding_with_timeout};
+use super::setup_embedding_with_timeout;
 use crate::commands::setup::Setup;
 use factbase::output::format_json;
 use factbase::processor::DocumentProcessor;
 use factbase::progress::ProgressReporter;
-use factbase::scanner::{ScanContext, ScanOptions, Scanner, full_scan, scan_all_repositories};
+use factbase::scanner::{ScanContext, ScanOptions, Scanner, full_scan};
 use factbase::watcher::{FileWatcher, ScanCoordinator, find_repo_for_path};
 use factbase::config::validate_timeout;
 use prune::cmd_scan_prune;
@@ -40,17 +40,35 @@ use verify::cmd_scan_verify;
 #[tracing::instrument(
     name = "cmd_scan",
     skip(args),
-    fields(repo = ?args.repo, dry_run = args.dry_run, watch = args.watch)
+    fields(dry_run = args.dry_run, watch = args.watch)
 )]
 pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
-    let ctx = Setup::new().build()?;
+    // Auto-init if no .factbase/ exists
+    let ctx = match Setup::new().require_repo(None).build() {
+        Ok(ctx) => ctx,
+        Err(_) => {
+            let cwd = std::env::current_dir()?;
+            let (config, db, repo) = super::auto_init_repo(&cwd)?;
+            crate::commands::setup::SetupContext {
+                config,
+                db,
+                db_path: cwd.join(".factbase/factbase.db"),
+                repo: Some(repo),
+            }
+        }
+    };
     let (config, db) = (ctx.config, ctx.db);
     let scanner = Scanner::new(&config.watcher.ignore_patterns);
     let quiet = args.quiet || args.json;
     let json_output = args.json;
 
-    let repos = db.list_repositories()?;
-    let target_repos = resolve_repos(repos, args.repo.as_deref())?;
+    let target_repos = {
+        let repos = db.list_repositories()?;
+        if repos.is_empty() {
+            anyhow::bail!("No repository found. Run from a directory with markdown files.");
+        }
+        repos
+    };
 
     // --progress and --no-progress are mutually exclusive
     if args.progress && args.no_progress {
@@ -108,7 +126,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
 
     // Parse --since filter if provided
     let since = if let Some(ref since_str) = args.since {
-        let dt = parse_since(since_str)?;
+        let dt = super::parse_since(since_str)?;
         if !quiet {
             println!(
                 "Filtering files modified since {}",
@@ -233,7 +251,8 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
     let result = if target_repos.len() == 1 {
         full_scan(&target_repos[0], &db, &ctx).await?
     } else {
-        scan_all_repositories(&db, &ctx).await?
+        // Single-KB model: should always be exactly one repo
+        full_scan(&target_repos[0], &db, &ctx).await?
     };
 
     // Check if scan was interrupted

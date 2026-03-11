@@ -18,8 +18,6 @@ EXAMPLES:
 "
 )]
 pub struct ScanArgs {
-    #[arg(long)]
-    pub repo: Option<String>,
     #[arg(long, help = "Show per-file processing details")]
     pub detailed: bool,
     #[arg(long, short = 'q', help = "Suppress output except errors")]
@@ -137,7 +135,6 @@ mod tests {
     #[test]
     fn test_scan_args_default() {
         let args = ScanArgs::try_parse_from(["scan"]).unwrap();
-        assert!(args.repo.is_none());
         assert!(!args.detailed);
         assert!(!args.quiet);
         assert!(!args.json);
@@ -147,12 +144,6 @@ mod tests {
         assert!(!args.fix);
         assert!(!args.prune);
         assert!(!args.hard);
-    }
-
-    #[test]
-    fn test_scan_args_repo() {
-        let args = ScanArgs::try_parse_from(["scan", "--repo", "myrepo"]).unwrap();
-        assert_eq!(args.repo, Some("myrepo".to_string()));
     }
 
     #[test]

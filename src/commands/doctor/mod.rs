@@ -44,7 +44,7 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
         Ok(c) => c,
         Err(e) => {
             if args.fix || args.dry_run {
-                let config_path = Config::default_path();
+                let config_path = std::path::PathBuf::from(".factbase/config.yaml");
                 if args.dry_run {
                     qprintln!("Would create default config at: {}", config_path.display());
                     return Ok(());

@@ -4,9 +4,6 @@ use clap::Args;
 
 #[derive(Args)]
 pub struct RepairArgs {
-    /// Only repair documents in this repository
-    #[arg(long)]
-    pub repo: Option<String>,
     /// Repair a single document by ID
     #[arg(long)]
     pub doc: Option<String>,
@@ -18,21 +15,27 @@ pub struct RepairArgs {
     pub quiet: bool,
 }
 
-use super::{resolve_repos};
 use crate::commands::setup::Setup;
 use factbase::processor::content_hash;
 use factbase::processor::repair::repair_document;
 use std::path::Path;
 
+fn db_repos(db: &factbase::database::Database) -> anyhow::Result<Vec<factbase::models::Repository>> {
+    let repos = db.list_repositories()?;
+    if repos.is_empty() {
+        anyhow::bail!("No repository found");
+    }
+    Ok(repos)
+}
+
 pub fn cmd_repair(args: RepairArgs) -> anyhow::Result<()> {
-    let ctx = Setup::new().build()?;
-    let repos = ctx.db.list_repositories()?;
-    let repos_to_check = resolve_repos(repos, args.repo.as_deref())?;
+    let ctx = Setup::new().require_repo(None).build()?;
+    let repos = db_repos(&ctx.db)?;
 
     let mut total_fixed = 0usize;
     let mut total_docs = 0usize;
 
-    for repo in &repos_to_check {
+    for repo in &repos {
         let docs = if let Some(ref doc_id) = args.doc {
             match ctx.db.get_document(doc_id)? {
                 Some(doc) if doc.repo_id == repo.id => vec![doc],

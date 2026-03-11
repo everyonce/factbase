@@ -31,7 +31,7 @@ impl DatabaseConfig {
 }
 
 fn default_db_path() -> String {
-    shellexpand::tilde("~/.config/factbase/factbase.db").to_string()
+    ".factbase/factbase.db".to_string()
 }
 
 pub(crate) fn default_compression() -> String {
