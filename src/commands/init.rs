@@ -90,7 +90,7 @@ pub fn cmd_init(args: InitArgs) -> anyhow::Result<()> {
     // Optionally generate starter config
     let mut config_created = false;
     if args.config {
-        let config_path = Config::default_path();
+        let config_path = factbase_dir.join("config.yaml");
         if config_path.exists() {
             if !args.json {
                 println!("Config already exists at {}", config_path.display());

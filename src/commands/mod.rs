@@ -5,31 +5,33 @@ pub mod db;
 pub mod doctor;
 pub mod embeddings;
 pub mod errors;
-pub mod export;
 pub mod filters;
-pub mod grep;
-pub mod import;
-pub mod init;
-pub mod links;
-pub mod check;
 #[cfg(feature = "mcp")]
 pub mod mcp;
-pub mod organize;
 pub mod paths;
 pub mod repair;
-pub mod repo;
-pub mod review;
 pub mod scan;
-pub mod search;
 #[cfg(feature = "mcp")]
 pub mod serve;
 pub mod setup;
-pub mod show;
-pub mod stats;
 pub mod status;
 pub mod utils;
 pub mod version;
 pub mod watch_helper;
+
+// These modules are still needed by MCP tools but no longer have CLI commands
+pub mod check;
+pub mod grep;
+pub mod export;
+pub mod import;
+pub mod init;
+pub mod links;
+pub mod organize;
+pub mod repo;
+pub mod review;
+pub mod search;
+pub mod show;
+pub mod stats;
 
 #[cfg(test)]
 pub(crate) mod test_helpers;
@@ -54,29 +56,17 @@ impl OutputFormat {
     }
 }
 
-// Re-export command functions
+// Re-export command functions for active CLI commands
 pub use completions::cmd_completions;
 pub use db::cmd_db_vacuum;
 pub use doctor::cmd_doctor;
 pub use embeddings::cmd_embeddings;
-pub use export::cmd_export;
-pub use grep::cmd_grep;
-pub use import::cmd_import;
-pub use init::cmd_init;
-pub use links::cmd_links;
-pub use check::cmd_check;
 #[cfg(feature = "mcp")]
 pub use mcp::cmd_mcp;
-pub use organize::cmd_organize;
 pub use repair::cmd_repair;
-pub use repo::{cmd_repo_add, cmd_repo_list, cmd_repo_remove};
-pub use review::cmd_review;
 pub use scan::cmd_scan;
-pub use search::cmd_search;
 #[cfg(feature = "mcp")]
 pub use serve::cmd_serve;
-pub use show::cmd_show;
-pub use stats::{cmd_stats, StatsArgs};
 pub use status::cmd_status;
 pub use version::cmd_version;
 

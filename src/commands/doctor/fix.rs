@@ -18,7 +18,7 @@ pub fn pull_ollama_model(model: &str) -> anyhow::Result<()> {
 
 /// Create default config file if it doesn't exist.
 pub fn create_default_config() -> anyhow::Result<Config> {
-    let config_path = Config::default_path();
+    let config_path = std::path::PathBuf::from(".factbase/config.yaml");
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }

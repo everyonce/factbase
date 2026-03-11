@@ -5,19 +5,15 @@
 //! Use `Setup::new()` to configure what you need, then `.build()` to get a `SetupContext`:
 //!
 //! ```ignore
-//! // Just config + database (global or local)
+//! // Config + database from .factbase/ in cwd
 //! let ctx = Setup::new().build()?;
 //!
 //! // Require database file exists (error if missing)
 //! let ctx = Setup::new().check_exists().build()?;
 //!
-//! // Require a single repository (from .factbase/ in cwd)
-//! let ctx = Setup::new().require_repo(args.repo.as_deref()).build()?;
+//! // Require a repository (from .factbase/ in cwd)
+//! let ctx = Setup::new().require_repo(None).build()?;
 //! // ctx.config, ctx.db, ctx.repo() all available
-//!
-//! // Resolve multiple repositories with optional filter
-//! let ctx = Setup::new().resolve_repos(args.repo.as_deref()).build()?;
-//! // ctx.config, ctx.db, ctx.repos() all available
 //! ```
 
 use super::errors::db_not_found_error;
@@ -36,27 +32,18 @@ use std::path::PathBuf;
 // Builder
 // ---------------------------------------------------------------------------
 
-enum RepoMode {
-    /// No repository resolution needed
-    None,
-    /// Resolve a single repo from .factbase/ in cwd
-    Single(Option<String>),
-    /// Resolve multiple repos (global DB), with optional filter
-    Multiple(Option<String>),
-}
-
 /// Builder for CLI command setup. Configures what resources are needed,
 /// then `.build()` loads/validates everything in one shot.
 pub struct Setup {
     check_exists: bool,
-    repo_mode: RepoMode,
+    require_repo: bool,
 }
 
 impl Setup {
     pub fn new() -> Self {
         Self {
             check_exists: false,
-            repo_mode: RepoMode::None,
+            require_repo: false,
         }
     }
 
@@ -66,53 +53,37 @@ impl Setup {
         self
     }
 
-    /// Resolve a single repository from `.factbase/` in the current directory.
-    /// Optionally filter by repo ID. Fails if no `.factbase/` dir or no matching repo.
-    pub fn require_repo(mut self, repo_id: Option<&str>) -> Self {
-        self.repo_mode = RepoMode::Single(repo_id.map(String::from));
+    /// Resolve the single repository from `.factbase/` in the current directory.
+    /// The `_repo_id` parameter is accepted for backward compatibility but ignored
+    /// (single-KB-per-directory model).
+    pub fn require_repo(mut self, _repo_id: Option<&str>) -> Self {
+        self.require_repo = true;
         self
     }
 
-    /// Resolve repositories from the global database, with optional ID/name filter.
-    /// Fails if no repositories match.
-    pub fn resolve_repos(mut self, filter: Option<&str>) -> Self {
-        self.repo_mode = RepoMode::Multiple(filter.map(String::from));
-        self
+    /// Alias for `require_repo` — kept for backward compatibility with callers
+    /// that used to resolve multiple repos.
+    pub fn resolve_repos(self, _filter: Option<&str>) -> Self {
+        self.require_repo(None)
     }
 
     pub fn build(self) -> anyhow::Result<SetupContext> {
-        print_first_run_notice();
         let config = Config::load(None)?;
+        let dir = std::env::current_dir()?;
+        let factbase_dir = dir.join(".factbase");
 
-        // For Single repo mode, we require .factbase/ in cwd
-        if let RepoMode::Single(ref repo_id) = self.repo_mode {
-            let dir = std::env::current_dir()?;
-            let factbase_dir = dir.join(".factbase");
-            if !factbase_dir.exists() {
-                anyhow::bail!("Not in a factbase repository. Run `factbase init <path>` first.");
+        if !factbase_dir.exists() {
+            if self.require_repo || self.check_exists {
+                anyhow::bail!(
+                    "No .factbase/ directory found in {}.\n\
+                     Use the MCP 'create' workflow to set up a new knowledge base,\n\
+                     or run `factbase scan` from a directory containing markdown files.",
+                    dir.display()
+                );
             }
-            let db_path = factbase_dir.join("factbase.db");
-            let db = config.open_database(&db_path)?;
-            let repos = db.list_repositories()?;
-            let repo = if let Some(id) = repo_id {
-                repos.into_iter().find(|r| r.id == *id)
-            } else {
-                repos.into_iter().next()
-            };
-            let repo = repo.ok_or_else(|| {
-                anyhow::anyhow!("No repository found in {}", factbase_dir.display())
-            })?;
-            return Ok(SetupContext {
-                config,
-                db,
-                db_path,
-                repo: Some(repo),
-                repos: None,
-            });
         }
 
-        // Global/local DB resolution
-        let db_path = local_or_global_db_path(&config);
+        let db_path = factbase_dir.join("factbase.db");
 
         if self.check_exists && !db_path.exists() {
             return Err(db_not_found_error(&db_path));
@@ -120,11 +91,12 @@ impl Setup {
 
         let db = config.open_database(&db_path)?;
 
-        // Resolve multiple repos if requested
-        let repos = if let RepoMode::Multiple(ref filter) = self.repo_mode {
-            let all = db.list_repositories()?;
-            let resolved = super::resolve_repos(all, filter.as_deref())?;
-            Some(resolved)
+        let repo = if self.require_repo {
+            let repos = db.list_repositories()?;
+            let r = repos.into_iter().next().ok_or_else(|| {
+                anyhow::anyhow!("No repository found in {}", factbase_dir.display())
+            })?;
+            Some(r)
         } else {
             None
         };
@@ -133,8 +105,7 @@ impl Setup {
             config,
             db,
             db_path,
-            repo: None,
-            repos,
+            repo,
         })
     }
 }
@@ -143,13 +114,12 @@ impl Setup {
 // SetupContext
 // ---------------------------------------------------------------------------
 
-/// Result of `Setup::build()`. Contains config, database, and optionally resolved repositories.
+/// Result of `Setup::build()`. Contains config, database, and optionally resolved repository.
 pub struct SetupContext {
     pub config: Config,
     pub db: Database,
     pub db_path: PathBuf,
     pub repo: Option<Repository>,
-    pub repos: Option<Vec<Repository>>,
 }
 
 impl SetupContext {
@@ -159,44 +129,19 @@ impl SetupContext {
         (self.config, self.db, repo)
     }
 
-    /// Get the resolved repositories. Panics if `resolve_repos()` was not called.
+    /// Get the resolved repositories (returns single repo in a slice).
+    /// Kept for backward compatibility.
     pub fn repos(&self) -> &[Repository] {
-        self.repos.as_deref().expect("resolve_repos() was not called on Setup builder")
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-/// Print a one-time notice when no config file exists
-fn print_first_run_notice() {
-    let local = PathBuf::from(".factbase/config.yaml");
-    if local.exists() || Config::config_file_exists() {
-        return;
-    }
-    eprintln!(
-        "Note: No config found at {} or .factbase/config.yaml. Using defaults ({} provider).",
-        Config::default_path().display(),
-        Config::default().embedding.provider,
-    );
-    eprintln!("  Run `factbase doctor` to verify connectivity.\n");
-}
-
-/// Resolve the database path: local `.factbase/factbase.db` takes priority
-/// over the global config `database.path`.
-fn local_or_global_db_path(config: &Config) -> PathBuf {
-    if let Ok(cwd) = std::env::current_dir() {
-        let factbase_dir = cwd.join(".factbase");
-        if factbase_dir.is_dir() {
-            return factbase_dir.join("factbase.db");
+        // Return the single repo as a slice, or empty
+        match &self.repo {
+            Some(r) => std::slice::from_ref(r),
+            None => &[],
         }
     }
-    PathBuf::from(shellexpand::tilde(&config.database.path).to_string())
 }
 
 // ---------------------------------------------------------------------------
-// Auto-init (special case for serve/mcp)
+// Auto-init (for serve/mcp)
 // ---------------------------------------------------------------------------
 
 /// Auto-initialize a factbase repository in the given directory.
@@ -379,7 +324,7 @@ mod tests {
     fn test_setup_builder_default() {
         let setup = Setup::new();
         assert!(!setup.check_exists);
-        assert!(matches!(setup.repo_mode, RepoMode::None));
+        assert!(!setup.require_repo);
     }
 
     #[test]
@@ -391,12 +336,35 @@ mod tests {
     #[test]
     fn test_setup_builder_require_repo() {
         let setup = Setup::new().require_repo(Some("test"));
-        assert!(matches!(setup.repo_mode, RepoMode::Single(Some(ref id)) if id == "test"));
+        assert!(setup.require_repo);
     }
 
     #[test]
-    fn test_setup_builder_resolve_repos() {
+    fn test_setup_builder_resolve_repos_aliases_require_repo() {
         let setup = Setup::new().resolve_repos(None);
-        assert!(matches!(setup.repo_mode, RepoMode::Multiple(None)));
+        assert!(setup.require_repo);
+    }
+
+    #[test]
+    fn test_auto_init_repo_creates_factbase_dir() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+        assert!(!dir.join(".factbase").exists());
+
+        let (_, _, repo) = auto_init_repo(dir).unwrap();
+        assert!(dir.join(".factbase").exists());
+        assert!(dir.join(".factbase/factbase.db").exists());
+        assert!(dir.join("perspective.yaml").exists());
+        assert_eq!(repo.id, factbase::DEFAULT_REPO_ID);
+    }
+
+    #[test]
+    fn test_auto_init_repo_idempotent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let dir = tmp.path();
+
+        let (_, _, r1) = auto_init_repo(dir).unwrap();
+        let (_, _, r2) = auto_init_repo(dir).unwrap();
+        assert_eq!(r1.id, r2.id);
     }
 }

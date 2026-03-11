@@ -59,7 +59,6 @@ fn search_schema() -> Value {
                 "exclude_unknown": { "type": "boolean", "description": "Exclude facts with @t[?] tags" },
                 "boost_recent": { "type": "boolean", "description": "Boost ranking of recent dates" },
                 "offset": { "type": "integer", "description": "Pagination offset" },
-                "repo": { "type": "string", "description": "Repository ID" },
                 "pattern": { "type": "string", "description": "Text pattern for content mode" },
                 "context": { "type": "integer", "description": "Context lines around content matches" }
             },
@@ -95,7 +94,6 @@ fn workflow_schema() -> Value {
                     ],
                     "description": "For add (improve mode): steps to skip. Valid names: 'cleanup', 'resolve', 'enrich', 'check'"
                 },
-                "repo": { "type": "string", "description": "Repository ID (optional)" }
             },
             "required": ["workflow"]
         }
@@ -109,24 +107,24 @@ fn factbase_schema() -> Value {
             "Unified factbase operations tool. Called by workflow steps — use the workflow tool as the entry point for multi-step tasks.\n\n",
             "Operations (op=...):\n",
             "- get_entity: Get document by ID. Params: id (required), detail, include_preview, max_content_length\n",
-            "- list: List documents. Params: doc_type, repo, title_filter, limit\n",
+            "- list: List documents. Params: doc_type, title_filter, limit\n",
             "- repos: List all repositories.\n",
-            "- perspective: Get repository context. Params: repo (required)\n",
-            "- create: Create document. Params: repo (required), path (required), title (required), content\n",
+            "- perspective: Get repository context.\n",
+            "- create: Create document. Params: path (required), title (required), content\n",
             "- update: Update document. Params: id (required), title, content, suggested_move, suggested_rename, suggested_title\n",
             "- delete: Delete document. Params: id (required)\n",
-            "- bulk_create: Create multiple documents. Params: repo (required), documents (required, array of {path, title, content})\n",
-            "- scan: Re-index documents + embeddings. Time-boxed — returns continue+resume for large repos. Params: repo, force_reindex, skip_embeddings, time_budget_secs, resume\n",
-            "- check: Run quality checks. Params: repo, doc_id, doc_ids, dry_run\n",
-            "- detect_links: Detect cross-document links. Time-boxed. Params: repo, time_budget_secs, resume\n",
+            "- bulk_create: Create multiple documents. Params: documents (required, array of {path, title, content})\n",
+            "- scan: Re-index documents + embeddings. Time-boxed — returns continue+resume for large repos. Params: force_reindex, skip_embeddings, time_budget_secs, resume\n",
+            "- check: Run quality checks. Params: doc_id, doc_ids, dry_run\n",
+            "- detect_links: Detect cross-document links. Time-boxed. Params: time_budget_secs, resume\n",
             "- init: Initialize new repository. Params: path (required), id, name\n",
-            "- review_queue: List review questions. Params: repo, doc_id, type, status, limit, offset\n",
+            "- review_queue: List review questions. Params: doc_id, type, status, limit, offset\n",
             "- answer: Answer/defer review questions. Params: doc_id, question_index, answer, confidence, answers (bulk array)\n",
-            "- deferred: Get deferred items. Params: repo, type, limit, offset\n",
-            "- organize: Reorganize KB. action=analyze for suggestions, action=merge/split/delete/move/retype/apply/execute_suggestions for execution. Params: action, repo, doc_id, source_id, target_id, sections, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
-            "- links: action=suggest for link suggestions, action=store to write links, action=migrate to convert existing refs to repo's link style. Params: action, repo, min_similarity, include_types, exclude_types, limit, links (array)\n",
-            "- fact_pairs: Get similar fact pairs for cross-validation. Params: repo, min_similarity, limit\n",
-            "- embeddings: action=export/import/status. Params: action, repo, data, force\n",
+            "- deferred: Get deferred items. Params: type, limit, offset\n",
+            "- organize: Reorganize KB. action=analyze for suggestions, action=merge/split/delete/move/retype/apply/execute_suggestions for execution. Params: action, doc_id, source_id, target_id, sections, to, new_type, persist, dry_run, focus, merge_threshold, split_threshold\n",
+            "- links: action=suggest for link suggestions, action=store to write links, action=migrate to convert existing refs to repo's link style. Params: action, min_similarity, include_types, exclude_types, limit, links (array)\n",
+            "- fact_pairs: Get similar fact pairs for cross-validation. Params: min_similarity, limit\n",
+            "- embeddings: action=export/import/status. Params: action, data, force\n",
             "- authoring_guide: Get document format rules and templates.\n",
         ),
         "inputSchema": {
@@ -145,7 +143,6 @@ fn factbase_schema() -> Value {
                     "description": "Operation to perform"
                 },
                 // Common
-                "repo": { "type": "string", "description": "Repository ID" },
                 "doc_id": { "type": "string", "description": "Document ID" },
                 "limit": { "type": "integer", "description": "Max results" },
                 "offset": { "type": "integer", "description": "Pagination offset" },
