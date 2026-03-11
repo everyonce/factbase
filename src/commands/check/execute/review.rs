@@ -190,3 +190,219 @@ pub fn generate_review_questions(
 
     Ok((count, None))
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use factbase::database::Database;
+    use factbase::models::{Document, Repository};
+    use tempfile::TempDir;
+
+    fn test_db() -> (Database, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db = Database::new(&tmp.path().join("test.db")).unwrap();
+        (db, tmp)
+    }
+
+    fn make_repo(path: &std::path::Path) -> Repository {
+        Repository {
+            id: "test".into(),
+            name: "test".into(),
+            path: path.to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        }
+    }
+
+    fn make_doc(id: &str, content: &str, file_path: &str) -> Document {
+        Document {
+            id: id.into(),
+            repo_id: "test".into(),
+            file_path: file_path.into(),
+            file_hash: "hash".into(),
+            title: format!("Doc {id}"),
+            doc_type: Some("document".into()),
+            content: content.into(),
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
+        }
+    }
+
+    #[test]
+    fn test_generate_review_questions_no_issues() {
+        let (db, _db_tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = make_repo(repo_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = make_doc("aaa111", "# Title\n\n- Fact @t[2024-01]\n", "doc.md");
+        db.upsert_document(&doc).unwrap();
+
+        let opts = ReviewQuestionOptions {
+            min_similarity: 0.95,
+            dry_run: true,
+            export_mode: false,
+            is_table_format: false,
+            max_age: None,
+        };
+
+        let (count, exported) = generate_review_questions(
+            &doc, &repo, &db, &opts, &[], &std::collections::HashSet::new(),
+        ).unwrap();
+
+        // Well-formed doc with temporal tag should have few/no questions
+        assert!(exported.is_none() || count == 0);
+    }
+
+    #[test]
+    fn test_generate_review_questions_missing_temporal() {
+        let (db, _db_tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = make_repo(repo_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = make_doc("aaa111", "# Title\n\n- Fact without date\n- Another fact\n", "doc.md");
+        db.upsert_document(&doc).unwrap();
+
+        let opts = ReviewQuestionOptions {
+            min_similarity: 0.95,
+            dry_run: true,
+            export_mode: false,
+            is_table_format: false,
+            max_age: None,
+        };
+
+        let (count, _) = generate_review_questions(
+            &doc, &repo, &db, &opts, &[], &std::collections::HashSet::new(),
+        ).unwrap();
+
+        assert!(count > 0, "Should generate questions for facts without temporal tags");
+    }
+
+    #[test]
+    fn test_generate_review_questions_export_mode() {
+        let (db, _db_tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = make_repo(repo_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = make_doc("aaa111", "# Title\n\n- Undated fact\n", "doc.md");
+        db.upsert_document(&doc).unwrap();
+
+        let opts = ReviewQuestionOptions {
+            min_similarity: 0.95,
+            dry_run: false,
+            export_mode: true,
+            is_table_format: false,
+            max_age: None,
+        };
+
+        let (count, exported) = generate_review_questions(
+            &doc, &repo, &db, &opts, &[], &std::collections::HashSet::new(),
+        ).unwrap();
+
+        if count > 0 {
+            assert!(exported.is_some(), "Export mode should return exported questions");
+            let exp = exported.unwrap();
+            assert_eq!(exp.doc_id, "aaa111");
+            assert!(!exp.questions.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_generate_review_questions_title_duplicates() {
+        let (db, _db_tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = make_repo(repo_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = make_doc("aaa111", "# Title\n\n- Fact @t[2024]\n", "doc.md");
+        db.upsert_document(&doc).unwrap();
+
+        let opts = ReviewQuestionOptions {
+            min_similarity: 0.95,
+            dry_run: true,
+            export_mode: false,
+            is_table_format: false,
+            max_age: None,
+        };
+
+        let title_dups = vec![("bbb222", "Title")];
+        let (count, _) = generate_review_questions(
+            &doc, &repo, &db, &opts, &title_dups, &std::collections::HashSet::new(),
+        ).unwrap();
+
+        assert!(count > 0, "Should generate duplicate question for same-title docs");
+    }
+
+    #[test]
+    fn test_generate_review_questions_writes_to_file() {
+        let (db, _db_tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = make_repo(repo_dir.path());
+        db.upsert_repository(&repo).unwrap();
+
+        // Create actual file on disk
+        let file_path = repo_dir.path().join("doc.md");
+        let content = "# Title\n\n- Undated fact\n";
+        std::fs::write(&file_path, content).unwrap();
+
+        let doc = make_doc("aaa111", content, "doc.md");
+        db.upsert_document(&doc).unwrap();
+
+        let opts = ReviewQuestionOptions {
+            min_similarity: 0.95,
+            dry_run: false,
+            export_mode: false,
+            is_table_format: false,
+            max_age: None,
+        };
+
+        let (count, _) = generate_review_questions(
+            &doc, &repo, &db, &opts, &[], &std::collections::HashSet::new(),
+        ).unwrap();
+
+        if count > 0 {
+            let updated = std::fs::read_to_string(&file_path).unwrap();
+            assert!(updated.contains("@q["), "File should contain review questions: {updated}");
+        }
+    }
+
+    #[test]
+    fn test_generate_review_questions_ignore_pattern() {
+        let (db, _db_tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let mut repo = make_repo(repo_dir.path());
+        repo.perspective = Some(factbase::models::Perspective {
+            review: Some(factbase::models::ReviewPerspective {
+                stale_days: None,
+                ignore_patterns: Some(vec!["archive/*".to_string()]),
+                required_fields: None,
+                glossary_types: None,
+            }),
+            ..Default::default()
+        });
+        db.upsert_repository(&repo).unwrap();
+
+        let doc = make_doc("aaa111", "# Title\n\n- Undated fact\n", "archive/old.md");
+        db.upsert_document(&doc).unwrap();
+
+        let opts = ReviewQuestionOptions {
+            min_similarity: 0.95,
+            dry_run: true,
+            export_mode: false,
+            is_table_format: true,
+            max_age: None,
+        };
+
+        let (count, _) = generate_review_questions(
+            &doc, &repo, &db, &opts, &[], &std::collections::HashSet::new(),
+        ).unwrap();
+
+        assert_eq!(count, 0, "Ignored files should generate no questions");
+    }
+}

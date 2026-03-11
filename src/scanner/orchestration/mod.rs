@@ -843,6 +843,133 @@ mod tests {
         assert!(result.is_empty());
     }
 
+    #[test]
+    fn test_check_duplicates_no_similar_docs() {
+        let (db, _tmp) = test_db();
+        let (_, repo) = setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let dim = embedding.dimension();
+
+        // Insert two very different docs
+        let doc1 = Document {
+            id: "aaa111".into(), repo_id: repo.id.clone(),
+            file_path: "a.md".into(), file_hash: "h1".into(),
+            title: "Alpha".into(), doc_type: Some("doc".into()),
+            content: "# Alpha\n\nCompletely different content about cats.".into(),
+            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+        };
+        let doc2 = Document {
+            id: "bbb222".into(), repo_id: repo.id.clone(),
+            file_path: "b.md".into(), file_hash: "h2".into(),
+            title: "Beta".into(), doc_type: Some("doc".into()),
+            content: "# Beta\n\nEntirely unrelated content about dogs.".into(),
+            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+        };
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+        // Different embeddings → low similarity
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &vec![1.0; dim]).unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &vec![-1.0; dim]).unwrap();
+
+        let mut changed = HashSet::new();
+        changed.insert("aaa111".to_string());
+        let result = check_duplicates(&db, &changed).unwrap();
+        assert!(result.is_empty(), "Different docs should not be duplicates");
+    }
+
+    #[test]
+    fn test_check_duplicates_finds_similar() {
+        let (db, _tmp) = test_db();
+        let (_, repo) = setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let dim = embedding.dimension();
+
+        let doc1 = Document {
+            id: "aaa111".into(), repo_id: repo.id.clone(),
+            file_path: "a.md".into(), file_hash: "h1".into(),
+            title: "Alpha".into(), doc_type: Some("doc".into()),
+            content: "# Alpha\n\nSame content.".into(),
+            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+        };
+        let doc2 = Document {
+            id: "bbb222".into(), repo_id: repo.id.clone(),
+            file_path: "b.md".into(), file_hash: "h2".into(),
+            title: "Beta".into(), doc_type: Some("doc".into()),
+            content: "# Beta\n\nSame content.".into(),
+            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+        };
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+        // Identical embeddings → 100% similarity
+        let emb = vec![0.5; dim];
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &emb).unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &emb).unwrap();
+
+        let mut changed = HashSet::new();
+        changed.insert("aaa111".to_string());
+        let result = check_duplicates(&db, &changed).unwrap();
+        assert!(!result.is_empty(), "Identical embeddings should be detected as duplicates");
+        assert_eq!(result[0].doc1_id, "aaa111");
+        assert_eq!(result[0].doc2_id, "bbb222");
+    }
+
+    #[test]
+    fn test_check_duplicates_deduplicates_pairs() {
+        let (db, _tmp) = test_db();
+        let (_, repo) = setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let dim = embedding.dimension();
+
+        let doc1 = Document {
+            id: "aaa111".into(), repo_id: repo.id.clone(),
+            file_path: "a.md".into(), file_hash: "h1".into(),
+            title: "Alpha".into(), doc_type: Some("doc".into()),
+            content: "# Alpha".into(),
+            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+        };
+        let doc2 = Document {
+            id: "bbb222".into(), repo_id: repo.id.clone(),
+            file_path: "b.md".into(), file_hash: "h2".into(),
+            title: "Beta".into(), doc_type: Some("doc".into()),
+            content: "# Beta".into(),
+            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+        };
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+        let emb = vec![0.5; dim];
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &emb).unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &emb).unwrap();
+
+        // Both docs in changed set — should still only produce one pair
+        let mut changed = HashSet::new();
+        changed.insert("aaa111".to_string());
+        changed.insert("bbb222".to_string());
+        let result = check_duplicates(&db, &changed).unwrap();
+        assert_eq!(result.len(), 1, "Should deduplicate (A,B) and (B,A) into one pair");
+    }
+
+    // ── pre_read_files edge cases ──
+
+    #[test]
+    fn test_pre_read_files_empty_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("empty.md");
+        std::fs::write(&path, "").unwrap();
+        let results = pre_read_files(vec![path]);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].content.as_ref().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_pre_read_files_with_existing_id() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, "<!-- factbase:abc123 -->\n# Title\n\nContent.").unwrap();
+        let results = pre_read_files(vec![path]);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].existing_id.as_deref(), Some("abc123"));
+    }
+
     // ── full_scan: new file detection ──
 
     #[tokio::test]

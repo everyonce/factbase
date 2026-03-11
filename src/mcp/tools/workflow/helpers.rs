@@ -595,3 +595,330 @@ pub(super) fn effective_steps(skip: &[String]) -> Vec<(usize, &'static str)> {
         .map(|(i, name)| (i + 1, *name))
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // --- normalize_question_text ---
+
+    #[test]
+    fn test_normalize_replaces_footnotes() {
+        let input = r#"Source [^3] is weak — consider replacing with a specific reference"#;
+        let result = normalize_question_text(input);
+        assert!(result.contains("[^_]"), "Footnote should be normalized: {result}");
+        assert!(!result.contains("[^3]"));
+    }
+
+    #[test]
+    fn test_normalize_replaces_quoted_text() {
+        let input = r#""VP at BigCo" has no temporal tag"#;
+        let result = normalize_question_text(input);
+        assert!(result.contains("\"_\""), "Quoted text should be normalized: {result}");
+        assert!(!result.contains("VP at BigCo"));
+    }
+
+    #[test]
+    fn test_normalize_replaces_dates() {
+        let input = "Last verified 2024-06-15, stale since 2023-01";
+        let result = normalize_question_text(input);
+        assert!(!result.contains("2024"), "Dates should be normalized: {result}");
+        assert!(result.contains("_DATE_"));
+    }
+
+    #[test]
+    fn test_normalize_replaces_temporal_tags() {
+        let input = "Fact @t[2020..2023] overlaps with @t[2022..]";
+        let result = normalize_question_text(input);
+        assert!(result.contains("@t[_]"), "Temporal tags should be normalized: {result}");
+        assert!(!result.contains("2020..2023"));
+    }
+
+    #[test]
+    fn test_normalize_replaces_line_refs() {
+        let input = "Some issue (line 42)";
+        let result = normalize_question_text(input);
+        assert!(result.contains("(line _)"), "Line refs should be normalized: {result}");
+        assert!(!result.contains("42"));
+    }
+
+    #[test]
+    fn test_normalize_empty_string() {
+        assert_eq!(normalize_question_text(""), "");
+    }
+
+    // --- detect_question_patterns ---
+
+    #[test]
+    fn test_detect_patterns_below_threshold() {
+        let questions: Vec<Value> = (0..3)
+            .map(|i| json!({"type": "temporal", "description": format!("\"Fact {i}\" has no date")}))
+            .collect();
+        let patterns = detect_question_patterns(&questions, &questions);
+        assert!(patterns.is_empty(), "3 questions should be below threshold of {PATTERN_MIN_COUNT}");
+    }
+
+    #[test]
+    fn test_detect_patterns_above_threshold() {
+        let questions: Vec<Value> = (0..5)
+            .map(|i| json!({"type": "temporal", "description": format!("\"Fact {i}\" has no temporal tag")}))
+            .collect();
+        let patterns = detect_question_patterns(&questions, &questions);
+        assert!(!patterns.is_empty(), "5 similar questions should form a pattern");
+        assert_eq!(patterns[0]["count_total"].as_u64().unwrap(), 5);
+    }
+
+    #[test]
+    fn test_detect_patterns_empty() {
+        let patterns = detect_question_patterns(&[], &[]);
+        assert!(patterns.is_empty());
+    }
+
+    // --- question_type_priority ---
+
+    #[test]
+    fn test_priority_ordering() {
+        assert!(question_type_priority(&QuestionType::Temporal) < question_type_priority(&QuestionType::WeakSource));
+        assert!(question_type_priority(&QuestionType::Missing) < question_type_priority(&QuestionType::Duplicate));
+        assert!(question_type_priority(&QuestionType::Stale) < question_type_priority(&QuestionType::Corruption));
+    }
+
+    // --- type_evidence_guidance ---
+
+    #[test]
+    fn test_evidence_guidance_returns_nonempty() {
+        for qt in [
+            QuestionType::Stale, QuestionType::Temporal, QuestionType::Ambiguous,
+            QuestionType::Conflict, QuestionType::Precision, QuestionType::Missing,
+            QuestionType::Duplicate, QuestionType::Corruption, QuestionType::WeakSource,
+        ] {
+            let guidance = type_evidence_guidance(&qt);
+            assert!(!guidance.is_empty(), "Guidance for {qt:?} should not be empty");
+        }
+    }
+
+    // --- rebrand_step ---
+
+    #[test]
+    fn test_rebrand_step_replaces_workflow() {
+        let val = json!({"workflow": "old", "step": 1, "when_done": "call workflow='old' step=2"});
+        let result = rebrand_step(val, "old", "new");
+        assert_eq!(result["workflow"], "new");
+        assert!(result["when_done"].as_str().unwrap().contains("workflow='new'"));
+    }
+
+    #[test]
+    fn test_rebrand_step_no_when_done() {
+        let val = json!({"workflow": "old", "step": 1});
+        let result = rebrand_step(val, "old", "new");
+        assert_eq!(result["workflow"], "new");
+    }
+
+    // --- perspective_context ---
+
+    #[test]
+    fn test_perspective_context_none() {
+        assert_eq!(perspective_context(&None), "");
+    }
+
+    #[test]
+    fn test_perspective_context_with_org() {
+        let p = Perspective {
+            organization: Some("Acme Corp".into()),
+            ..Default::default()
+        };
+        let result = perspective_context(&Some(p));
+        assert!(result.contains("Acme Corp"));
+    }
+
+    #[test]
+    fn test_perspective_context_with_both() {
+        let p = Perspective {
+            organization: Some("Acme".into()),
+            focus: Some("Sales".into()),
+            ..Default::default()
+        };
+        let result = perspective_context(&Some(p));
+        assert!(result.contains("Acme"));
+        assert!(result.contains("Sales"));
+    }
+
+    // --- stale_days ---
+
+    #[test]
+    fn test_stale_days_default() {
+        assert_eq!(stale_days(&None), 365);
+    }
+
+    #[test]
+    fn test_stale_days_from_perspective() {
+        let p = Perspective {
+            review: Some(crate::models::ReviewPerspective {
+                stale_days: Some(90),
+                ignore_patterns: None,
+                required_fields: None,
+                glossary_types: None,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(stale_days(&Some(p)), 90);
+    }
+
+    // --- required_fields_hint ---
+
+    #[test]
+    fn test_required_fields_hint_none() {
+        assert_eq!(required_fields_hint(&None), "");
+    }
+
+    #[test]
+    fn test_required_fields_hint_with_fields() {
+        let mut fields = HashMap::new();
+        fields.insert("person".to_string(), vec!["name".to_string(), "role".to_string()]);
+        let p = Perspective {
+            review: Some(crate::models::ReviewPerspective {
+                stale_days: None,
+                ignore_patterns: None,
+                required_fields: Some(fields),
+                glossary_types: None,
+            }),
+            ..Default::default()
+        };
+        let result = required_fields_hint(&Some(p));
+        assert!(result.contains("person"));
+        assert!(result.contains("name"));
+    }
+
+    // --- subagent_fanout_hint ---
+
+    #[test]
+    fn test_fanout_hint_small_queue() {
+        let dist = vec![("temporal".into(), 10), ("stale".into(), 5)];
+        let result = subagent_fanout_hint(15, &dist);
+        assert!(result.contains("PARALLEL DISPATCH"));
+        assert!(!result.contains("MANDATORY"));
+    }
+
+    #[test]
+    fn test_fanout_hint_large_queue() {
+        let dist = vec![("temporal".into(), 150), ("stale".into(), 100)];
+        let result = subagent_fanout_hint(250, &dist);
+        assert!(result.contains("MANDATORY"));
+    }
+
+    #[test]
+    fn test_fanout_hint_skips_zero_count() {
+        let dist = vec![("temporal".into(), 10), ("stale".into(), 0)];
+        let result = subagent_fanout_hint(10, &dist);
+        assert!(result.contains("temporal"));
+        assert!(!result.contains("question_type='stale'"));
+    }
+
+    // --- parse_skip_steps ---
+
+    #[test]
+    fn test_parse_skip_steps_none() {
+        let args = json!({});
+        assert!(parse_skip_steps(&args).is_empty());
+    }
+
+    #[test]
+    fn test_parse_skip_steps_string() {
+        let args = json!({"skip": "cleanup,resolve"});
+        let result = parse_skip_steps(&args);
+        assert_eq!(result, vec!["cleanup", "resolve"]);
+    }
+
+    #[test]
+    fn test_parse_skip_steps_array() {
+        let args = json!({"skip": ["Cleanup", "Check"]});
+        let result = parse_skip_steps(&args);
+        assert_eq!(result, vec!["cleanup", "check"]);
+    }
+
+    // --- effective_steps ---
+
+    #[test]
+    fn test_effective_steps_no_skip() {
+        let steps = effective_steps(&[]);
+        assert_eq!(steps.len(), 4);
+        assert_eq!(steps[0], (1, "cleanup"));
+        assert_eq!(steps[3], (4, "check"));
+    }
+
+    #[test]
+    fn test_effective_steps_skip_some() {
+        let skip = vec!["resolve".to_string(), "check".to_string()];
+        let steps = effective_steps(&skip);
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].1, "cleanup");
+        assert_eq!(steps[1].1, "enrich");
+    }
+
+    // --- recommended_resolve_order ---
+
+    #[test]
+    fn test_recommended_order_fewest_first() {
+        let dist = vec![
+            (QuestionType::Stale, 50),
+            (QuestionType::Temporal, 10),
+            (QuestionType::Missing, 30),
+        ];
+        let order = recommended_resolve_order(&dist);
+        assert_eq!(order[0], "temporal");
+        assert_eq!(order[1], "missing");
+        assert_eq!(order[2], "stale");
+    }
+
+    #[test]
+    fn test_recommended_order_skips_zero() {
+        let dist = vec![
+            (QuestionType::Stale, 0),
+            (QuestionType::Temporal, 5),
+        ];
+        let order = recommended_resolve_order(&dist);
+        assert_eq!(order.len(), 1);
+        assert_eq!(order[0], "temporal");
+    }
+
+    // --- build_continuation_guidance ---
+
+    #[test]
+    fn test_continuation_guidance_large_queue() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::Temporal, 300);
+        let result = build_continuation_guidance(600, 100, 20, &dist, &[]);
+        assert!(result.is_some());
+        assert!(result.unwrap().contains("DO NOT STOP"));
+    }
+
+    #[test]
+    fn test_continuation_guidance_empty_queue() {
+        let dist = HashMap::new();
+        let result = build_continuation_guidance(0, 50, 20, &dist, &[]);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_continuation_guidance_context_management() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::Stale, 100);
+        let result = build_continuation_guidance(100, 200, 20, &dist, &[]);
+        assert!(result.is_some());
+        let text = result.unwrap();
+        assert!(text.contains("CONTEXT MANAGEMENT"), "Should include context hint: {text}");
+    }
+
+    #[test]
+    fn test_continuation_guidance_type_cleared() {
+        let mut dist = HashMap::new();
+        dist.insert(QuestionType::Temporal, 0);
+        dist.insert(QuestionType::Stale, 20);
+        let filter = vec![QuestionType::Temporal];
+        let result = build_continuation_guidance(20, 10, 20, &dist, &filter);
+        assert!(result.is_some());
+        let text = result.unwrap();
+        assert!(text.contains("stale"), "Should suggest next type: {text}");
+    }
+}
