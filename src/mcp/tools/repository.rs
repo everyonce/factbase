@@ -344,7 +344,10 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let perspective_path = abs_path.join("perspective.yaml");
     let perspective_created = !perspective_path.exists();
     if perspective_created {
-        let _ = std::fs::write(&perspective_path, crate::models::PERSPECTIVE_TEMPLATE);
+        // Best-effort: perspective.yaml is optional, log warning on failure
+        if let Err(e) = std::fs::write(&perspective_path, crate::models::PERSPECTIVE_TEMPLATE) {
+            tracing::warn!("Failed to write perspective.yaml: {e}");
+        }
     }
 
     let gitignore_added = crate::ensure_gitignore(&abs_path).unwrap_or_default();

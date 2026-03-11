@@ -68,7 +68,8 @@ pub fn parse_referenced_by_block(content: &str) -> Vec<String> {
 /// Returns names that are NOT 6-char hex IDs (those are factbase IDs, not wikilinks).
 /// For `[[path|display]]` format, returns the display portion.
 pub fn extract_wikilink_names(content: &str) -> Vec<String> {
-    let hex_id = regex::Regex::new(r"^[a-f0-9]{6}$").unwrap();
+    // Use the existing static DOC_ID_REGEX instead of compiling a new Regex on every call
+    let hex_id = &*crate::patterns::DOC_ID_REGEX;
     WIKILINK_NAME_REGEX
         .captures_iter(content)
         .map(|c| {
