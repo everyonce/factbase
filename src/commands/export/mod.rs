@@ -21,8 +21,8 @@ mod markdown;
 
 pub use args::ExportArgs;
 
-use super::setup_database_only;
-use super::utils::ends_with_ext;
+use super::setup::Setup;
+use super::paths::ends_with_ext;
 use factbase::ProgressReporter;
 
 /// Determine if the output path represents a single file (vs directory)
@@ -78,7 +78,7 @@ pub fn cmd_export(args: ExportArgs) -> anyhow::Result<()> {
         }
     }
 
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     let repo = db.require_repository(&args.repo)?;
 

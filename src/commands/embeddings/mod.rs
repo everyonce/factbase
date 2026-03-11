@@ -4,7 +4,7 @@ mod args;
 
 pub use args::{EmbeddingsArgs, EmbeddingsCommands};
 
-use super::setup::setup_database_only;
+use super::setup::Setup;
 use factbase::Config;
 
 pub fn cmd_embeddings(args: EmbeddingsArgs) -> anyhow::Result<()> {
@@ -17,7 +17,7 @@ pub fn cmd_embeddings(args: EmbeddingsArgs) -> anyhow::Result<()> {
 
 fn cmd_export(args: args::ExportArgs) -> anyhow::Result<()> {
     let config = Config::load(None)?;
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
     let model = config.embedding.model.clone();
 
     let (chunk_count, fact_count) = factbase::export_embeddings_to_file(
@@ -35,7 +35,7 @@ fn cmd_export(args: args::ExportArgs) -> anyhow::Result<()> {
 }
 
 fn cmd_import(args: args::ImportArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     let result = factbase::import_embeddings_from_file(&db, &args.input, args.force)?;
 
@@ -50,7 +50,7 @@ fn cmd_import(args: args::ImportArgs) -> anyhow::Result<()> {
 
 fn cmd_status(args: args::StatusArgs) -> anyhow::Result<()> {
     let config = Config::load(None)?;
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
     let model = config.embedding.model.clone();
 
     let info = factbase::embeddings_status(&db, args.repo.as_deref(), &model)?;

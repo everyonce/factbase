@@ -1,4 +1,5 @@
-use super::{create_repository, setup_database_only, validate_directory_path};
+use super::{create_repository, validate_directory_path};
+use crate::commands::setup::Setup;
 use clap::Parser;
 use factbase::format_json;
 use std::io::{self, Write};
@@ -90,11 +91,11 @@ pub fn cmd_repo_add(args: RepoAddArgs) -> anyhow::Result<()> {
     // Validate repository ID
     validate_repo_id(&args.id)?;
 
-    let path = super::clean_canonicalize(&args.path);
+    let path = factbase::organize::clean_canonicalize(&args.path);
 
     validate_directory_path(&path)?;
 
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     let repos = db.list_repositories()?;
     if repos.iter().any(|r| r.id == args.id) {
@@ -115,7 +116,7 @@ pub fn cmd_repo_add(args: RepoAddArgs) -> anyhow::Result<()> {
 }
 
 pub fn cmd_repo_remove(args: RepoRemoveArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     let repos = db.list_repositories()?;
     let _repo = repos
@@ -153,7 +154,7 @@ pub fn cmd_repo_remove(args: RepoRemoveArgs) -> anyhow::Result<()> {
 }
 
 pub fn cmd_repo_list(args: RepoListArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     let repos = db.list_repositories_with_stats()?;
 

@@ -1,35 +1,168 @@
-//! Database and service setup functions for CLI commands.
+//! Database and service setup for CLI commands.
 //!
-//! # Setup Function Guide
+//! # Builder Pattern
 //!
-//! | Function | Returns | Use When |
-//! |----------|---------|----------|
-//! | `setup_database()` | `(Config, Database)` | Need global database AND config later |
-//! | `setup_database_only()` | `Database` | Need global database, don't need config |
-//! | `setup_database_checked()` | `(Config, Database, PathBuf)` | Same as above, but fail if DB doesn't exist |
-//! | `find_repo()` | `(Database, Repository)` | Need local repo, don't need config later |
-//! | `find_repo_with_config()` | `(Config, Database, Repository)` | Need local repo AND config (e.g., for embedding/LLM) |
-//!
-//! # Examples
+//! Use `Setup::new()` to configure what you need, then `.build()` to get a `SetupContext`:
 //!
 //! ```ignore
-//! // Global database operations (repo list, stats)
-//! let (config, db) = setup_database()?;
+//! // Just config + database (global or local)
+//! let ctx = Setup::new().build()?;
 //!
-//! // Local repo operations without Ollama
-//! let (db, repo) = find_repo(args.repo.as_deref())?;
+//! // Require database file exists (error if missing)
+//! let ctx = Setup::new().check_exists().build()?;
 //!
-//! // Local repo operations with Ollama (search, scan)
-//! let (config, db, repo) = find_repo_with_config(args.repo.as_deref())?;
-//! let embedding = setup_embedding_with_timeout(&config, args.timeout);
+//! // Require a single repository (from .factbase/ in cwd)
+//! let ctx = Setup::new().require_repo(args.repo.as_deref()).build()?;
+//! // ctx.config, ctx.db, ctx.repo() all available
+//!
+//! // Resolve multiple repositories with optional filter
+//! let ctx = Setup::new().resolve_repos(args.repo.as_deref()).build()?;
+//! // ctx.config, ctx.db, ctx.repos() all available
 //! ```
 
-use super::utils::db_not_found_error;
+use super::errors::db_not_found_error;
 use factbase::{
     CachedEmbedding, Config, Database, EmbeddingProvider,
     OllamaEmbedding, PersistentCachedEmbedding, Repository,
 };
 use std::path::PathBuf;
+
+// ---------------------------------------------------------------------------
+// Builder
+// ---------------------------------------------------------------------------
+
+enum RepoMode {
+    /// No repository resolution needed
+    None,
+    /// Resolve a single repo from .factbase/ in cwd
+    Single(Option<String>),
+    /// Resolve multiple repos (global DB), with optional filter
+    Multiple(Option<String>),
+}
+
+/// Builder for CLI command setup. Configures what resources are needed,
+/// then `.build()` loads/validates everything in one shot.
+pub struct Setup {
+    check_exists: bool,
+    repo_mode: RepoMode,
+}
+
+impl Setup {
+    pub fn new() -> Self {
+        Self {
+            check_exists: false,
+            repo_mode: RepoMode::None,
+        }
+    }
+
+    /// Fail at build time if the database file doesn't exist on disk.
+    pub fn check_exists(mut self) -> Self {
+        self.check_exists = true;
+        self
+    }
+
+    /// Resolve a single repository from `.factbase/` in the current directory.
+    /// Optionally filter by repo ID. Fails if no `.factbase/` dir or no matching repo.
+    pub fn require_repo(mut self, repo_id: Option<&str>) -> Self {
+        self.repo_mode = RepoMode::Single(repo_id.map(String::from));
+        self
+    }
+
+    /// Resolve repositories from the global database, with optional ID/name filter.
+    /// Fails if no repositories match.
+    pub fn resolve_repos(mut self, filter: Option<&str>) -> Self {
+        self.repo_mode = RepoMode::Multiple(filter.map(String::from));
+        self
+    }
+
+    pub fn build(self) -> anyhow::Result<SetupContext> {
+        print_first_run_notice();
+        let config = Config::load(None)?;
+
+        // For Single repo mode, we require .factbase/ in cwd
+        if let RepoMode::Single(ref repo_id) = self.repo_mode {
+            let dir = std::env::current_dir()?;
+            let factbase_dir = dir.join(".factbase");
+            if !factbase_dir.exists() {
+                anyhow::bail!("Not in a factbase repository. Run `factbase init <path>` first.");
+            }
+            let db_path = factbase_dir.join("factbase.db");
+            let db = config.open_database(&db_path)?;
+            let repos = db.list_repositories()?;
+            let repo = if let Some(id) = repo_id {
+                repos.into_iter().find(|r| r.id == *id)
+            } else {
+                repos.into_iter().next()
+            };
+            let repo = repo.ok_or_else(|| {
+                anyhow::anyhow!("No repository found in {}", factbase_dir.display())
+            })?;
+            return Ok(SetupContext {
+                config,
+                db,
+                db_path,
+                repo: Some(repo),
+                repos: None,
+            });
+        }
+
+        // Global/local DB resolution
+        let db_path = local_or_global_db_path(&config);
+
+        if self.check_exists && !db_path.exists() {
+            return Err(db_not_found_error(&db_path));
+        }
+
+        let db = config.open_database(&db_path)?;
+
+        // Resolve multiple repos if requested
+        let repos = if let RepoMode::Multiple(ref filter) = self.repo_mode {
+            let all = db.list_repositories()?;
+            let resolved = super::resolve_repos(all, filter.as_deref())?;
+            Some(resolved)
+        } else {
+            None
+        };
+
+        Ok(SetupContext {
+            config,
+            db,
+            db_path,
+            repo: None,
+            repos,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SetupContext
+// ---------------------------------------------------------------------------
+
+/// Result of `Setup::build()`. Contains config, database, and optionally resolved repositories.
+pub struct SetupContext {
+    pub config: Config,
+    pub db: Database,
+    pub db_path: PathBuf,
+    pub repo: Option<Repository>,
+    pub repos: Option<Vec<Repository>>,
+}
+
+impl SetupContext {
+    /// Take ownership of the resolved single repository.
+    pub fn take_repo(self) -> (Config, Database, Repository) {
+        let repo = self.repo.expect("require_repo() was not called on Setup builder");
+        (self.config, self.db, repo)
+    }
+
+    /// Get the resolved repositories. Panics if `resolve_repos()` was not called.
+    pub fn repos(&self) -> &[Repository] {
+        self.repos.as_deref().expect("resolve_repos() was not called on Setup builder")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
 /// Print a one-time notice when no config file exists
 fn print_first_run_notice() {
@@ -47,9 +180,6 @@ fn print_first_run_notice() {
 
 /// Resolve the database path: local `.factbase/factbase.db` takes priority
 /// over the global config `database.path`.
-///
-/// Checks for the `.factbase/` directory (not the DB file itself) since the
-/// directory indicates "this is a factbase repo" even before the DB is created.
 fn local_or_global_db_path(config: &Config) -> PathBuf {
     if let Ok(cwd) = std::env::current_dir() {
         let factbase_dir = cwd.join(".factbase");
@@ -60,45 +190,13 @@ fn local_or_global_db_path(config: &Config) -> PathBuf {
     PathBuf::from(shellexpand::tilde(&config.database.path).to_string())
 }
 
-/// Load config and open database - common setup for most commands.
-///
-/// Checks for a local `.factbase/factbase.db` in the current directory first,
-/// then falls back to the global config `database.path`.
-pub fn setup_database() -> anyhow::Result<(Config, Database)> {
-    print_first_run_notice();
-    let config = Config::load(None)?;
-    let db_path = local_or_global_db_path(&config);
-    let db = config.open_database(&db_path)?;
-    Ok((config, db))
-}
-
-/// Load config and open database, returning only the database.
-///
-/// Use this when you don't need the config after setup (most commands).
-pub fn setup_database_only() -> anyhow::Result<Database> {
-    let (_config, db) = setup_database()?;
-    Ok(db)
-}
-
-/// Load config and open database with explicit path existence check.
-/// Returns a helpful error if the database file doesn't exist.
-/// Also returns the expanded database path for commands that need it.
-pub fn setup_database_checked() -> anyhow::Result<(Config, Database, PathBuf)> {
-    let config = Config::load(None)?;
-    let db_path = local_or_global_db_path(&config);
-
-    if !db_path.exists() {
-        return Err(db_not_found_error(&db_path));
-    }
-
-    let db = config.open_database(&db_path)?;
-    Ok((config, db, db_path))
-}
+// ---------------------------------------------------------------------------
+// Auto-init (special case for serve/mcp)
+// ---------------------------------------------------------------------------
 
 /// Auto-initialize a factbase repository in the given directory.
 ///
 /// Creates `.factbase/` dir, `perspective.yaml`, database, and registers the repo.
-/// Returns (Config, Database, Repository). Shared by `cmd_mcp`, `cmd_serve`, etc.
 pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database, Repository)> {
     let factbase_dir = dir.join(".factbase");
     std::fs::create_dir_all(&factbase_dir)?;
@@ -118,50 +216,11 @@ pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database
     Ok((config, db, repo))
 }
 
-/// Find repository by ID or from current directory, returning config for callers that need it.
-///
-/// Use this when you need both the repository and config (e.g., for embedding/LLM setup).
-/// Use `find_repo()` when you only need the database and repository.
-pub fn find_repo_with_config(
-    repo_id: Option<&str>,
-) -> anyhow::Result<(Config, Database, Repository)> {
-    print_first_run_notice();
-    let dir = std::env::current_dir()?;
-    let config = Config::load(None)?;
-
-    // Only check the current directory for .factbase/ — don't walk up.
-    // Walking up caused confusion when a parent directory had its own .factbase/.
-    let factbase_dir = dir.join(".factbase");
-    if factbase_dir.exists() {
-        let db_path = factbase_dir.join("factbase.db");
-        let db = config.open_database(&db_path)?;
-        let repos = db.list_repositories()?;
-        let repo = if let Some(id) = repo_id {
-            repos.into_iter().find(|r| r.id == id)
-        } else {
-            repos.into_iter().next()
-        };
-        if let Some(r) = repo {
-            return Ok((config, db, r));
-        }
-        anyhow::bail!("No repository found in {}", factbase_dir.display());
-    }
-    anyhow::bail!("Not in a factbase repository. Run `factbase init <path>` first.")
-}
-
-/// Find repository by ID or from current directory.
-///
-/// Use this when you only need the database and repository.
-/// Use `find_repo_with_config()` when you also need config for embedding/LLM setup.
-pub fn find_repo(repo_id: Option<&str>) -> anyhow::Result<(Database, Repository)> {
-    let (_, db, repo) = find_repo_with_config(repo_id)?;
-    Ok((db, repo))
-}
+// ---------------------------------------------------------------------------
+// Embedding setup
+// ---------------------------------------------------------------------------
 
 /// Resolve a Bedrock region from a base_url config value.
-///
-/// Returns `None` if the value is empty or an HTTP URL (Ollama),
-/// `Some(region)` if it looks like an AWS region string.
 #[cfg(feature = "bedrock")]
 fn resolve_bedrock_region(base_url: &str) -> Option<&str> {
     if base_url.is_empty() || base_url.starts_with("http") {
@@ -172,7 +231,6 @@ fn resolve_bedrock_region(base_url: &str) -> Option<&str> {
 }
 
 /// Validate that a base_url looks like an HTTP URL for Ollama.
-/// Exits with a clear error if it looks like an AWS region or other non-URL value.
 fn validate_ollama_url(base_url: &str, section: &str, provider: &str) {
     if base_url.starts_with("http://") || base_url.starts_with("https://") {
         return;
@@ -182,7 +240,6 @@ fn validate_ollama_url(base_url: &str, section: &str, provider: &str) {
         base_url, provider
     );
     if base_url.contains('-') && base_url.chars().all(|c| c.is_alphanumeric() || c == '-') {
-        // Looks like an AWS region
         eprintln!("       This looks like an AWS region. Did you mean to use provider 'bedrock'?");
         eprintln!("hint: Set {section}.provider = 'bedrock' in config, or change {section}.base_url to an Ollama URL (e.g., http://localhost:11434).");
     } else {
@@ -279,14 +336,13 @@ pub async fn setup_cached_embedding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factbase::config::{EmbeddingConfig, OllamaConfig};
+    use factbase::config::EmbeddingConfig;
     use factbase::EmbeddingProvider;
 
     fn test_config() -> Config {
         let config = Config::default();
         Config {
             embedding: EmbeddingConfig {
-                // Use whatever the default provider is for this build
                 ..config.embedding
             },
             ..config
@@ -312,5 +368,30 @@ mod tests {
     #[tokio::test]
     async fn test_setup_link_detector_no_llm_needed() {
         let _detector = factbase::LinkDetector::new();
+    }
+
+    #[test]
+    fn test_setup_builder_default() {
+        let setup = Setup::new();
+        assert!(!setup.check_exists);
+        assert!(matches!(setup.repo_mode, RepoMode::None));
+    }
+
+    #[test]
+    fn test_setup_builder_check_exists() {
+        let setup = Setup::new().check_exists();
+        assert!(setup.check_exists);
+    }
+
+    #[test]
+    fn test_setup_builder_require_repo() {
+        let setup = Setup::new().require_repo(Some("test"));
+        assert!(matches!(setup.repo_mode, RepoMode::Single(Some(ref id)) if id == "test"));
+    }
+
+    #[test]
+    fn test_setup_builder_resolve_repos() {
+        let setup = Setup::new().resolve_repos(None);
+        assert!(matches!(setup.repo_mode, RepoMode::Multiple(None)));
     }
 }

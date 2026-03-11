@@ -8,7 +8,8 @@ use std::path::Path;
 use anyhow::Context;
 
 use super::MoveArgs;
-use crate::commands::{confirm_prompt, find_repo_with_config, print_output, OutputFormat};
+use crate::commands::{confirm_prompt, print_output, OutputFormat};
+use crate::commands::setup::Setup;
 use factbase::{execute_move, MoveResult};
 use serde::Serialize;
 
@@ -56,7 +57,8 @@ impl From<MoveResult> for MoveResultOutput {
 
 /// Run the move command.
 pub fn run(args: MoveArgs) -> anyhow::Result<()> {
-    let (_config, db, repo) = find_repo_with_config(None)?;
+    let ctx = Setup::new().require_repo(None).build()?;
+    let (_config, db, repo) = ctx.take_repo();
     let format = OutputFormat::resolve(args.json, args.format);
 
     // Validate document ID exists
@@ -70,7 +72,7 @@ pub fn run(args: MoveArgs) -> anyhow::Result<()> {
 
     // Normalize destination: ensure it ends with the filename
     let dest = args.to.trim_end_matches('/');
-    let new_path = if crate::commands::utils::ends_with_ext(dest, ".md") {
+    let new_path = if crate::commands::paths::ends_with_ext(dest, ".md") {
         // User provided full path including filename
         dest.to_string()
     } else {

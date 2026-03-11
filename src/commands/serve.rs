@@ -1,6 +1,7 @@
 use super::{
-    auto_init_repo, find_repo_with_config, setup_cached_embedding, setup_embedding,
+    auto_init_repo, setup_cached_embedding, setup_embedding,
 };
+use crate::commands::setup::Setup;
 use crate::commands::utils::resolve_repos;
 use anyhow::Context;
 use clap::Parser;
@@ -40,8 +41,8 @@ pub struct ServeArgs {
 }
 
 pub async fn cmd_serve(args: ServeArgs) -> anyhow::Result<()> {
-    let (config, db, _) = match find_repo_with_config(None) {
-        Ok(tuple) => tuple,
+    let (config, db, _) = match Setup::new().require_repo(None).build() {
+        Ok(ctx) => ctx.take_repo(),
         Err(_) => auto_init_repo(&std::env::current_dir()?)?,
     };
 

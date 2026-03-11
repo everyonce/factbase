@@ -4,8 +4,9 @@
 
 use super::MergeArgs;
 use crate::commands::{
-    confirm_prompt, find_repo_with_config, print_output, OutputFormat,
+    confirm_prompt, print_output, OutputFormat,
 };
+use crate::commands::setup::Setup;
 use factbase::{execute_merge, plan_merge, verify_merge, MergePlan, MergeResult};
 use serde::Serialize;
 
@@ -78,7 +79,8 @@ impl MergeResultOutput {
 
 /// Run the merge command.
 pub async fn run(args: MergeArgs) -> anyhow::Result<()> {
-    let (_config, db, repo) = find_repo_with_config(None)?;
+    let ctx = Setup::new().require_repo(None).build()?;
+    let (_config, db, repo) = ctx.take_repo();
     let format = OutputFormat::resolve(args.json, args.format);
 
     // Validate document IDs exist

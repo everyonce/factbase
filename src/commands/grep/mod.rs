@@ -6,8 +6,9 @@ pub use args::GrepArgs;
 
 use super::watch_helper;
 use super::{
-    filter_by_excluded_types, parse_since_filter, print_output, setup_database_only, OutputFormat,
+    filter_by_excluded_types, parse_since_filter, print_output, OutputFormat,
 };
+use crate::commands::setup::Setup;
 use execute::{run_grep_watch_mode, run_single_grep};
 use regex::RegexBuilder;
 
@@ -27,7 +28,7 @@ pub fn cmd_grep(args: GrepArgs) -> anyhow::Result<()> {
 
     // Handle dry-run mode
     if args.dry_run {
-        let db = setup_database_only()?;
+        let db = Setup::new().build()?.db;
         let repos = db.list_repositories_with_stats()?;
         let (repo_count, doc_count) = match &args.repo {
             Some(repo_id) => {

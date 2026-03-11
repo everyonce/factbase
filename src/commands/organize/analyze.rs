@@ -4,8 +4,9 @@
 
 use super::AnalyzeArgs;
 use crate::commands::{
-    find_repo_with_config, print_output, setup_embedding_with_timeout, OutputFormat,
+    print_output, setup_embedding_with_timeout, OutputFormat,
 };
+use crate::commands::setup::Setup;
 use factbase::{
     assess_staleness, detect_duplicate_entries, detect_ghost_files, detect_merge_candidates,
     detect_misplaced, detect_split_candidates, DuplicateEntry, GhostFile, MergeCandidate,
@@ -49,7 +50,8 @@ impl AnalysisResults {
 
 /// Run the analyze command.
 pub async fn run(args: AnalyzeArgs) -> anyhow::Result<()> {
-    let (config, db, repo) = find_repo_with_config(args.repo.as_deref())?;
+    let ctx = Setup::new().require_repo(args.repo.as_deref()).build()?;
+    let (config, db, repo) = ctx.take_repo();
     let format = OutputFormat::resolve(args.json, args.format);
     let progress = factbase::ProgressReporter::Cli { quiet: false };
 

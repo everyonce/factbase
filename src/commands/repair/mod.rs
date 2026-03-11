@@ -18,14 +18,15 @@ pub struct RepairArgs {
     pub quiet: bool,
 }
 
-use super::{resolve_repos, setup_database};
+use super::{resolve_repos};
+use crate::commands::setup::Setup;
 use factbase::processor::content_hash;
 use factbase::processor::repair::repair_document;
 use std::path::Path;
 
 pub fn cmd_repair(args: RepairArgs) -> anyhow::Result<()> {
-    let (_config, db) = setup_database()?;
-    let repos = db.list_repositories()?;
+    let ctx = Setup::new().build()?;
+    let repos = ctx.db.list_repositories()?;
     let repos_to_check = resolve_repos(repos, args.repo.as_deref())?;
 
     let mut total_fixed = 0usize;
@@ -33,12 +34,12 @@ pub fn cmd_repair(args: RepairArgs) -> anyhow::Result<()> {
 
     for repo in &repos_to_check {
         let docs = if let Some(ref doc_id) = args.doc {
-            match db.get_document(doc_id)? {
+            match ctx.db.get_document(doc_id)? {
                 Some(doc) if doc.repo_id == repo.id => vec![doc],
                 _ => continue,
             }
         } else {
-            db.list_documents(None, Some(&repo.id), None, 10000)?
+            ctx.db.list_documents(None, Some(&repo.id), None, 10000)?
         };
 
         for doc in &docs {
@@ -66,7 +67,7 @@ pub fn cmd_repair(args: RepairArgs) -> anyhow::Result<()> {
                     if path.exists() {
                         std::fs::write(path, repaired)?;
                         let new_hash = content_hash(repaired);
-                        db.update_document_content(&doc.id, repaired, &new_hash)?;
+                        ctx.db.update_document_content(&doc.id, repaired, &new_hash)?;
                         if !args.quiet {
                             println!("  ✓ Written to disk");
                         }

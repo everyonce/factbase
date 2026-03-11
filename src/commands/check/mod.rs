@@ -43,9 +43,10 @@ use output::{
 };
 
 use super::{
-    parse_since_filter, resolve_repos, setup_database, setup_embedding_with_timeout,
+    parse_since_filter, resolve_repos, setup_embedding_with_timeout,
     OutputFormat,
 };
+use crate::commands::setup::Setup;
 use chrono::Utc;
 use factbase::{config::validate_timeout, format_json, format_yaml, ProgressReporter};
 use incremental::{filter_documents_by_time, get_effective_since, update_check_timestamps};
@@ -61,7 +62,8 @@ use watch::run_check_watch_mode;
     fields(repo = ?args.repo, check_temporal = args.check_temporal, check_sources = args.check_sources, review = true)
 )]
 pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
-    let (config, db) = setup_database()?;
+    let ctx = Setup::new().build()?;
+    let (config, db) = (ctx.config, ctx.db);
     let repos = db.list_repositories()?;
 
     // Parse --since filter if provided
@@ -440,8 +442,8 @@ pub async fn cmd_check(args: CheckArgs) -> anyhow::Result<()> {
         let total_docs = exported_questions.len();
 
         // Determine format from file extension
-        let output = if super::utils::ends_with_ext(export_path, ".yaml")
-            || super::utils::ends_with_ext(export_path, ".yml")
+        let output = if super::paths::ends_with_ext(export_path, ".yaml")
+            || super::paths::ends_with_ext(export_path, ".yml")
         {
             format_yaml(&exported_questions)?
         } else {

@@ -1,6 +1,7 @@
 use anyhow::Context;
 
-use super::{print_output, resolve_repos, setup_database_only, OutputFormat};
+use super::{print_output, resolve_repos, OutputFormat};
+use crate::commands::setup::Setup;
 use clap::Parser;
 use factbase::Database;
 use serde::Serialize;
@@ -87,7 +88,7 @@ struct ConnectedDoc {
 }
 
 pub fn cmd_links(args: LinksArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
     let format = OutputFormat::resolve(args.json, args.format);
 
     if args.orphans {
