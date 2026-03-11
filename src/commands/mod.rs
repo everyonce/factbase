@@ -5,10 +5,8 @@ pub mod db;
 pub mod doctor;
 pub mod embeddings;
 pub mod errors;
-pub mod filters;
 #[cfg(feature = "mcp")]
 pub mod mcp;
-pub mod paths;
 pub mod repair;
 pub mod scan;
 #[cfg(feature = "mcp")]
@@ -17,24 +15,6 @@ pub mod setup;
 pub mod status;
 pub mod utils;
 pub mod version;
-pub mod watch_helper;
-
-// These modules are still needed by MCP tools but no longer have CLI commands
-pub mod check;
-pub mod grep;
-pub mod export;
-pub mod import;
-pub mod init;
-pub mod links;
-pub mod organize;
-pub mod repo;
-pub mod review;
-pub mod search;
-pub mod show;
-pub mod stats;
-
-#[cfg(test)]
-pub(crate) mod test_helpers;
 
 /// Output format for commands that support multiple formats
 #[derive(Clone, Copy, Default, clap::ValueEnum)]
@@ -77,14 +57,13 @@ pub use setup::{
 #[cfg(feature = "mcp")]
 pub use setup::setup_embedding;
 
-// Re-export error and path helpers
+// Re-export error helpers
 pub use errors::repo_path_not_found_error;
-pub use paths::{validate_directory_path, validate_file_path};
 
 // Re-export utils
 pub use utils::{
-    confirm_prompt, create_repository, filter_by_excluded_types,
-    parse_since, parse_since_filter, print_output, resolve_repos,
+    confirm_prompt, create_repository,
+    parse_since, parse_since_filter, print_output,
 };
 
 #[cfg(test)]

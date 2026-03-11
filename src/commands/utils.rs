@@ -48,42 +48,6 @@ pub fn create_repository(id: &str, name: &str, path: &Path) -> Repository {
     }
 }
 
-/// Filter repositories by optional repo ID, bailing if none remain.
-///
-/// If `repo_id` is `Some`, keeps only the matching repository.
-/// If `repo_id` is `None`, returns all repositories.
-/// Returns an error if the resulting list is empty.
-pub fn resolve_repos(
-    repos: Vec<Repository>,
-    repo_id: Option<&str>,
-) -> anyhow::Result<Vec<Repository>> {
-    let filtered: Vec<_> = if let Some(id) = repo_id {
-        repos.into_iter().filter(|r| r.id == id || r.name == id).collect()
-    } else {
-        repos
-    };
-    if filtered.is_empty() {
-        anyhow::bail!("No repositories found");
-    }
-    Ok(filtered)
-}
-
-/// Filter items by excluded types.
-///
-/// Removes items whose type (extracted via `get_type`) matches any of the excluded types.
-/// Items without a type are kept. Comparison is case-insensitive.
-pub fn filter_by_excluded_types<T>(
-    items: Vec<T>,
-    exclude_types: &[String],
-    get_type: impl Fn(&T) -> Option<&str>,
-) -> Vec<T> {
-    let exclude_lower: Vec<String> = exclude_types.iter().map(|t| t.to_lowercase()).collect();
-    items
-        .into_iter()
-        .filter(|item| get_type(item).is_none_or(|t| !exclude_lower.contains(&t.to_lowercase())))
-        .collect()
-}
-
 /// Parse an optional --since argument into an optional DateTime.
 /// Convenience wrapper around `parse_since` for the common pattern at call sites.
 pub fn parse_since_filter(since: &Option<String>) -> anyhow::Result<Option<DateTime<Utc>>> {
@@ -125,7 +89,6 @@ pub fn parse_since(since: &str) -> anyhow::Result<DateTime<Utc>> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
-    use std::path::Path;
 
     #[test]
     fn test_print_output_json() {
@@ -181,109 +144,5 @@ mod tests {
             *called.borrow(),
             "Table closure should be called for Table format"
         );
-    }
-
-    #[test]
-    fn test_filter_by_excluded_types_removes_matching() {
-        struct Item {
-            doc_type: Option<String>,
-        }
-        let items = vec![
-            Item {
-                doc_type: Some("draft".to_string()),
-            },
-            Item {
-                doc_type: Some("person".to_string()),
-            },
-            Item {
-                doc_type: Some("Draft".to_string()),
-            }, // case-insensitive
-        ];
-        let exclude = vec!["draft".to_string()];
-        let result = filter_by_excluded_types(items, &exclude, |i| i.doc_type.as_deref());
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].doc_type.as_deref(), Some("person"));
-    }
-
-    #[test]
-    fn test_filter_by_excluded_types_keeps_none() {
-        struct Item {
-            doc_type: Option<String>,
-        }
-        let items = vec![
-            Item { doc_type: None },
-            Item {
-                doc_type: Some("draft".to_string()),
-            },
-        ];
-        let exclude = vec!["draft".to_string()];
-        let result = filter_by_excluded_types(items, &exclude, |i| i.doc_type.as_deref());
-        assert_eq!(result.len(), 1);
-        assert!(result[0].doc_type.is_none());
-    }
-
-    #[test]
-    fn test_filter_by_excluded_types_empty_exclude() {
-        struct Item {
-            doc_type: Option<String>,
-        }
-        let items = vec![
-            Item {
-                doc_type: Some("draft".to_string()),
-            },
-            Item {
-                doc_type: Some("person".to_string()),
-            },
-        ];
-        let exclude: Vec<String> = vec![];
-        let result = filter_by_excluded_types(items, &exclude, |i| i.doc_type.as_deref());
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn test_resolve_repos_no_filter() {
-        let repos = vec![
-            create_repository("r1", "Repo 1", Path::new("/r1")),
-            create_repository("r2", "Repo 2", Path::new("/r2")),
-        ];
-        let result = resolve_repos(repos, None).unwrap();
-        assert_eq!(result.len(), 2);
-    }
-
-    #[test]
-    fn test_resolve_repos_with_filter() {
-        let repos = vec![
-            create_repository("r1", "Repo 1", Path::new("/r1")),
-            create_repository("r2", "Repo 2", Path::new("/r2")),
-        ];
-        let result = resolve_repos(repos, Some("r2")).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "r2");
-    }
-
-    #[test]
-    fn test_resolve_repos_empty_bails() {
-        let repos: Vec<Repository> = vec![];
-        let result = resolve_repos(repos, None);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No repositories"));
-    }
-
-    #[test]
-    fn test_resolve_repos_filter_no_match_bails() {
-        let repos = vec![create_repository("r1", "Repo 1", Path::new("/r1"))];
-        let result = resolve_repos(repos, Some("nonexistent"));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_resolve_repos_by_name() {
-        let repos = vec![
-            create_repository("r1", "Repo 1", Path::new("/r1")),
-            create_repository("r2", "Repo 2", Path::new("/r2")),
-        ];
-        let result = resolve_repos(repos, Some("Repo 2")).unwrap();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].id, "r2");
     }
 }
