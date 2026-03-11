@@ -128,6 +128,10 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("improve.resolve", &["doc_hint", "stale", "ctx"]),
         ("improve.enrich", &["doc_hint", "fields", "ctx"]),
         ("improve.check", &["doc_hint", "compare_note"]),
+        ("correct.parse", &["correction", "source_note"]),
+        ("correct.search", &["correction"]),
+        ("correct.fix", &["correction", "source_note", "source_footnote", "today"]),
+        ("correct.cleanup", &["correction", "source"]),
     ])
 }
 
@@ -225,7 +229,7 @@ mod tests {
     #[test]
     fn test_known_workflows_count() {
         let known = known_workflows();
-        assert_eq!(known.len(), 24);
+        assert_eq!(known.len(), 28);
     }
 
     #[test]
