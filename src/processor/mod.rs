@@ -95,7 +95,7 @@ pub use links::{
 };
 
 // Re-export format layer
-pub use format::{build_document_header, format_link, format_references_line, wikilink_path};
+pub use format::{build_document_header, extract_extra_frontmatter, format_link, format_references_line, wikilink_path};
 
 // Note: Unit tests are distributed to their respective submodules:
 // - core.rs: 16 tests (ID, title, type, hash)
