@@ -1,7 +1,9 @@
 //! Apply command - process answered organization suggestions from _orphans.md.
 
 use super::args::ApplyArgs;
-use crate::commands::{print_output, setup_database, utils::resolve_repos, OutputFormat};
+use crate::commands::{print_output, OutputFormat};
+use crate::commands::setup::Setup;
+use crate::commands::utils::resolve_repos;
 use factbase::{has_orphans, load_orphan_entries, process_orphan_answers, Database, Repository};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -78,7 +80,8 @@ pub struct PendingChange {
 pub fn run(args: ApplyArgs) -> anyhow::Result<()> {
     let format = OutputFormat::resolve(args.json, args.format);
 
-    let (_, db) = setup_database()?;
+    let ctx = Setup::new().build()?;
+    let (_, db) = (ctx.config, ctx.db);
     let repos = resolve_repos(db.list_repositories()?, args.repo.as_deref())?;
 
     if args.dry_run {

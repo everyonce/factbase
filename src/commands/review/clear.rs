@@ -1,7 +1,7 @@
 //! Clear unanswered review questions from documents.
 
 use super::args::ReviewArgs;
-use super::super::setup_database_only;
+use crate::commands::setup::Setup;
 use factbase::{
     content_hash, normalize_review_section, parse_review_queue, unwrap_review_callout,
     wrap_review_callout, QuestionType,
@@ -9,7 +9,7 @@ use factbase::{
 use std::fs;
 
 pub fn cmd_review_clear(args: &ReviewArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
     let repos = db.list_repositories()?;
 
     let type_filter: Option<QuestionType> = args

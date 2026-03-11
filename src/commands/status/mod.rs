@@ -4,7 +4,8 @@ mod display;
 
 pub use args::StatusArgs;
 
-use super::{find_repo, parse_since_filter, print_output, OutputFormat};
+use super::{parse_since_filter, print_output, OutputFormat};
+use crate::commands::setup::Setup;
 use chrono::{DateTime, Utc};
 use detailed::format_repo_status_json;
 use display::print_repo_status_text;
@@ -21,7 +22,8 @@ pub fn format_coverage(coverage: f32) -> String {
 }
 
 pub fn cmd_status(args: StatusArgs) -> anyhow::Result<()> {
-    let (db, _) = find_repo(None)?;
+    let ctx = Setup::new().require_repo(None).build()?;
+    let db = &ctx.db;
     let format = OutputFormat::resolve(args.json, args.format);
 
     // Parse --since filter if provided

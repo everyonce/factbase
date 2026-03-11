@@ -1,6 +1,6 @@
 //! Review question import logic.
 
-use super::super::setup_database_only;
+use crate::commands::setup::Setup;
 use super::args::ReviewArgs;
 use anyhow::Context;
 use factbase::{append_review_questions, QuestionType, ReviewQuestion};
@@ -54,7 +54,7 @@ fn imported_to_review_question(imported: &ImportedQuestion) -> ReviewQuestion {
 }
 
 pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     // Read and parse the import file
     let content = fs::read_to_string(import_path)
@@ -62,8 +62,8 @@ pub fn cmd_review_import(args: &ReviewArgs, import_path: &str) -> anyhow::Result
 
     // Determine format from file extension
     let imported: Vec<ImportedDocQuestions> =
-        if crate::commands::utils::ends_with_ext(import_path, ".yaml")
-            || crate::commands::utils::ends_with_ext(import_path, ".yml")
+        if crate::commands::paths::ends_with_ext(import_path, ".yaml")
+            || crate::commands::paths::ends_with_ext(import_path, ".yml")
         {
             serde_yaml_ng::from_str(&content).context("Failed to parse YAML")?
         } else {

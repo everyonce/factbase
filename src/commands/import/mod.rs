@@ -17,7 +17,8 @@ mod validate;
 
 pub use args::ImportArgs;
 
-use super::{setup_database_only, validate_file_path};
+use super::{validate_file_path};
+use crate::commands::setup::Setup;
 use factbase::ProgressReporter;
 use formats::{import_directory, import_json};
 
@@ -26,7 +27,7 @@ use formats::{import_json_zst, import_md_zst, import_tar_zst};
 
 /// Import documents into a repository.
 pub fn cmd_import(args: ImportArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
 
     let repo = db.require_repository(&args.repo)?;
 

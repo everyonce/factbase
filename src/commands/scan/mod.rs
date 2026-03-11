@@ -22,7 +22,8 @@ mod verify;
 
 pub use args::ScanArgs;
 
-use super::{parse_since, resolve_repos, setup_database, setup_embedding_with_timeout};
+use super::{parse_since, resolve_repos, setup_embedding_with_timeout};
+use crate::commands::setup::Setup;
 use factbase::{
     config::validate_timeout, find_repo_for_path, format_json, full_scan, scan_all_repositories,
     DocumentProcessor, FileWatcher, ProgressReporter, ScanContext, ScanCoordinator, ScanOptions,
@@ -41,7 +42,8 @@ use verify::cmd_scan_verify;
     fields(repo = ?args.repo, dry_run = args.dry_run, watch = args.watch)
 )]
 pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
-    let (config, db) = setup_database()?;
+    let ctx = Setup::new().build()?;
+    let (config, db) = (ctx.config, ctx.db);
     let scanner = Scanner::new(&config.watcher.ignore_patterns);
     let quiet = args.quiet || args.json;
     let json_output = args.json;

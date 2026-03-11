@@ -5,8 +5,9 @@
 use super::SplitArgs;
 use super::merge::TemporalIssueOutput;
 use crate::commands::{
-    confirm_prompt, find_repo_with_config, print_output, OutputFormat,
+    confirm_prompt, print_output, OutputFormat,
 };
+use crate::commands::setup::Setup;
 use factbase::{
     execute_split, extract_sections, plan_split, verify_split, SplitPlan, SplitResult, SplitSection,
 };
@@ -77,7 +78,8 @@ impl SplitResultOutput {
 
 /// Run the split command.
 pub async fn run(args: SplitArgs) -> anyhow::Result<()> {
-    let (_config, db, repo) = find_repo_with_config(None)?;
+    let ctx = Setup::new().require_repo(None).build()?;
+    let (_config, db, repo) = ctx.take_repo();
     let format = OutputFormat::resolve(args.json, args.format);
 
     // Validate document ID exists

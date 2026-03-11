@@ -18,9 +18,10 @@ pub use args::SearchArgs;
 use crate::commands::filters::{
     apply_exclude_filters, apply_include_filters, parse_filter_expr, FilterExpr,
 };
-use crate::commands::{filter_by_excluded_types, find_repo_with_config, setup_cached_embedding};
+use crate::commands::{filter_by_excluded_types, setup_cached_embedding};
+use crate::commands::setup::Setup;
 use crate::commands::watch_helper::{run_async_watch_loop, WatchContext};
-use crate::commands::{setup_database, resolve_repos};
+use crate::commands::resolve_repos;
 use factbase::{
     calculate_recency_boost, config::validate_timeout, format_json, overlaps_point, overlaps_range,
     parse_temporal_tags, EmbeddingProvider, TemporalTagType,
@@ -39,9 +40,9 @@ use std::fs;
 pub async fn cmd_search(args: SearchArgs) -> anyhow::Result<()> {
     // Watch mode: re-run search when files change
     if args.watch {
-        let (config, db) = setup_database()?;
-        let repos = resolve_repos(db.list_repositories()?, args.repo.as_deref())?;
-        let mut ctx = WatchContext::new(&config, repos)?;
+        let setup = Setup::new().build()?;
+        let repos = resolve_repos(setup.db.list_repositories()?, args.repo.as_deref())?;
+        let mut ctx = WatchContext::new(&setup.config, repos)?;
         let query = args.query.clone();
         return run_async_watch_loop(
             &mut ctx,
@@ -60,7 +61,8 @@ pub async fn cmd_search(args: SearchArgs) -> anyhow::Result<()> {
 
 /// Execute a single search and display results
 pub(crate) async fn run_single_search(args: &SearchArgs) -> anyhow::Result<()> {
-    let (config, db, _repo) = find_repo_with_config(args.repo.as_deref())?;
+    let ctx = Setup::new().require_repo(args.repo.as_deref()).build()?;
+    let (config, db) = (&ctx.config, &ctx.db);
 
     // Parse --during range if provided
     let during_range = if let Some(ref during) = args.during {

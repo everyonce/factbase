@@ -1,4 +1,4 @@
-use super::setup_database;
+use crate::commands::setup::Setup;
 use clap::Parser;
 use factbase::{format_bytes, format_json};
 use serde::Serialize;
@@ -41,7 +41,8 @@ struct StatsOutput {
 }
 
 pub fn cmd_stats(args: StatsArgs) -> anyhow::Result<()> {
-    let (config, db) = setup_database()?;
+    let ctx = Setup::new().build()?;
+    let (config, db) = (ctx.config, ctx.db);
 
     let repos = db.list_repositories_with_stats()?;
 

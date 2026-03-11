@@ -1,6 +1,7 @@
 //! Review status display logic.
 
-use super::super::{parse_since_filter, print_output, setup_db_and_resolve_repos, OutputFormat};
+use super::super::{parse_since_filter, print_output, OutputFormat};
+use crate::commands::setup::Setup;
 use super::args::ReviewArgs;
 use chrono::{DateTime, Utc};
 use factbase::{parse_review_queue, QuestionType};
@@ -49,7 +50,8 @@ pub fn file_modified_since(file_path: &Path, since: &DateTime<Utc>) -> bool {
 }
 
 pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
-    let (db, repos_to_process) = setup_db_and_resolve_repos(args.repo.as_deref())?;
+    let ctx = Setup::new().resolve_repos(args.repo.as_deref()).build()?;
+    let (db, repos_to_process) = (&ctx.db, ctx.repos());
 
     // Parse --since filter if provided
     let since_filter: Option<DateTime<Utc>> = parse_since_filter(&args.since)?;
@@ -62,7 +64,7 @@ pub fn cmd_review_status(args: &ReviewArgs) -> anyhow::Result<()> {
     let mut docs_with_questions: Vec<(String, String, usize, usize)> = Vec::with_capacity(32); // (id, title, total, answered)
     let mut filtered_count = 0usize;
 
-    for repo in &repos_to_process {
+    for repo in repos_to_process {
         let docs = db.get_documents_with_review_queue(Some(&repo.id))?;
 
         for doc in &docs {

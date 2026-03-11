@@ -1,8 +1,9 @@
 //! Review answer application logic.
 
 use super::super::{
-    parse_since_filter, setup_db_and_resolve_repos,
+    parse_since_filter,
 };
+use crate::commands::setup::Setup;
 use super::args::ReviewArgs;
 use factbase::{
     apply_all_review_answers, config::validate_timeout, extract_inbox_blocks, ApplyConfig,
@@ -18,7 +19,8 @@ use tracing::error;
     fields(repo = ?args.repo, dry_run = args.dry_run, detailed = args.detailed)
 )]
 pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
-    let (db, repos_to_process) = setup_db_and_resolve_repos(args.repo.as_deref())?;
+    let ctx = Setup::new().resolve_repos(args.repo.as_deref()).build()?;
+    let (db, repos_to_process) = (&ctx.db, ctx.repos());
 
     let since_filter = parse_since_filter(&args.since)?;
 
@@ -95,7 +97,7 @@ pub async fn cmd_review_apply(args: &ReviewArgs) -> anyhow::Result<()> {
     }
 
     // --- Inbox block processing ---
-    let inbox_docs = collect_inbox_documents(&db, &repos_to_process, since_filter.as_ref())?;
+    let inbox_docs = collect_inbox_documents(db, repos_to_process, since_filter.as_ref())?;
 
     if !inbox_docs.is_empty() {
         if !args.quiet {

@@ -8,60 +8,10 @@ use std::path::Path;
 
 use super::OutputFormat;
 
-// --- Error helpers (merged from errors.rs) ---
-
-/// Create a "Database not found" error with helpful suggestion
-pub fn db_not_found_error(path: &Path) -> anyhow::Error {
-    anyhow::anyhow!(
-        "Database not found at {}\nRun 'factbase init' to create database",
-        path.display()
-    )
-}
-
-/// Create a "Repository path not found" error with helpful suggestion
-pub fn repo_path_not_found_error() -> anyhow::Error {
-    anyhow::anyhow!(
-        "Repository path not found\nCheck that the repository path exists and is accessible"
-    )
-}
-
-// --- Path validation (merged from paths.rs) ---
-
-/// Validate that a path exists and is a directory
-pub fn validate_directory_path(path: &Path) -> anyhow::Result<()> {
-    if !path.exists() {
-        anyhow::bail!("Path does not exist: {}", path.display());
-    }
-    if !path.is_dir() {
-        anyhow::bail!("Path is not a directory: {}", path.display());
-    }
-    Ok(())
-}
-
-/// Validate that a path exists (file or directory)
-pub fn validate_file_path(path: &Path) -> anyhow::Result<()> {
-    if !path.exists() {
-        anyhow::bail!("Path does not exist: {}", path.display());
-    }
-    Ok(())
-}
-
-/// Case-insensitive file extension check.
-pub fn ends_with_ext(path: &str, ext: &str) -> bool {
-    path.len() >= ext.len() && path[path.len() - ext.len()..].eq_ignore_ascii_case(ext)
-}
-
 /// Print data in the specified output format.
 ///
 /// For JSON and YAML formats, serializes the data directly.
 /// For Table format, calls the provided closure to render custom output.
-///
-/// # Example
-/// ```ignore
-/// print_output(format, &data, || {
-///     println!("Custom table output");
-/// })?;
-/// ```
 pub fn print_output<T: Serialize>(
     format: OutputFormat,
     data: &T,
@@ -117,32 +67,10 @@ pub fn resolve_repos(
     Ok(filtered)
 }
 
-/// Open the database and resolve repositories in one step.
-///
-/// Combines the common 3-line pattern:
-/// ```ignore
-/// let db = setup_database_only()?;
-/// let repos = db.list_repositories()?;
-/// let repos = resolve_repos(repos, repo_filter)?;
-/// ```
-pub fn setup_db_and_resolve_repos(
-    repo_filter: Option<&str>,
-) -> anyhow::Result<(factbase::Database, Vec<Repository>)> {
-    let db = super::setup_database_only()?;
-    let repos = db.list_repositories()?;
-    let repos = resolve_repos(repos, repo_filter)?;
-    Ok((db, repos))
-}
-
 /// Filter items by excluded types.
 ///
 /// Removes items whose type (extracted via `get_type`) matches any of the excluded types.
 /// Items without a type are kept. Comparison is case-insensitive.
-///
-/// # Example
-/// ```ignore
-/// let results = filter_by_excluded_types(results, &exclude_types, |r| r.doc_type.as_deref());
-/// ```
 pub fn filter_by_excluded_types<T>(
     items: Vec<T>,
     exclude_types: &[String],
@@ -197,91 +125,6 @@ mod tests {
     use super::*;
     use std::cell::RefCell;
     use std::path::Path;
-
-    // --- Error helper tests ---
-
-    #[test]
-    fn test_db_not_found_error_contains_path() {
-        let path = std::path::Path::new("/some/path/factbase.db");
-        let err = db_not_found_error(path);
-        let msg = err.to_string();
-        assert!(msg.contains("/some/path/factbase.db"));
-        assert!(msg.contains("Database not found"));
-    }
-
-    #[test]
-    fn test_db_not_found_error_contains_suggestion() {
-        let path = std::path::Path::new("/test/db.sqlite");
-        let err = db_not_found_error(path);
-        let msg = err.to_string();
-        assert!(msg.contains("factbase init"));
-    }
-
-    #[test]
-    fn test_repo_path_not_found_error_message() {
-        let err = repo_path_not_found_error();
-        let msg = err.to_string();
-        assert!(msg.contains("Repository path not found"));
-    }
-
-    #[test]
-    fn test_repo_path_not_found_error_contains_suggestion() {
-        let err = repo_path_not_found_error();
-        let msg = err.to_string();
-        assert!(msg.contains("Check that the repository path exists"));
-    }
-
-    // --- Path validation tests ---
-
-    #[test]
-    fn test_validate_directory_path_nonexistent() {
-        let path = std::path::Path::new("/nonexistent/path/that/does/not/exist");
-        let result = validate_directory_path(path);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("Path does not exist"));
-    }
-
-    #[test]
-    fn test_validate_directory_path_is_file() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-        let result = validate_directory_path(&path);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("Path is not a directory"));
-    }
-
-    #[test]
-    fn test_validate_directory_path_valid() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let result = validate_directory_path(path);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_file_path_nonexistent() {
-        let path = std::path::Path::new("/nonexistent/path/that/does/not/exist");
-        let result = validate_file_path(path);
-        assert!(result.is_err());
-        let msg = result.unwrap_err().to_string();
-        assert!(msg.contains("Path does not exist"));
-    }
-
-    #[test]
-    fn test_validate_file_path_valid_file() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-        let result = validate_file_path(&path);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_file_path_valid_directory() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let result = validate_file_path(path);
-        assert!(result.is_ok());
-    }
-
-    // --- Original utils tests ---
 
     #[test]
     fn test_print_output_json() {

@@ -2,9 +2,9 @@ use super::{
     args::GrepArgs,
     filter_by_excluded_types,
     output::{compute_grep_stats, highlight_matches, should_highlight_output},
-    parse_since_filter, print_output, setup_database_only, OutputFormat,
+    parse_since_filter, print_output, OutputFormat,
 };
-use crate::commands::setup_database;
+use crate::commands::setup::Setup;
 use chrono::{DateTime, Utc};
 use factbase::{ContentSearchParams, ProgressReporter};
 use regex::RegexBuilder;
@@ -15,7 +15,7 @@ pub(super) fn run_single_grep(args: &GrepArgs) -> anyhow::Result<()> {
     // Parse --since if provided
     let since: Option<DateTime<Utc>> = parse_since_filter(&args.since)?;
 
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
     let progress = ProgressReporter::Cli { quiet: args.quiet };
 
     let params = ContentSearchParams {
@@ -150,9 +150,9 @@ pub(super) fn run_grep_watch_mode(args: &GrepArgs) -> anyhow::Result<()> {
     use super::watch_helper::{run_sync_watch_loop, WatchContext};
     use crate::commands::utils::resolve_repos;
 
-    let (config, db) = setup_database()?;
-    let repos = resolve_repos(db.list_repositories()?, args.repo.as_deref())?;
-    let mut ctx = WatchContext::new(&config, repos)?;
+    let setup = Setup::new().build()?;
+    let repos = resolve_repos(setup.db.list_repositories()?, args.repo.as_deref())?;
+    let mut ctx = WatchContext::new(&setup.config, repos)?;
 
     let pattern = args.pattern.clone();
     run_sync_watch_loop(

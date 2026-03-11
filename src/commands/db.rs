@@ -1,4 +1,4 @@
-use super::{setup_database_checked, utils::print_output, OutputFormat};
+use super::{setup::Setup, utils::print_output, OutputFormat};
 use clap::Parser;
 use factbase::format_bytes;
 use serde::Serialize;
@@ -64,7 +64,8 @@ pub fn format_vacuum_result(before: u64, after: u64) -> String {
 }
 
 pub fn cmd_db_vacuum() -> anyhow::Result<()> {
-    let (_config, db, _db_path) = setup_database_checked()?;
+    let ctx = Setup::new().check_exists().build()?;
+    let (_config, db, _db_path) = (ctx.config, ctx.db, ctx.db_path);
     let (before, after) = db.vacuum()?;
 
     println!("Database optimized:");
@@ -102,7 +103,8 @@ struct Counts {
 }
 
 pub fn cmd_db_stats(args: DbStatsArgs) -> anyhow::Result<()> {
-    let (config, db, db_path) = setup_database_checked()?;
+    let ctx = Setup::new().check_exists().build()?;
+    let (config, db, db_path) = (ctx.config, ctx.db, ctx.db_path);
     let compression = config.database.is_compression_enabled();
 
     // Get pool stats
@@ -165,7 +167,8 @@ pub fn cmd_db_stats(args: DbStatsArgs) -> anyhow::Result<()> {
 }
 
 pub fn cmd_db_backfill_word_counts() -> anyhow::Result<()> {
-    let (_config, db, _db_path) = setup_database_checked()?;
+    let ctx = Setup::new().check_exists().build()?;
+    let (_config, db, _db_path) = (ctx.config, ctx.db, ctx.db_path);
     let updated = db.backfill_word_counts()?;
 
     if updated == 0 {

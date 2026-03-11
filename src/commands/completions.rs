@@ -1,4 +1,4 @@
-use super::setup_database;
+use crate::commands::setup::Setup;
 use clap::{CommandFactory, Parser};
 use clap_complete::{generate, Shell};
 use std::io::{self, Write};
@@ -49,8 +49,8 @@ pub fn cmd_completions(args: CompletionsArgs) {
 }
 
 fn get_repo_ids() -> Vec<String> {
-    match setup_database() {
-        Ok((_, db)) => db
+    match Setup::new().build() {
+        Ok(ctx) => ctx.db
             .list_repositories()
             .unwrap_or_default()
             .into_iter()

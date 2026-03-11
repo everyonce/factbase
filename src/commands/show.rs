@@ -1,4 +1,5 @@
-use super::{print_output, setup_database_only, OutputFormat};
+use super::{print_output, OutputFormat};
+use crate::commands::setup::Setup;
 use clap::Parser;
 use factbase::Database;
 use serde::Serialize;
@@ -48,7 +49,7 @@ struct LinkInfo {
 }
 
 pub fn cmd_show(args: ShowArgs) -> anyhow::Result<()> {
-    let db = setup_database_only()?;
+    let db = Setup::new().build()?.db;
     let format = OutputFormat::resolve(args.json, args.format);
 
     let output = get_document_details(&db, &args.id)?;
