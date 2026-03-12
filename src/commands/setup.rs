@@ -20,10 +20,7 @@ use super::errors::db_not_found_error;
 use factbase::config::Config;
 use factbase::database::Database;
 use factbase::embedding::{
-    CachedEmbedding,
-    EmbeddingProvider,
-    OllamaEmbedding,
-    PersistentCachedEmbedding,
+    CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding,
 };
 use factbase::models::Repository;
 use std::path::PathBuf;
@@ -117,7 +114,9 @@ pub struct SetupContext {
 impl SetupContext {
     /// Take ownership of the resolved single repository.
     pub fn take_repo(self) -> (Config, Database, Repository) {
-        let repo = self.repo.expect("require_repo() was not called on Setup builder");
+        let repo = self
+            .repo
+            .expect("require_repo() was not called on Setup builder");
         (self.config, self.db, repo)
     }
 }
@@ -139,9 +138,10 @@ pub fn auto_init_repo(dir: &std::path::Path) -> anyhow::Result<(Config, Database
     let config = Config::load(None)?;
     let db_path = factbase_dir.join("factbase.db");
     let db = config.open_database(&db_path)?;
-    let name = dir
-        .file_name()
-        .map_or_else(|| factbase::DEFAULT_REPO_ID.into(), |s| s.to_string_lossy().to_string());
+    let name = dir.file_name().map_or_else(
+        || factbase::DEFAULT_REPO_ID.into(),
+        |s| s.to_string_lossy().to_string(),
+    );
     let repo = super::create_repository(factbase::DEFAULT_REPO_ID, &name, dir);
     db.upsert_repository(&repo)?;
     tracing::info!("Auto-initialized factbase at {}", dir.display());
@@ -223,7 +223,9 @@ pub async fn setup_embedding_with_timeout(
         #[cfg(not(feature = "bedrock"))]
         "bedrock" => {
             eprintln!("error: Config specifies provider 'bedrock' but this binary was built without Bedrock support.");
-            eprintln!("hint: Install with Bedrock support: cargo install --path . --features bedrock");
+            eprintln!(
+                "hint: Install with Bedrock support: cargo install --path . --features bedrock"
+            );
             eprintln!("      Or switch to Ollama: set embedding.provider = 'ollama' in config.");
             std::process::exit(1);
         }
@@ -274,9 +276,7 @@ mod tests {
     fn test_config() -> Config {
         let config = Config::default();
         Config {
-            embedding: EmbeddingConfig {
-                ..config.embedding
-            },
+            embedding: EmbeddingConfig { ..config.embedding },
             ..config
         }
     }

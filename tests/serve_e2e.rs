@@ -114,7 +114,6 @@ async fn test_graceful_shutdown() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -357,7 +356,6 @@ async fn test_agent_workflow_via_mcp() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 

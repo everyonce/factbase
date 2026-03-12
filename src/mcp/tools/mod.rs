@@ -49,8 +49,8 @@ pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
 pub use repository::{detect_links, scan_repository};
 pub use review::{
-    answer_question, answer_questions, bulk_answer_questions,
-    generate_questions, get_deferred_items, get_review_queue, check_repository,
+    answer_question, answer_questions, bulk_answer_questions, check_repository, generate_questions,
+    get_deferred_items, get_review_queue,
 };
 pub use search::{get_fact_pairs, search_content, search_knowledge};
 
@@ -160,16 +160,50 @@ async fn dispatch_tool<E: EmbeddingProvider>(
 
     match tool_name {
         "search_knowledge" => search_knowledge(db, embedding, args).await,
-        "get_entity" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_entity(&db, &a)).await }
-        "list_entities" => { let db = db.clone(); let a = args.clone(); run_blocking(move || list_entities(&db, &a)).await }
-        "get_perspective" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_perspective(&db, &a)).await }
-        "create_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || create_document(&db, &a)).await }
-        "update_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || update_document(&db, &a)).await }
-        "delete_document" => { let db = db.clone(); let a = args.clone(); run_blocking(move || delete_document(&db, &a)).await }
-        "bulk_create_documents" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || bulk_create_documents(&db, &a, &r)).await }
+        "get_entity" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || get_entity(&db, &a)).await
+        }
+        "list_entities" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || list_entities(&db, &a)).await
+        }
+        "get_perspective" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || get_perspective(&db, &a)).await
+        }
+        "create_document" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || create_document(&db, &a)).await
+        }
+        "update_document" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || update_document(&db, &a)).await
+        }
+        "delete_document" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || delete_document(&db, &a)).await
+        }
+        "bulk_create_documents" => {
+            let db = db.clone();
+            let a = args.clone();
+            let r = reporter.clone();
+            run_blocking(move || bulk_create_documents(&db, &a, &r)).await
+        }
         "get_review_queue" => get_review_queue(db, args, reporter),
         "get_deferred_items" => get_deferred_items(db, args, reporter),
-        "answer_questions" => { let db = db.clone(); let a = args.clone(); let r = reporter.clone(); run_blocking(move || answer_questions(&db, &a, &r)).await }
+        "answer_questions" => {
+            let db = db.clone();
+            let a = args.clone();
+            let r = reporter.clone();
+            run_blocking(move || answer_questions(&db, &a, &r)).await
+        }
         "check_repository" => check_repository(db, embedding, args, reporter).await,
         "scan_repository" => scan_repository(db, embedding, args, reporter).await,
         "detect_links" => detect_links(db, args, reporter).await,
@@ -180,7 +214,9 @@ async fn dispatch_tool<E: EmbeddingProvider>(
             let a = args.clone();
             run_blocking(move || {
                 let repo_id = get_str_arg(&a, "repo");
-                let repo_path = db.list_repositories().ok()
+                let repo_path = db
+                    .list_repositories()
+                    .ok()
                     .and_then(|repos| {
                         if let Some(id) = repo_id {
                             repos.into_iter().find(|r| r.id == id)
@@ -190,20 +226,41 @@ async fn dispatch_tool<E: EmbeddingProvider>(
                     })
                     .map(|r| r.path);
                 Ok(get_authoring_guide_for_repo(repo_path.as_deref()))
-            }).await
+            })
+            .await
         }
-        "embeddings_export" => { let db = db.clone(); let a = args.clone(); run_blocking(move || embeddings_export(&db, &a)).await }
-        "embeddings_import" => { let db = db.clone(); let a = args.clone(); run_blocking(move || embeddings_import(&db, &a)).await }
-        "embeddings_status" => { let db = db.clone(); run_blocking(move || embeddings_status_tool(&db)).await }
+        "embeddings_export" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || embeddings_export(&db, &a)).await
+        }
+        "embeddings_import" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || embeddings_import(&db, &a)).await
+        }
+        "embeddings_status" => {
+            let db = db.clone();
+            run_blocking(move || embeddings_status_tool(&db)).await
+        }
         "get_link_suggestions" => get_link_suggestions(db, embedding, args).await,
-        "store_links" => { let db = db.clone(); let a = args.clone(); run_blocking(move || store_links(&db, &a)).await }
-        "get_fact_pairs" => { let db = db.clone(); let a = args.clone(); run_blocking(move || get_fact_pairs(&db, &a)).await }
+        "store_links" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || store_links(&db, &a)).await
+        }
+        "get_fact_pairs" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || get_fact_pairs(&db, &a)).await
+        }
         "workflow" => {
             let is_bootstrap = args.get("workflow").and_then(|v| v.as_str()) == Some("bootstrap");
             if is_bootstrap {
                 workflow::bootstrap(args)
             } else {
-                let db = db.clone(); let a = args.clone();
+                let db = db.clone();
+                let a = args.clone();
                 run_blocking(move || workflow::workflow(&db, &a)).await
             }
         }
@@ -241,7 +298,10 @@ async fn handle_search_tool<E: EmbeddingProvider>(
     args: &Value,
     reporter: &crate::ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("semantic");
+    let mode = args
+        .get("mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("semantic");
 
     let mut result = match mode {
         "content" => {
@@ -274,7 +334,8 @@ async fn handle_search_tool<E: EmbeddingProvider>(
             run_blocking(move || {
                 let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
                 db.get_links_for_documents(&refs)
-            }).await?
+            })
+            .await?
         };
 
         // Collect all unique target IDs to resolve titles
@@ -291,7 +352,8 @@ async fn handle_search_tool<E: EmbeddingProvider>(
             run_blocking(move || {
                 let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
                 db.get_document_titles_by_ids(&refs)
-            }).await?
+            })
+            .await?
         };
 
         for item in items.iter_mut() {
@@ -332,20 +394,27 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
     if let Some(tool_name) = op_to_tool_name(op) {
         // For answer op: propagate top-level doc_id into each answer if missing
         if op == "answer" {
-            if let Some(doc_id) = args.get("doc_id").and_then(|v| v.as_str()).map(String::from) {
+            if let Some(doc_id) = args
+                .get("doc_id")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+            {
                 if let Some(answers) = args.get("answers").and_then(|v| v.as_array()) {
                     let mut patched_args = args.clone();
-                    let patched_answers: Vec<Value> = answers.iter().map(|a| {
-                        if a.get("doc_id").is_some() {
-                            a.clone()
-                        } else {
-                            let mut a = a.clone();
-                            if let Some(obj) = a.as_object_mut() {
-                                obj.insert("doc_id".into(), Value::String(doc_id.clone()));
+                    let patched_answers: Vec<Value> = answers
+                        .iter()
+                        .map(|a| {
+                            if a.get("doc_id").is_some() {
+                                a.clone()
+                            } else {
+                                let mut a = a.clone();
+                                if let Some(obj) = a.as_object_mut() {
+                                    obj.insert("doc_id".into(), Value::String(doc_id.clone()));
+                                }
+                                a
                             }
-                            a
-                        }
-                    }).collect();
+                        })
+                        .collect();
                     if let Some(obj) = patched_args.as_object_mut() {
                         obj.insert("answers".into(), Value::Array(patched_answers));
                     }
@@ -368,18 +437,24 @@ async fn handle_factbase_op<E: EmbeddingProvider>(
         }
         // links: action=suggest or action=store
         "links" => {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("suggest");
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("suggest");
             match action {
                 "store" => dispatch_tool(db, embedding, "store_links", args, reporter).await,
                 "migrate" => Err(FactbaseError::Config(
-                    "links action='migrate' removed. Link migration is no longer needed.".into()
+                    "links action='migrate' removed. Link migration is no longer needed.".into(),
                 )),
                 _ => dispatch_tool(db, embedding, "get_link_suggestions", args, reporter).await,
             }
         }
         // embeddings: action=export/import/status
         "embeddings" => {
-            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("status");
+            let action = args
+                .get("action")
+                .and_then(|v| v.as_str())
+                .unwrap_or("status");
             match action {
                 "export" => dispatch_tool(db, embedding, "embeddings_export", args, reporter).await,
                 "import" => dispatch_tool(db, embedding, "embeddings_import", args, reporter).await,
@@ -424,23 +499,31 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
 
                 // Legacy aliases (backward compat — not in schema)
                 "get_duplicate_entries" => {
-                    dispatch_tool(db, embedding, "organize_analyze",
+                    dispatch_tool(
+                        db,
+                        embedding,
+                        "organize_analyze",
                         &serde_json::json!({"focus": "duplicates", "repo": args.get("repo")}),
-                        &reporter).await
+                        &reporter,
+                    )
+                    .await
                 }
                 "organize_move" => {
                     let mut a = args.clone();
-                    a.as_object_mut().map(|m| m.insert("action".into(), "move".into()));
+                    a.as_object_mut()
+                        .map(|m| m.insert("action".into(), "move".into()));
                     dispatch_tool(db, embedding, "organize", &a, &reporter).await
                 }
                 "organize_retype" => {
                     let mut a = args.clone();
-                    a.as_object_mut().map(|m| m.insert("action".into(), "retype".into()));
+                    a.as_object_mut()
+                        .map(|m| m.insert("action".into(), "retype".into()));
                     dispatch_tool(db, embedding, "organize", &a, &reporter).await
                 }
                 "organize_apply" => {
                     let mut a = args.clone();
-                    a.as_object_mut().map(|m| m.insert("action".into(), "apply".into()));
+                    a.as_object_mut()
+                        .map(|m| m.insert("action".into(), "apply".into()));
                     dispatch_tool(db, embedding, "organize", &a, &reporter).await
                 }
                 other => {
@@ -576,11 +659,18 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
 
-        assert_eq!(schema_names, expected, "schema should have exactly search + workflow + factbase");
+        assert_eq!(
+            schema_names, expected,
+            "schema should have exactly search + workflow + factbase"
+        );
 
         // All legacy tool names should still be dispatchable (tested via integration tests)
         let legacy = schema::legacy_tool_names();
-        assert!(legacy.len() >= 23, "should have active legacy tool names as aliases, got {}", legacy.len());
+        assert!(
+            legacy.len() >= 23,
+            "should have active legacy tool names as aliases, got {}",
+            legacy.len()
+        );
     }
 
     #[test]
@@ -591,15 +681,24 @@ mod tests {
         // search, factbase and workflow should have doc_type param
         let search = tools.iter().find(|t| t["name"] == "search").unwrap();
         let s_props = search["inputSchema"]["properties"].as_object().unwrap();
-        assert!(s_props.contains_key("doc_type"), "search should have doc_type param");
+        assert!(
+            s_props.contains_key("doc_type"),
+            "search should have doc_type param"
+        );
 
         let factbase = tools.iter().find(|t| t["name"] == "factbase").unwrap();
         let fb_props = factbase["inputSchema"]["properties"].as_object().unwrap();
-        assert!(fb_props.contains_key("doc_type"), "factbase should have doc_type param");
+        assert!(
+            fb_props.contains_key("doc_type"),
+            "factbase should have doc_type param"
+        );
 
         let workflow = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let wf_props = workflow["inputSchema"]["properties"].as_object().unwrap();
-        assert!(wf_props.contains_key("doc_type"), "workflow should have doc_type param");
+        assert!(
+            wf_props.contains_key("doc_type"),
+            "workflow should have doc_type param"
+        );
     }
 
     #[tokio::test]
@@ -785,8 +884,14 @@ mod tests {
         assert_eq!(result["links_detected"], 0);
         assert!(result["total"].as_u64().unwrap() > 1);
         let hint = result["hint"].as_str().unwrap();
-        assert!(hint.contains("exact title"), "hint should mention exact titles");
-        assert!(hint.contains("not markdown links"), "hint should warn about markdown links");
+        assert!(
+            hint.contains("exact title"),
+            "hint should mention exact titles"
+        );
+        assert!(
+            hint.contains("not markdown links"),
+            "hint should warn about markdown links"
+        );
     }
 
     #[tokio::test]
@@ -811,7 +916,10 @@ mod tests {
             .unwrap();
 
         // Single doc → no hint
-        assert!(result["hint"].is_null(), "should not show hint for single doc");
+        assert!(
+            result["hint"].is_null(),
+            "should not show hint for single doc"
+        );
     }
 
     #[tokio::test]
@@ -861,8 +969,14 @@ mod tests {
         let has_progress = messages
             .iter()
             .any(|m| m.get("progress").is_some() && m.get("total").is_some());
-        assert!(has_phase, "expected phase messages from check, got: {messages:?}");
-        assert!(has_progress, "expected numeric progress from check, got: {messages:?}");
+        assert!(
+            has_phase,
+            "expected phase messages from check, got: {messages:?}"
+        );
+        assert!(
+            has_progress,
+            "expected numeric progress from check, got: {messages:?}"
+        );
     }
 
     #[test]
@@ -871,8 +985,14 @@ mod tests {
         let tools = result["tools"].as_array().expect("tools array");
         let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
         let props = fb["inputSchema"]["properties"].as_object().unwrap();
-        assert!(props.contains_key("time_budget_secs"), "factbase should have time_budget_secs param");
-        assert!(props.contains_key("resume"), "factbase should have resume param");
+        assert!(
+            props.contains_key("time_budget_secs"),
+            "factbase should have time_budget_secs param"
+        );
+        assert!(
+            props.contains_key("resume"),
+            "factbase should have resume param"
+        );
     }
 
     #[tokio::test]
@@ -906,8 +1026,10 @@ mod tests {
 
         // With MockEmbedding (instant), 5 docs should complete within 5s
         // So we expect a normal completion (no "continue" field)
-        assert!(result.get("continue").is_none() || result["continue"] == false,
-            "Small scan with MockEmbedding should complete within budget");
+        assert!(
+            result.get("continue").is_none() || result["continue"] == false,
+            "Small scan with MockEmbedding should complete within budget"
+        );
         assert!(result.get("total").is_some());
     }
 
@@ -978,9 +1100,7 @@ mod tests {
 
         // Generate questions for all docs with generous budget
         let args = serde_json::json!({"dry_run": true, "time_budget_secs": 30});
-        let result = generate_questions(&db, &embedding, &args)
-            .await
-            .unwrap();
+        let result = generate_questions(&db, &embedding, &args).await.unwrap();
 
         assert!(result.get("documents_processed").is_some());
         assert!(result["documents_processed"].as_u64().unwrap() >= 3);
@@ -991,14 +1111,18 @@ mod tests {
     async fn test_scan_auto_populates_fact_embeddings_on_empty_table() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
-        use crate::{DocumentProcessor, LinkDetector, Scanner, ScanContext, ScanOptions};
+        use crate::{DocumentProcessor, LinkDetector, ScanContext, ScanOptions, Scanner};
         use tempfile::TempDir;
 
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
 
-        std::fs::write(repo_path.join("doc1.md"), "<!-- factbase:aaa111 -->\n# Doc One\n\n- Fact alpha\n- Fact beta\n").unwrap();
+        std::fs::write(
+            repo_path.join("doc1.md"),
+            "<!-- factbase:aaa111 -->\n# Doc One\n\n- Fact alpha\n- Fact beta\n",
+        )
+        .unwrap();
         test_repo_in_db(&db, "test", repo_path);
 
         let embedding = MockEmbedding::new(1024);
@@ -1010,8 +1134,12 @@ mod tests {
         let repo = db.list_repositories().unwrap().into_iter().next().unwrap();
 
         let ctx = ScanContext {
-            scanner: &scanner, processor: &processor, embedding: &embedding,
-            link_detector: &link_detector, opts: &opts, progress: &progress,
+            scanner: &scanner,
+            processor: &processor,
+            embedding: &embedding,
+            link_detector: &link_detector,
+            opts: &opts,
+            progress: &progress,
         };
 
         // First scan: indexes docs and generates fact embeddings
@@ -1028,14 +1156,18 @@ mod tests {
     async fn test_scan_auto_populates_fact_embeddings_after_migration() {
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
-        use crate::{DocumentProcessor, LinkDetector, Scanner, ScanContext, ScanOptions};
+        use crate::{DocumentProcessor, LinkDetector, ScanContext, ScanOptions, Scanner};
         use tempfile::TempDir;
 
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
 
-        std::fs::write(repo_path.join("doc1.md"), "<!-- factbase:bbb222 -->\n# Doc One\n\n- Fact one\n").unwrap();
+        std::fs::write(
+            repo_path.join("doc1.md"),
+            "<!-- factbase:bbb222 -->\n# Doc One\n\n- Fact one\n",
+        )
+        .unwrap();
         test_repo_in_db(&db, "test", repo_path);
 
         let embedding = MockEmbedding::new(1024);
@@ -1047,8 +1179,12 @@ mod tests {
         let repo = db.list_repositories().unwrap().into_iter().next().unwrap();
 
         let ctx = ScanContext {
-            scanner: &scanner, processor: &processor, embedding: &embedding,
-            link_detector: &link_detector, opts: &opts, progress: &progress,
+            scanner: &scanner,
+            processor: &processor,
+            embedding: &embedding,
+            link_detector: &link_detector,
+            opts: &opts,
+            progress: &progress,
         };
 
         // First scan indexes docs and generates fact embeddings
@@ -1079,11 +1215,15 @@ mod tests {
 
         // First scan
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // Second scan with force_reindex: should re-process all docs
         let args = serde_json::json!({"force_reindex": true});
-        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
         // force_reindex causes docs to be reindexed even though unchanged
         let total = r["total"].as_u64().unwrap();
         assert!(total > 0, "force_reindex should process docs");
@@ -1116,17 +1256,25 @@ mod tests {
 
         // Initial scan to populate DB
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // force_reindex without explicit time_budget_secs: should NOT be interrupted
         let args = serde_json::json!({"force_reindex": true});
-        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         assert!(
             r.get("continue").is_none() || r["continue"] == false,
             "force_reindex without explicit budget should not be interrupted"
         );
-        assert_eq!(r["reindexed"].as_u64().unwrap(), 5, "all docs should be reindexed");
+        assert_eq!(
+            r["reindexed"].as_u64().unwrap(),
+            5,
+            "all docs should be reindexed"
+        );
         assert!(r.get("total").is_some());
     }
 
@@ -1141,7 +1289,11 @@ mod tests {
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
 
-        std::fs::write(repo_path.join("doc1.md"), "<!-- factbase:aaa001 -->\n# Doc One\nContent.").unwrap();
+        std::fs::write(
+            repo_path.join("doc1.md"),
+            "<!-- factbase:aaa001 -->\n# Doc One\nContent.",
+        )
+        .unwrap();
         test_repo_in_db(&db, "test", repo_path);
 
         let embedding = MockEmbedding::new(1024);
@@ -1149,16 +1301,23 @@ mod tests {
 
         // Initial scan
         let args = serde_json::json!({});
-        scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // force_reindex WITH explicit time_budget_secs: budget should be ignored
         let args = serde_json::json!({"force_reindex": true, "time_budget_secs": 10});
-        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // Should complete with reindexed count (budget was ignored, not enforced)
         assert_eq!(r["reindexed"].as_u64().unwrap(), 1);
         // Verify no continuation — force_reindex bypasses time budget entirely
-        assert!(r.get("continue").is_none(), "force_reindex should bypass time budget, no continuation expected");
+        assert!(
+            r.get("continue").is_none(),
+            "force_reindex should bypass time budget, no continuation expected"
+        );
     }
 
     #[tokio::test]
@@ -1180,7 +1339,9 @@ mod tests {
 
         // Normal scan (no force_reindex) with explicit budget: should still use budget
         let args = serde_json::json!({"time_budget_secs": 30});
-        let r = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let r = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // MockEmbedding is instant, so it completes within budget
         assert!(r.get("total").is_some());
@@ -1191,18 +1352,24 @@ mod tests {
     fn test_scan_interrupted_always_includes_continue_and_resume() {
         // Simulate what the MCP tool does when full_scan returns interrupted=true.
         // The response must always have continue=true and a resume token.
-        use crate::mcp::tools::helpers::{encode_resume_token, decode_resume_token};
+        use crate::mcp::tools::helpers::{decode_resume_token, encode_resume_token};
 
         let file_offset = 30usize;
         let total_files = 100usize;
         let processed = 30usize;
 
         // This is the fixed logic from scan_repository
-        let resume_offset = if file_offset > 0 { file_offset } else { total_files };
-        let resume_token = encode_resume_token(
-            &serde_json::json!({"file_offset": resume_offset}),
-        );
-        let pct = if total_files > 0 { (processed as f64 / total_files as f64 * 100.0) as u32 } else { 0 };
+        let resume_offset = if file_offset > 0 {
+            file_offset
+        } else {
+            total_files
+        };
+        let resume_token = encode_resume_token(&serde_json::json!({"file_offset": resume_offset}));
+        let pct = if total_files > 0 {
+            (processed as f64 / total_files as f64 * 100.0) as u32
+        } else {
+            0
+        };
         let response = serde_json::json!({
             "continue": true,
             "resume": resume_token,
@@ -1228,18 +1395,23 @@ mod tests {
     fn test_scan_interrupted_zero_file_offset_uses_total_files() {
         // When embedding phase is interrupted, file_offset=0 but all files were processed.
         // The resume token should use total_files so the next call skips the file loop.
-        use crate::mcp::tools::helpers::{encode_resume_token, decode_resume_token};
+        use crate::mcp::tools::helpers::{decode_resume_token, encode_resume_token};
 
         let file_offset = 0usize; // embedding phase interrupted, file_offset not set
         let total_files = 50usize;
 
-        let resume_offset = if file_offset > 0 { file_offset } else { total_files };
-        let resume_token = encode_resume_token(
-            &serde_json::json!({"file_offset": resume_offset}),
-        );
+        let resume_offset = if file_offset > 0 {
+            file_offset
+        } else {
+            total_files
+        };
+        let resume_token = encode_resume_token(&serde_json::json!({"file_offset": resume_offset}));
 
         let decoded = decode_resume_token(&resume_token).unwrap();
-        assert_eq!(decoded["file_offset"], 50, "should use total_files when file_offset is 0");
+        assert_eq!(
+            decoded["file_offset"], 50,
+            "should use total_files when file_offset is 0"
+        );
     }
 
     #[tokio::test]
@@ -1260,7 +1432,8 @@ mod tests {
             std::fs::write(
                 repo_path.join(format!("doc{i}.md")),
                 format!("# Doc {i}\nContent {i}."),
-            ).unwrap();
+            )
+            .unwrap();
         }
         test_repo_in_db(&db, "test", repo_path);
 
@@ -1269,7 +1442,9 @@ mod tests {
 
         // First scan: index all files
         let args = serde_json::json!({});
-        let r1 = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let r1 = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
         assert_eq!(r1["added"].as_u64().unwrap(), 3);
 
         // Second scan with resume token pointing past all files
@@ -1277,7 +1452,9 @@ mod tests {
             &serde_json::json!({"file_offset": 100}),
         );
         let args = serde_json::json!({"resume": resume_token});
-        let r2 = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let r2 = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // Should not have reprocessed any files
         assert_eq!(r2["added"].as_u64().unwrap(), 0);
@@ -1306,7 +1483,9 @@ mod tests {
         let reporter = crate::ProgressReporter::Silent;
 
         let args = serde_json::json!({"time_budget_secs": 120});
-        let result = scan_repository(&db, &embedding, &args, &reporter).await.unwrap();
+        let result = scan_repository(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         // Completed scan should not have continue=true
         assert!(result.get("continue").is_none() || result["continue"] == false);
@@ -1327,7 +1506,11 @@ mod tests {
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
 
-        std::fs::write(repo_path.join("alpha.md"), "# Alpha\nAlpha content about Beta.").unwrap();
+        std::fs::write(
+            repo_path.join("alpha.md"),
+            "# Alpha\nAlpha content about Beta.",
+        )
+        .unwrap();
         std::fs::write(repo_path.join("beta.md"), "# Beta\nBeta content.").unwrap();
 
         test_repo_in_db(&db, "test", repo_path);
@@ -1346,16 +1529,22 @@ mod tests {
         let beta = docs.values().find(|d| d.title == "Beta").unwrap();
 
         // Add a link from Alpha -> Beta
-        db.update_links(&alpha.id, &[DetectedLink {
-            target_id: beta.id.clone(),
-            target_title: "Beta".into(),
-            mention_text: "Beta".into(),
-            context: String::new(),
-        }]).unwrap();
+        db.update_links(
+            &alpha.id,
+            &[DetectedLink {
+                target_id: beta.id.clone(),
+                target_title: "Beta".into(),
+                mention_text: "Beta".into(),
+                context: String::new(),
+            }],
+        )
+        .unwrap();
 
         // Search via the search tool
         let args = serde_json::json!({"query": "Alpha"});
-        let result = handle_search_tool(&db, &embedding, &args, &reporter).await.unwrap();
+        let result = handle_search_tool(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         let results = result["results"].as_array().unwrap();
         assert!(!results.is_empty());
@@ -1392,13 +1581,18 @@ mod tests {
 
         // Content search
         let args = serde_json::json!({"query": "unique", "mode": "content"});
-        let result = handle_search_tool(&db, &embedding, &args, &reporter).await.unwrap();
+        let result = handle_search_tool(&db, &embedding, &args, &reporter)
+            .await
+            .unwrap();
 
         let results = result["results"].as_array().unwrap();
         assert!(!results.is_empty());
         // Each result should have a links array (even if empty)
         for r in results {
-            assert!(r.get("links").is_some(), "content search results should have links field");
+            assert!(
+                r.get("links").is_some(),
+                "content search results should have links field"
+            );
         }
     }
 }

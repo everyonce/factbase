@@ -43,11 +43,15 @@ pub(crate) fn update_date_range(
 ) {
     let normalized = normalize_date_for_comparison(date);
     match oldest {
-        Some(ref old) if date_cmp(&normalized, &normalize_date_for_comparison(old)) != std::cmp::Ordering::Less => {}
+        Some(ref old)
+            if date_cmp(&normalized, &normalize_date_for_comparison(old))
+                != std::cmp::Ordering::Less => {}
         _ => *oldest = Some(date.to_string()),
     }
     match newest {
-        Some(ref new) if date_cmp(&normalized, &normalize_date_for_comparison(new)) != std::cmp::Ordering::Greater => {}
+        Some(ref new)
+            if date_cmp(&normalized, &normalize_date_for_comparison(new))
+                != std::cmp::Ordering::Greater => {}
         _ => *newest = Some(date.to_string()),
     }
 }

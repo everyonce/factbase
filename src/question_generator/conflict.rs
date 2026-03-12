@@ -60,8 +60,8 @@ pub fn classify_conflict_pattern(
 ) -> ConflictPattern {
     let names1 = extract_proper_names(text1);
     let names2 = extract_proper_names(text2);
-    let shared_entity = names1.iter().any(|n| names2.contains(n))
-        || has_shared_significant_word(text1, text2);
+    let shared_entity =
+        names1.iter().any(|n| names2.contains(n)) || has_shared_significant_word(text1, text2);
 
     // Same entity with overlap → transition (one supersedes the other)
     if shared_entity {
@@ -79,8 +79,16 @@ pub fn classify_conflict_pattern(
     let e2 = normalize_date_for_comparison(end2);
 
     // Compute overlap size in months
-    let overlap_start = if date_cmp(&s1, &s2) == std::cmp::Ordering::Greater { &s1 } else { &s2 };
-    let overlap_end = if date_cmp(&e1, &e2) == std::cmp::Ordering::Less { &e1 } else { &e2 };
+    let overlap_start = if date_cmp(&s1, &s2) == std::cmp::Ordering::Greater {
+        &s1
+    } else {
+        &s2
+    };
+    let overlap_end = if date_cmp(&e1, &e2) == std::cmp::Ordering::Less {
+        &e1
+    } else {
+        &e2
+    };
     let overlap_months = months_between(overlap_start, overlap_end);
     let span1 = months_between(&s1, &e1).max(1);
     let span2 = months_between(&s2, &e2).max(1);
@@ -132,10 +140,7 @@ struct FactWithRange {
 /// Filter out conflict questions whose referenced line participates in a
 /// boundary-month sequential pattern.  This catches conflicts from
 /// ANY generator (rule-based or LLM cross-validation).
-pub fn filter_sequential_conflicts(
-    content: &str,
-    questions: &mut Vec<ReviewQuestion>,
-) {
+pub fn filter_sequential_conflicts(content: &str, questions: &mut Vec<ReviewQuestion>) {
     if questions.is_empty() {
         return;
     }
@@ -148,8 +153,7 @@ pub fn filter_sequential_conflicts(
     for i in 0..facts.len() {
         for j in (i + 1)..facts.len() {
             let (f1, f2) = (&facts[i], &facts[j]);
-            let (Some(s1), Some(s2)) = (f1.start_date.as_deref(), f2.start_date.as_deref())
-            else {
+            let (Some(s1), Some(s2)) = (f1.start_date.as_deref(), f2.start_date.as_deref()) else {
                 continue;
             };
             let e1 = if f1.is_ongoing {
@@ -294,7 +298,12 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
                     let date = tag.start_date.clone();
                     (date.clone(), date, false, is_pit)
                 }
-                _ => (tag.start_date.clone(), tag.end_date.clone(), is_ongoing, false),
+                _ => (
+                    tag.start_date.clone(),
+                    tag.end_date.clone(),
+                    is_ongoing,
+                    false,
+                ),
             }
         };
 
@@ -376,9 +385,7 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
     }
 
     // Classify the conflict pattern and include hint in description
-    let pattern = classify_conflict_pattern(
-        &fact1.text, &fact2.text, start1, end1, start2, end2,
-    );
+    let pattern = classify_conflict_pattern(&fact1.text, &fact2.text, start1, end1, start2, end2);
 
     // Generate conflict question with pattern hint
     let description = format!(
@@ -535,7 +542,8 @@ fn is_boundary_month_sequential(start1: &str, end1: &str, start2: &str, end2: &s
     // Sequential: end of one is within one month of start of the other.
     // Data sources often report the transition date in both entries, or off by one month
     // due to date granularity. Use strict less-than to exclude point-in-time facts.
-    let month_seq = (dates_within_one_month(&e1, &s2) && date_cmp(&s1, &s2) == std::cmp::Ordering::Less)
+    let month_seq = (dates_within_one_month(&e1, &s2)
+        && date_cmp(&s1, &s2) == std::cmp::Ordering::Less)
         || (dates_within_one_month(&e2, &s1) && date_cmp(&s2, &s1) == std::cmp::Ordering::Less);
     if month_seq {
         return true;
@@ -545,7 +553,8 @@ fn is_boundary_month_sequential(start1: &str, end1: &str, start2: &str, end2: &s
     // transition year (e.g. entry A ends 2018-06, entry B starts 2018-01).  When
     // the entries are clearly sequential (one starts years before the other) and
     // the only overlap is within a single calendar year, suppress the conflict.
-    (dates_same_year(end1, start2) && date_cmp(&s1, &s2) == std::cmp::Ordering::Less) || (dates_same_year(end2, start1) && date_cmp(&s2, &s1) == std::cmp::Ordering::Less)
+    (dates_same_year(end1, start2) && date_cmp(&s1, &s2) == std::cmp::Ordering::Less)
+        || (dates_same_year(end2, start1) && date_cmp(&s2, &s1) == std::cmp::Ordering::Less)
 }
 
 /// Returns true when two facts share a common entity name and one clearly
@@ -559,8 +568,8 @@ fn is_boundary_month_sequential(start1: &str, end1: &str, start2: &str, end2: &s
 fn is_shared_entity_sequential(text1: &str, text2: &str, start1: &str, start2: &str) -> bool {
     let names1 = extract_proper_names(text1);
     let names2 = extract_proper_names(text2);
-    let shared = names1.iter().any(|n| names2.contains(n))
-        || has_shared_significant_word(text1, text2);
+    let shared =
+        names1.iter().any(|n| names2.contains(n)) || has_shared_significant_word(text1, text2);
     if !shared {
         return false;
     }
@@ -633,21 +642,82 @@ fn extract_significant_words(text: &str) -> Vec<String> {
     static STOP_WORDS: &[&str] = &[
         // Common English words that frequently appear capitalized in context
         // (titles, roles, descriptors). Excluded to avoid false entity matches.
-        "Senior", "Junior", "Lead", "Chief", "Head", "Director", "Manager",
-        "Engineer", "Developer", "Analyst", "Consultant", "Founder", "President",
-        "Officer", "Architect", "Designer", "Specialist", "Coordinator",
-        "Administrator", "Associate", "Principal", "Staff", "Distinguished",
-        "Infrastructure", "Engineering", "Operations", "Product", "Data",
-        "Science", "Technology", "Marketing", "Sales", "Finance", "Procurement",
-        "Security", "Platform", "Software", "Hardware", "Vice", "Executive",
-        "Member", "Board", "Advisor", "Advisory",
+        "Senior",
+        "Junior",
+        "Lead",
+        "Chief",
+        "Head",
+        "Director",
+        "Manager",
+        "Engineer",
+        "Developer",
+        "Analyst",
+        "Consultant",
+        "Founder",
+        "President",
+        "Officer",
+        "Architect",
+        "Designer",
+        "Specialist",
+        "Coordinator",
+        "Administrator",
+        "Associate",
+        "Principal",
+        "Staff",
+        "Distinguished",
+        "Infrastructure",
+        "Engineering",
+        "Operations",
+        "Product",
+        "Data",
+        "Science",
+        "Technology",
+        "Marketing",
+        "Sales",
+        "Finance",
+        "Procurement",
+        "Security",
+        "Platform",
+        "Software",
+        "Hardware",
+        "Vice",
+        "Executive",
+        "Member",
+        "Board",
+        "Advisor",
+        "Advisory",
         // Common fact/action words that may appear capitalized
-        "Entry", "Phase", "Role", "Position", "Based", "Lives", "Located",
-        "Moved", "Joined", "Left", "Promoted", "Hired", "Resigned", "Retired",
-        "Collaborates", "Coordinates", "Reports", "Works", "Manages",
+        "Entry",
+        "Phase",
+        "Role",
+        "Position",
+        "Based",
+        "Lives",
+        "Located",
+        "Moved",
+        "Joined",
+        "Left",
+        "Promoted",
+        "Hired",
+        "Resigned",
+        "Retired",
+        "Collaborates",
+        "Coordinates",
+        "Reports",
+        "Works",
+        "Manages",
         // Common organizational suffixes (would match across different entities)
-        "Corp", "Inc.", "Group", "Company", "International", "Global",
-        "National", "Services", "Solutions", "Systems", "Consulting",
+        "Corp",
+        "Inc.",
+        "Group",
+        "Company",
+        "International",
+        "Global",
+        "National",
+        "Services",
+        "Solutions",
+        "Systems",
+        "Consulting",
     ];
 
     text.split(|c: char| !c.is_alphanumeric())
@@ -874,11 +944,20 @@ mod tests {
         assert!(facts_may_conflict("CTO at Acme Corp", "CEO at BigCo"));
         assert!(facts_may_conflict("Lives in NYC", "Based in SF"));
         // Same proper name — may conflict
-        assert!(facts_may_conflict("Aaron Stranahan, VP Infrastructure", "Aaron Stranahan, Director Engineering"));
+        assert!(facts_may_conflict(
+            "Aaron Stranahan, VP Infrastructure",
+            "Aaron Stranahan, Director Engineering"
+        ));
         // Two roster entries with [[links]] should NOT conflict
-        assert!(!facts_may_conflict("[[abc123]] Jason King - Senior Director", "[[def456]] Anurag Voleti - VP Data Science"));
+        assert!(!facts_may_conflict(
+            "[[abc123]] Jason King - Senior Director",
+            "[[def456]] Anurag Voleti - VP Data Science"
+        ));
         // One with [[link]], one without — NOT conflict
-        assert!(!facts_may_conflict("[[abc123]] Jason King - Senior Director", "VP Data Science at BigCo"));
+        assert!(!facts_may_conflict(
+            "[[abc123]] Jason King - Senior Director",
+            "VP Data Science at BigCo"
+        ));
         // Different proper names — not a conflict
         assert!(!facts_may_conflict(
             "Collaborates with Aaron Stranahan, VP Infrastructure",
@@ -956,17 +1035,25 @@ mod tests {
     #[test]
     fn test_ongoing_contains_point_event_no_conflict() {
         // Point event during an ongoing range is parallel, not a conflict
-        let content = "# Entity\n\n## History\n- Status active @t[2023..]\n- Event occurred @t[=2024-06]";
+        let content =
+            "# Entity\n\n## History\n- Status active @t[2023..]\n- Event occurred @t[=2024-06]";
         let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty(), "Point event within ongoing range should be suppressed");
+        assert!(
+            questions.is_empty(),
+            "Point event within ongoing range should be suppressed"
+        );
     }
 
     #[test]
     fn test_ongoing_contains_subrange_no_conflict() {
         // Sub-range within an ongoing range is parallel
-        let content = "# Entity\n\n## History\n- Status active @t[2020..]\n- Phase completed @t[2022..2024]";
+        let content =
+            "# Entity\n\n## History\n- Status active @t[2020..]\n- Phase completed @t[2022..2024]";
         let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty(), "Sub-range within ongoing range should be suppressed");
+        assert!(
+            questions.is_empty(),
+            "Sub-range within ongoing range should be suppressed"
+        );
     }
 
     #[test]
@@ -984,7 +1071,10 @@ mod tests {
         // Multiple point events during an ongoing range — all suppressed
         let content = "# Entity\n\n## Timeline\n- Active status @t[2020..]\n- Event A @t[=2021]\n- Event B @t[=2023-06]\n- Event C @t[=2024-01]";
         let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty(), "All point events within ongoing range should be suppressed");
+        assert!(
+            questions.is_empty(),
+            "All point events within ongoing range should be suppressed"
+        );
     }
 
     #[test]
@@ -992,7 +1082,11 @@ mod tests {
         // Closed range containing a point — NOT suppressed (only ongoing triggers this)
         let content = "# Person\n\n- CTO at Acme @t[=2023]\n- CEO at BigCo @t[2022..2024]";
         let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1, "Closed range containment should still conflict");
+        assert_eq!(
+            questions.len(),
+            1,
+            "Closed range containment should still conflict"
+        );
     }
 
     #[test]
@@ -1010,7 +1104,10 @@ mod tests {
         // Same fact in different sections — no conflict (different sections)
         let content = "# Entity\n\n## Section A\n- CTO at Acme @t[2020..2023]\n\n## Section B\n- CTO at Acme @t[2020..2023]";
         let questions = generate_conflict_questions(content);
-        assert!(questions.is_empty(), "Duplicate entries in different sections should not generate conflict questions");
+        assert!(
+            questions.is_empty(),
+            "Duplicate entries in different sections should not generate conflict questions"
+        );
     }
 
     #[test]
@@ -1091,26 +1188,49 @@ mod tests {
         ];
         for (i, content) in cases.iter().enumerate() {
             let questions = generate_conflict_questions(content);
-            assert!(questions.is_empty(), "Case {} should not generate conflict, got: {:?}", i, questions.iter().map(|q| &q.description).collect::<Vec<_>>());
+            assert!(
+                questions.is_empty(),
+                "Case {} should not generate conflict, got: {:?}",
+                i,
+                questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+            );
         }
     }
 
     #[test]
     fn test_is_boundary_month_sequential() {
         // Exact boundary
-        assert!(is_boundary_month_sequential("2020", "2023-09", "2023-09", "2024"));
-        assert!(is_boundary_month_sequential("2023-09", "2024", "2020", "2023-09"));
+        assert!(is_boundary_month_sequential(
+            "2020", "2023-09", "2023-09", "2024"
+        ));
+        assert!(is_boundary_month_sequential(
+            "2023-09", "2024", "2020", "2023-09"
+        ));
         // Off-by-one month
-        assert!(is_boundary_month_sequential("2020-01", "2022-03", "2022-02", "2024"));
-        assert!(is_boundary_month_sequential("2022-02", "2024", "2020-01", "2022-03"));
+        assert!(is_boundary_month_sequential(
+            "2020-01", "2022-03", "2022-02", "2024"
+        ));
+        assert!(is_boundary_month_sequential(
+            "2022-02", "2024", "2020-01", "2022-03"
+        ));
         // Boundary-year with month precision
-        assert!(is_boundary_month_sequential("2014-03", "2018-06", "2018-01", "2023-09"));
-        assert!(is_boundary_month_sequential("2005-03", "2012-09", "2012-01", "2018-06"));
+        assert!(is_boundary_month_sequential(
+            "2014-03", "2018-06", "2018-01", "2023-09"
+        ));
+        assert!(is_boundary_month_sequential(
+            "2005-03", "2012-09", "2012-01", "2018-06"
+        ));
         // Point-in-time should NOT be sequential
-        assert!(!is_boundary_month_sequential("2023", "2023", "2023", "2023"));
+        assert!(!is_boundary_month_sequential(
+            "2023", "2023", "2023", "2023"
+        ));
         // Real overlap should not match
-        assert!(!is_boundary_month_sequential("2020", "2023", "2022", "2024"));
-        assert!(!is_boundary_month_sequential("2018-01", "2023-06", "2021-03", "2024-12"));
+        assert!(!is_boundary_month_sequential(
+            "2020", "2023", "2022", "2024"
+        ));
+        assert!(!is_boundary_month_sequential(
+            "2018-01", "2023-06", "2021-03", "2024-12"
+        ));
     }
 
     #[test]
@@ -1121,8 +1241,16 @@ mod tests {
             - Entry B @t[2016-11..2020-11]\n\
             - Entry C @t[2020-11..2024-01]";
         let mut questions = vec![
-            ReviewQuestion::new(QuestionType::Conflict, Some(3), "Cross-check: Entry A — overlapping entry".to_string()),
-            ReviewQuestion::new(QuestionType::Conflict, Some(4), "Cross-check: Entry B — overlapping entry".to_string()),
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(3),
+                "Cross-check: Entry A — overlapping entry".to_string(),
+            ),
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(4),
+                "Cross-check: Entry B — overlapping entry".to_string(),
+            ),
             ReviewQuestion::new(QuestionType::Stale, Some(3), "Stale fact".to_string()),
         ];
         filter_sequential_conflicts(content, &mut questions);
@@ -1133,7 +1261,11 @@ mod tests {
         let content2 = "# Entity\n\n\
             - Entry A @t[2020..2023]\n\
             - Entry B @t[2022..2024]";
-        let mut questions2 = vec![ReviewQuestion::new(QuestionType::Conflict, Some(3), "Cross-check: overlapping entries".to_string())];
+        let mut questions2 = vec![ReviewQuestion::new(
+            QuestionType::Conflict,
+            Some(3),
+            "Cross-check: overlapping entries".to_string(),
+        )];
         filter_sequential_conflicts(content2, &mut questions2);
         assert_eq!(questions2.len(), 1);
 
@@ -1146,8 +1278,16 @@ mod tests {
             - VP at BigCo @t[2022-11..]"
         );
         let mut questions3 = vec![
-            ReviewQuestion::new(QuestionType::Conflict, Some(3), "Cross-check: Sr. Manager overlaps Director".to_string()),
-            ReviewQuestion::new(QuestionType::Conflict, Some(4), "Cross-check: Director overlaps VP".to_string()),
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(3),
+                "Cross-check: Sr. Manager overlaps Director".to_string(),
+            ),
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(4),
+                "Cross-check: Director overlaps VP".to_string(),
+            ),
         ];
         filter_sequential_conflicts(&content3, &mut questions3);
         assert!(questions3.is_empty());
@@ -1156,7 +1296,11 @@ mod tests {
         let content4 = "# Person\n\n## Career History\n\
             - Manager at Tivity Health @t[2015..2019]\n\
             - Director at Tivity Health @t[2018..2023]";
-        let mut questions4 = vec![ReviewQuestion::new(QuestionType::Conflict, Some(4), "Cross-check: overlapping entries".to_string())];
+        let mut questions4 = vec![ReviewQuestion::new(
+            QuestionType::Conflict,
+            Some(4),
+            "Cross-check: overlapping entries".to_string(),
+        )];
         filter_sequential_conflicts(content4, &mut questions4);
         assert!(questions4.is_empty());
 
@@ -1164,7 +1308,11 @@ mod tests {
         let content5 = "# Person\n\n## Career History\n\
             - VP at axialHealthcare @t[2016-01..2018-11]\n\
             - SVP at axialHealthcare @t[2018-11..2022-03]";
-        let mut questions5 = vec![ReviewQuestion::new(QuestionType::Conflict, Some(4), "Cross-check: overlapping entries".to_string())];
+        let mut questions5 = vec![ReviewQuestion::new(
+            QuestionType::Conflict,
+            Some(4),
+            "Cross-check: overlapping entries".to_string(),
+        )];
         filter_sequential_conflicts(content5, &mut questions5);
         assert!(questions5.is_empty());
     }
@@ -1233,25 +1381,62 @@ mod tests {
                 - Engineer at Google @t[2020..2023]\n\
                 - Manager at Amazon @t[2022..2024]",
         ] {
-            assert_eq!(generate_conflict_questions(content).len(), 1, "Should conflict for: {}", content);
+            assert_eq!(
+                generate_conflict_questions(content).len(),
+                1,
+                "Should conflict for: {}",
+                content
+            );
         }
     }
 
     #[test]
     fn test_is_shared_entity_sequential() {
         // Multi-word proper name
-        assert!(is_shared_entity_sequential("Manager at Tivity Health", "Director at Tivity Health", "2015", "2018"));
+        assert!(is_shared_entity_sequential(
+            "Manager at Tivity Health",
+            "Director at Tivity Health",
+            "2015",
+            "2018"
+        ));
         // camelCase company name
-        assert!(is_shared_entity_sequential("VP at axialHealthcare", "SVP at axialHealthcare", "2016", "2018"));
+        assert!(is_shared_entity_sequential(
+            "VP at axialHealthcare",
+            "SVP at axialHealthcare",
+            "2016",
+            "2018"
+        ));
         // Single-word company
-        assert!(is_shared_entity_sequential("Engineer at Google", "Manager at Google", "2018", "2021"));
+        assert!(is_shared_entity_sequential(
+            "Engineer at Google",
+            "Manager at Google",
+            "2018",
+            "2021"
+        ));
         // Different entities
-        assert!(!is_shared_entity_sequential("VP at Acme Corp", "Director at Beta Inc", "2020", "2022"));
-        assert!(!is_shared_entity_sequential("VP at Acme", "CTO at Globex", "2020", "2022"));
+        assert!(!is_shared_entity_sequential(
+            "VP at Acme Corp",
+            "Director at Beta Inc",
+            "2020",
+            "2022"
+        ));
+        assert!(!is_shared_entity_sequential(
+            "VP at Acme",
+            "CTO at Globex",
+            "2020",
+            "2022"
+        ));
         // Same start date = not sequential
-        assert!(!is_shared_entity_sequential("VP at Acme Corp", "Director at Acme Corp", "2020", "2020"));
+        assert!(!is_shared_entity_sequential(
+            "VP at Acme Corp",
+            "Director at Acme Corp",
+            "2020",
+            "2020"
+        ));
         // No proper names
-        assert!(!is_shared_entity_sequential("Entry A", "Entry B", "2020", "2022"));
+        assert!(!is_shared_entity_sequential(
+            "Entry A", "Entry B", "2020", "2022"
+        ));
     }
 
     // --- ConflictPattern classification tests ---
@@ -1260,8 +1445,12 @@ mod tests {
     fn test_classify_parallel_overlap_different_entities() {
         // Two facts at different entities with multi-year overlap → parallel_overlap
         let p = classify_conflict_pattern(
-            "CTO at Acme", "Board Member at StartupX",
-            "2018", "2023", "2020", "9999-12-31",
+            "CTO at Acme",
+            "Board Member at StartupX",
+            "2018",
+            "2023",
+            "2020",
+            "9999-12-31",
         );
         assert_eq!(p, ConflictPattern::ParallelOverlap);
     }
@@ -1270,8 +1459,12 @@ mod tests {
     fn test_classify_same_entity_transition() {
         // Two facts at the same entity → same_entity_transition
         let p = classify_conflict_pattern(
-            "VP Engineering at Acme", "CTO at Acme",
-            "2018", "2023", "2022", "9999-12-31",
+            "VP Engineering at Acme",
+            "CTO at Acme",
+            "2018",
+            "2023",
+            "2022",
+            "9999-12-31",
         );
         assert_eq!(p, ConflictPattern::SameEntityTransition);
     }
@@ -1280,8 +1473,12 @@ mod tests {
     fn test_classify_date_imprecision_small_overlap() {
         // Small overlap (3 months) relative to multi-year spans → date_imprecision
         let p = classify_conflict_pattern(
-            "Lives in NYC", "Based in San Francisco",
-            "2018", "2022-03", "2022-01", "2025",
+            "Lives in NYC",
+            "Based in San Francisco",
+            "2018",
+            "2022-03",
+            "2022-01",
+            "2025",
         );
         assert_eq!(p, ConflictPattern::DateImprecision);
     }
@@ -1290,8 +1487,12 @@ mod tests {
     fn test_classify_unknown_short_spans() {
         // Short spans with moderate overlap, no entity match → unknown
         let p = classify_conflict_pattern(
-            "Consulting gig", "Freelance project",
-            "2023-01", "2023-08", "2023-04", "2023-10",
+            "Consulting gig",
+            "Freelance project",
+            "2023-01",
+            "2023-08",
+            "2023-04",
+            "2023-10",
         );
         assert_eq!(p, ConflictPattern::Unknown);
     }
@@ -1304,12 +1505,24 @@ mod tests {
         assert_eq!(extract_attribute_key("Email: foo@bar.com"), Some("Email"));
         assert_eq!(extract_attribute_key("Phone: 555-1234"), Some("Phone"));
         // Bold key
-        assert_eq!(extract_attribute_key("**Email**: foo@bar.com"), Some("Email"));
-        assert_eq!(extract_attribute_key("**Hire Date**: 2020-01-15"), Some("Hire Date"));
+        assert_eq!(
+            extract_attribute_key("**Email**: foo@bar.com"),
+            Some("Email")
+        );
+        assert_eq!(
+            extract_attribute_key("**Hire Date**: 2020-01-15"),
+            Some("Hire Date")
+        );
         // Multi-word key (up to 4 words)
-        assert_eq!(extract_attribute_key("Spore Print Color: white"), Some("Spore Print Color"));
+        assert_eq!(
+            extract_attribute_key("Spore Print Color: white"),
+            Some("Spore Print Color")
+        );
         // Too many words → not a key
-        assert_eq!(extract_attribute_key("This is a long sentence fragment: value"), None);
+        assert_eq!(
+            extract_attribute_key("This is a long sentence fragment: value"),
+            None
+        );
         // No colon → not key-value
         assert_eq!(extract_attribute_key("CTO at Acme Corp"), None);
         // URL-like colon (no space after) → not key-value
@@ -1321,9 +1534,18 @@ mod tests {
     #[test]
     fn test_have_different_attribute_keys() {
         // Different keys → true
-        assert!(have_different_attribute_keys("Email: foo@bar.com", "Phone: 555-1234"));
-        assert!(have_different_attribute_keys("**Email**: foo", "**Slack**: @foo"));
-        assert!(have_different_attribute_keys("Habitat: forest", "Classification: Agaricales"));
+        assert!(have_different_attribute_keys(
+            "Email: foo@bar.com",
+            "Phone: 555-1234"
+        ));
+        assert!(have_different_attribute_keys(
+            "**Email**: foo",
+            "**Slack**: @foo"
+        ));
+        assert!(have_different_attribute_keys(
+            "Habitat: forest",
+            "Classification: Agaricales"
+        ));
         // Same key → false
         assert!(!have_different_attribute_keys("Role: CTO", "Role: CEO"));
         assert!(!have_different_attribute_keys("**Role**: CTO", "Role: CEO"));
@@ -1331,7 +1553,10 @@ mod tests {
         assert!(!have_different_attribute_keys("email: foo", "Email: bar"));
         // One or both not key-value → false (can't determine)
         assert!(!have_different_attribute_keys("CTO at Acme", "Email: foo"));
-        assert!(!have_different_attribute_keys("CTO at Acme", "CEO at BigCo"));
+        assert!(!have_different_attribute_keys(
+            "CTO at Acme",
+            "CEO at BigCo"
+        ));
     }
 
     #[test]
@@ -1386,11 +1611,20 @@ mod tests {
     #[test]
     fn test_conflict_pattern_tags() {
         assert_eq!(ConflictPattern::ParallelOverlap.tag(), "parallel_overlap");
-        assert_eq!(ConflictPattern::SameEntityTransition.tag(), "same_entity_transition");
+        assert_eq!(
+            ConflictPattern::SameEntityTransition.tag(),
+            "same_entity_transition"
+        );
         assert_eq!(ConflictPattern::DateImprecision.tag(), "date_imprecision");
         assert_eq!(ConflictPattern::Sequential.tag(), "sequential");
         assert_eq!(ConflictPattern::Unknown.tag(), "unknown");
-        for p in [ConflictPattern::ParallelOverlap, ConflictPattern::SameEntityTransition, ConflictPattern::DateImprecision, ConflictPattern::Sequential, ConflictPattern::Unknown] {
+        for p in [
+            ConflictPattern::ParallelOverlap,
+            ConflictPattern::SameEntityTransition,
+            ConflictPattern::DateImprecision,
+            ConflictPattern::Sequential,
+            ConflictPattern::Unknown,
+        ] {
             assert!(!p.hint().is_empty());
         }
     }
@@ -1451,7 +1685,11 @@ mod tests {
             - Shepherd threw stone into cave @t[=1947]\n\
             - Scrolls sold to dealer @t[=1947]";
         let mut questions = vec![
-            ReviewQuestion::new(QuestionType::Conflict, Some(4), "Cross-check: threw stone".to_string()),
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(4),
+                "Cross-check: threw stone".to_string(),
+            ),
             ReviewQuestion::new(QuestionType::Stale, Some(4), "Stale fact".to_string()),
         ];
         filter_sequential_conflicts(content, &mut questions);

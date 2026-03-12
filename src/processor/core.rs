@@ -13,7 +13,13 @@ use std::path::Path;
 /// When a document lives directly inside one of these folders, the grandparent
 /// folder is used for type derivation instead.
 pub(crate) const STRUCTURAL_FOLDERS: &[&str] = &[
-    "archive", "archived", "old", "inactive", "deprecated", "drafts", "temp",
+    "archive",
+    "archived",
+    "old",
+    "inactive",
+    "deprecated",
+    "drafts",
+    "temp",
 ];
 
 /// Compute SHA256 hash of content, returning lowercase hex string.
@@ -172,20 +178,16 @@ impl DocumentProcessor {
     /// - `services/deprecated/old-api.md` → skips "deprecated" → type "services" → "service"
     pub fn derive_type(&self, path: &Path, repo_root: &Path) -> String {
         let relative = path.strip_prefix(repo_root).unwrap_or(path);
-        let file_stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
+        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
 
         if let Some(parent) = relative.parent() {
-            let parent_name = parent
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("");
+            let parent_name = parent.file_name().and_then(|s| s.to_str()).unwrap_or("");
 
             // Skip structural/organizational folder names — use grandparent instead.
             if !parent_name.is_empty()
-                && STRUCTURAL_FOLDERS.iter().any(|&s| s.eq_ignore_ascii_case(parent_name))
+                && STRUCTURAL_FOLDERS
+                    .iter()
+                    .any(|&s| s.eq_ignore_ascii_case(parent_name))
             {
                 if let Some(grandparent) = parent.parent() {
                     if let Some(gp_name) = grandparent.file_name().and_then(|s| s.to_str()) {
@@ -200,9 +202,7 @@ impl DocumentProcessor {
 
             // If filename matches parent folder (e.g., acme/acme.md),
             // derive type from grandparent instead (e.g., companies/acme/acme.md → "company")
-            if !parent_name.is_empty()
-                && parent_name.eq_ignore_ascii_case(file_stem)
-            {
+            if !parent_name.is_empty() && parent_name.eq_ignore_ascii_case(file_stem) {
                 if let Some(grandparent) = parent.parent() {
                     if let Some(gp_name) = grandparent.file_name().and_then(|s| s.to_str()) {
                         if !gp_name.is_empty() {

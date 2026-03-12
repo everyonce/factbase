@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use factbase::models::{DetailedStats, PoolStats, RepoStats, Repository, SourceStats, TemporalStats};
+use factbase::models::{
+    DetailedStats, PoolStats, RepoStats, Repository, SourceStats, TemporalStats,
+};
 
 /// Format repository status as JSON
 pub fn format_repo_status_json(

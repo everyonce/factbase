@@ -19,7 +19,10 @@ pub fn known_prompts() -> HashMap<&'static str, &'static [&'static str]> {
         ("bootstrap", &["domain", "entity_types"] as &[&str]),
         ("rewrite_section", &["section", "changes"]),
         ("inbox_merge", &["document_content", "inbox_content"]),
-        ("organize_merge", &["doc_title", "keep_facts", "merge_facts"]),
+        (
+            "organize_merge",
+            &["doc_title", "keep_facts", "merge_facts"],
+        ),
         ("organize_split", &["doc_title", "facts", "sections"]),
         ("cross_validate", &["doc_title", "fact_batch"]),
         ("link_detect", &["entities_list", "content"]),
@@ -60,7 +63,7 @@ pub(crate) fn extract_placeholders(template: &str) -> Vec<String> {
     let mut chars = template.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '{' {
-            // Skip escaped {{ 
+            // Skip escaped {{
             if chars.peek() == Some(&'{') {
                 chars.next();
                 continue;
@@ -140,12 +143,7 @@ mod tests {
     #[test]
     fn test_resolve_prompt_multiple_vars() {
         let config = PromptsConfig::default();
-        let result = resolve_prompt(
-            &config,
-            "k",
-            "{a} and {b}",
-            &[("a", "X"), ("b", "Y")],
-        );
+        let result = resolve_prompt(&config, "k", "{a} and {b}", &[("a", "X"), ("b", "Y")]);
         assert_eq!(result, "X and Y");
     }
 
@@ -205,9 +203,10 @@ mod tests {
     #[test]
     fn test_validate_prompts_ok_for_valid() {
         let mut config = PromptsConfig::default();
-        config
-            .templates
-            .insert("bootstrap".into(), "Domain: {domain}, Types: {entity_types}".into());
+        config.templates.insert(
+            "bootstrap".into(),
+            "Domain: {domain}, Types: {entity_types}".into(),
+        );
         validate_prompts(&config); // no warnings
     }
 

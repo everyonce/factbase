@@ -57,7 +57,10 @@ pub async fn get_document_links(
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
     let db = state.db.clone();
 
-    let params = GetEntityParams { id, ..Default::default() };
+    let params = GetEntityParams {
+        id,
+        ..Default::default()
+    };
 
     let result = super::run_blocking_web(move || services::get_entity(&db, &params)).await?;
 

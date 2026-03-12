@@ -50,7 +50,8 @@ pub fn cmd_completions(args: CompletionsArgs) {
 
 fn get_repo_ids() -> Vec<String> {
     match Setup::new().build() {
-        Ok(ctx) => ctx.db
+        Ok(ctx) => ctx
+            .db
             .list_repositories()
             .unwrap_or_default()
             .into_iter()

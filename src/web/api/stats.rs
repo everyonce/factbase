@@ -5,8 +5,8 @@
 use super::errors::ApiError;
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::services::{self, ReviewQueueParams};
 use crate::organize::{detect_merge_candidates, detect_misplaced};
+use crate::services::{self, ReviewQueueParams};
 use crate::ProgressReporter;
 use axum::{extract::State, http::StatusCode, Json};
 use serde::Serialize;
@@ -103,10 +103,7 @@ fn compute_review_stats(db: &Database) -> Result<ReviewStatsResponse, FactbaseEr
         .get("unanswered")
         .and_then(Value::as_u64)
         .unwrap_or(0);
-    let deferred = result
-        .get("deferred")
-        .and_then(Value::as_u64)
-        .unwrap_or(0);
+    let deferred = result.get("deferred").and_then(Value::as_u64).unwrap_or(0);
 
     Ok(ReviewStatsResponse {
         total,

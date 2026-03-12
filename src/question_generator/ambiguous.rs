@@ -283,46 +283,28 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
     // Includes business, tech, cloud/AWS, and general industry terms.
     static KNOWN: &[&str] = &[
         // Business & titles
-        "CEO", "CTO", "CFO", "COO", "CMO", "CIO", "CISO", "CPO", "CRO", "CSO",
-        "VP", "SVP", "EVP", "MD", "PhD", "MBA", "BS", "BA", "MS", "JD",
-        "HR", "IT", "PM", "AM",
-        "IPO", "LLC", "INC", "LTD", "PLC", "AG",
-        "Q1", "Q2", "Q3", "Q4", "YoY", "QoQ", "MoM",
-        "KPI", "OKR", "ROI", "P&L", "R&D", "M&A",
-        "SaaS", "PaaS", "IaaS", "B2B", "B2C", "B2G", "D2C",
-        "PR", "IR", "VC", "PE", "LP", "GP",
-        "ARR", "MRR", "GMV", "TAM", "SAM", "SOM", "NPS", "CAC", "LTV", "EBITDA",
-        "FTE", "PTO", "WFH", "RTO", "OOO",
-        // Geography & general
-        "US", "USA", "UK", "EU", "UN", "NATO",
-        "USD", "EUR", "GBP", "JPY", "CAD", "AUD",
-        "NYC", "SF", "LA", "DC", "HQ",
-        "NA", "EMEA", "APAC", "LATAM", "AMER", "ANZ", "DACH",
-        "ASAP", "TBD", "TBA", "ID", "OK", "ETA", "EOD", "COB",
-        // Core tech
-        "AI", "ML", "LLM", "NLP", "GPU", "CPU", "RAM", "SSD", "HDD",
-        "API", "SDK", "CLI", "GUI", "IDE", "URL", "URI",
-        "SQL", "DB", "ORM", "ETL", "ELT",
-        "DNS", "HTTP", "HTTPS", "SSH", "TCP", "IP", "UDP", "TLS", "SSL",
-        "REST", "RPC", "gRPC", "MQTT", "AMQP",
-        "PDF", "CSV", "JSON", "YAML", "XML", "HTML", "CSS", "JS", "TS",
-        "CI", "CD", "QA", "UAT", "SLA", "SLO", "SLI",
-        "OS", "VM", "VPN", "SSO", "MFA", "RBAC", "IAM", "LDAP", "SAML",
-        "CRUD", "CQRS", "DDD", "TDD", "BDD", "OOP",
-        "JWT", "OAuth", "OIDC",
-        "CIDR", "VLAN", "BGP", "CDN", "WAF",
+        "CEO", "CTO", "CFO", "COO", "CMO", "CIO", "CISO", "CPO", "CRO", "CSO", "VP", "SVP", "EVP",
+        "MD", "PhD", "MBA", "BS", "BA", "MS", "JD", "HR", "IT", "PM", "AM", "IPO", "LLC", "INC",
+        "LTD", "PLC", "AG", "Q1", "Q2", "Q3", "Q4", "YoY", "QoQ", "MoM", "KPI", "OKR", "ROI",
+        "P&L", "R&D", "M&A", "SaaS", "PaaS", "IaaS", "B2B", "B2C", "B2G", "D2C", "PR", "IR", "VC",
+        "PE", "LP", "GP", "ARR", "MRR", "GMV", "TAM", "SAM", "SOM", "NPS", "CAC", "LTV", "EBITDA",
+        "FTE", "PTO", "WFH", "RTO", "OOO", // Geography & general
+        "US", "USA", "UK", "EU", "UN", "NATO", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "NYC",
+        "SF", "LA", "DC", "HQ", "NA", "EMEA", "APAC", "LATAM", "AMER", "ANZ", "DACH", "ASAP",
+        "TBD", "TBA", "ID", "OK", "ETA", "EOD", "COB", // Core tech
+        "AI", "ML", "LLM", "NLP", "GPU", "CPU", "RAM", "SSD", "HDD", "API", "SDK", "CLI", "GUI",
+        "IDE", "URL", "URI", "SQL", "DB", "ORM", "ETL", "ELT", "DNS", "HTTP", "HTTPS", "SSH",
+        "TCP", "IP", "UDP", "TLS", "SSL", "REST", "RPC", "gRPC", "MQTT", "AMQP", "PDF", "CSV",
+        "JSON", "YAML", "XML", "HTML", "CSS", "JS", "TS", "CI", "CD", "QA", "UAT", "SLA", "SLO",
+        "SLI", "OS", "VM", "VPN", "SSO", "MFA", "RBAC", "IAM", "LDAP", "SAML", "CRUD", "CQRS",
+        "DDD", "TDD", "BDD", "OOP", "JWT", "OAuth", "OIDC", "CIDR", "VLAN", "BGP", "CDN", "WAF",
         // AWS services & terms
-        "AWS", "EC2", "S3", "RDS", "ECS", "EKS", "ELB", "ALB", "NLB",
-        "VPC", "SNS", "SQS", "SES", "DMS", "KMS", "ACM",
-        "EMR", "MSK", "MQ", "DAX", "DDB",
-        "EBS", "EFS", "FSx",
-        "ECR", "EKS", "ECS",
-        "WAF", "ACL", "NAT", "IGW",
-        "SSM", "ASG", "AMI", "AZ", "ARN",
+        "AWS", "EC2", "S3", "RDS", "ECS", "EKS", "ELB", "ALB", "NLB", "VPC", "SNS", "SQS", "SES",
+        "DMS", "KMS", "ACM", "EMR", "MSK", "MQ", "DAX", "DDB", "EBS", "EFS", "FSx", "ECR", "EKS",
+        "ECS", "WAF", "ACL", "NAT", "IGW", "SSM", "ASG", "AMI", "AZ", "ARN",
         // Other cloud & infra
-        "GCP", "GKE", "GCE", "GCS",
-        "K8s", "CNCF", "OCI", "WASM",
-        "SOC", "PCI", "DSS", "HIPAA", "GDPR", "SOX", "FedRAMP",
+        "GCP", "GKE", "GCE", "GCS", "K8s", "CNCF", "OCI", "WASM", "SOC", "PCI", "DSS", "HIPAA",
+        "GDPR", "SOX", "FedRAMP",
     ];
 
     // Find uppercase sequences of 2-5 chars that look like acronyms
@@ -345,14 +327,16 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
             continue;
         }
         // Skip terms defined in the repo's definitions files
-        if defined_terms.iter().any(|t| t.eq_ignore_ascii_case(trimmed)) {
+        if defined_terms
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(trimmed))
+        {
             continue;
         }
         // Check if the expansion appears in the same line (e.g., "Total Addressable Market (TAM)")
         let lower = text.to_lowercase();
         let acronym_lower = trimmed.to_lowercase();
-        if lower.contains(&format!("({acronym_lower})"))
-            || lower.contains(&format!("({trimmed})"))
+        if lower.contains(&format!("({acronym_lower})")) || lower.contains(&format!("({trimmed})"))
         {
             continue;
         }
@@ -380,7 +364,9 @@ mod tests {
         assert_eq!(q[0].question_type, QuestionType::Ambiguous);
         assert!(q[0].description.contains("home, work, or another"));
         // With context → not flagged
-        assert!(generate_ambiguous_questions("# Person\n\n- Lives in San Francisco (home)").is_empty());
+        assert!(
+            generate_ambiguous_questions("# Person\n\n- Lives in San Francisco (home)").is_empty()
+        );
         assert!(generate_ambiguous_questions("# Person\n\n- Based in NYC office").is_empty());
     }
 
@@ -391,7 +377,10 @@ mod tests {
         assert_eq!(q.len(), 1);
         assert!(q[0].description.contains("professional or personal"));
         // With context → not flagged
-        assert!(generate_ambiguous_questions("# Person\n\n- Knows John Smith (colleague from Acme)").is_empty());
+        assert!(generate_ambiguous_questions(
+            "# Person\n\n- Knows John Smith (colleague from Acme)"
+        )
+        .is_empty());
     }
 
     #[test]
@@ -399,7 +388,10 @@ mod tests {
         let q = generate_ambiguous_questions("# Person\n\n- Works with Jane Doe");
         assert_eq!(q.len(), 1);
         assert!(q[0].description.contains("direct colleague, collaborator"));
-        assert!(generate_ambiguous_questions("# Person\n\n- Works with Jane Doe as her manager").is_empty());
+        assert!(
+            generate_ambiguous_questions("# Person\n\n- Works with Jane Doe as her manager")
+                .is_empty()
+        );
     }
 
     #[test]
@@ -421,21 +413,57 @@ mod tests {
 
     #[test]
     fn test_detect_ambiguous_location() {
-        for phrase in ["Lives in NYC", "Based in London", "Located in Paris", "Resides in Tokyo"] {
-            assert!(detect_ambiguous_location(phrase).is_some(), "Should flag: {}", phrase);
+        for phrase in [
+            "Lives in NYC",
+            "Based in London",
+            "Located in Paris",
+            "Resides in Tokyo",
+        ] {
+            assert!(
+                detect_ambiguous_location(phrase).is_some(),
+                "Should flag: {}",
+                phrase
+            );
         }
-        for phrase in ["Lives in NYC (home)", "Based in London office", "Located in Paris headquarters", "Primary residence in Tokyo"] {
-            assert!(detect_ambiguous_location(phrase).is_none(), "Should NOT flag: {}", phrase);
+        for phrase in [
+            "Lives in NYC (home)",
+            "Based in London office",
+            "Located in Paris headquarters",
+            "Primary residence in Tokyo",
+        ] {
+            assert!(
+                detect_ambiguous_location(phrase).is_none(),
+                "Should NOT flag: {}",
+                phrase
+            );
         }
     }
 
     #[test]
     fn test_detect_ambiguous_relationship() {
-        for phrase in ["Knows John", "Connected to Jane", "Associated with Acme", "Works with Bob"] {
-            assert!(detect_ambiguous_relationship(phrase).is_some(), "Should flag: {}", phrase);
+        for phrase in [
+            "Knows John",
+            "Connected to Jane",
+            "Associated with Acme",
+            "Works with Bob",
+        ] {
+            assert!(
+                detect_ambiguous_relationship(phrase).is_some(),
+                "Should flag: {}",
+                phrase
+            );
         }
-        for phrase in ["Knows John (colleague)", "Connected to Jane as mentor", "Works with Bob as his manager", "Met Jane, now a close friend"] {
-            assert!(detect_ambiguous_relationship(phrase).is_none(), "Should NOT flag: {}", phrase);
+        for phrase in [
+            "Knows John (colleague)",
+            "Connected to Jane as mentor",
+            "Works with Bob as his manager",
+            "Met Jane, now a close friend",
+        ] {
+            assert!(
+                detect_ambiguous_relationship(phrase).is_none(),
+                "Should NOT flag: {}",
+                phrase
+            );
         }
     }
 
@@ -443,10 +471,19 @@ mod tests {
     fn test_reviewed_marker_suppresses_ambiguous() {
         let today = Utc::now().date_naive();
         let marker_date = today - chrono::Duration::days(30);
-        let content = format!("# Person\n\n- Lives in San Francisco <!-- reviewed:{} -->", marker_date.format("%Y-%m-%d"));
+        let content = format!(
+            "# Person\n\n- Lives in San Francisco <!-- reviewed:{} -->",
+            marker_date.format("%Y-%m-%d")
+        );
         assert!(generate_ambiguous_questions(&content).is_empty());
         // Old marker does NOT suppress
-        assert_eq!(generate_ambiguous_questions("# Person\n\n- Lives in San Francisco <!-- reviewed:2020-01-01 -->").len(), 1);
+        assert_eq!(
+            generate_ambiguous_questions(
+                "# Person\n\n- Lives in San Francisco <!-- reviewed:2020-01-01 -->"
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]
@@ -460,11 +497,15 @@ mod tests {
         for acronym in ["CTO", "ECS", "RDS", "SOC", "TAM", "VPC", "SQS", "AWS"] {
             let content = format!("# Project\n\n- Uses {acronym} for deployment");
             let qs = generate_ambiguous_questions(&content);
-            assert!(qs.iter().all(|q| !q.description.contains(acronym)), "{acronym} should not be flagged");
+            assert!(
+                qs.iter().all(|q| !q.description.contains(acronym)),
+                "{acronym} should not be flagged"
+            );
         }
 
         // Expanded acronym not flagged
-        let q2 = generate_ambiguous_questions("# Company\n\n- Total Addressable Market (TAM) is $5B");
+        let q2 =
+            generate_ambiguous_questions("# Company\n\n- Total Addressable Market (TAM) is $5B");
         assert!(q2.iter().all(|q| !q.description.contains("TAM")));
 
         // Short uppercase word not flagged
@@ -473,7 +514,12 @@ mod tests {
 
         // Only first unknown acronym per line flagged
         let q4 = generate_ambiguous_questions("# Doc\n\n- Working on XYZQ and ABCD analysis");
-        assert_eq!(q4.iter().filter(|q| q.description.contains("what does")).count(), 1);
+        assert_eq!(
+            q4.iter()
+                .filter(|q| q.description.contains("what does"))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -494,21 +540,39 @@ mod tests {
     fn test_defined_terms_suppress_acronym_questions() {
         let defined = HashSet::from(["XYZQ".to_string()]);
         // Defined term not flagged
-        let q1 = generate_ambiguous_questions_with_type("# Company\n\n- Uses XYZQ for analytics", None, &defined);
+        let q1 = generate_ambiguous_questions_with_type(
+            "# Company\n\n- Uses XYZQ for analytics",
+            None,
+            &defined,
+        );
         assert!(q1.iter().all(|q| !q.description.contains("XYZQ")));
         // Case-insensitive
         let defined2 = HashSet::from(["xyzq".to_string()]);
-        let q2 = generate_ambiguous_questions_with_type("# Company\n\n- Uses XYZQ for analytics", None, &defined2);
+        let q2 = generate_ambiguous_questions_with_type(
+            "# Company\n\n- Uses XYZQ for analytics",
+            None,
+            &defined2,
+        );
         assert!(q2.iter().all(|q| !q.description.contains("XYZQ")));
         // Undefined term still flagged
-        let q3 = generate_ambiguous_questions_with_type("# Company\n\n- Uses ABCD for analytics", None, &defined);
-        assert_eq!(q3.iter().filter(|q| q.description.contains("ABCD")).count(), 1);
+        let q3 = generate_ambiguous_questions_with_type(
+            "# Company\n\n- Uses ABCD for analytics",
+            None,
+            &defined,
+        );
+        assert_eq!(
+            q3.iter().filter(|q| q.description.contains("ABCD")).count(),
+            1
+        );
     }
 
     #[test]
     fn test_is_roman_numeral() {
         // Valid Roman numerals
-        for s in ["II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII", "XIV", "XV", "XX", "XXI", "XL", "CD", "CM", "MM", "MCMX"] {
+        for s in [
+            "II", "III", "IV", "VI", "VII", "VIII", "IX", "XI", "XII", "XIV", "XV", "XX", "XXI",
+            "XL", "CD", "CM", "MM", "MCMX",
+        ] {
             assert!(is_roman_numeral(s), "{s} should be a Roman numeral");
         }
         // Not Roman numerals
@@ -520,7 +584,15 @@ mod tests {
     #[test]
     fn test_roman_numerals_not_flagged_as_acronyms() {
         // Roman numeral ordinals in proper nouns should not generate questions
-        for name in ["Sargon II", "Tiglath-Pileser III", "Nebuchadnezzar II", "Henry VIII", "Louis XIV", "Elizabeth II", "Pope Pius XII"] {
+        for name in [
+            "Sargon II",
+            "Tiglath-Pileser III",
+            "Nebuchadnezzar II",
+            "Henry VIII",
+            "Louis XIV",
+            "Elizabeth II",
+            "Pope Pius XII",
+        ] {
             let content = format!("# Entity\n\n- {name} ruled the empire");
             let q = generate_ambiguous_questions(&content);
             assert!(
@@ -542,7 +614,10 @@ mod tests {
         assert!(is_glossary_doc(Some("Glossary"), "# Something"));
         assert!(is_glossary_doc(Some("Reference"), "# Something"));
         // By title in content
-        assert!(is_glossary_doc(None, "<!-- factbase:abc123 -->\n# Glossary\n\n- **TERM**: def"));
+        assert!(is_glossary_doc(
+            None,
+            "<!-- factbase:abc123 -->\n# Glossary\n\n- **TERM**: def"
+        ));
         assert!(is_glossary_doc(None, "# Definitions\n\n- **TERM**: def"));
         // Not a glossary
         assert!(!is_glossary_doc(Some("person"), "# John Smith"));
@@ -585,10 +660,18 @@ mod tests {
         };
         let terms = collect_defined_terms(&[glossary]);
         // HCLS defined in glossary → not flagged
-        let q = generate_ambiguous_questions_with_type("# Project\n\n- Expanding HCLS practice", None, &terms);
+        let q = generate_ambiguous_questions_with_type(
+            "# Project\n\n- Expanding HCLS practice",
+            None,
+            &terms,
+        );
         assert!(q.iter().all(|q| !q.description.contains("HCLS")));
         // Unknown acronym still flagged
-        let q2 = generate_ambiguous_questions_with_type("# Project\n\n- Working on XYZQ initiative", None, &terms);
+        let q2 = generate_ambiguous_questions_with_type(
+            "# Project\n\n- Working on XYZQ initiative",
+            None,
+            &terms,
+        );
         assert!(q2.iter().any(|q| q.description.contains("XYZQ")));
     }
 
@@ -606,16 +689,22 @@ mod tests {
     #[test]
     fn test_extract_acronym_from_question() {
         assert_eq!(
-            extract_acronym_from_question("\"Uses SA for deployment\" - what does \"SA\" mean in this context?"),
+            extract_acronym_from_question(
+                "\"Uses SA for deployment\" - what does \"SA\" mean in this context?"
+            ),
             Some("SA".to_string())
         );
         assert_eq!(
-            extract_acronym_from_question("\"HCLS practice\" - what does \"HCLS\" mean in this context?"),
+            extract_acronym_from_question(
+                "\"HCLS practice\" - what does \"HCLS\" mean in this context?"
+            ),
             Some("HCLS".to_string())
         );
         // Non-acronym ambiguous questions return None
         assert_eq!(
-            extract_acronym_from_question("\"Lives in NYC\" - is this home, work, or another type of location?"),
+            extract_acronym_from_question(
+                "\"Lives in NYC\" - is this home, work, or another type of location?"
+            ),
             None
         );
         assert_eq!(extract_acronym_from_question(""), None);
@@ -624,8 +713,14 @@ mod tests {
     #[test]
     fn test_definitions_plural_type_recognized_as_glossary() {
         // Documents with type "definitions" (plural, from folder name) should be glossary docs
-        assert!(is_glossary_doc(Some("definitions"), "# SA\n\n- Solutions Architect"));
-        assert!(is_glossary_doc(Some("Definitions"), "# SA\n\n- Solutions Architect"));
+        assert!(is_glossary_doc(
+            Some("definitions"),
+            "# SA\n\n- Solutions Architect"
+        ));
+        assert!(is_glossary_doc(
+            Some("Definitions"),
+            "# SA\n\n- Solutions Architect"
+        ));
     }
 
     #[test]
@@ -648,8 +743,14 @@ mod tests {
         };
         let terms = collect_defined_terms(&[sa_doc, hcls_doc]);
         // Both titles and content terms should be included
-        assert!(terms.contains("SA"), "doc title SA should be a defined term");
-        assert!(terms.contains("HCLS"), "doc title HCLS should be a defined term");
+        assert!(
+            terms.contains("SA"),
+            "doc title SA should be a defined term"
+        );
+        assert!(
+            terms.contains("HCLS"),
+            "doc title HCLS should be a defined term"
+        );
     }
 
     #[test]
@@ -670,8 +771,10 @@ mod tests {
             Some("project"),
             &terms,
         );
-        assert!(q.iter().all(|q| !q.description.contains("SA")),
-            "SA should be suppressed by definitions doc");
+        assert!(
+            q.iter().all(|q| !q.description.contains("SA")),
+            "SA should be suppressed by definitions doc"
+        );
     }
 
     #[test]
@@ -679,8 +782,12 @@ mod tests {
         // Unknown acronyms should include a suggestion to create a definitions doc
         let q = generate_ambiguous_questions("# Project\n\n- Uses XYZQ for analytics");
         assert_eq!(q.len(), 1);
-        assert!(q[0].description.contains("Consider creating a definitions/ doc"),
-            "Should suggest creating a definitions doc, got: {}", q[0].description);
+        assert!(
+            q[0].description
+                .contains("Consider creating a definitions/ doc"),
+            "Should suggest creating a definitions doc, got: {}",
+            q[0].description
+        );
     }
 
     #[test]
@@ -696,10 +803,16 @@ mod tests {
         };
         // Without custom types, "acronym" type is not recognized as glossary
         let terms_default = collect_defined_terms(&[doc.clone()]);
-        assert!(!terms_default.contains("FHIR"), "acronym type not in defaults");
+        assert!(
+            !terms_default.contains("FHIR"),
+            "acronym type not in defaults"
+        );
         // With custom types, it is recognized
         let custom = vec!["acronym".to_string()];
         let terms_custom = collect_defined_terms_with_types(&[doc], Some(&custom));
-        assert!(terms_custom.contains("FHIR"), "acronym type should be recognized with custom glossary_types");
+        assert!(
+            terms_custom.contains("FHIR"),
+            "acronym type should be recognized with custom glossary_types"
+        );
     }
 }

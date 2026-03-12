@@ -40,10 +40,7 @@ fn parent_changed(_original: u32) -> bool {
 /// Reads stdin on a background thread and uses `tokio::select!` to
 /// interleave message handling with periodic keepalive pings. This
 /// prevents the transport from appearing dead during idle periods.
-pub async fn run_stdio<E: EmbeddingProvider>(
-    db: &Database,
-    embedding: &E,
-) -> anyhow::Result<()> {
+pub async fn run_stdio<E: EmbeddingProvider>(db: &Database, embedding: &E) -> anyhow::Result<()> {
     let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<io::Result<String>>();
 
     // Read stdin on a dedicated blocking thread so the async runtime stays free.
@@ -60,7 +57,8 @@ pub async fn run_stdio<E: EmbeddingProvider>(
 
     let mut writer = io::stdout().lock();
     let ping_id = AtomicU64::new(1);
-    let mut keepalive = tokio::time::interval(std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
+    let mut keepalive =
+        tokio::time::interval(std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
     // Don't send a ping immediately on startup
     keepalive.reset();
 
@@ -266,18 +264,17 @@ async fn handle_message<E: EmbeddingProvider>(
                     (None, None)
                 };
 
-                let tool_fut = std::panic::AssertUnwindSafe(
-                    handle_tool_call(db, embedding, request, progress),
-                )
+                let tool_fut = std::panic::AssertUnwindSafe(handle_tool_call(
+                    db, embedding, request, progress,
+                ))
                 .catch_unwind();
                 tokio::pin!(tool_fut);
 
                 // Keepalive timer ensures pings continue during long-running
                 // tool calls (e.g. scan_repository with embeddings), preventing
                 // the client transport from timing out and closing.
-                let mut keepalive = tokio::time::interval(
-                    std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS),
-                );
+                let mut keepalive =
+                    tokio::time::interval(std::time::Duration::from_secs(KEEPALIVE_INTERVAL_SECS));
                 keepalive.reset();
 
                 if let Some(mut rx) = tx {
@@ -588,7 +585,11 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file_path = repo_dir.path().join("test.md");
-        std::fs::write(&file_path, "<!-- factbase:abc123 -->\n# Old Title\n\nOld body").unwrap();
+        std::fs::write(
+            &file_path,
+            "<!-- factbase:abc123 -->\n# Old Title\n\nOld body",
+        )
+        .unwrap();
 
         let doc = Document {
             id: "abc123".to_string(),

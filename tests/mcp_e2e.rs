@@ -87,7 +87,6 @@ async fn test_mcp_search_with_real_embeddings() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -202,7 +201,6 @@ async fn test_all_8_mcp_tools() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -417,7 +415,6 @@ async fn test_mcp_concurrent_requests_real() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -515,7 +512,6 @@ async fn test_mcp_write_operations_update_index() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -674,7 +670,6 @@ async fn test_tools_list_endpoint() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -705,7 +700,11 @@ async fn test_tools_list_endpoint() {
         .unwrap();
 
     let tools = resp["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 3, "Should have 3 MCP tools: search, workflow, factbase");
+    assert_eq!(
+        tools.len(),
+        3,
+        "Should have 3 MCP tools: search, workflow, factbase"
+    );
 
     let tool_names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
 

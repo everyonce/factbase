@@ -56,12 +56,12 @@ pub use core::{content_hash, DocumentProcessor};
 pub use acronyms::{dedup_acronym_expansions, strip_glossary_reviewed_markers};
 
 // Re-export temporal types and functions
+pub(crate) use temporal::ranges_overlap;
 pub use temporal::{
     calculate_recency_boost, detect_illogical_sequences, detect_temporal_conflicts,
     find_malformed_tags, overlaps_point, overlaps_range, parse_temporal_tags, validate_date,
     validate_temporal_tags, TemporalConflict, TemporalSequenceError, TemporalValidationError,
 };
-pub(crate) use temporal::ranges_overlap;
 pub(crate) use temporal::{line_has_temporal_tag, normalize_temporal_tags};
 
 // Re-export source types and functions
@@ -74,8 +74,8 @@ pub use sources::{
 pub use review::{
     append_review_questions, ensure_review_section, is_callout_review,
     merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
-    parse_review_queue, prune_stale_questions, recover_review_section,
-    strip_answered_questions, unwrap_review_callout, wrap_review_callout,
+    parse_review_queue, prune_stale_questions, recover_review_section, strip_answered_questions,
+    unwrap_review_callout, wrap_review_callout,
 };
 
 // Re-export citation quality scoring
@@ -95,7 +95,10 @@ pub use links::{
 };
 
 // Re-export format layer
-pub use format::{build_document_header, extract_extra_frontmatter, format_link, format_references_line, merge_path_tags, tags_from_path, update_frontmatter_type, wikilink_path};
+pub use format::{
+    build_document_header, extract_extra_frontmatter, format_link, format_references_line,
+    merge_path_tags, tags_from_path, update_frontmatter_type, wikilink_path,
+};
 
 // Note: Unit tests are distributed to their respective submodules:
 // - core.rs: 16 tests (ID, title, type, hash)

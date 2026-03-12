@@ -39,14 +39,25 @@ pub fn get_entity(db: &Database, params: &GetEntityParams) -> Result<Value, Fact
     let linked_from = db.get_links_to(&params.id)?;
 
     let mut result = doc.to_summary_json();
-    let obj = result.as_object_mut().expect("to_summary_json returns object");
+    let obj = result
+        .as_object_mut()
+        .expect("to_summary_json returns object");
 
     if params.include_preview {
-        obj.insert("preview".into(), serde_json::json!(generate_preview(&doc.content, 500)));
+        obj.insert(
+            "preview".into(),
+            serde_json::json!(generate_preview(&doc.content, 500)),
+        );
     }
 
     if params.max_content_length > 0 && doc.content.len() > params.max_content_length {
-        obj.insert("content".into(), serde_json::json!(truncate_at_word_boundary(&doc.content, params.max_content_length)));
+        obj.insert(
+            "content".into(),
+            serde_json::json!(truncate_at_word_boundary(
+                &doc.content,
+                params.max_content_length
+            )),
+        );
         obj.insert("content_truncated".into(), serde_json::json!(true));
     } else {
         obj.insert("content".into(), serde_json::json!(doc.content));
@@ -54,7 +65,10 @@ pub fn get_entity(db: &Database, params: &GetEntityParams) -> Result<Value, Fact
 
     obj.insert("links_to".into(), serde_json::json!(links_to));
     obj.insert("linked_from".into(), serde_json::json!(linked_from));
-    obj.insert("indexed_at".into(), serde_json::json!(doc.indexed_at.to_rfc3339()));
+    obj.insert(
+        "indexed_at".into(),
+        serde_json::json!(doc.indexed_at.to_rfc3339()),
+    );
 
     Ok(result)
 }
@@ -64,7 +78,12 @@ pub fn get_entity(db: &Database, params: &GetEntityParams) -> Result<Value, Fact
 pub fn list_entities(db: &Database, params: &ListEntitiesParams) -> Result<Value, FactbaseError> {
     let repo = resolve_repo_filter(db, params.repo.as_deref())?;
     let limit = if params.limit == 0 { 50 } else { params.limit };
-    let docs = db.list_documents(params.doc_type.as_deref(), repo.as_deref(), params.title_filter.as_deref(), limit)?;
+    let docs = db.list_documents(
+        params.doc_type.as_deref(),
+        repo.as_deref(),
+        params.title_filter.as_deref(),
+        limit,
+    )?;
     let items: Vec<Value> = docs.into_iter().map(|d| d.to_summary_json()).collect();
     Ok(serde_json::json!({ "entities": items }))
 }
@@ -82,8 +101,12 @@ pub fn get_perspective(db: &Database, repo_id: Option<&str>) -> Result<Value, Fa
     .ok_or_else(|| FactbaseError::not_found("No repository found"))?;
 
     let mut json = repo.to_summary_json(doc_count);
-    let perspective = repo.perspective.or_else(|| load_perspective_from_file(&repo.path));
-    let obj = json.as_object_mut().expect("to_summary_json returns object");
+    let perspective = repo
+        .perspective
+        .or_else(|| load_perspective_from_file(&repo.path));
+    let obj = json
+        .as_object_mut()
+        .expect("to_summary_json returns object");
     obj.insert("perspective".into(), serde_json::json!(perspective));
 
     // Include all repos summary (replaces the removed list_repositories/repos op)
@@ -99,7 +122,10 @@ pub fn get_perspective(db: &Database, repo_id: Option<&str>) -> Result<Value, Fa
 #[instrument(name = "svc_list_repositories", skip(db))]
 pub fn list_repositories(db: &Database) -> Result<Value, FactbaseError> {
     let repos = db.list_repositories_with_stats()?;
-    let items: Vec<Value> = repos.into_iter().map(|(r, c)| r.to_summary_json(c)).collect();
+    let items: Vec<Value> = repos
+        .into_iter()
+        .map(|(r, c)| r.to_summary_json(c))
+        .collect();
     Ok(serde_json::json!({ "repositories": items }))
 }
 
@@ -116,11 +142,19 @@ pub fn get_document_stats(db: &Database, id: &str) -> Result<Value, FactbaseErro
     let linked_from = db.get_links_to(id)?;
 
     let mut result = doc.to_summary_json();
-    let obj = result.as_object_mut().expect("to_summary_json returns object");
+    let obj = result
+        .as_object_mut()
+        .expect("to_summary_json returns object");
     obj.insert("temporal".into(), build_temporal_stats_json(&doc.content));
     obj.insert("sources".into(), build_source_stats_json(&doc.content));
-    obj.insert("links".into(), build_link_stats_json(links_to.len(), linked_from.len()));
-    obj.insert("word_count".into(), serde_json::json!(crate::models::word_count(&doc.content)));
+    obj.insert(
+        "links".into(),
+        build_link_stats_json(links_to.len(), linked_from.len()),
+    );
+    obj.insert(
+        "word_count".into(),
+        serde_json::json!(crate::models::word_count(&doc.content)),
+    );
     obj.insert("review_queue".into(), build_review_stats_json(&doc.content));
     Ok(result)
 }
@@ -143,9 +177,13 @@ mod tests {
     fn test_list_repositories_format() {
         let repos: Vec<(crate::models::Repository, usize)> = vec![(
             crate::models::Repository {
-                id: "test".to_string(), name: "Test Repo".to_string(),
-                path: std::path::PathBuf::from("/tmp/test"), perspective: None,
-                created_at: chrono::Utc::now(), last_indexed_at: None, last_check_at: None,
+                id: "test".to_string(),
+                name: "Test Repo".to_string(),
+                path: std::path::PathBuf::from("/tmp/test"),
+                perspective: None,
+                created_at: chrono::Utc::now(),
+                last_indexed_at: None,
+                last_check_at: None,
             },
             5,
         )];
@@ -270,7 +308,10 @@ mod tests {
     fn test_list_entities_empty() {
         use crate::database::tests::test_db;
         let (db, _tmp) = test_db();
-        let params = ListEntitiesParams { limit: 10, ..Default::default() };
+        let params = ListEntitiesParams {
+            limit: 10,
+            ..Default::default()
+        };
         let result = list_entities(&db, &params).unwrap();
         assert_eq!(result["entities"].as_array().unwrap().len(), 0);
     }
@@ -282,7 +323,10 @@ mod tests {
         db.upsert_repository(&test_repo()).unwrap();
         db.upsert_document(&test_doc("a1", "Doc A")).unwrap();
         db.upsert_document(&test_doc("b2", "Doc B")).unwrap();
-        let params = ListEntitiesParams { limit: 10, ..Default::default() };
+        let params = ListEntitiesParams {
+            limit: 10,
+            ..Default::default()
+        };
         let result = list_entities(&db, &params).unwrap();
         assert_eq!(result["entities"].as_array().unwrap().len(), 2);
     }
@@ -293,9 +337,13 @@ mod tests {
         let (db, _tmp) = test_db();
         db.upsert_repository(&test_repo()).unwrap();
         for i in 0..5 {
-            db.upsert_document(&test_doc(&format!("d{i:02}"), &format!("Doc {i}"))).unwrap();
+            db.upsert_document(&test_doc(&format!("d{i:02}"), &format!("Doc {i}")))
+                .unwrap();
         }
-        let params = ListEntitiesParams { limit: 2, ..Default::default() };
+        let params = ListEntitiesParams {
+            limit: 2,
+            ..Default::default()
+        };
         let result = list_entities(&db, &params).unwrap();
         assert_eq!(result["entities"].as_array().unwrap().len(), 2);
     }

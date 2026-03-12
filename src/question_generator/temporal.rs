@@ -6,10 +6,11 @@
 use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, MALFORMED_TAG_REGEX, ONGOING_TAG_REGEX, SOURCE_REF_DETECT_REGEX,
-    TEMPORAL_TAG_FULL_REGEX,
+use crate::patterns::{
+    extract_frontmatter_reviewed_date, extract_reviewed_date, MALFORMED_TAG_REGEX,
+    ONGOING_TAG_REGEX, SOURCE_REF_DETECT_REGEX, TEMPORAL_TAG_FULL_REGEX,
 };
-use crate::processor::{find_malformed_tags, normalize_temporal_tags, line_has_temporal_tag};
+use crate::processor::{find_malformed_tags, line_has_temporal_tag, normalize_temporal_tags};
 
 use super::iter_fact_lines;
 
@@ -32,9 +33,8 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
     let current_year = Utc::now().year();
     let today = Utc::now().date_naive();
 
-    let is_definition_type = doc_type.is_some_and(|t| {
-        matches!(t, "definition" | "glossary" | "reference")
-    });
+    let is_definition_type =
+        doc_type.is_some_and(|t| matches!(t, "definition" | "glossary" | "reference"));
 
     // Check frontmatter for document-level reviewed date (obsidian format)
     let fm_skip = extract_frontmatter_reviewed_date(content)
@@ -64,7 +64,10 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
             if is_definition_type {
                 q = q.with_confidence("low", "fact in definition/glossary document");
             } else if SOURCE_REF_DETECT_REGEX.is_match(line) {
-                q = q.with_confidence("low", "fact has source citation — may be an evergreen description");
+                q = q.with_confidence(
+                    "low",
+                    "fact has source citation — may be an evergreen description",
+                );
             }
             questions.push(q);
         } else {
@@ -466,7 +469,11 @@ mod tests {
         let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].confidence.as_deref(), Some("low"));
-        assert!(questions[0].confidence_reason.as_ref().unwrap().contains("source citation"));
+        assert!(questions[0]
+            .confidence_reason
+            .as_ref()
+            .unwrap()
+            .contains("source citation"));
     }
 
     #[test]
@@ -475,7 +482,11 @@ mod tests {
         let questions = generate_temporal_questions(content, Some("definition"));
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].confidence.as_deref(), Some("low"));
-        assert!(questions[0].confidence_reason.as_ref().unwrap().contains("definition"));
+        assert!(questions[0]
+            .confidence_reason
+            .as_ref()
+            .unwrap()
+            .contains("definition"));
     }
 
     #[test]
@@ -501,7 +512,11 @@ mod tests {
         let questions = generate_temporal_questions(content, Some("definition"));
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].confidence.as_deref(), Some("low"));
-        assert!(questions[0].confidence_reason.as_ref().unwrap().contains("definition"));
+        assert!(questions[0]
+            .confidence_reason
+            .as_ref()
+            .unwrap()
+            .contains("definition"));
     }
 
     #[test]
@@ -509,9 +524,15 @@ mod tests {
         // Stale ongoing questions should not have low confidence
         let content = "# Doc\n\n- Role at Company @t[2020..]";
         let questions = generate_temporal_questions(content, None);
-        let stale: Vec<_> = questions.iter().filter(|q| q.description.contains("still current")).collect();
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current"))
+            .collect();
         for q in &stale {
-            assert!(q.confidence.is_none(), "stale ongoing questions should have no confidence override");
+            assert!(
+                q.confidence.is_none(),
+                "stale ongoing questions should have no confidence override"
+            );
         }
     }
 
@@ -520,6 +541,9 @@ mod tests {
         let content = "# Person\n\n- Some fact without tag";
         let questions = generate_temporal_questions(content, Some("person"));
         assert_eq!(questions.len(), 1);
-        assert!(questions[0].confidence.is_none(), "regular doc types should not get low confidence");
+        assert!(
+            questions[0].confidence.is_none(),
+            "regular doc types should not get low confidence"
+        );
     }
 }

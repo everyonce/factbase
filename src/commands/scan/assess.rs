@@ -1,6 +1,6 @@
 use factbase::models::Repository;
 use factbase::output::{format_bytes, format_json};
-use factbase::processor::{DocumentProcessor, calculate_fact_stats, count_facts_with_sources};
+use factbase::processor::{calculate_fact_stats, count_facts_with_sources, DocumentProcessor};
 use factbase::scanner::Scanner;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -144,12 +144,21 @@ fn build_summary(repos: &[RepoAssessment]) -> (AssessmentSummary, Vec<String>) {
 
     let total_size: u64 = all_files.iter().map(|f| f.size_bytes).sum();
     let files_with_ids = all_files.iter().filter(|f| f.has_id_header).count();
-    let files_with_temporal = all_files.iter().filter(|f| f.facts_with_temporal > 0).count();
-    let files_with_sources = all_files.iter().filter(|f| f.facts_with_sources > 0).count();
+    let files_with_temporal = all_files
+        .iter()
+        .filter(|f| f.facts_with_temporal > 0)
+        .count();
+    let files_with_sources = all_files
+        .iter()
+        .filter(|f| f.facts_with_sources > 0)
+        .count();
     let files_in_typed = all_files.iter().filter(|f| f.in_typed_folder).count();
     let files_in_root = total - files_in_typed;
-    let avg_score: f32 =
-        all_files.iter().map(|f| f.quality_score as f32).sum::<f32>() / total as f32;
+    let avg_score: f32 = all_files
+        .iter()
+        .map(|f| f.quality_score as f32)
+        .sum::<f32>()
+        / total as f32;
 
     let mut type_dist: HashMap<String, usize> = HashMap::new();
     for f in &all_files {
@@ -157,10 +166,7 @@ fn build_summary(repos: &[RepoAssessment]) -> (AssessmentSummary, Vec<String>) {
     }
 
     // Readiness assessment
-    let well_formatted = all_files
-        .iter()
-        .filter(|f| f.quality_score >= 50)
-        .count();
+    let well_formatted = all_files.iter().filter(|f| f.quality_score >= 50).count();
     let pct_well = (well_formatted as f32 / total as f32 * 100.0) as u8;
     let needs_temporal = all_files
         .iter()
@@ -345,10 +351,7 @@ pub(super) fn cmd_scan_assess(
                     } else {
                         "no facts".to_string()
                     };
-                    println!(
-                        "  [{}] {} ({})",
-                        f.quality_score, f.path, f.doc_type
-                    );
+                    println!("  [{}] {} ({})", f.quality_score, f.path, f.doc_type);
                     println!(
                         "       ID: {} | Title: {} | Temporal: {} | Sources: {}",
                         if f.has_id_header { "✓" } else { "✗" },
@@ -574,10 +577,7 @@ mod tests {
 
         let (summary, _) = build_summary(&repos);
         assert!(summary.readiness.contains("100%"));
-        assert!(summary
-            .next_steps
-            .iter()
-            .any(|s| s.contains("look good")));
+        assert!(summary.next_steps.iter().any(|s| s.contains("look good")));
     }
 
     #[test]

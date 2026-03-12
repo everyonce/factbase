@@ -175,8 +175,8 @@ pub(super) fn cmd_scan_prune(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use factbase::models::Document;
     use factbase::database::Database;
+    use factbase::models::Document;
     use tempfile::TempDir;
 
     fn test_db() -> (Database, TempDir) {
@@ -262,7 +262,10 @@ mod tests {
 
         // get_document filters out soft-deleted docs, so it returns None
         let doc = db.get_document("aaa111").unwrap();
-        assert!(doc.is_none(), "soft-deleted doc should not appear in get_document");
+        assert!(
+            doc.is_none(),
+            "soft-deleted doc should not appear in get_document"
+        );
     }
 
     #[test]

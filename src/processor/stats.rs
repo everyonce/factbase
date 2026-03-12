@@ -3,9 +3,9 @@
 //! This module handles calculating statistics about facts in documents,
 //! including temporal coverage and source attribution.
 
+use super::temporal::line_has_temporal_tag;
 use crate::models::FactStats;
 use crate::patterns::FACT_LINE_REGEX;
-use super::temporal::line_has_temporal_tag;
 
 /// Count total facts (list items) in document content.
 /// A fact is defined as a list item starting with `-`, `*`, or a number followed by `.` or `)`.
@@ -49,9 +49,15 @@ mod tests {
     #[test]
     fn test_count_facts_mixed() {
         // All list marker formats counted
-        assert_eq!(count_facts("# Title\n- Dash item\n* Star item\n1. Numbered\n2) Paren"), 4);
+        assert_eq!(
+            count_facts("# Title\n- Dash item\n* Star item\n1. Numbered\n2) Paren"),
+            4
+        );
         // Indented items counted
-        assert_eq!(count_facts("# Title\n- Top level\n  - Nested\n    - Deep nested"), 3);
+        assert_eq!(
+            count_facts("# Title\n- Top level\n  - Nested\n    - Deep nested"),
+            3
+        );
     }
 
     #[test]
@@ -148,8 +154,7 @@ mod tests {
 
     #[test]
     fn test_mixed_bce_and_ce_tags_counted() {
-        let content =
-            "- Ancient @t[=331 BCE]\n- Modern @t[=2024]\n- Unknown @t[?]\n- Bare fact";
+        let content = "- Ancient @t[=331 BCE]\n- Modern @t[=2024]\n- Unknown @t[?]\n- Bare fact";
         let stats = calculate_fact_stats(content);
         assert_eq!(stats.total_facts, 4);
         assert_eq!(stats.facts_with_tags, 3);

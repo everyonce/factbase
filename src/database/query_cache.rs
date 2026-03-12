@@ -62,11 +62,10 @@ impl Database {
     /// Evict oldest entries to keep cache at or below `max_entries`.
     pub fn evict_query_cache(&self, max_entries: usize) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM query_embedding_cache",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM query_embedding_cache", [], |row| {
+                row.get(0)
+            })?;
         let to_delete = (count as usize).saturating_sub(max_entries);
         if to_delete == 0 {
             return Ok(0);
@@ -83,11 +82,10 @@ impl Database {
     /// Count entries in the query embedding cache.
     pub fn count_query_cache(&self) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM query_embedding_cache",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM query_embedding_cache", [], |row| {
+                row.get(0)
+            })?;
         Ok(count as usize)
     }
 

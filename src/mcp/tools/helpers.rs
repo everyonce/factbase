@@ -61,7 +61,10 @@ pub(crate) fn get_bool_arg(args: &Value, key: &str, default: bool) -> bool {
 /// Extract optional string array argument.
 pub(crate) fn get_str_array_arg(args: &Value, key: &str) -> Option<Vec<String>> {
     args.get(key).and_then(Value::as_array).map(|arr| {
-        arr.iter().filter_map(Value::as_str).map(String::from).collect()
+        arr.iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect()
     })
 }
 
@@ -91,9 +94,11 @@ pub(crate) fn resolve_repo(
     } else {
         repos.into_iter().next()
     };
-    repo.ok_or_else(|| FactbaseError::NotFound(
-        "No repository found. Initialize one first with factbase init or scan.".into(),
-    ))
+    repo.ok_or_else(|| {
+        FactbaseError::NotFound(
+            "No repository found. Initialize one first with factbase init or scan.".into(),
+        )
+    })
 }
 
 /// Build temporal stats JSON from document content.
@@ -186,7 +191,9 @@ pub(crate) fn build_quality_stats(
         None => (0, 0),
     };
     let pending_questions = total_q - answered_q;
-    let facts_without_temporal = fact_stats.total_facts.saturating_sub(fact_stats.facts_with_tags);
+    let facts_without_temporal = fact_stats
+        .total_facts
+        .saturating_sub(fact_stats.facts_with_tags);
     let facts_without_sources = fact_stats.total_facts.saturating_sub(facts_with_sources);
     let attention_score = pending_questions * 2 + facts_without_sources + facts_without_temporal;
 
@@ -269,8 +276,7 @@ pub(crate) fn detect_weak_identification(
                 .filter_map(|w| w.chars().next())
                 .collect::<String>()
                 .to_lowercase();
-            let is_initials =
-                title_initials.len() >= 2 && cand_initials == title_initials;
+            let is_initials = title_initials.len() >= 2 && cand_initials == title_initials;
 
             if is_substring || is_initials {
                 best = Some(candidate.to_string());
@@ -311,7 +317,9 @@ pub(crate) fn encode_resume_token(data: &Value) -> String {
 /// Decode a resume token back to a JSON value.
 pub(crate) fn decode_resume_token(token: &str) -> Option<Value> {
     use base64::Engine;
-    let bytes = base64::engine::general_purpose::STANDARD.decode(token).ok()?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(token)
+        .ok()?;
     serde_json::from_slice(&bytes).ok()
 }
 
@@ -329,7 +337,11 @@ pub(crate) fn apply_time_budget_progress(
     if remaining == 0 || !budget_active {
         return;
     }
-    let pct = if total > 0 { (processed as f64 / total as f64 * 100.0) as u32 } else { 0 };
+    let pct = if total > 0 {
+        (processed as f64 / total as f64 * 100.0) as u32
+    } else {
+        0
+    };
     response["progress"] = serde_json::json!({
         "processed": processed,
         "remaining": remaining,
@@ -436,7 +448,10 @@ mod tests {
     fn test_get_str_array_arg_present() {
         let args = serde_json::json!({"ids": ["a", "b", "c"]});
         let result = get_str_array_arg(&args, "ids");
-        assert_eq!(result, Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]));
+        assert_eq!(
+            result,
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()])
+        );
     }
 
     #[test]
@@ -574,7 +589,8 @@ mod tests {
     #[test]
     fn test_weak_id_picks_longest_candidate() {
         let title = "DS";
-        let content = "# DS\n\nDesert Storm was a military operation. Operation Desert Storm began in 1991.";
+        let content =
+            "# DS\n\nDesert Storm was a military operation. Operation Desert Storm began in 1991.";
         let result = detect_weak_identification(title, content, &[]);
         // "DS" matches initials of "Desert Storm" but not "Operation Desert Storm" (ODS)
         assert_eq!(result.as_deref(), Some("Desert Storm"));
@@ -711,7 +727,8 @@ mod tests {
     #[test]
     fn test_resolve_repo_filter_by_id() {
         let (db, _tmp) = crate::database::tests::test_db();
-        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        db.add_repository(&crate::database::tests::test_repo())
+            .unwrap();
         let result = resolve_repo_filter(&db, Some("test-repo")).unwrap();
         assert_eq!(result.as_deref(), Some("test-repo"));
     }
@@ -719,7 +736,8 @@ mod tests {
     #[test]
     fn test_resolve_repo_filter_by_name() {
         let (db, _tmp) = crate::database::tests::test_db();
-        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        db.add_repository(&crate::database::tests::test_repo())
+            .unwrap();
         let result = resolve_repo_filter(&db, Some("Test Repo")).unwrap();
         assert_eq!(result.as_deref(), Some("test-repo"));
     }
@@ -734,7 +752,8 @@ mod tests {
     #[test]
     fn test_resolve_repo_none_returns_first() {
         let (db, _tmp) = crate::database::tests::test_db();
-        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        db.add_repository(&crate::database::tests::test_repo())
+            .unwrap();
         let repo = resolve_repo(&db, None).unwrap();
         assert_eq!(repo.id, "test-repo");
     }
@@ -742,7 +761,8 @@ mod tests {
     #[test]
     fn test_resolve_repo_explicit_id() {
         let (db, _tmp) = crate::database::tests::test_db();
-        db.add_repository(&crate::database::tests::test_repo()).unwrap();
+        db.add_repository(&crate::database::tests::test_repo())
+            .unwrap();
         let repo = resolve_repo(&db, Some("test-repo")).unwrap();
         assert_eq!(repo.id, "test-repo");
     }

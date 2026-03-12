@@ -136,7 +136,10 @@ mod tests {
         let mut docs = HashMap::new();
         docs.insert("doc1".into(), "# No Tags\n\n- Just a fact".into());
         apply_temporal_filter(&mut results, &docs, None, None, false);
-        assert!(results.is_empty(), "docs without temporal tags should be removed");
+        assert!(
+            results.is_empty(),
+            "docs without temporal tags should be removed"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //!
 //! This module provides configuration loading, validation, and defaults.
 
+pub mod cross_validate;
 mod database;
 mod embedding;
 mod processor;
@@ -10,8 +11,8 @@ mod server;
 mod validation;
 mod web;
 pub mod workflows;
-pub mod cross_validate;
 
+pub use cross_validate::CrossValidateConfig;
 pub use database::DatabaseConfig;
 pub use embedding::{EmbeddingConfig, LlmConfig, OllamaConfig};
 pub use processor::{ProcessorConfig, RepositoryConfig, WatcherConfig};
@@ -20,14 +21,13 @@ pub use server::{RateLimitConfig, ReviewConfig, ServerConfig, TemporalConfig};
 pub use validation::{validate_timeout, TIMEOUT_RANGE};
 pub use web::WebConfig;
 pub use workflows::WorkflowsConfig;
-pub use cross_validate::CrossValidateConfig;
 
 use crate::database::Database;
 use crate::error::FactbaseError;
 use database::{default_compression, default_pool_size};
 use processor::{
-    default_chunk_overlap, default_chunk_size, default_embedding_batch_size,
-    default_link_batch_size, default_check_concurrency, default_metadata_cache_size,
+    default_check_concurrency, default_chunk_overlap, default_chunk_size,
+    default_embedding_batch_size, default_link_batch_size, default_metadata_cache_size,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -116,10 +116,8 @@ impl Default for Config {
 
 impl Config {
     pub fn load(path: Option<&Path>) -> Result<Self, FactbaseError> {
-        let config_path = path.map_or_else(
-            || PathBuf::from(".factbase/config.yaml"),
-            PathBuf::from,
-        );
+        let config_path =
+            path.map_or_else(|| PathBuf::from(".factbase/config.yaml"), PathBuf::from);
 
         if !config_path.exists() {
             return Ok(Config::default());
@@ -264,7 +262,11 @@ mod tests {
 
         let mut c = valid_config();
         c.database.compression = "invalid".to_string();
-        assert!(c.validate().unwrap_err().to_string().contains("compression"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("compression"));
         c.database.compression = "none".to_string();
         assert!(c.validate().is_ok());
         c.database.compression = "zstd".to_string();
@@ -293,7 +295,11 @@ mod tests {
         assert!(c.validate().unwrap_err().to_string().contains("cache_size"));
         let mut c = valid_config();
         c.embedding.timeout_secs = 0;
-        assert!(c.validate().unwrap_err().to_string().contains("embedding.timeout_secs"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("embedding.timeout_secs"));
     }
 
     #[test]
@@ -311,9 +317,17 @@ mod tests {
             assert!(c.validate().is_ok());
         }
         c.temporal.min_coverage = -0.1;
-        assert!(c.validate().unwrap_err().to_string().contains("min_coverage"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("min_coverage"));
         c.temporal.min_coverage = 1.1;
-        assert!(c.validate().unwrap_err().to_string().contains("min_coverage"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("min_coverage"));
     }
 
     #[test]
@@ -325,17 +339,29 @@ mod tests {
         c.ollama.max_retries = 10;
         assert!(c.validate().is_ok());
         c.ollama.max_retries = 11;
-        assert!(c.validate().unwrap_err().to_string().contains("max_retries"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("max_retries"));
         c.ollama.max_retries = 3; // reset
-        // retry_delay_ms: 100 and 60000 valid, 99 and 60001 invalid
+                                  // retry_delay_ms: 100 and 60000 valid, 99 and 60001 invalid
         c.ollama.retry_delay_ms = 100;
         assert!(c.validate().is_ok());
         c.ollama.retry_delay_ms = 60000;
         assert!(c.validate().is_ok());
         c.ollama.retry_delay_ms = 99;
-        assert!(c.validate().unwrap_err().to_string().contains("retry_delay_ms"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("retry_delay_ms"));
         c.ollama.retry_delay_ms = 60001;
-        assert!(c.validate().unwrap_err().to_string().contains("retry_delay_ms"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("retry_delay_ms"));
     }
 
     #[test]
@@ -351,9 +377,17 @@ mod tests {
     fn test_validate_time_budget_secs() {
         let mut c = valid_config();
         c.server.time_budget_secs = 4;
-        assert!(c.validate().unwrap_err().to_string().contains("time_budget_secs"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("time_budget_secs"));
         c.server.time_budget_secs = 601;
-        assert!(c.validate().unwrap_err().to_string().contains("time_budget_secs"));
+        assert!(c
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("time_budget_secs"));
         c.server.time_budget_secs = 5;
         assert!(c.validate().is_ok());
         c.server.time_budget_secs = 600;

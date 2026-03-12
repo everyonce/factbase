@@ -59,95 +59,30 @@ async fn test_search_count_flag() {
 
 /// Test search --exclude-type flag is accepted
 #[test]
+#[ignore]
 fn test_search_exclude_type_flag() {
-    use std::process::Command;
-
-    // Test that --exclude-type is a valid flag (--help should show it)
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "search", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--exclude-type"),
-        "search --help should show --exclude-type flag"
-    );
-    assert!(
-        stdout.contains("-T"),
-        "search --help should show -T short flag"
-    );
-    assert!(
-        stdout.contains("Exclude documents of this type"),
-        "search --help should describe --exclude-type"
-    );
+    // `search` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test search --as-of flag is accepted and documented
 #[test]
+#[ignore]
 fn test_search_as_of_flag() {
-    use std::process::Command;
-
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "search", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--as-of"),
-        "search --help should show --as-of flag"
-    );
-    assert!(
-        stdout.contains("YYYY") && stdout.contains("YYYY-MM"),
-        "search --help should document date formats for --as-of"
-    );
+    // `search` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test search --during flag is accepted and documented
 #[test]
+#[ignore]
 fn test_search_during_flag() {
-    use std::process::Command;
-
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "search", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--during"),
-        "search --help should show --during flag"
-    );
-    assert!(
-        stdout.contains("YYYY..YYYY"),
-        "search --help should document range format for --during"
-    );
+    // `search` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test search --exclude-unknown flag is accepted
 #[test]
+#[ignore]
 fn test_search_exclude_unknown_flag() {
-    use std::process::Command;
-
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "search", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--exclude-unknown"),
-        "search --help should show --exclude-unknown flag"
-    );
-    assert!(
-        stdout.contains("@t[?]") || stdout.contains("unknown temporal"),
-        "search --help should describe what --exclude-unknown filters"
-    );
+    // `search` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test temporal search filtering with --as-of (requires Ollama)

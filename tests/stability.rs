@@ -61,7 +61,6 @@ async fn test_stability_short() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -207,7 +206,6 @@ async fn test_stability_long() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 

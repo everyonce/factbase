@@ -15,13 +15,13 @@ use chrono::{DateTime, Utc};
 use rayon::prelude::*;
 
 use crate::models::TemporalScanStats;
+use crate::models::{normalize_pair, DuplicatePair};
 use crate::processor::content_hash;
 use crate::ProgressReporter;
 use crate::{
     calculate_fact_stats, count_facts_with_sources, Database, Document, DocumentProcessor,
     EmbeddingProvider, LinkDetector, Repository, ScanResult, ScanStats,
 };
-use crate::models::{normalize_pair, DuplicatePair};
 
 use super::options::ScanOptions;
 use super::progress::OptionalProgress;
@@ -241,7 +241,11 @@ pub async fn full_scan(
         // Check deadline before starting a new chunk
         if let Some(deadline) = ctx.opts.deadline {
             if Instant::now() > deadline {
-                result.total = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+                result.total = result.added
+                    + result.updated
+                    + result.unchanged
+                    + result.moved
+                    + result.reindexed;
                 result.file_offset = ctx.opts.file_offset + global_idx;
                 result.interrupted = true;
                 return Ok(result);
@@ -313,9 +317,12 @@ pub async fn full_scan(
                     .unwrap_or_default();
                 // Derive type now so it can be written to frontmatter alongside the ID
                 let new_doc_type = ctx.processor.derive_type(&pre.path, &repo.path);
-                let new_content =
-                    ctx.processor
-                        .inject_id_with_format(&content, &id, &resolved_format, Some(&new_doc_type));
+                let new_content = ctx.processor.inject_id_with_format(
+                    &content,
+                    &id,
+                    &resolved_format,
+                    Some(&new_doc_type),
+                );
                 fs::write(&pre.path, &new_content)?;
                 id
             };
@@ -495,51 +502,51 @@ pub async fn full_scan(
                 }
                 total_db_write_ms += db_start.elapsed().as_millis() as u64;
             } else {
-            let chunk_output = run_embedding_phase(EmbeddingPhaseInput {
-                pending: std::mem::take(&mut pending),
-                repo_id: &repo.id,
-                embedding: ctx.embedding,
-                db,
-                chunk_size: ctx.opts.chunk_size,
-                chunk_overlap: ctx.opts.chunk_overlap,
-                embedding_batch_size: ctx.opts.embedding_batch_size,
-                show_progress: ctx.opts.show_progress,
-                verbose: ctx.opts.verbose,
-                collect_stats: ctx.opts.collect_stats,
-                progress: ctx.progress,
-            })
-            .await?;
+                let chunk_output = run_embedding_phase(EmbeddingPhaseInput {
+                    pending: std::mem::take(&mut pending),
+                    repo_id: &repo.id,
+                    embedding: ctx.embedding,
+                    db,
+                    chunk_size: ctx.opts.chunk_size,
+                    chunk_overlap: ctx.opts.chunk_overlap,
+                    embedding_batch_size: ctx.opts.embedding_batch_size,
+                    show_progress: ctx.opts.show_progress,
+                    verbose: ctx.opts.verbose,
+                    collect_stats: ctx.opts.collect_stats,
+                    progress: ctx.progress,
+                })
+                .await?;
 
-            total_docs_embedded += chunk_output.docs_embedded;
-            total_embedding_ms += chunk_output.embedding_ms;
-            total_db_write_ms += chunk_output.db_write_ms;
-            all_file_timings.extend(chunk_output.file_timings);
+                total_docs_embedded += chunk_output.docs_embedded;
+                total_embedding_ms += chunk_output.embedding_ms;
+                total_db_write_ms += chunk_output.db_write_ms;
+                all_file_timings.extend(chunk_output.file_timings);
 
-            if chunk_output.interrupted {
-                return Ok(build_interrupted_result(InterruptedResultParams {
-                    added: result.added,
-                    updated: result.updated,
-                    deleted: result.deleted,
-                    unchanged: result.unchanged,
-                    moved: result.moved,
-                    reindexed: result.reindexed,
-                    links_detected: 0,
-                    total_facts,
-                    facts_with_tags,
-                    facts_with_sources,
-                    below_threshold_docs,
-                    file_discovery_ms,
-                    parsing_ms: parsing_start.elapsed().as_millis() as u64,
-                    embedding_ms: total_embedding_ms,
-                    db_write_ms: total_db_write_ms,
-                    link_detection_ms: 0,
-                    total_ms: scan_start.elapsed().as_millis() as u64,
-                    docs_embedded: total_docs_embedded,
-                    docs_link_detected: 0,
-                    fact_embeddings_generated: 0,
-                    file_offset: ctx.opts.file_offset + global_idx,
-                }));
-            }
+                if chunk_output.interrupted {
+                    return Ok(build_interrupted_result(InterruptedResultParams {
+                        added: result.added,
+                        updated: result.updated,
+                        deleted: result.deleted,
+                        unchanged: result.unchanged,
+                        moved: result.moved,
+                        reindexed: result.reindexed,
+                        links_detected: 0,
+                        total_facts,
+                        facts_with_tags,
+                        facts_with_sources,
+                        below_threshold_docs,
+                        file_discovery_ms,
+                        parsing_ms: parsing_start.elapsed().as_millis() as u64,
+                        embedding_ms: total_embedding_ms,
+                        db_write_ms: total_db_write_ms,
+                        link_detection_ms: 0,
+                        total_ms: scan_start.elapsed().as_millis() as u64,
+                        docs_embedded: total_docs_embedded,
+                        docs_link_detected: 0,
+                        fact_embeddings_generated: 0,
+                        file_offset: ctx.opts.file_offset + global_idx,
+                    }));
+                }
             } // end else (embedding enabled)
         }
     } // end file_chunk loop
@@ -657,30 +664,32 @@ pub async fn full_scan(
 
     // Pass 3: Generate fact embeddings for changed documents
     if !ctx.opts.skip_embeddings {
-    let fact_ids = if !changed_ids.is_empty() {
-        changed_ids.clone()
-    } else {
-        let total_docs = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
-        if total_docs > 0 && db.get_fact_embedding_count()? == 0 {
-            seen.clone()
+        let fact_ids = if !changed_ids.is_empty() {
+            changed_ids.clone()
         } else {
-            HashSet::new()
+            let total_docs =
+                result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+            if total_docs > 0 && db.get_fact_embedding_count()? == 0 {
+                seen.clone()
+            } else {
+                HashSet::new()
+            }
+        };
+        if !fact_ids.is_empty() {
+            let _ = db.invalidate_fact_pair_cache();
+            ctx.progress.phase("Generating fact embeddings");
+            let fact_output = facts::run_fact_embedding_phase(&facts::FactEmbeddingInput {
+                changed_ids: &fact_ids,
+                embedding: ctx.embedding,
+                db,
+                embedding_batch_size: ctx.opts.embedding_batch_size,
+                progress: ctx.progress,
+                deadline: ctx.opts.deadline,
+            })
+            .await?;
+            result.fact_embeddings_generated = fact_output.generated;
         }
-    };
-    if !fact_ids.is_empty() {
-        let _ = db.invalidate_fact_pair_cache();
-        ctx.progress.phase("Generating fact embeddings");
-        let fact_output = facts::run_fact_embedding_phase(&facts::FactEmbeddingInput {
-            changed_ids: &fact_ids,
-            embedding: ctx.embedding,
-            db,
-            embedding_batch_size: ctx.opts.embedding_batch_size,
-            progress: ctx.progress,
-            deadline: ctx.opts.deadline,
-        }).await?;
-        result.fact_embeddings_generated = fact_output.generated;
-    }
-    result.fact_embeddings_needed = 0;
+        result.fact_embeddings_needed = 0;
     } // end skip_embeddings check
 
     // Set total document count
@@ -889,24 +898,36 @@ mod tests {
 
         // Insert two very different docs
         let doc1 = Document {
-            id: "aaa111".into(), repo_id: repo.id.clone(),
-            file_path: "a.md".into(), file_hash: "h1".into(),
-            title: "Alpha".into(), doc_type: Some("doc".into()),
+            id: "aaa111".into(),
+            repo_id: repo.id.clone(),
+            file_path: "a.md".into(),
+            file_hash: "h1".into(),
+            title: "Alpha".into(),
+            doc_type: Some("doc".into()),
             content: "# Alpha\n\nCompletely different content about cats.".into(),
-            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
         };
         let doc2 = Document {
-            id: "bbb222".into(), repo_id: repo.id.clone(),
-            file_path: "b.md".into(), file_hash: "h2".into(),
-            title: "Beta".into(), doc_type: Some("doc".into()),
+            id: "bbb222".into(),
+            repo_id: repo.id.clone(),
+            file_path: "b.md".into(),
+            file_hash: "h2".into(),
+            title: "Beta".into(),
+            doc_type: Some("doc".into()),
             content: "# Beta\n\nEntirely unrelated content about dogs.".into(),
-            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
         };
         db.upsert_document(&doc1).unwrap();
         db.upsert_document(&doc2).unwrap();
         // Different embeddings → low similarity
-        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &vec![1.0; dim]).unwrap();
-        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &vec![-1.0; dim]).unwrap();
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &vec![1.0; dim])
+            .unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &vec![-1.0; dim])
+            .unwrap();
 
         let mut changed = HashSet::new();
         changed.insert("aaa111".to_string());
@@ -922,30 +943,45 @@ mod tests {
         let dim = embedding.dimension();
 
         let doc1 = Document {
-            id: "aaa111".into(), repo_id: repo.id.clone(),
-            file_path: "a.md".into(), file_hash: "h1".into(),
-            title: "Alpha".into(), doc_type: Some("doc".into()),
+            id: "aaa111".into(),
+            repo_id: repo.id.clone(),
+            file_path: "a.md".into(),
+            file_hash: "h1".into(),
+            title: "Alpha".into(),
+            doc_type: Some("doc".into()),
             content: "# Alpha\n\nSame content.".into(),
-            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
         };
         let doc2 = Document {
-            id: "bbb222".into(), repo_id: repo.id.clone(),
-            file_path: "b.md".into(), file_hash: "h2".into(),
-            title: "Beta".into(), doc_type: Some("doc".into()),
+            id: "bbb222".into(),
+            repo_id: repo.id.clone(),
+            file_path: "b.md".into(),
+            file_hash: "h2".into(),
+            title: "Beta".into(),
+            doc_type: Some("doc".into()),
             content: "# Beta\n\nSame content.".into(),
-            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
         };
         db.upsert_document(&doc1).unwrap();
         db.upsert_document(&doc2).unwrap();
         // Identical embeddings → 100% similarity
         let emb = vec![0.5; dim];
-        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &emb).unwrap();
-        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &emb).unwrap();
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &emb)
+            .unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &emb)
+            .unwrap();
 
         let mut changed = HashSet::new();
         changed.insert("aaa111".to_string());
         let result = check_duplicates(&db, &changed).unwrap();
-        assert!(!result.is_empty(), "Identical embeddings should be detected as duplicates");
+        assert!(
+            !result.is_empty(),
+            "Identical embeddings should be detected as duplicates"
+        );
         assert_eq!(result[0].doc1_id, "aaa111");
         assert_eq!(result[0].doc2_id, "bbb222");
     }
@@ -958,31 +994,47 @@ mod tests {
         let dim = embedding.dimension();
 
         let doc1 = Document {
-            id: "aaa111".into(), repo_id: repo.id.clone(),
-            file_path: "a.md".into(), file_hash: "h1".into(),
-            title: "Alpha".into(), doc_type: Some("doc".into()),
+            id: "aaa111".into(),
+            repo_id: repo.id.clone(),
+            file_path: "a.md".into(),
+            file_hash: "h1".into(),
+            title: "Alpha".into(),
+            doc_type: Some("doc".into()),
             content: "# Alpha".into(),
-            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
         };
         let doc2 = Document {
-            id: "bbb222".into(), repo_id: repo.id.clone(),
-            file_path: "b.md".into(), file_hash: "h2".into(),
-            title: "Beta".into(), doc_type: Some("doc".into()),
+            id: "bbb222".into(),
+            repo_id: repo.id.clone(),
+            file_path: "b.md".into(),
+            file_hash: "h2".into(),
+            title: "Beta".into(),
+            doc_type: Some("doc".into()),
             content: "# Beta".into(),
-            file_modified_at: None, indexed_at: chrono::Utc::now(), is_deleted: false,
+            file_modified_at: None,
+            indexed_at: chrono::Utc::now(),
+            is_deleted: false,
         };
         db.upsert_document(&doc1).unwrap();
         db.upsert_document(&doc2).unwrap();
         let emb = vec![0.5; dim];
-        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &emb).unwrap();
-        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &emb).unwrap();
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &emb)
+            .unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &emb)
+            .unwrap();
 
         // Both docs in changed set — should still only produce one pair
         let mut changed = HashSet::new();
         changed.insert("aaa111".to_string());
         changed.insert("bbb222".to_string());
         let result = check_duplicates(&db, &changed).unwrap();
-        assert_eq!(result.len(), 1, "Should deduplicate (A,B) and (B,A) into one pair");
+        assert_eq!(
+            result.len(),
+            1,
+            "Should deduplicate (A,B) and (B,A) into one pair"
+        );
     }
 
     // ── pre_read_files edge cases ──
@@ -1024,7 +1076,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert_eq!(result.added, 1);
@@ -1048,7 +1107,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         // First scan — adds file and injects ID header into the file
         let r1 = full_scan(&repo, &db, &ctx).await.unwrap();
@@ -1081,7 +1147,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         full_scan(&repo, &db, &ctx).await.unwrap();
 
@@ -1111,7 +1184,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         full_scan(&repo, &db, &ctx).await.unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -1140,7 +1220,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert_eq!(result.added, 1, "Only visible.md should be indexed");
@@ -1169,7 +1256,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         // With offset 3, only 2 of 5 files should be processed
@@ -1192,7 +1286,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert_eq!(result.added, 1);
@@ -1224,7 +1325,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         // Good file should be indexed, bad file skipped without crash
@@ -1236,7 +1344,11 @@ mod tests {
         let (db, _db_tmp) = test_db();
         let (tmp, repo) = setup_repo(&db);
         std::fs::create_dir(tmp.path().join("topics")).unwrap();
-        std::fs::write(tmp.path().join("topics/alpha.md"), "# Alpha\n\nAlpha content.").unwrap();
+        std::fs::write(
+            tmp.path().join("topics/alpha.md"),
+            "# Alpha\n\nAlpha content.",
+        )
+        .unwrap();
         std::fs::write(tmp.path().join("topics/beta.md"), "# Beta\n\nBeta content.").unwrap();
         std::fs::write(tmp.path().join("root.md"), "# Root\n\nRoot content.").unwrap();
 
@@ -1249,7 +1361,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert_eq!(result.added, 3);
@@ -1272,7 +1391,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert_eq!(result.added, 1);
@@ -1300,7 +1426,14 @@ mod tests {
             skip_links: true,
             ..Default::default()
         };
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
         full_scan(&repo, &db, &ctx).await.unwrap();
 
         // Second scan to stabilize (ID injection changed the file)
@@ -1312,7 +1445,14 @@ mod tests {
             force_reindex: true,
             ..Default::default()
         };
-        let ctx2 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts2, &progress);
+        let ctx2 = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts2,
+            &progress,
+        );
         let r3 = full_scan(&repo, &db, &ctx2).await.unwrap();
         assert_eq!(r3.reindexed, 1);
         assert_eq!(r3.added, 0);
@@ -1342,7 +1482,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert!(result.interrupted);
@@ -1367,7 +1514,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         let ts = result.temporal_stats.unwrap();
@@ -1390,7 +1544,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         assert_eq!(result.total, 0);
@@ -1413,7 +1574,14 @@ mod tests {
             ..Default::default()
         };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         // All files skipped

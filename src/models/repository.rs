@@ -100,12 +100,10 @@ pub fn load_perspective_from_file(repo_root: &Path) -> Option<Perspective> {
     };
 
     // If file is empty or all comments, treat as unconfigured
-    let has_data = content
-        .lines()
-        .any(|l| {
-            let t = l.trim();
-            !t.is_empty() && !t.starts_with('#')
-        });
+    let has_data = content.lines().any(|l| {
+        let t = l.trim();
+        !t.is_empty() && !t.starts_with('#')
+    });
     if !has_data {
         return None;
     }
@@ -203,7 +201,10 @@ mod tests {
         .unwrap();
         let p = load_perspective_from_file(tmp.path()).unwrap();
         assert_eq!(p.focus.as_deref(), Some("Mycology research"));
-        assert_eq!(p.allowed_types.as_deref(), Some(&["species".to_string(), "habitat".to_string()][..]));
+        assert_eq!(
+            p.allowed_types.as_deref(),
+            Some(&["species".to_string(), "habitat".to_string()][..])
+        );
     }
 
     #[test]
@@ -254,11 +255,7 @@ mod tests {
     fn test_load_perspective_warns_about_md_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::write(tmp.path().join("perspective.md"), "# Perspective").unwrap();
-        std::fs::write(
-            tmp.path().join("perspective.yaml"),
-            "focus: test\n",
-        )
-        .unwrap();
+        std::fs::write(tmp.path().join("perspective.yaml"), "focus: test\n").unwrap();
         // Should still load the yaml, just warn about .md
         let p = load_perspective_from_file(tmp.path());
         assert!(p.is_some());
@@ -333,7 +330,10 @@ mod tests {
         let r = fmt.resolve();
         assert_eq!(r.link_style, super::super::format::LinkStyle::Wikilink);
         assert!(r.frontmatter);
-        assert_eq!(r.id_placement, super::super::format::IdPlacement::Frontmatter);
+        assert_eq!(
+            r.id_placement,
+            super::super::format::IdPlacement::Frontmatter
+        );
     }
 
     #[test]

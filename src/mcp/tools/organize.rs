@@ -5,11 +5,12 @@ use std::path::Path;
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::error::FactbaseError;
-use crate::mcp::tools::{get_bool_arg, get_str_arg, get_str_arg_required, resolve_repo, run_blocking};
+use crate::mcp::tools::{
+    get_bool_arg, get_str_arg, get_str_arg_required, resolve_repo, run_blocking,
+};
 use crate::organize::{
-    assess_staleness,
-    detect_duplicate_entries, detect_ghost_files, detect_merge_candidates, detect_misplaced,
-    detect_split_candidates, execute_move, execute_retype,
+    assess_staleness, detect_duplicate_entries, detect_ghost_files, detect_merge_candidates,
+    detect_misplaced, detect_split_candidates, execute_move, execute_retype,
     process_orphan_answers,
 };
 use crate::processor::DocumentProcessor;
@@ -142,8 +143,14 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
     }
 
     // Default mode: run all phases
-    let merge_threshold = args.get("merge_threshold").and_then(|v| v.as_f64()).unwrap_or(0.95) as f32;
-    let split_threshold = args.get("split_threshold").and_then(|v| v.as_f64()).unwrap_or(0.5) as f32;
+    let merge_threshold = args
+        .get("merge_threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.95) as f32;
+    let split_threshold = args
+        .get("split_threshold")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.5) as f32;
 
     progress.phase("Analysis 1/5: Ghost files");
     let ghost_files = {
@@ -158,11 +165,13 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
         let db2 = db.clone();
         let p = progress.clone();
         let rid2 = rid.map(String::from);
-        run_blocking(move || detect_merge_candidates(&db2, merge_threshold, rid2.as_deref(), &p)).await?
+        run_blocking(move || detect_merge_candidates(&db2, merge_threshold, rid2.as_deref(), &p))
+            .await?
     };
 
     progress.phase("Analysis 3/5: Split candidates");
-    let split_candidates = detect_split_candidates(db, embedding, split_threshold, rid, progress).await?;
+    let split_candidates =
+        detect_split_candidates(db, embedding, split_threshold, rid, progress).await?;
 
     progress.phase("Analysis 4/5: Misplaced documents");
     let misplaced_candidates = {
@@ -232,7 +241,9 @@ fn organize_merge(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let target_id = get_str_arg_required(args, "target_id")?;
 
     if source_id == target_id {
-        return Err(FactbaseError::parse("source_id and target_id must be different"));
+        return Err(FactbaseError::parse(
+            "source_id and target_id must be different",
+        ));
     }
 
     let source = db.require_document(&source_id)?;
@@ -243,7 +254,10 @@ fn organize_merge(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let target_path = repo.path.join(&target.file_path);
 
     if !target_path.exists() {
-        return Err(FactbaseError::not_found(format!("Target file not found: {}", target_path.display())));
+        return Err(FactbaseError::not_found(format!(
+            "Target file not found: {}",
+            target_path.display()
+        )));
     }
 
     // Read target content from disk (authoritative)
@@ -257,7 +271,10 @@ fn organize_merge(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     if !merged.ends_with('\n') {
         merged.push('\n');
     }
-    merged.push_str(&format!("\n## Merged from {}\n\n{}\n", source.title, source_body));
+    merged.push_str(&format!(
+        "\n## Merged from {}\n\n{}\n",
+        source.title, source_body
+    ));
 
     // Write merged content
     std::fs::write(&target_path, &merged)?;
@@ -286,9 +303,12 @@ fn organize_merge(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
 #[instrument(name = "mcp_organize_split", skip(db, args))]
 fn organize_split(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let doc_id = get_str_arg_required(args, "doc_id")?;
-    let sections = args.get("sections")
+    let sections = args
+        .get("sections")
         .and_then(|v| v.as_array())
-        .ok_or_else(|| FactbaseError::parse("sections array is required (each with 'title' and 'content')"))?;
+        .ok_or_else(|| {
+            FactbaseError::parse("sections array is required (each with 'title' and 'content')")
+        })?;
 
     if sections.is_empty() {
         return Err(FactbaseError::parse("sections array cannot be empty"));
@@ -297,22 +317,37 @@ fn organize_split(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let doc = db.require_document(&doc_id)?;
     let repo = resolve_repo(db, Some(doc.repo_id.as_str()))?;
     let doc_path = repo.path.join(&doc.file_path);
-    let parent_dir = doc_path.parent()
+    let parent_dir = doc_path
+        .parent()
         .ok_or_else(|| FactbaseError::internal("Document has no parent directory"))?;
 
     let processor = DocumentProcessor::new();
     let mut new_docs = Vec::new();
 
     for section in sections {
-        let title = section.get("title").and_then(|v| v.as_str())
+        let title = section
+            .get("title")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| FactbaseError::parse("Each section requires a 'title'"))?;
-        let content = section.get("content").and_then(|v| v.as_str())
+        let content = section
+            .get("content")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| FactbaseError::parse("Each section requires 'content'"))?;
 
         let new_id = processor.generate_unique_id(db);
-        let safe_name = title.chars()
-            .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' { c } else { '_' })
-            .collect::<String>().trim().replace(' ', "-").to_lowercase();
+        let safe_name = title
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+            .trim()
+            .replace(' ', "-")
+            .to_lowercase();
         let new_path = parent_dir.join(format!("{safe_name}.md"));
 
         let full_content = format!("<!-- factbase:{new_id} -->\n# {title}\n\n{content}\n");
@@ -403,7 +438,8 @@ fn organize_move(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let repo = resolve_repo(db, Some(doc.repo_id.as_str()))?;
 
     let old_path = Path::new(&doc.file_path);
-    let filename = old_path.file_name()
+    let filename = old_path
+        .file_name()
         .ok_or_else(|| FactbaseError::internal(format!("Invalid file path: {}", doc.file_path)))?;
 
     let dest = to.trim_end_matches('/');
@@ -638,14 +674,28 @@ mod tests {
     fn test_temporal_issues_serialized_in_merge_dry_run() {
         use crate::organize::TemporalIssue;
         let issues = vec![
-            TemporalIssue { line_ref: 3, description: "Boundary overlap on transition date".into() },
-            TemporalIssue { line_ref: 8, description: "Missing end date makes timeline unclear".into() },
-            TemporalIssue { line_ref: 12, description: "Contradictory dates for same event".into() },
+            TemporalIssue {
+                line_ref: 3,
+                description: "Boundary overlap on transition date".into(),
+            },
+            TemporalIssue {
+                line_ref: 8,
+                description: "Missing end date makes timeline unclear".into(),
+            },
+            TemporalIssue {
+                line_ref: 12,
+                description: "Contradictory dates for same event".into(),
+            },
         ];
-        let json: Vec<Value> = issues.iter().map(|t| serde_json::json!({
-            "line_ref": t.line_ref,
-            "description": t.description,
-        })).collect();
+        let json: Vec<Value> = issues
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "line_ref": t.line_ref,
+                    "description": t.description,
+                })
+            })
+            .collect();
         let response = serde_json::json!({
             "dry_run": true,
             "keep_id": "aaa",
@@ -656,20 +706,29 @@ mod tests {
         assert_eq!(ti.len(), 3);
         assert_eq!(ti[0]["line_ref"], 3);
         assert_eq!(ti[0]["description"], "Boundary overlap on transition date");
-        assert_eq!(ti[1]["description"], "Missing end date makes timeline unclear");
+        assert_eq!(
+            ti[1]["description"],
+            "Missing end date makes timeline unclear"
+        );
         assert_eq!(ti[2]["description"], "Contradictory dates for same event");
     }
 
     #[test]
     fn test_temporal_issues_serialized_in_split_dry_run() {
         use crate::organize::TemporalIssue;
-        let issues = vec![
-            TemporalIssue { line_ref: 5, description: "Timeline contradiction: ended before started".into() },
-        ];
-        let json: Vec<Value> = issues.iter().map(|t| serde_json::json!({
-            "line_ref": t.line_ref,
-            "description": t.description,
-        })).collect();
+        let issues = vec![TemporalIssue {
+            line_ref: 5,
+            description: "Timeline contradiction: ended before started".into(),
+        }];
+        let json: Vec<Value> = issues
+            .iter()
+            .map(|t| {
+                serde_json::json!({
+                    "line_ref": t.line_ref,
+                    "description": t.description,
+                })
+            })
+            .collect();
         let response = serde_json::json!({
             "dry_run": true,
             "source_id": "abc",
@@ -678,7 +737,10 @@ mod tests {
         let ti = response["temporal_issues"].as_array().unwrap();
         assert_eq!(ti.len(), 1);
         assert_eq!(ti[0]["line_ref"], 5);
-        assert!(ti[0]["description"].as_str().unwrap().contains("contradiction"));
+        assert!(ti[0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("contradiction"));
     }
 
     #[test]
@@ -715,7 +777,10 @@ mod tests {
             "suggested_move": "people/",
         });
         let result = crate::mcp::tools::document::update_document(&db, &args).unwrap();
-        assert!(result["suggestions_stored"].as_array().unwrap().contains(&Value::String("move".into())));
+        assert!(result["suggestions_stored"]
+            .as_array()
+            .unwrap()
+            .contains(&Value::String("move".into())));
 
         let suggestions = db.list_suggestions(None).unwrap();
         assert_eq!(suggestions.len(), 1);
@@ -731,13 +796,18 @@ mod tests {
         // Create source file
         let src_dir = tmp.path().join("old");
         std::fs::create_dir_all(&src_dir).unwrap();
-        std::fs::write(src_dir.join("target.md"), "<!-- factbase:tgt001 -->\n# Target\n\nContent").unwrap();
+        std::fs::write(
+            src_dir.join("target.md"),
+            "<!-- factbase:tgt001 -->\n# Target\n\nContent",
+        )
+        .unwrap();
 
         // Create a referencing file with wikilink
         std::fs::write(
             tmp.path().join("ref.md"),
             "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut target_doc = crate::models::Document::test_default();
         target_doc.id = "tgt001".to_string();
@@ -750,13 +820,15 @@ mod tests {
         let mut ref_doc = crate::models::Document::test_default();
         ref_doc.id = "ref001".to_string();
         ref_doc.title = "Ref".to_string();
-        ref_doc.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.".to_string();
+        ref_doc.content =
+            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.".to_string();
         ref_doc.file_path = "ref.md".to_string();
         ref_doc.repo_id = "test".to_string();
         db.upsert_document(&ref_doc).unwrap();
 
         // Insert move suggestion
-        db.insert_suggestion("tgt001", "move", "new/", "update").unwrap();
+        db.insert_suggestion("tgt001", "move", "new/", "update")
+            .unwrap();
 
         // Execute
         let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
@@ -789,11 +861,13 @@ mod tests {
         std::fs::write(
             tmp.path().join("old-name.md"),
             "<!-- factbase:ren001 -->\n# Entity\n\nContent",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             tmp.path().join("other.md"),
             "<!-- factbase:oth001 -->\n# Other\n\nSee [[old-name|Entity]].",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "ren001".to_string();
@@ -811,7 +885,8 @@ mod tests {
         other.repo_id = "test".to_string();
         db.upsert_document(&other).unwrap();
 
-        db.insert_suggestion("ren001", "rename", "new-name.md", "update").unwrap();
+        db.insert_suggestion("ren001", "rename", "new-name.md", "update")
+            .unwrap();
 
         let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
         let result = organize_execute_suggestions(&db, &args).unwrap();
@@ -835,11 +910,13 @@ mod tests {
         std::fs::write(
             tmp.path().join("entity.md"),
             "<!-- factbase:ent001 -->\n# Old Name\n\nContent",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             tmp.path().join("ref.md"),
             "<!-- factbase:ref001 -->\n# Ref\n\nSee [[entity|Old Name]].",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "ent001".to_string();
@@ -857,7 +934,8 @@ mod tests {
         ref_doc.repo_id = "test".to_string();
         db.upsert_document(&ref_doc).unwrap();
 
-        db.insert_suggestion("ent001", "title", "New Name", "update").unwrap();
+        db.insert_suggestion("ent001", "title", "New Name", "update")
+            .unwrap();
 
         let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
         let result = organize_execute_suggestions(&db, &args).unwrap();
@@ -880,7 +958,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("doc.md"),
             "<!-- factbase:dry001 -->\n# Doc\n\nContent",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "dry001".to_string();
@@ -890,9 +969,11 @@ mod tests {
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
-        db.insert_suggestion("dry001", "move", "archive/", "update").unwrap();
+        db.insert_suggestion("dry001", "move", "archive/", "update")
+            .unwrap();
 
-        let args = serde_json::json!({"action": "execute_suggestions", "repo": "test", "dry_run": true});
+        let args =
+            serde_json::json!({"action": "execute_suggestions", "repo": "test", "dry_run": true});
         let result = organize_execute_suggestions(&db, &args).unwrap();
 
         assert_eq!(result["dry_run"], true);
@@ -918,7 +999,8 @@ mod tests {
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
-        db.insert_suggestion("del001", "move", "new/", "update").unwrap();
+        db.insert_suggestion("del001", "move", "new/", "update")
+            .unwrap();
 
         // Soft-delete the document
         db.mark_deleted("del001").unwrap();
@@ -938,16 +1020,20 @@ mod tests {
         std::fs::write(
             tmp.join("source.md"),
             "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             tmp.join("target.md"),
             "<!-- factbase:tgt001 -->\n# Target Doc\n\n- Target fact X\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut src = crate::models::Document::test_default();
         src.id = "src001".to_string();
         src.title = "Source Doc".to_string();
-        src.content = "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n".to_string();
+        src.content =
+            "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n"
+                .to_string();
         src.file_path = "source.md".to_string();
         src.repo_id = "test".to_string();
         db.upsert_document(&src).unwrap();
@@ -966,7 +1052,8 @@ mod tests {
         let (db, tmp) = crate::database::tests::test_db();
         setup_two_docs(&db, tmp.path());
 
-        let args = serde_json::json!({"action": "merge", "source_id": "src001", "target_id": "tgt001"});
+        let args =
+            serde_json::json!({"action": "merge", "source_id": "src001", "target_id": "tgt001"});
         let result = organize_merge(&db, &args).unwrap();
 
         assert_eq!(result["source_id"], "src001");
@@ -991,11 +1078,13 @@ mod tests {
         std::fs::write(
             tmp.path().join("a.md"),
             "<!-- factbase:aaa001 -->\n# Doc A\n\n- Shared fact\n- Unique A\n",
-        ).unwrap();
+        )
+        .unwrap();
         std::fs::write(
             tmp.path().join("b.md"),
             "<!-- factbase:bbb001 -->\n# Doc B\n\n- Shared fact\n- Unique B\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut a = crate::models::Document::test_default();
         a.id = "aaa001".to_string();
@@ -1013,7 +1102,8 @@ mod tests {
         b.repo_id = "test".to_string();
         db.upsert_document(&b).unwrap();
 
-        let args = serde_json::json!({"action": "merge", "source_id": "aaa001", "target_id": "bbb001"});
+        let args =
+            serde_json::json!({"action": "merge", "source_id": "aaa001", "target_id": "bbb001"});
         let result = organize_merge(&db, &args).unwrap();
         assert_eq!(result["source_id"], "aaa001");
 
@@ -1032,7 +1122,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("ref.md"),
             "<!-- factbase:ref001 -->\n# Ref\n\nSee [[src001]] for details.",
-        ).unwrap();
+        )
+        .unwrap();
         let mut r = crate::models::Document::test_default();
         r.id = "ref001".to_string();
         r.title = "Ref".to_string();
@@ -1041,14 +1132,19 @@ mod tests {
         r.repo_id = "test".to_string();
         db.upsert_document(&r).unwrap();
 
-        db.update_links("ref001", &[crate::link_detection::DetectedLink {
-            target_id: "src001".to_string(),
-            target_title: "Source Doc".to_string(),
-            mention_text: "Source Doc".to_string(),
-            context: "references".to_string(),
-        }]).unwrap();
+        db.update_links(
+            "ref001",
+            &[crate::link_detection::DetectedLink {
+                target_id: "src001".to_string(),
+                target_title: "Source Doc".to_string(),
+                mention_text: "Source Doc".to_string(),
+                context: "references".to_string(),
+            }],
+        )
+        .unwrap();
 
-        let args = serde_json::json!({"action": "merge", "source_id": "src001", "target_id": "tgt001"});
+        let args =
+            serde_json::json!({"action": "merge", "source_id": "src001", "target_id": "tgt001"});
         let result = organize_merge(&db, &args).unwrap();
         assert!(result["links_redirected"].as_u64().unwrap() >= 1);
 
@@ -1072,7 +1168,8 @@ mod tests {
         std::fs::write(
             tmp.path().join("victim.md"),
             "<!-- factbase:vic001 -->\n# Victim\n\n- Some fact\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "vic001".to_string();
@@ -1099,8 +1196,16 @@ mod tests {
         let (db, tmp) = crate::database::tests::test_db();
         crate::database::tests::test_repo_in_db(&db, "test", tmp.path());
 
-        std::fs::write(tmp.path().join("target.md"), "<!-- factbase:del001 -->\n# Target\n\n- Fact\n").unwrap();
-        std::fs::write(tmp.path().join("ref.md"), "<!-- factbase:ref001 -->\n# Ref\n\nSee [[del001]] here.").unwrap();
+        std::fs::write(
+            tmp.path().join("target.md"),
+            "<!-- factbase:del001 -->\n# Target\n\n- Fact\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.path().join("ref.md"),
+            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[del001]] here.",
+        )
+        .unwrap();
 
         let mut target = crate::models::Document::test_default();
         target.id = "del001".to_string();
@@ -1118,12 +1223,16 @@ mod tests {
         r.repo_id = "test".to_string();
         db.upsert_document(&r).unwrap();
 
-        db.update_links("ref001", &[crate::link_detection::DetectedLink {
-            target_id: "del001".to_string(),
-            target_title: "Target".to_string(),
-            mention_text: "Target".to_string(),
-            context: "references".to_string(),
-        }]).unwrap();
+        db.update_links(
+            "ref001",
+            &[crate::link_detection::DetectedLink {
+                target_id: "del001".to_string(),
+                target_title: "Target".to_string(),
+                mention_text: "Target".to_string(),
+                context: "references".to_string(),
+            }],
+        )
+        .unwrap();
 
         let args = serde_json::json!({"action": "delete", "doc_id": "del001"});
         let result = organize_delete(&db, &args).unwrap();
@@ -1197,12 +1306,21 @@ mod tests {
         let args = serde_json::json!({"workflow": "maintain", "step": 5});
         let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
         let instruction = result["instruction"].as_str().unwrap();
-        assert!(instruction.contains("merge"), "should mention merge: {instruction}");
+        assert!(
+            instruction.contains("merge"),
+            "should mention merge: {instruction}"
+        );
         assert!(instruction.contains("split"), "should mention split");
         assert!(instruction.contains("delete"), "should mention delete");
         assert!(instruction.contains("move"), "should mention move");
-        assert!(instruction.contains("execute_suggestions"), "should mention execute_suggestions");
-        assert!(instruction.contains("Do NOT use shell commands"), "should warn against shell commands");
+        assert!(
+            instruction.contains("execute_suggestions"),
+            "should mention execute_suggestions"
+        );
+        assert!(
+            instruction.contains("Do NOT use shell commands"),
+            "should warn against shell commands"
+        );
     }
 
     #[test]
@@ -1212,6 +1330,9 @@ mod tests {
         let args = serde_json::json!({"workflow": "correct", "step": 4, "correction": "test", "source": "test"});
         let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
         let instruction = result["instruction"].as_str().unwrap();
-        assert!(instruction.contains("execute_suggestions"), "should mention execute_suggestions: {instruction}");
+        assert!(
+            instruction.contains("execute_suggestions"),
+            "should mention execute_suggestions: {instruction}"
+        );
     }
 }

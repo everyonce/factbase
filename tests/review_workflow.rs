@@ -11,7 +11,6 @@ mod common;
 use common::ollama_helpers::require_ollama;
 use factbase::{
     config::Config,
-    llm::ReviewLlm,
     models::QuestionType,
     processor::{append_review_questions, parse_review_queue},
     question_generator::{
@@ -264,8 +263,6 @@ async fn test_review_apply_with_llm() {
     require_ollama().await;
 
     let config = Config::default();
-    let llm = factbase::OllamaLlm::new(config.llm.effective_base_url(), &config.llm.model);
-    let review_llm = ReviewLlm::new(Box::new(llm), config.llm.model.clone());
 
     // Step 1: Create a document with facts missing temporal tags
     let original_content = r#"<!-- factbase:test01 -->
@@ -340,7 +337,7 @@ async fn test_review_apply_with_llm() {
             instruction,
         }];
 
-        let rewritten = apply_changes_to_section(&review_llm, &section, &interpreted).await;
+        let rewritten = apply_changes_to_section(&section, &interpreted).await;
 
         match rewritten {
             Ok(new_section) => {

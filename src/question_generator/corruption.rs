@@ -162,9 +162,7 @@ fn check_duplicate_fact_lines(content: &str, questions: &mut Vec<ReviewQuestion>
             questions.push(ReviewQuestion::new(
                 QuestionType::Corruption,
                 Some(line_idx + 1),
-                format!(
-                    "Duplicate fact line (same as line {first_line})"
-                ),
+                format!("Duplicate fact line (same as line {first_line})"),
             ));
         } else {
             seen.insert(normalized, line_idx + 1);
@@ -178,7 +176,11 @@ fn check_duplicate_fact_lines(content: &str, questions: &mut Vec<ReviewQuestion>
 ///
 /// Only flags bare-year tags (e.g. `@t[~1991]`, `@t[=2024]`) — not ranges or
 /// month-precision tags, which indicate intentional dating.
-fn check_citation_year_as_temporal(content: &str, questions: &mut Vec<ReviewQuestion>, current_year: i32) {
+fn check_citation_year_as_temporal(
+    content: &str,
+    questions: &mut Vec<ReviewQuestion>,
+    current_year: i32,
+) {
     // Build map of footnote number -> set of years in definition text
     let mut footnote_years: HashMap<u32, HashSet<String>> = HashMap::new();
     for line in content.lines() {
@@ -263,77 +265,101 @@ mod tests {
     fn test_clean_document_no_corruption() {
         let content = "<!-- factbase:abc123 -->\n# Test Entity\n\n- Fact one @t[2024..] [^1]\n- Fact two @t[=2023-06] [^2]\n\n---\n[^1]: Source A, 2024-01-15\n[^2]: Source B, 2023-06-01\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.is_empty(), "Clean doc should have no corruption: {:?}", questions);
+        assert!(
+            questions.is_empty(),
+            "Clean doc should have no corruption: {:?}",
+            questions
+        );
     }
 
     #[test]
     fn test_corrupted_title_with_temporal_tag() {
         let content = "# Test Entity @t[?]\n\n- Some fact\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("Title contains temporal tag")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("Title contains temporal tag")));
     }
 
     #[test]
     fn test_corrupted_title_with_footnote_ref() {
         let content = "# Test Entity [^1]\n\n- Some fact\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("Title contains footnote reference")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("Title contains footnote reference")));
     }
 
     #[test]
     fn test_garbage_footnote_not_a_conflict() {
         let content = "- Fact [^1]\n\n[^1]: Not a conflict, sequential progression\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("review-answer text")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("review-answer text")));
     }
 
     #[test]
     fn test_garbage_footnote_classification() {
         let content = "- Fact [^1]\n\n[^1]: classification: confirmed\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("review-answer text")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("review-answer text")));
     }
 
     #[test]
     fn test_legitimate_footnote_not_flagged() {
         let content = "- Fact [^1]\n\n[^1]: LinkedIn profile, scraped 2024-01-15\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("review-answer text")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("review-answer text")));
     }
 
     #[test]
     fn test_duplicate_footnote_defs() {
         let content = "- Fact [^1]\n\n[^1]: Source A\n[^1]: Source B\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("defined multiple times")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("defined multiple times")));
     }
 
     #[test]
     fn test_orphaned_footnote_def() {
         let content = "- Fact without refs\n\n[^5]: Some source\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("never referenced")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("never referenced")));
     }
 
     #[test]
     fn test_referenced_footnote_not_orphaned() {
         let content = "- Fact [^1]\n\n[^1]: Valid source\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("never referenced")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("never referenced")));
     }
 
     #[test]
     fn test_duplicate_fact_lines() {
         let content = "# Title\n\n- Exact same fact\n- Different fact\n- Exact same fact\n";
         let questions = generate_corruption_questions(content);
-        assert!(questions.iter().any(|q| q.description.contains("Duplicate fact line")));
+        assert!(questions
+            .iter()
+            .any(|q| q.description.contains("Duplicate fact line")));
     }
 
     #[test]
     fn test_no_duplicate_for_unique_facts() {
         let content = "# Title\n\n- Fact one\n- Fact two\n- Fact three\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("Duplicate fact line")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("Duplicate fact line")));
     }
 
     #[test]
@@ -341,7 +367,9 @@ mod tests {
         // Only H1 titles should be checked, not H2 section headers
         let content = "# Clean Title\n\n## Section @t[2024..]\n\n- Fact\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("Title contains")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("Title contains")));
     }
 
     #[test]
@@ -349,12 +377,36 @@ mod tests {
         let content = "# Bad Title @t[?] [^1]\n\n- Dup fact\n- Dup fact\n\n[^1]: Not a conflict\n[^1]: Duplicate def\n[^9]: Orphaned source\n";
         let questions = generate_corruption_questions(content);
         let descs: Vec<_> = questions.iter().map(|q| q.description.as_str()).collect();
-        assert!(descs.iter().any(|d| d.contains("temporal tag")), "Missing title temporal: {:?}", descs);
-        assert!(descs.iter().any(|d| d.contains("footnote reference")), "Missing title footnote: {:?}", descs);
-        assert!(descs.iter().any(|d| d.contains("Duplicate fact")), "Missing dup fact: {:?}", descs);
-        assert!(descs.iter().any(|d| d.contains("review-answer text")), "Missing garbage footnote: {:?}", descs);
-        assert!(descs.iter().any(|d| d.contains("defined multiple times")), "Missing dup def: {:?}", descs);
-        assert!(descs.iter().any(|d| d.contains("never referenced")), "Missing orphaned: {:?}", descs);
+        assert!(
+            descs.iter().any(|d| d.contains("temporal tag")),
+            "Missing title temporal: {:?}",
+            descs
+        );
+        assert!(
+            descs.iter().any(|d| d.contains("footnote reference")),
+            "Missing title footnote: {:?}",
+            descs
+        );
+        assert!(
+            descs.iter().any(|d| d.contains("Duplicate fact")),
+            "Missing dup fact: {:?}",
+            descs
+        );
+        assert!(
+            descs.iter().any(|d| d.contains("review-answer text")),
+            "Missing garbage footnote: {:?}",
+            descs
+        );
+        assert!(
+            descs.iter().any(|d| d.contains("defined multiple times")),
+            "Missing dup def: {:?}",
+            descs
+        );
+        assert!(
+            descs.iter().any(|d| d.contains("never referenced")),
+            "Missing orphaned: {:?}",
+            descs
+        );
     }
 
     // === Citation year as temporal tag tests ===
@@ -365,8 +417,11 @@ mod tests {
         let content = "# Entity\n\n- Some fact @t[1991] [^2]\n\n---\n[^2]: Book published 1991\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            questions.iter().any(|q| q.description.contains("Temporal tag year 1991 matches footnote [^2]")),
-            "Should flag citation year match: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+            questions.iter().any(|q| q
+                .description
+                .contains("Temporal tag year 1991 matches footnote [^2]")),
+            "Should flag citation year match: {:?}",
+            questions.iter().map(|q| &q.description).collect::<Vec<_>>()
         );
     }
 
@@ -376,19 +431,26 @@ mod tests {
         let content = "# Entity\n\n- Some fact @t[=2024] [^1]\n\n---\n[^1]: Report, 2024\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            !questions.iter().any(|q| q.description.contains("citation year")),
-            "Should not flag =YYYY tags: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+            !questions
+                .iter()
+                .any(|q| q.description.contains("citation year")),
+            "Should not flag =YYYY tags: {:?}",
+            questions.iter().map(|q| &q.description).collect::<Vec<_>>()
         );
     }
 
     #[test]
     fn test_citation_year_approximate_month_precision_not_flagged() {
         // ~YYYY-MM should also be suppressed (not just ~YYYY)
-        let content = "# Entity\n\n- Current role @t[~2026-02] [^1]\n\n---\n[^1]: Lookup, 2026-02-27\n";
+        let content =
+            "# Entity\n\n- Current role @t[~2026-02] [^1]\n\n---\n[^1]: Lookup, 2026-02-27\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            !questions.iter().any(|q| q.description.contains("citation year")),
-            "Should not flag ~YYYY-MM tags: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+            !questions
+                .iter()
+                .any(|q| q.description.contains("citation year")),
+            "Should not flag ~YYYY-MM tags: {:?}",
+            questions.iter().map(|q| &q.description).collect::<Vec<_>>()
         );
     }
 
@@ -398,8 +460,11 @@ mod tests {
         let content = "# Entity\n\n- Current role @t[~2026] [^1]\n\n---\n[^1]: Scraped 2026-02\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            !questions.iter().any(|q| q.description.contains("citation year")),
-            "Should not flag ~YYYY tags: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+            !questions
+                .iter()
+                .any(|q| q.description.contains("citation year")),
+            "Should not flag ~YYYY tags: {:?}",
+            questions.iter().map(|q| &q.description).collect::<Vec<_>>()
         );
     }
 
@@ -409,8 +474,11 @@ mod tests {
         let content = "# Entity\n\n- Ruled from here @t[~323] [^1]\n\n---\n[^1]: Source, 1991\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            !questions.iter().any(|q| q.description.contains("citation year")),
-            "Should not flag non-matching years: {:?}", questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+            !questions
+                .iter()
+                .any(|q| q.description.contains("citation year")),
+            "Should not flag non-matching years: {:?}",
+            questions.iter().map(|q| &q.description).collect::<Vec<_>>()
         );
     }
 
@@ -419,7 +487,9 @@ mod tests {
         // Temporal tag but no footnote ref on the same line
         let content = "# Entity\n\n- Some fact @t[~1991]\n\n---\n[^1]: Source, 1991\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("citation year")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("citation year")));
     }
 
     #[test]
@@ -427,7 +497,9 @@ mod tests {
         // Footnote has no year at all
         let content = "# Entity\n\n- Some fact @t[=2024] [^1]\n\n---\n[^1]: Personal interview\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("citation year")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("citation year")));
     }
 
     #[test]
@@ -435,15 +507,20 @@ mod tests {
         // BCE/negative year in temporal tag can't match a modern citation year
         let content = "# Entity\n\n- Ancient event @t[=-330] [^1]\n\n---\n[^1]: Source, 2020\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("citation year")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("citation year")));
     }
 
     #[test]
     fn test_citation_year_range_tag_not_flagged() {
         // Range tags are not bare years — not flagged
-        let content = "# Entity\n\n- Active period @t[1995..2003] [^1]\n\n---\n[^1]: Published 1995\n";
+        let content =
+            "# Entity\n\n- Active period @t[1995..2003] [^1]\n\n---\n[^1]: Published 1995\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("citation year")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("citation year")));
     }
 
     #[test]
@@ -451,7 +528,9 @@ mod tests {
         // Month-precision tag is not a bare year — not flagged
         let content = "# Entity\n\n- Observed @t[=2024-03] [^1]\n\n---\n[^1]: Report, March 2024\n";
         let questions = generate_corruption_questions(content);
-        assert!(!questions.iter().any(|q| q.description.contains("citation year")));
+        assert!(!questions
+            .iter()
+            .any(|q| q.description.contains("citation year")));
     }
 
     #[test]
@@ -472,7 +551,11 @@ mod tests {
         );
         let mut questions = Vec::new();
         check_citation_year_as_temporal(&content, &mut questions, current_year);
-        assert!(questions.is_empty(), "Current year should be suppressed: {:?}", questions);
+        assert!(
+            questions.is_empty(),
+            "Current year should be suppressed: {:?}",
+            questions
+        );
     }
 
     #[test]
@@ -480,12 +563,15 @@ mod tests {
         // Previous year also suppressed — source may have been scraped late last year
         let current_year = Utc::now().year();
         let prev = current_year - 1;
-        let content = format!(
-            "# Entity\n\n- Fact @t[{prev}] [^1]\n\n---\n[^1]: Report, {prev}-11-30\n"
-        );
+        let content =
+            format!("# Entity\n\n- Fact @t[{prev}] [^1]\n\n---\n[^1]: Report, {prev}-11-30\n");
         let mut questions = Vec::new();
         check_citation_year_as_temporal(&content, &mut questions, current_year);
-        assert!(questions.is_empty(), "Previous year should be suppressed: {:?}", questions);
+        assert!(
+            questions.is_empty(),
+            "Previous year should be suppressed: {:?}",
+            questions
+        );
     }
 
     #[test]
@@ -496,7 +582,8 @@ mod tests {
         check_citation_year_as_temporal(&content, &mut questions, 2026);
         assert!(
             questions.iter().any(|q| q.description.contains("1991")),
-            "Old year should still be flagged: {:?}", questions
+            "Old year should still be flagged: {:?}",
+            questions
         );
     }
 }

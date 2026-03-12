@@ -23,10 +23,7 @@ pub fn detect_ghost_files(
     progress: &ProgressReporter,
 ) -> Result<Vec<GhostFile>, FactbaseError> {
     let repos = match repo_id {
-        Some(rid) => db
-            .get_repository(rid)?
-            .into_iter()
-            .collect::<Vec<_>>(),
+        Some(rid) => db.get_repository(rid)?.into_iter().collect::<Vec<_>>(),
         None => db.list_repositories()?,
     };
 
@@ -51,8 +48,7 @@ pub fn detect_ghost_files(
         progress.report(0, files.len(), "Scanning for ghost files");
 
         // Group files by directory: dir -> Vec<(relative_path, doc_id, title, line_count)>
-        let mut by_dir: HashMap<String, Vec<FileEntry>> =
-            HashMap::new();
+        let mut by_dir: HashMap<String, Vec<FileEntry>> = HashMap::new();
 
         for (i, path) in files.iter().enumerate() {
             progress.report(i + 1, files.len(), "Reading file headers");
@@ -86,8 +82,7 @@ pub fn detect_ghost_files(
         // Detect duplicates within each directory
         for entries in by_dir.values() {
             // Check for shared factbase IDs
-            let mut by_id: HashMap<&str, Vec<&FileEntry>> =
-                HashMap::new();
+            let mut by_id: HashMap<&str, Vec<&FileEntry>> = HashMap::new();
             for entry in entries {
                 if let Some(ref id) = entry.1 {
                     by_id.entry(id.as_str()).or_default().push(entry);
@@ -103,7 +98,10 @@ pub fn detect_ghost_files(
                     .partition(|e| tracked.get(&e.0).is_some_and(|id| id == *doc_id));
 
                 // Safe: group.len() >= 2 checked above, so group.first() always succeeds
-                let tracked_entry = tracked_entry.first().or(group.first()).expect("group is non-empty (len >= 2)");
+                let tracked_entry = tracked_entry
+                    .first()
+                    .or(group.first())
+                    .expect("group is non-empty (len >= 2)");
                 let title = tracked_entry
                     .2
                     .clone()
@@ -136,8 +134,7 @@ pub fn detect_ghost_files(
                 .flat_map(|g| [g.tracked_path.as_str(), g.ghost_path.as_str()])
                 .collect();
 
-            let mut by_title: HashMap<&str, Vec<&FileEntry>> =
-                HashMap::new();
+            let mut by_title: HashMap<&str, Vec<&FileEntry>> = HashMap::new();
             for entry in entries {
                 if flagged_paths.contains(entry.0.as_str()) {
                     continue;
@@ -155,11 +152,11 @@ pub fn detect_ghost_files(
                     group.iter().partition(|e| tracked.contains_key(&e.0));
 
                 // Safe: group.len() >= 2 checked above, so group.first() always succeeds
-                let primary = tracked_entries.first().or(group.first()).expect("group is non-empty (len >= 2)");
-                let doc_id = primary
-                    .1
-                    .clone()
-                    .unwrap_or_else(|| "unknown".to_string());
+                let primary = tracked_entries
+                    .first()
+                    .or(group.first())
+                    .expect("group is non-empty (len >= 2)");
+                let doc_id = primary.1.clone().unwrap_or_else(|| "unknown".to_string());
 
                 let ghost_iter = if others.is_empty() {
                     group[1..].to_vec()
@@ -215,7 +212,13 @@ mod tests {
             "<!-- factbase:aaa111 -->\n# Doc\nContent",
         )
         .unwrap();
-        upsert_doc(&db, "aaa111", "test", "doc.md", "<!-- factbase:aaa111 -->\n# Doc\nContent");
+        upsert_doc(
+            &db,
+            "aaa111",
+            "test",
+            "doc.md",
+            "<!-- factbase:aaa111 -->\n# Doc\nContent",
+        );
 
         let results = detect_ghost_files(&db, Some("test"), &ProgressReporter::Silent).unwrap();
         assert!(results.is_empty());
@@ -285,7 +288,10 @@ mod tests {
         upsert_doc(&db, "aaa111", "test", "a/doc.md", content);
 
         let results = detect_ghost_files(&db, Some("test"), &ProgressReporter::Silent).unwrap();
-        assert!(results.is_empty(), "Files in different dirs should not be flagged");
+        assert!(
+            results.is_empty(),
+            "Files in different dirs should not be flagged"
+        );
     }
 
     #[test]

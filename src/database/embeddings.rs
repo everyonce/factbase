@@ -167,29 +167,28 @@ impl Database {
         repo_id: Option<&str>,
     ) -> Result<Vec<crate::embeddings_io::EmbeddingRecord>, FactbaseError> {
         let conn = self.get_conn()?;
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(rid) =
-            repo_id
-        {
-            (
-                "SELECT c.document_id, c.chunk_index, c.chunk_start, c.chunk_end, e.embedding
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+            if let Some(rid) = repo_id {
+                (
+                    "SELECT c.document_id, c.chunk_index, c.chunk_start, c.chunk_end, e.embedding
                  FROM embedding_chunks c
                  JOIN document_embeddings e ON c.id = e.id
                  JOIN documents d ON c.document_id = d.id
                  WHERE d.repo_id = ?1 AND d.is_deleted = FALSE
                  ORDER BY c.document_id, c.chunk_index"
-                    .to_string(),
-                vec![Box::new(rid.to_string())],
-            )
-        } else {
-            (
-                "SELECT c.document_id, c.chunk_index, c.chunk_start, c.chunk_end, e.embedding
+                        .to_string(),
+                    vec![Box::new(rid.to_string())],
+                )
+            } else {
+                (
+                    "SELECT c.document_id, c.chunk_index, c.chunk_start, c.chunk_end, e.embedding
                  FROM embedding_chunks c
                  JOIN document_embeddings e ON c.id = e.id
                  ORDER BY c.document_id, c.chunk_index"
-                    .to_string(),
-                vec![],
-            )
-        };
+                        .to_string(),
+                    vec![],
+                )
+            };
 
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(&params))?;
@@ -220,16 +219,16 @@ impl Database {
     /// Count total embedding chunks in the database.
     pub fn count_embedding_chunks(&self) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
-        let count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM embedding_chunks", [], |row| row.get(0))?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM embedding_chunks", [], |row| {
+            row.get(0)
+        })?;
         Ok(count as usize)
     }
 
     /// Get all non-deleted document IDs.
     pub fn get_all_document_ids(&self) -> Result<std::collections::HashSet<String>, FactbaseError> {
         let conn = self.get_conn()?;
-        let mut stmt =
-            conn.prepare("SELECT id FROM documents WHERE is_deleted = FALSE")?;
+        let mut stmt = conn.prepare("SELECT id FROM documents WHERE is_deleted = FALSE")?;
         let ids = stmt
             .query_map([], |row| row.get(0))?
             .collect::<Result<std::collections::HashSet<String>, _>>()?;
@@ -561,7 +560,8 @@ mod tests {
         assert_eq!(db.get_stored_embedding_model().unwrap(), None);
 
         // Set metadata
-        db.set_embedding_info("BAAI/bge-small-en-v1.5", 384).unwrap();
+        db.set_embedding_info("BAAI/bge-small-en-v1.5", 384)
+            .unwrap();
         assert_eq!(db.get_stored_embedding_dim().unwrap(), Some(384));
         assert_eq!(
             db.get_stored_embedding_model().unwrap(),
@@ -569,7 +569,8 @@ mod tests {
         );
 
         // Update metadata
-        db.set_embedding_info("amazon.titan-embed-text-v2:0", 1024).unwrap();
+        db.set_embedding_info("amazon.titan-embed-text-v2:0", 1024)
+            .unwrap();
         assert_eq!(db.get_stored_embedding_dim().unwrap(), Some(1024));
         assert_eq!(
             db.get_stored_embedding_model().unwrap(),

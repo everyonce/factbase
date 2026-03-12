@@ -38,8 +38,9 @@ impl Database {
         repo_id: Option<&str>,
     ) -> Result<Vec<OrganizationSuggestion>, FactbaseError> {
         let conn = self.get_conn()?;
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(rid) = repo_id {
-            (
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+            if let Some(rid) = repo_id {
+                (
                 "SELECT s.id, s.doc_id, s.suggestion_type, s.suggested_value, s.source, s.created_at
                  FROM organization_suggestions s
                  JOIN documents d ON d.id = s.doc_id
@@ -47,16 +48,18 @@ impl Database {
                  ORDER BY s.created_at".to_string(),
                 vec![Box::new(rid.to_string())],
             )
-        } else {
-            (
-                "SELECT id, doc_id, suggestion_type, suggested_value, source, created_at
+            } else {
+                (
+                    "SELECT id, doc_id, suggestion_type, suggested_value, source, created_at
                  FROM organization_suggestions
-                 ORDER BY created_at".to_string(),
-                vec![],
-            )
-        };
+                 ORDER BY created_at"
+                        .to_string(),
+                    vec![],
+                )
+            };
         let mut stmt = conn.prepare_cached(&sql)?;
-        let params_ref: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let mut rows = stmt.query(params_ref.as_slice())?;
         let mut results = Vec::new();
         while let Some(row) = rows.next()? {
@@ -103,7 +106,9 @@ mod tests {
         doc.repo_id = repo.id.clone();
         db.upsert_document(&doc).unwrap();
 
-        let id = db.insert_suggestion("d1", "move", "new/path/", "update").unwrap();
+        let id = db
+            .insert_suggestion("d1", "move", "new/path/", "update")
+            .unwrap();
         assert!(id > 0);
 
         let suggestions = db.list_suggestions(None).unwrap();
@@ -130,7 +135,8 @@ mod tests {
         db.upsert_document(&doc2).unwrap();
 
         db.insert_suggestion("d1", "move", "a/", "update").unwrap();
-        db.insert_suggestion("d2", "rename", "new.md", "update").unwrap();
+        db.insert_suggestion("d2", "rename", "new.md", "update")
+            .unwrap();
 
         let r1_suggestions = db.list_suggestions(Some("r1")).unwrap();
         assert_eq!(r1_suggestions.len(), 1);
@@ -166,7 +172,8 @@ mod tests {
         db.upsert_document(&doc).unwrap();
 
         db.insert_suggestion("d1", "move", "a/", "update").unwrap();
-        db.insert_suggestion("d1", "rename", "b.md", "update").unwrap();
+        db.insert_suggestion("d1", "rename", "b.md", "update")
+            .unwrap();
 
         let count = db.delete_suggestions_for_doc("d1").unwrap();
         assert_eq!(count, 2);

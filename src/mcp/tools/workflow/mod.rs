@@ -7,10 +7,9 @@
 //! Workflows read the repository perspective to tailor instructions
 //! to the knowledge base's purpose and policies.
 
-
+pub(crate) mod helpers;
 mod instructions;
 mod variants;
-pub(crate) mod helpers;
 
 use crate::database::Database;
 use crate::error::FactbaseError;
@@ -18,12 +17,12 @@ use crate::models::{Perspective, QuestionType};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use super::helpers::{load_glossary_terms, load_perspective, resolve_repo_filter};
+use super::review::format_question_json;
+use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 use crate::config::workflows::WorkflowsConfig;
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
-use super::helpers::{load_glossary_terms, load_perspective, resolve_repo_filter};
-use super::{get_str_arg, get_str_arg_required, get_u64_arg};
-use super::review::format_question_json;
 use helpers::*;
 use instructions::*;
 use variants::*;
@@ -51,7 +50,10 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
         }
     }
 
-    let deferred = || db.count_deferred_questions(repo_resolved.as_deref()).unwrap_or(0);
+    let deferred = || {
+        db.count_deferred_questions(repo_resolved.as_deref())
+            .unwrap_or(0)
+    };
 
     match workflow_name.as_str() {
         // --- Primary workflows (new 4-verb design) ---
@@ -60,31 +62,101 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             let topic = get_str_arg(args, "topic");
             let doc_id = get_str_arg(args, "doc_id");
             if topic.is_some() {
-                Ok(rebrand_step(ingest_step(step, args, &perspective, &wf_config), "ingest", "add"))
+                Ok(rebrand_step(
+                    ingest_step(step, args, &perspective, &wf_config),
+                    "ingest",
+                    "add",
+                ))
             } else if doc_id.is_some() {
                 let skip = parse_skip_steps(args);
-                Ok(rebrand_step(improve_step(step, doc_id, &perspective, &skip, db, &wf_config), "improve", "add"))
+                Ok(rebrand_step(
+                    improve_step(step, doc_id, &perspective, &skip, db, &wf_config),
+                    "improve",
+                    "add",
+                ))
             } else {
-                Ok(rebrand_step(enrich_step(step, args, &perspective, db, repo_resolved.as_deref(), &wf_config), "enrich", "add"))
+                Ok(rebrand_step(
+                    enrich_step(
+                        step,
+                        args,
+                        &perspective,
+                        db,
+                        repo_resolved.as_deref(),
+                        &wf_config,
+                    ),
+                    "enrich",
+                    "add",
+                ))
             }
         }
-        "maintain" => Ok(maintain_step(step, args, &perspective, deferred(), db, &wf_config)),
-        "refresh" => Ok(refresh_step(step, args, &perspective, deferred(), db, &wf_config)),
+        "maintain" => Ok(maintain_step(
+            step,
+            args,
+            &perspective,
+            deferred(),
+            db,
+            &wf_config,
+        )),
+        "refresh" => Ok(refresh_step(
+            step,
+            args,
+            &perspective,
+            deferred(),
+            db,
+            &wf_config,
+        )),
         "correct" => Ok(correct_step(step, args, &wf_config)),
         "transition" => Ok(transition_step(step, args, &wf_config)),
 
         // --- Standalone (power user) ---
-        "resolve" => Ok(resolve_step(step, args, &perspective, deferred(), db, &wf_config)),
+        "resolve" => Ok(resolve_step(
+            step,
+            args,
+            &perspective,
+            deferred(),
+            db,
+            &wf_config,
+        )),
 
         // --- Legacy aliases ---
-        "bootstrap" | "setup" => Ok(rebrand_step(create_step(step, args, &wf_config), "create", workflow_name.as_str())),
-        "update" => Ok(rebrand_step(maintain_step(step, args, &perspective, deferred(), db, &wf_config), "maintain", "update")),
-        "ingest" => Ok(rebrand_step(ingest_step(step, args, &perspective, &wf_config), "ingest", "ingest")),
-        "enrich" => Ok(rebrand_step(enrich_step(step, args, &perspective, db, repo_resolved.as_deref(), &wf_config), "enrich", "enrich")),
+        "bootstrap" | "setup" => Ok(rebrand_step(
+            create_step(step, args, &wf_config),
+            "create",
+            workflow_name.as_str(),
+        )),
+        "update" => Ok(rebrand_step(
+            maintain_step(step, args, &perspective, deferred(), db, &wf_config),
+            "maintain",
+            "update",
+        )),
+        "ingest" => Ok(rebrand_step(
+            ingest_step(step, args, &perspective, &wf_config),
+            "ingest",
+            "ingest",
+        )),
+        "enrich" => Ok(rebrand_step(
+            enrich_step(
+                step,
+                args,
+                &perspective,
+                db,
+                repo_resolved.as_deref(),
+                &wf_config,
+            ),
+            "enrich",
+            "enrich",
+        )),
         "improve" => {
             let doc_id = get_str_arg(args, "doc_id");
             let skip = parse_skip_steps(args);
-            Ok(improve_step(step, doc_id, &perspective, &skip, db, &wf_config))
+            Ok(improve_step(
+                step,
+                doc_id,
+                &perspective,
+                &skip,
+                db,
+                &wf_config,
+            ))
         }
 
         "list" => Ok(serde_json::json!({
@@ -145,9 +217,19 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 None => ("error".to_string(), "perspective.yaml is missing, empty, or has invalid YAML. Go back to step 2 and fix it.".into()),
             };
             let instruction = if status == "ok" {
-                resolve(wf, "setup.validate_ok", DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION, &[("detail", &detail)])
+                resolve(
+                    wf,
+                    "setup.validate_ok",
+                    DEFAULT_SETUP_VALIDATE_OK_INSTRUCTION,
+                    &[("detail", &detail)],
+                )
             } else {
-                resolve(wf, "setup.validate_error", DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION, &[("detail", &detail)])
+                resolve(
+                    wf,
+                    "setup.validate_error",
+                    DEFAULT_SETUP_VALIDATE_ERROR_INSTRUCTION,
+                    &[("detail", &detail)],
+                )
             };
             serde_json::json!({
                 "workflow": "setup",
@@ -162,7 +244,7 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                     "⚠️ REQUIRED: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again"
                 }
             })
-        },
+        }
         4 => serde_json::json!({
             "workflow": "setup",
             "step": 4, "total_steps": total,
@@ -219,9 +301,7 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
     let domain = get_str_arg_required(args, "domain")?;
     let entity_types = get_str_arg(args, "entity_types");
 
-    let prompts = crate::Config::load(None)
-        .unwrap_or_default()
-        .prompts;
+    let prompts = crate::Config::load(None).unwrap_or_default().prompts;
     let prompt = build_bootstrap_prompt(&domain, entity_types, &prompts, None);
 
     Ok(serde_json::json!({
@@ -255,7 +335,12 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                             obj.insert("workflow".into(), Value::String("create".into()));
                             obj.insert("step".into(), serde_json::json!(1));
                             obj.insert("total_steps".into(), serde_json::json!(total));
-                            obj.insert("title".into(), Value::String(format!("Step 1 of {total}: Design Knowledge Base Structure")));
+                            obj.insert(
+                                "title".into(),
+                                Value::String(format!(
+                                    "Step 1 of {total}: Design Knowledge Base Structure"
+                                )),
+                            );
                             obj.insert("when_done".into(), Value::String(format!("⚠️ REQUIRED: Call workflow(workflow='create', step=2) to continue to Step 2 of {total}")));
                         }
                         v
@@ -273,10 +358,20 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                     obj.insert("workflow".into(), Value::String("create".into()));
                     obj.insert("step".into(), serde_json::json!(s));
                     obj.insert("total_steps".into(), serde_json::json!(total));
-                    obj.insert("title".into(), Value::String(format!("Step {s} of {total}: {}",
-                        match s { 2 => "Initialize Repository", 3 => "Configure Perspective",
-                            4 => "Validate Perspective", 5 => "Create Documents",
-                            6 => "Scan & Verify", _ => "Complete" })));
+                    obj.insert(
+                        "title".into(),
+                        Value::String(format!(
+                            "Step {s} of {total}: {}",
+                            match s {
+                                2 => "Initialize Repository",
+                                3 => "Configure Perspective",
+                                4 => "Validate Perspective",
+                                5 => "Create Documents",
+                                6 => "Scan & Verify",
+                                _ => "Complete",
+                            }
+                        )),
+                    );
                     // Fix when_done routing
                     if s < total {
                         obj.insert("when_done".into(), Value::String(format!(
@@ -284,14 +379,30 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                     }
                     // Replace setup complete instruction with create complete
                     if s == total {
-                        obj.insert("instruction".into(), Value::String(
-                            resolve(wf, "create.complete", DEFAULT_CREATE_COMPLETE_INSTRUCTION, &[])));
+                        obj.insert(
+                            "instruction".into(),
+                            Value::String(resolve(
+                                wf,
+                                "create.complete",
+                                DEFAULT_CREATE_COMPLETE_INSTRUCTION,
+                                &[],
+                            )),
+                        );
                         obj.insert("complete".into(), Value::Bool(true));
                     }
                 }
                 // Fix instruction references to setup workflow
-                if let Some(instr) = v.get("instruction").and_then(|v| v.as_str()).map(String::from) {
-                    if let Some(obj) = v.as_object_mut() { obj.insert("instruction".into(), Value::String(instr.replace("workflow='setup'", "workflow='create'"))); }
+                if let Some(instr) = v
+                    .get("instruction")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                {
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert(
+                            "instruction".into(),
+                            Value::String(instr.replace("workflow='setup'", "workflow='create'")),
+                        );
+                    }
                 }
                 v
             }
@@ -309,8 +420,17 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                             "⚠️ REQUIRED: Call workflow(workflow='create', step={}) to continue to Step {} of {total}", s + 1, s + 1)));
                     }
                 }
-                if let Some(instr) = v.get("instruction").and_then(|v| v.as_str()).map(String::from) {
-                    if let Some(obj) = v.as_object_mut() { obj.insert("instruction".into(), Value::String(instr.replace("workflow='setup'", "workflow='create'"))); }
+                if let Some(instr) = v
+                    .get("instruction")
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                {
+                    if let Some(obj) = v.as_object_mut() {
+                        obj.insert(
+                            "instruction".into(),
+                            Value::String(instr.replace("workflow='setup'", "workflow='create'")),
+                        );
+                    }
                 }
                 v
             }
@@ -366,7 +486,7 @@ fn resolve_step(
                 "resolve_batch_size": wf.resolve_batch_size(),
                 "when_done": "Call workflow with workflow='resolve', step=2, question_type=<next_type>"
             })
-        },
+        }
         2 => resolve_step2_batch(args, perspective, db, wf),
         3 => serde_json::json!({
             "workflow": "resolve",
@@ -402,7 +522,7 @@ fn resolve_step(
                 "deferred_questions": new_deferred,
                 "complete": true
             })
-        },
+        }
         _ => serde_json::json!({
             "workflow": "resolve",
             "complete": true,
@@ -412,7 +532,6 @@ fn resolve_step(
 }
 
 // --- Maintain workflow ---
-
 
 fn maintain_step(
     step: usize,
@@ -521,7 +640,6 @@ fn maintain_step(
 
 // --- Refresh workflow (research-enabled maintenance) ---
 
-
 fn refresh_step(
     step: usize,
     args: &Value,
@@ -553,7 +671,9 @@ fn refresh_step(
             let doc_id = get_str_arg(args, "doc_id");
             let repo = get_str_arg(args, "repo");
             let quality = if let Some(id) = doc_id {
-                entity_quality(db, id).map(|q| Value::Array(vec![q])).unwrap_or(Value::Array(vec![]))
+                entity_quality(db, id)
+                    .map(|q| Value::Array(vec![q]))
+                    .unwrap_or(Value::Array(vec![]))
             } else {
                 bulk_quality(db, doc_type, repo)
             };
@@ -664,7 +784,10 @@ fn resolve_step2_batch(
     for doc in &docs {
         // Apply doc_type filter
         if let Some(dt_filter) = doc_type_filter {
-            let matches = doc.doc_type.as_deref().is_some_and(|dt| dt.eq_ignore_ascii_case(dt_filter));
+            let matches = doc
+                .doc_type
+                .as_deref()
+                .is_some_and(|dt| dt.eq_ignore_ascii_case(dt_filter));
             if !matches {
                 continue;
             }
@@ -681,7 +804,10 @@ fn resolve_step2_batch(
                     // Auto-dismiss ambiguous acronym questions covered by glossary
                     if q.question_type == QuestionType::Ambiguous {
                         if let Some(acronym) = extract_acronym_from_question(&q.description) {
-                            if glossary_terms.iter().any(|t| t.eq_ignore_ascii_case(&acronym)) {
+                            if glossary_terms
+                                .iter()
+                                .any(|t| t.eq_ignore_ascii_case(&acronym))
+                            {
                                 glossary_auto_resolved += 1;
                                 // Auto-answer in DB+file so the question doesn't reappear
                                 let _ = auto_dismiss_question(db, &doc.id, idx);
@@ -720,7 +846,8 @@ fn resolve_step2_batch(
         }
     }
 
-    let resolved_so_far = resolved_verified + resolved_believed + resolved_deferred + glossary_auto_resolved;
+    let resolved_so_far =
+        resolved_verified + resolved_believed + resolved_deferred + glossary_auto_resolved;
 
     // Sort: group by document, then by type priority within each doc
     unanswered.sort_by(|a, b| {
@@ -747,7 +874,11 @@ fn resolve_step2_batch(
     let active_filter: Value = if type_filter.is_empty() {
         Value::Null
     } else {
-        type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().into()
+        type_filter
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .into()
     };
 
     // If no unanswered questions remain, advance to step 3
@@ -791,7 +922,10 @@ fn resolve_step2_batch(
     let (answer_default, intro_default) = match variant {
         "type_evidence" => (VARIANT_TYPE_EVIDENCE_ANSWER, VARIANT_TYPE_EVIDENCE_INTRO),
         "research_batch" => (VARIANT_RESEARCH_BATCH_ANSWER, VARIANT_RESEARCH_BATCH_INTRO),
-        _ => (DEFAULT_RESOLVE_ANSWER_INSTRUCTION, DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION),
+        _ => (
+            DEFAULT_RESOLVE_ANSWER_INSTRUCTION,
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
+        ),
     };
 
     let instruction = resolve(
@@ -855,11 +989,16 @@ fn resolve_step2_batch(
         })
     };
 
-    let pct = if total_questions > 0 { (resolved_so_far * 100) / total_questions } else { 0 };
+    let pct = if total_questions > 0 {
+        (resolved_so_far * 100) / total_questions
+    } else {
+        0
+    };
 
     // Collect batch question types for checkpoint summary
     let _last_batch_types: Vec<String> = {
-        let mut types: Vec<String> = batch.iter()
+        let mut types: Vec<String> = batch
+            .iter()
             .filter_map(|q| q["type"].as_str().map(|s| s.to_string()))
             .collect();
         types.sort();
@@ -891,12 +1030,14 @@ fn resolve_step2_batch(
     // Only include conflict_patterns when first batch or batch contains conflict questions
     let batch_has_conflicts = batch.iter().any(|q| q["type"].as_str() == Some("conflict"));
     if is_first_batch || batch_has_conflicts {
-        if let Some(obj) = result.as_object_mut() { obj.insert("conflict_patterns".to_string(), serde_json::json!({
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("conflict_patterns".to_string(), serde_json::json!({
             "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
             "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
             "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
             "unknown": "No recognized pattern — investigate which fact is current."
-        })); }
+        }));
+        }
     }
 
     if is_first_batch {
@@ -911,21 +1052,35 @@ fn resolve_step2_batch(
             .map(|(qt, c)| (qt.to_string(), *c))
             .collect();
         intro.push_str(&subagent_fanout_hint(total_questions, &fanout_types));
-        if let Some(obj) = result.as_object_mut() { obj.insert("intro".to_string(), Value::String(intro)); }
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("intro".to_string(), Value::String(intro));
+        }
     }
 
     if glossary_auto_resolved > 0 {
-        if let Some(obj) = result.as_object_mut() { obj.insert("glossary_auto_resolved".to_string(), serde_json::json!(glossary_auto_resolved)); }
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert(
+                "glossary_auto_resolved".to_string(),
+                serde_json::json!(glossary_auto_resolved),
+            );
+        }
     }
 
     if is_first_batch && !patterns.is_empty() {
-        if let Some(obj) = result.as_object_mut() { obj.insert("patterns_detected".to_string(), Value::Array(patterns)); }
+        if let Some(obj) = result.as_object_mut() {
+            obj.insert("patterns_detected".to_string(), Value::Array(patterns));
+        }
     }
 
     result
 }
 
-fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig) -> Value {
+fn ingest_step(
+    step: usize,
+    args: &Value,
+    perspective: &Option<Perspective>,
+    wf: &WorkflowsConfig,
+) -> Value {
     let topic = get_str_arg(args, "topic").unwrap_or("the requested topic");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
@@ -974,14 +1129,25 @@ fn ingest_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf:
     }
 }
 
-fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db: &Database, repo: Option<&str>, wf: &WorkflowsConfig) -> Value {
+fn enrich_step(
+    step: usize,
+    args: &Value,
+    perspective: &Option<Perspective>,
+    db: &Database,
+    repo: Option<&str>,
+    wf: &WorkflowsConfig,
+) -> Value {
     let doc_type = get_str_arg(args, "doc_type").unwrap_or("all types");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
     let total = 4;
     match step {
         1 => {
-            let type_filter = if doc_type != "all types" { Some(doc_type) } else { None };
+            let type_filter = if doc_type != "all types" {
+                Some(doc_type)
+            } else {
+                None
+            };
             let quality = bulk_quality(db, type_filter, repo);
             serde_json::json!({
                 "workflow": "enrich",
@@ -991,7 +1157,7 @@ fn enrich_step(step: usize, args: &Value, perspective: &Option<Perspective>, db:
                 "next_tool": "factbase", "suggested_op": "get_entity",
                 "when_done": "Call workflow with workflow='enrich', step=2"
             })
-        },
+        }
         2 => serde_json::json!({
             "workflow": "enrich",
             "step": 2, "total_steps": total,
@@ -1052,12 +1218,19 @@ fn improve_step(
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
     let stale = stale_days(perspective);
-    let doc_hint = doc_id.map(|id| format!(" for document '{id}'")).unwrap_or_default();
+    let doc_hint = doc_id
+        .map(|id| format!(" for document '{id}'"))
+        .unwrap_or_default();
     let doc_arg = doc_id.map(|id| serde_json::json!(id));
     let skipped: Vec<&str> = skip.iter().map(|s| s.as_str()).collect();
     let next_step_hint = if step < total {
-        format!("Call workflow with workflow='improve', step={}{}", step + 1,
-            doc_id.map(|id| format!(", doc_id='{id}'")).unwrap_or_default())
+        format!(
+            "Call workflow with workflow='improve', step={}{}",
+            step + 1,
+            doc_id
+                .map(|id| format!(", doc_id='{id}'"))
+                .unwrap_or_default()
+        )
     } else {
         String::new()
     };
@@ -1316,9 +1489,18 @@ mod tests {
     const DEFAULT_UPDATE_SUMMARY_INSTRUCTION: &str = "Write a diagnostic report combining metrics and assessment.\n\n## Scan & Links\n- Documents: X | Links: X\n- Temporal coverage: X% | Source coverage: X%\n- Link health: [healthy / needs work / poor] \u{2014} each doc should average 1+ link\n\n## Quality Issues\n- Total questions: X (stale: X, conflict: X, temporal: X, missing: X)\n- Dominant issue type tells you the KB's biggest weakness\n\n## Organization\n- Merge/split/misplaced/duplicate candidates found\n\n## Health Assessment\nOne paragraph: overall KB health, biggest strength, biggest gap, and top 3 priorities ordered by impact.";
 
     /// Legacy update_step — kept for test coverage of the update workflow instruction content.
-    fn update_step(step: usize, args: &Value, perspective: &Option<Perspective>, wf: &WorkflowsConfig, db: &Database) -> Value {
+    fn update_step(
+        step: usize,
+        args: &Value,
+        perspective: &Option<Perspective>,
+        wf: &WorkflowsConfig,
+        db: &Database,
+    ) -> Value {
         let ctx = perspective_context(perspective);
-        let do_cv = args.get("cross_validate").and_then(Value::as_bool).unwrap_or(false);
+        let do_cv = args
+            .get("cross_validate")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let total = if do_cv { 7 } else { 6 };
         match step {
             1 => {
@@ -1508,33 +1690,61 @@ mod tests {
     fn test_ingest_create_has_required_next() {
         let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("NEXT:"), "create step should have REQUIRED NEXT routing");
-        assert!(instruction.contains("workflow(workflow='ingest', step=4)"), "should route to step 4");
+        assert!(
+            instruction.contains("NEXT:"),
+            "create step should have REQUIRED NEXT routing"
+        );
+        assert!(
+            instruction.contains("workflow(workflow='ingest', step=4)"),
+            "should route to step 4"
+        );
     }
 
     #[test]
     fn test_ingest_create_recommends_bulk() {
         let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("factbase(op='bulk_create')"), "create step should recommend bulk_create_documents");
-        assert_eq!(step["next_tool"].as_str().unwrap(), "factbase", "next_tool should be factbase");
+        assert!(
+            instruction.contains("factbase(op='bulk_create')"),
+            "create step should recommend bulk_create_documents"
+        );
+        assert_eq!(
+            step["next_tool"].as_str().unwrap(),
+            "factbase",
+            "next_tool should be factbase"
+        );
     }
 
     #[test]
     fn test_ingest_verify_no_dry_run() {
         let step = ingest_step(4, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(!instruction.contains("dry_run"), "verify step should not mention dry_run");
-        assert!(step.get("suggested_args").is_none(), "verify step should not have suggested_args with dry_run");
-        assert!(instruction.contains("doc_ids"), "verify step should tell agent to use doc_ids");
+        assert!(
+            !instruction.contains("dry_run"),
+            "verify step should not mention dry_run"
+        );
+        assert!(
+            step.get("suggested_args").is_none(),
+            "verify step should not have suggested_args with dry_run"
+        );
+        assert!(
+            instruction.contains("doc_ids"),
+            "verify step should tell agent to use doc_ids"
+        );
     }
 
     #[test]
     fn test_ingest_verify_has_required_next() {
         let step = ingest_step(4, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("NEXT:"), "verify step should have REQUIRED NEXT routing");
-        assert!(instruction.contains("workflow(workflow='ingest', step=5)"), "should route to step 5");
+        assert!(
+            instruction.contains("NEXT:"),
+            "verify step should have REQUIRED NEXT routing"
+        );
+        assert!(
+            instruction.contains("workflow(workflow='ingest', step=5)"),
+            "should route to step 5"
+        );
     }
 
     #[test]
@@ -1561,10 +1771,22 @@ mod tests {
     fn test_ingest_create_has_source_requirement() {
         let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("SOURCE REQUIREMENT"), "ingest create must have source requirement");
-        assert!(instruction.contains("independently verifiable"), "must mention independently verifiable");
-        assert!(instruction.contains("GOOD citations"), "must list good citation examples");
-        assert!(instruction.contains("BAD citations"), "must list bad citation examples");
+        assert!(
+            instruction.contains("SOURCE REQUIREMENT"),
+            "ingest create must have source requirement"
+        );
+        assert!(
+            instruction.contains("independently verifiable"),
+            "must mention independently verifiable"
+        );
+        assert!(
+            instruction.contains("GOOD citations"),
+            "must list good citation examples"
+        );
+        assert!(
+            instruction.contains("BAD citations"),
+            "must list bad citation examples"
+        );
     }
 
     #[test]
@@ -1572,22 +1794,40 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("SOURCE REQUIREMENT"), "enrich research must have source requirement");
-        assert!(instruction.contains("vague"), "must mention checking existing vague citations");
+        assert!(
+            instruction.contains("SOURCE REQUIREMENT"),
+            "enrich research must have source requirement"
+        );
+        assert!(
+            instruction.contains("vague"),
+            "must mention checking existing vague citations"
+        );
     }
 
     #[test]
     fn test_resolve_intro_has_weak_source_guidance() {
         let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
-        assert!(intro.contains("WEAK-SOURCE"), "resolve intro must have WEAK-SOURCE guidance");
-        assert!(intro.contains("UNVERIFIED"), "must mention UNVERIFIED fallback");
+        assert!(
+            intro.contains("WEAK-SOURCE"),
+            "resolve intro must have WEAK-SOURCE guidance"
+        );
+        assert!(
+            intro.contains("UNVERIFIED"),
+            "must mention UNVERIFIED fallback"
+        );
     }
 
     #[test]
     fn test_type_evidence_weak_source_mentions_unverified() {
         let guidance = type_evidence_guidance(&QuestionType::WeakSource);
-        assert!(guidance.contains("UNVERIFIED"), "weak-source guidance must mention UNVERIFIED fallback");
-        assert!(guidance.contains("Do not invent"), "must warn against inventing citations");
+        assert!(
+            guidance.contains("UNVERIFIED"),
+            "weak-source guidance must mention UNVERIFIED fallback"
+        );
+        assert!(
+            guidance.contains("Do not invent"),
+            "must warn against inventing citations"
+        );
     }
 
     #[test]
@@ -1616,7 +1856,10 @@ mod tests {
         let step = resolve_step(1, &serde_json::json!({}), &None, 5, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         // Deferred items should NOT appear in instruction (agents misinterpret as "stop")
-        assert!(!instruction.contains("deferred"), "instruction must not mention deferred items");
+        assert!(
+            !instruction.contains("deferred"),
+            "instruction must not mention deferred items"
+        );
         // But the count is still available as structured data
         assert_eq!(step["deferred_count"], 5);
     }
@@ -1665,7 +1908,7 @@ mod tests {
         let order = step["recommended_order"].as_array().unwrap();
         assert_eq!(order.len(), 2);
         assert_eq!(order[0], "temporal"); // 1 question
-        assert_eq!(order[1], "stale");    // 2 questions
+        assert_eq!(order[1], "stale"); // 2 questions
     }
 
     #[test]
@@ -1685,7 +1928,7 @@ mod tests {
         let step = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
         let order = step["recommended_order"].as_array().unwrap();
         assert_eq!(order.len(), 2);
-        assert_eq!(order[0], "temporal");  // priority 0
+        assert_eq!(order[0], "temporal"); // priority 0
         assert_eq!(order[1], "ambiguous"); // priority 4
     }
 
@@ -1726,8 +1969,14 @@ mod tests {
         insert_test_doc(&db, "fan001", content);
         let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf());
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("PARALLEL DISPATCH"), "intro should contain fan-out hint");
-        assert!(intro.contains("question_type="), "hint should show question_type param");
+        assert!(
+            intro.contains("PARALLEL DISPATCH"),
+            "intro should contain fan-out hint"
+        );
+        assert!(
+            intro.contains("question_type="),
+            "hint should show question_type param"
+        );
         assert!(!intro.contains("optional"), "hint should not say optional");
     }
 
@@ -1735,24 +1984,44 @@ mod tests {
     fn test_subagent_fanout_hint_large_queue_mandatory() {
         let types = vec![("stale".to_string(), 150), ("temporal".to_string(), 80)];
         let hint = subagent_fanout_hint(230, &types);
-        assert!(hint.contains("MANDATORY"), "large queue should use MANDATORY language");
-        assert!(hint.contains("USE IT NOW"), "large queue should say USE IT NOW");
-        assert!(hint.contains("question_type='stale'"), "should include actual types");
-        assert!(hint.contains("question_type='temporal'"), "should include actual types");
+        assert!(
+            hint.contains("MANDATORY"),
+            "large queue should use MANDATORY language"
+        );
+        assert!(
+            hint.contains("USE IT NOW"),
+            "large queue should say USE IT NOW"
+        );
+        assert!(
+            hint.contains("question_type='stale'"),
+            "should include actual types"
+        );
+        assert!(
+            hint.contains("question_type='temporal'"),
+            "should include actual types"
+        );
     }
 
     #[test]
     fn test_subagent_fanout_hint_small_queue_not_mandatory() {
         let types = vec![("stale".to_string(), 5)];
         let hint = subagent_fanout_hint(5, &types);
-        assert!(!hint.contains("MANDATORY"), "small queue should not use MANDATORY");
-        assert!(hint.contains("PARALLEL DISPATCH"), "should still suggest parallelism");
+        assert!(
+            !hint.contains("MANDATORY"),
+            "small queue should not use MANDATORY"
+        );
+        assert!(
+            hint.contains("PARALLEL DISPATCH"),
+            "should still suggest parallelism"
+        );
     }
 
     #[test]
     fn test_resolve_answer_instruction_action_framing() {
         assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("ANSWER questions, not analyze"));
-        assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("not factbase(op='answer') is reducing"));
+        assert!(
+            DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("not factbase(op='answer') is reducing")
+        );
         assert!(DEFAULT_RESOLVE_ANSWER_INSTRUCTION.contains("Minimize research calls"));
     }
 
@@ -1764,8 +2033,14 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // Conflict pattern names now in intro (first batch), not per-batch instruction
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("CONFLICT"), "intro should cover conflict type");
-        assert!(intro.contains("[pattern:"), "intro should mention pattern tags");
+        assert!(
+            intro.contains("CONFLICT"),
+            "intro should cover conflict type"
+        );
+        assert!(
+            intro.contains("[pattern:"),
+            "intro should mention pattern tags"
+        );
         // Structured conflict_patterns field should also be present
         let patterns = &step["conflict_patterns"];
         assert!(patterns["parallel_overlap"].is_string());
@@ -1782,12 +2057,24 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // Temporal guidance now in intro (first batch)
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("TEMPORAL"), "intro should cover temporal type");
+        assert!(
+            intro.contains("TEMPORAL"),
+            "intro should cover temporal type"
+        );
         assert!(intro.contains("@t[YYYY]"), "intro must show tag format");
-        assert!(intro.contains("verified"), "intro must require verification date");
+        assert!(
+            intro.contains("verified"),
+            "intro must require verification date"
+        );
         assert!(intro.contains("WRONG"), "intro must flag rejected answers");
-        assert!(intro.contains("well-known"), "intro must explicitly name 'well-known' as rejected");
-        assert!(intro.contains("no audit trail"), "intro must explain why dismissals are rejected");
+        assert!(
+            intro.contains("well-known"),
+            "intro must explicitly name 'well-known' as rejected"
+        );
+        assert!(
+            intro.contains("no audit trail"),
+            "intro must explain why dismissals are rejected"
+        );
     }
 
     #[test]
@@ -1795,10 +2082,22 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = improve_step(2, Some("abc123"), &None, &[], &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("MISSING an @t[...]"), "improve/resolve temporal guidance must explain the fact line is missing a tag");
-        assert!(instruction.contains("tag must appear in your answer"), "must require the @t tag in the answer");
-        assert!(instruction.contains("static fact"), "improve/resolve must reject 'static fact' dismissals");
-        assert!(instruction.contains("no audit trail"), "improve/resolve must explain why dismissals are rejected");
+        assert!(
+            instruction.contains("MISSING an @t[...]"),
+            "improve/resolve temporal guidance must explain the fact line is missing a tag"
+        );
+        assert!(
+            instruction.contains("tag must appear in your answer"),
+            "must require the @t tag in the answer"
+        );
+        assert!(
+            instruction.contains("static fact"),
+            "improve/resolve must reject 'static fact' dismissals"
+        );
+        assert!(
+            instruction.contains("no audit trail"),
+            "improve/resolve must explain why dismissals are rejected"
+        );
     }
 
     // --- improve workflow tests ---
@@ -1933,7 +2232,10 @@ mod tests {
         let p = mock_perspective();
         let (db, _tmp) = test_db();
         let step = improve_step(3, Some("abc123"), &p, &[], &db, &wf());
-        assert!(step["instruction"].as_str().unwrap().contains("current_role"));
+        assert!(step["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("current_role"));
     }
 
     // --- quality stats tests ---
@@ -1986,7 +2288,8 @@ mod tests {
     fn test_enrich_step1_includes_entity_quality_bulk() {
         let (db, _tmp) = test_db();
         let content_a = "<!-- factbase:aaa001 -->\n# Alpha\n\n- Fact one\n- Fact two";
-        let content_b = "<!-- factbase:bbb001 -->\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
+        let content_b =
+            "<!-- factbase:bbb001 -->\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
         insert_test_doc(&db, "aaa001", content_a);
         insert_test_doc(&db, "bbb001", content_b);
         let step = enrich_step(1, &serde_json::json!({}), &None, &db, None, &wf());
@@ -1995,7 +2298,10 @@ mod tests {
         // First item should have higher attention_score (aaa001 has no tags/sources)
         let first_score = quality[0]["attention_score"].as_u64().unwrap();
         let second_score = quality[1]["attention_score"].as_u64().unwrap();
-        assert!(first_score >= second_score, "should be sorted by attention_score desc");
+        assert!(
+            first_score >= second_score,
+            "should be sorted by attention_score desc"
+        );
     }
 
     #[test]
@@ -2034,7 +2340,10 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("factbase(op='scan')"), "should call factbase(op='scan')");
+        assert!(
+            instruction.contains("factbase(op='scan')"),
+            "should call factbase(op='scan')"
+        );
     }
 
     #[test]
@@ -2042,9 +2351,18 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("link detection"), "enrich step 3 should mention link detection");
-        assert!(instruction.contains("exact title"), "should emphasize exact titles");
-        assert!(instruction.contains("Preserve ALL existing content"), "should warn about preserving content");
+        assert!(
+            instruction.contains("link detection"),
+            "enrich step 3 should mention link detection"
+        );
+        assert!(
+            instruction.contains("exact title"),
+            "should emphasize exact titles"
+        );
+        assert!(
+            instruction.contains("Preserve ALL existing content"),
+            "should warn about preserving content"
+        );
     }
 
     // --- setup workflow tests ---
@@ -2171,11 +2489,15 @@ mod tests {
         std::fs::write(
             tmp.path().join("perspective.yaml"),
             "focus: Test\nformat:\n  preset: obsidian\n",
-        ).unwrap();
+        )
+        .unwrap();
         let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
         assert!(step["complete"].as_bool().unwrap());
         let git_setup = &step["obsidian_git_setup"];
-        assert!(git_setup.is_object(), "obsidian_git_setup should be present for obsidian preset");
+        assert!(
+            git_setup.is_object(),
+            "obsidian_git_setup should be present for obsidian preset"
+        );
         let files = git_setup["files_to_commit"].as_array().unwrap();
         let file_strs: Vec<&str> = files.iter().filter_map(|v| v.as_str()).collect();
         assert!(file_strs.contains(&".obsidian/snippets/factbase.css"));
@@ -2187,10 +2509,7 @@ mod tests {
     fn test_setup_step6_no_obsidian_git_setup_for_non_obsidian() {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
-        std::fs::write(
-            tmp.path().join("perspective.yaml"),
-            "focus: Test\n",
-        ).unwrap();
+        std::fs::write(tmp.path().join("perspective.yaml"), "focus: Test\n").unwrap();
         let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
         assert!(step.get("obsidian_git_setup").is_none());
     }
@@ -2218,7 +2537,12 @@ mod tests {
     #[test]
     fn test_build_bootstrap_prompt_with_entity_types() {
         let prompts = crate::config::PromptsConfig::default();
-        let prompt = build_bootstrap_prompt("mycology", Some("species, habitats, researchers"), &prompts, None);
+        let prompt = build_bootstrap_prompt(
+            "mycology",
+            Some("species, habitats, researchers"),
+            &prompts,
+            None,
+        );
         assert!(prompt.contains("mycology"));
         assert!(prompt.contains("species, habitats, researchers"));
         assert!(prompt.contains("suggested these entity types"));
@@ -2233,12 +2557,25 @@ mod tests {
         assert_eq!(result["domain"], "mycology");
         assert!(result["instruction"].is_string());
         let instruction = result["instruction"].as_str().unwrap();
-        assert!(instruction.contains("mycology"), "instruction should contain domain");
-        assert!(instruction.contains("document_types"), "instruction should describe expected format");
+        assert!(
+            instruction.contains("mycology"),
+            "instruction should contain domain"
+        );
+        assert!(
+            instruction.contains("document_types"),
+            "instruction should describe expected format"
+        );
         assert!(result["next_steps"].is_array());
         let steps = result["next_steps"].as_array().unwrap();
-        let all_steps = steps.iter().map(|s| s.as_str().unwrap_or("")).collect::<Vec<_>>().join(" ");
-        assert!(all_steps.contains("setup"), "next_steps should route to setup workflow");
+        let all_steps = steps
+            .iter()
+            .map(|s| s.as_str().unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            all_steps.contains("setup"),
+            "next_steps should route to setup workflow"
+        );
     }
 
     #[test]
@@ -2283,7 +2620,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let prompts_dir = tmp.path().join(".factbase").join("prompts");
         std::fs::create_dir_all(&prompts_dir).unwrap();
-        std::fs::write(prompts_dir.join("bootstrap.txt"), "Custom bootstrap for {domain}").unwrap();
+        std::fs::write(
+            prompts_dir.join("bootstrap.txt"),
+            "Custom bootstrap for {domain}",
+        )
+        .unwrap();
         let prompts = crate::config::PromptsConfig::default();
         let result = build_bootstrap_prompt("mycology", None, &prompts, Some(tmp.path()));
         assert_eq!(result, "Custom bootstrap for mycology");
@@ -2294,7 +2635,10 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let prompts = crate::config::PromptsConfig::default();
         let result = build_bootstrap_prompt("mycology", None, &prompts, Some(tmp.path()));
-        assert!(result.contains("document_types"), "should use compiled-in default");
+        assert!(
+            result.contains("document_types"),
+            "should use compiled-in default"
+        );
     }
 
     #[test]
@@ -2331,21 +2675,39 @@ mod tests {
     #[test]
     fn test_format_rules_has_negative_examples_for_all_categories() {
         // Entity names
-        assert!(FORMAT_RULES.contains("Wolfgang Amadeus Mozart"), "missing entity name");
+        assert!(
+            FORMAT_RULES.contains("Wolfgang Amadeus Mozart"),
+            "missing entity name"
+        );
         // Descriptions
-        assert!(FORMAT_RULES.contains("Complex counterpoint"), "missing description");
+        assert!(
+            FORMAT_RULES.contains("Complex counterpoint"),
+            "missing description"
+        );
         // Statuses
-        assert!(FORMAT_RULES.contains("Active Production Status"), "missing status");
+        assert!(
+            FORMAT_RULES.contains("Active Production Status"),
+            "missing status"
+        );
         // Statistics
-        assert!(FORMAT_RULES.contains("Total Produced: 650+"), "missing statistic");
+        assert!(
+            FORMAT_RULES.contains("Total Produced: 650+"),
+            "missing statistic"
+        );
         // Vague time words
         assert!(FORMAT_RULES.contains("seasonal"), "missing vague time word");
     }
 
     #[test]
     fn test_bootstrap_prompt_has_temporal_tag_negative_examples() {
-        assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("NEVER names, descriptions"), "missing negative guidance in bootstrap prompt");
-        assert!(DEFAULT_BOOTSTRAP_PROMPT.contains("Wolfgang Amadeus Mozart"), "missing entity name example in bootstrap prompt");
+        assert!(
+            DEFAULT_BOOTSTRAP_PROMPT.contains("NEVER names, descriptions"),
+            "missing negative guidance in bootstrap prompt"
+        );
+        assert!(
+            DEFAULT_BOOTSTRAP_PROMPT.contains("Wolfgang Amadeus Mozart"),
+            "missing entity name example in bootstrap prompt"
+        );
     }
 
     // --- workflow config override tests ---
@@ -2354,7 +2716,8 @@ mod tests {
     fn test_workflow_config_override_in_step() {
         let (db, _tmp) = test_db();
         let mut wfc = WorkflowsConfig::default();
-        wfc.templates.insert("update.scan".into(), "Custom scan: {ctx}".into());
+        wfc.templates
+            .insert("update.scan".into(), "Custom scan: {ctx}".into());
         let p = mock_perspective();
         let step = update_step(1, &serde_json::json!({}), &p, &wfc, &db);
         let instruction = step["instruction"].as_str().unwrap();
@@ -2365,10 +2728,14 @@ mod tests {
     #[test]
     fn test_workflow_config_override_improve() {
         let mut wfc = WorkflowsConfig::default();
-        wfc.templates.insert("improve.cleanup".into(), "My cleanup for {doc_hint}".into());
+        wfc.templates
+            .insert("improve.cleanup".into(), "My cleanup for {doc_hint}".into());
         let (db, _tmp) = test_db();
         let step = improve_step(1, Some("abc123"), &None, &[], &db, &wfc);
-        assert!(step["instruction"].as_str().unwrap().starts_with("My cleanup for"));
+        assert!(step["instruction"]
+            .as_str()
+            .unwrap()
+            .starts_with("My cleanup for"));
         assert!(step["instruction"].as_str().unwrap().contains("abc123"));
     }
 
@@ -2377,7 +2744,13 @@ mod tests {
         // Empty config should produce the same output as default
         let (db, _tmp) = test_db();
         let step_default = update_step(2, &serde_json::json!({}), &None, &wf(), &db);
-        let step_empty = update_step(2, &serde_json::json!({}), &None, &WorkflowsConfig::default(), &db);
+        let step_empty = update_step(
+            2,
+            &serde_json::json!({}),
+            &None,
+            &WorkflowsConfig::default(),
+            &db,
+        );
         assert_eq!(step_default["instruction"], step_empty["instruction"]);
     }
 
@@ -2427,10 +2800,19 @@ mod tests {
         insert_doc_with_questions(&db, "int001", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // First batch (resolved_so_far=0) should have intro
-        assert!(step["intro"].is_string(), "first batch should include intro");
+        assert!(
+            step["intro"].is_string(),
+            "first batch should include intro"
+        );
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("TEMPORAL"), "intro should describe question types");
-        assert!(intro.contains("STALE"), "intro should describe question types");
+        assert!(
+            intro.contains("TEMPORAL"),
+            "intro should describe question types"
+        );
+        assert!(
+            intro.contains("STALE"),
+            "intro should describe question types"
+        );
     }
 
     #[test]
@@ -2441,7 +2823,10 @@ mod tests {
         insert_test_doc(&db, "sub001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // resolved_so_far > 0, so no intro
-        assert!(step.get("intro").is_none(), "subsequent batch should not include intro");
+        assert!(
+            step.get("intro").is_none(),
+            "subsequent batch should not include intro"
+        );
     }
 
     #[test]
@@ -2452,7 +2837,10 @@ mod tests {
         insert_test_doc(&db, "slm001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.len() < 500, "subsequent batch instruction should be compact: {instr}");
+        assert!(
+            instr.len() < 500,
+            "subsequent batch instruction should be compact: {instr}"
+        );
         assert!(instr.contains("LOOP"), "should include LOOP: {instr}");
     }
 
@@ -2462,7 +2850,11 @@ mod tests {
         insert_doc_with_questions(&db, "ful001", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.len() > 100, "first batch instruction should be full: len={}", instr.len());
+        assert!(
+            instr.len() > 100,
+            "first batch instruction should be full: len={}",
+            instr.len()
+        );
     }
 
     #[test]
@@ -2480,7 +2872,10 @@ mod tests {
         let ans = "<!-- factbase:snpans -->\n# Answered\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Done (line 4)\n  > @t[2024]\n";
         insert_test_doc(&db, "snpans", ans);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("patterns_detected").is_none(), "subsequent batch should omit patterns_detected");
+        assert!(
+            step.get("patterns_detected").is_none(),
+            "subsequent batch should omit patterns_detected"
+        );
     }
 
     #[test]
@@ -2490,7 +2885,10 @@ mod tests {
         let content = "<!-- factbase:ncf001 -->\n# No Conflict\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[temporal]` Unanswered (line 5)\n";
         insert_test_doc(&db, "ncf001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("conflict_patterns").is_none(), "no conflicts in batch → omit conflict_patterns");
+        assert!(
+            step.get("conflict_patterns").is_none(),
+            "no conflicts in batch → omit conflict_patterns"
+        );
     }
 
     #[test]
@@ -2500,19 +2898,32 @@ mod tests {
         let content = "<!-- factbase:ycf001 -->\n# Has Conflict\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[conflict]` Two facts overlap (line 5)\n";
         insert_test_doc(&db, "ycf001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("conflict_patterns").is_some(), "batch with conflicts should include conflict_patterns");
+        assert!(
+            step.get("conflict_patterns").is_some(),
+            "batch with conflicts should include conflict_patterns"
+        );
     }
 
     #[test]
     fn test_resolve_step2_first_batch_has_all_fields() {
         let (db, _tmp) = test_db();
-        insert_doc_with_questions(&db, "all001", &["temporal", "conflict", "missing", "stale", "weak-source"]);
+        insert_doc_with_questions(
+            &db,
+            "all001",
+            &["temporal", "conflict", "missing", "stale", "weak-source"],
+        );
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // First batch should have everything
         assert!(step.get("intro").is_some(), "first batch should have intro");
-        assert!(step.get("conflict_patterns").is_some(), "first batch should have conflict_patterns");
+        assert!(
+            step.get("conflict_patterns").is_some(),
+            "first batch should have conflict_patterns"
+        );
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.len() > 100, "first batch should have full instruction");
+        assert!(
+            instr.len() > 100,
+            "first batch should have full instruction"
+        );
     }
 
     #[test]
@@ -2533,7 +2944,8 @@ mod tests {
         assert!(
             second_json.len() < first_json.len(),
             "subsequent batch ({} bytes) should be smaller than first ({} bytes)",
-            second_json.len(), first_json.len()
+            second_json.len(),
+            first_json.len()
         );
     }
 
@@ -2547,7 +2959,10 @@ mod tests {
         }
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
-        assert_eq!(batch["questions"].as_array().unwrap().len(), wf().resolve_batch_size());
+        assert_eq!(
+            batch["questions"].as_array().unwrap().len(),
+            wf().resolve_batch_size()
+        );
         assert_eq!(batch["questions_remaining"], 70);
         assert_eq!(batch["total_batches_estimate"], 3);
         assert!(step["when_done"].as_str().unwrap().contains("step=2"));
@@ -2608,27 +3023,36 @@ mod tests {
     #[test]
     fn test_detect_question_patterns_ignores_small_groups() {
         let questions: Vec<Value> = (0..3)
-            .map(|i| serde_json::json!({
-                "type": "temporal",
-                "description": format!("Missing date (line {i})"),
-            }))
+            .map(|i| {
+                serde_json::json!({
+                    "type": "temporal",
+                    "description": format!("Missing date (line {i})"),
+                })
+            })
             .collect();
         let patterns = detect_question_patterns(&questions, &questions);
-        assert!(patterns.is_empty(), "groups of 3 or fewer should not be surfaced");
+        assert!(
+            patterns.is_empty(),
+            "groups of 3 or fewer should not be surfaced"
+        );
     }
 
     #[test]
     fn test_detect_question_patterns_multiple_groups() {
         let mut questions: Vec<Value> = (0..5)
-            .map(|i| serde_json::json!({
-                "type": "weak-source",
-                "description": format!(r#"Citation [^{i}] "src" is not specific"#),
-            }))
+            .map(|i| {
+                serde_json::json!({
+                    "type": "weak-source",
+                    "description": format!(r#"Citation [^{i}] "src" is not specific"#),
+                })
+            })
             .collect();
-        questions.extend((0..6).map(|i| serde_json::json!({
-            "type": "stale",
-            "description": format!(r#""fact {i}" - source from 2020-01-01 may be outdated"#),
-        })));
+        questions.extend((0..6).map(|i| {
+            serde_json::json!({
+                "type": "stale",
+                "description": format!(r#""fact {i}" - source from 2020-01-01 may be outdated"#),
+            })
+        }));
         let patterns = detect_question_patterns(&questions, &questions);
         assert_eq!(patterns.len(), 2);
         // Sorted by count descending
@@ -2661,7 +3085,10 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "few001", &["temporal", "stale"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("patterns_detected").is_none(), "should not include patterns_detected when no patterns");
+        assert!(
+            step.get("patterns_detected").is_none(),
+            "should not include patterns_detected when no patterns"
+        );
     }
 
     #[test]
@@ -2702,7 +3129,8 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "cfg001", &["temporal"]);
         let mut wfc = WorkflowsConfig::default();
-        wfc.templates.insert("resolve.answer_intro".into(), "Custom intro {ctx}".into());
+        wfc.templates
+            .insert("resolve.answer_intro".into(), "Custom intro {ctx}".into());
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wfc);
         let intro = step["intro"].as_str().unwrap();
         assert!(intro.starts_with("Custom intro"));
@@ -2714,9 +3142,18 @@ mod tests {
         insert_doc_with_questions(&db, "gate01", &["temporal", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
-        assert!(gate.contains("resolved"), "gate should have resolved count: {gate}");
-        assert!(gate.contains("0/2"), "gate should have compact counts: {gate}");
-        assert!(gate.contains("step=2"), "gate should tell agent to call step=2: {gate}");
+        assert!(
+            gate.contains("resolved"),
+            "gate should have resolved count: {gate}"
+        );
+        assert!(
+            gate.contains("0/2"),
+            "gate should have compact counts: {gate}"
+        );
+        assert!(
+            gate.contains("step=2"),
+            "gate should tell agent to call step=2: {gate}"
+        );
     }
 
     #[test]
@@ -2725,9 +3162,18 @@ mod tests {
         insert_doc_with_questions(&db, "prg001", &["temporal", "stale"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // checkpoint fields removed from response — file still written to disk
-        assert!(step.get("progress").is_none(), "progress should not be in response");
-        assert!(step.get("checkpoint_file").is_none(), "checkpoint_file removed from response");
-        assert!(step.get("checkpoint_hint").is_none(), "checkpoint_hint removed from response");
+        assert!(
+            step.get("progress").is_none(),
+            "progress should not be in response"
+        );
+        assert!(
+            step.get("checkpoint_file").is_none(),
+            "checkpoint_file removed from response"
+        );
+        assert!(
+            step.get("checkpoint_hint").is_none(),
+            "checkpoint_hint removed from response"
+        );
     }
 
     #[test]
@@ -2744,8 +3190,14 @@ mod tests {
         insert_doc_with_questions(&db, "skip01", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("DO NOT STOP"), "instruction should be assertive: {instr}");
-        assert!(!instr.contains("report progress honestly"), "should not encourage progress reporting: {instr}");
+        assert!(
+            instr.contains("DO NOT STOP"),
+            "instruction should be assertive: {instr}"
+        );
+        assert!(
+            !instr.contains("report progress honestly"),
+            "should not encourage progress reporting: {instr}"
+        );
     }
 
     #[test]
@@ -2783,9 +3235,18 @@ mod tests {
             let args = serde_json::json!({"variant": variant});
             let step = resolve_step(2, &args, &None, 0, &db, &wf());
             let instr = step["instruction"].as_str().unwrap();
-            assert!(instr.contains("CONTINUATION"), "variant {variant} should have CONTINUATION in instruction");
-            assert!(instr.contains("If you must stop"), "variant {variant} should allow partial completion");
-            assert_eq!(step["continue"], true, "variant {variant} should have continue=true");
+            assert!(
+                instr.contains("CONTINUATION"),
+                "variant {variant} should have CONTINUATION in instruction"
+            );
+            assert!(
+                instr.contains("If you must stop"),
+                "variant {variant} should allow partial completion"
+            );
+            assert_eq!(
+                step["continue"], true,
+                "variant {variant} should have continue=true"
+            );
         }
     }
 
@@ -2826,7 +3287,10 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
         let desc = fb["description"].as_str().unwrap();
-        assert!(desc.contains("embeddings"), "factbase description should mention embeddings");
+        assert!(
+            desc.contains("embeddings"),
+            "factbase description should mention embeddings"
+        );
     }
 
     #[test]
@@ -2835,15 +3299,27 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
         let props = fb["inputSchema"]["properties"].as_object().unwrap();
-        assert!(props.contains_key("force_reindex"), "factbase should have force_reindex param");
+        assert!(
+            props.contains_key("force_reindex"),
+            "factbase should have force_reindex param"
+        );
     }
 
     #[test]
     fn test_workflow_texts_mention_fact_pairs() {
         let (db, _tmp) = test_db();
-        let update_cv = update_step(5, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
+        let update_cv = update_step(
+            5,
+            &serde_json::json!({"cross_validate": true}),
+            &None,
+            &wf(),
+            &db,
+        );
         let cv_instr = update_cv["instruction"].as_str().unwrap();
-        assert!(cv_instr.contains("fact comparison") || cv_instr.contains("fact pairs"), "update.cross_validate should mention facts");
+        assert!(
+            cv_instr.contains("fact comparison") || cv_instr.contains("fact pairs"),
+            "update.cross_validate should mention facts"
+        );
     }
 
     #[test]
@@ -2853,11 +3329,20 @@ mod tests {
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
 
         let setup_instr = setup["instruction"].as_str().unwrap();
-        assert!(setup_instr.contains("time_budget_secs=120"), "setup.scan should specify time_budget_secs");
+        assert!(
+            setup_instr.contains("time_budget_secs=120"),
+            "setup.scan should specify time_budget_secs"
+        );
 
         let scan_instr = update_scan["instruction"].as_str().unwrap();
-        assert!(scan_instr.contains("time_budget_secs=120"), "update.scan should specify time_budget_secs");
-        assert!(scan_instr.contains("Do NOT stop early"), "update.scan should warn against stopping early");
+        assert!(
+            scan_instr.contains("time_budget_secs=120"),
+            "update.scan should specify time_budget_secs"
+        );
+        assert!(
+            scan_instr.contains("Do NOT stop early"),
+            "update.scan should warn against stopping early"
+        );
     }
 
     #[test]
@@ -2871,15 +3356,28 @@ mod tests {
             ("setup.scan", setup["instruction"].as_str().unwrap()),
             ("update.scan", update_scan["instruction"].as_str().unwrap()),
         ] {
-            assert!(instr.contains("WILL return"), "{name} should say paging WILL happen");
-            assert!(instr.contains("MUST"), "{name} should use MUST language for continuation");
+            assert!(
+                instr.contains("WILL return"),
+                "{name} should say paging WILL happen"
+            );
+            assert!(
+                instr.contains("MUST"),
+                "{name} should use MUST language for continuation"
+            );
         }
     }
 
     #[test]
     fn test_time_budget_progress_message_warns_incomplete() {
         let mut resp = serde_json::json!({"ok": true});
-        crate::mcp::tools::helpers::apply_time_budget_progress(&mut resp, 3, 10, "check_repository", true, None);
+        crate::mcp::tools::helpers::apply_time_budget_progress(
+            &mut resp,
+            3,
+            10,
+            "check_repository",
+            true,
+            None,
+        );
         let msg = resp["message"].as_str().unwrap();
         assert!(msg.contains("MANDATORY"));
         assert!(msg.contains("MUST"));
@@ -2893,15 +3391,27 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(3, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("factbase(op='check')"), "step 3 must instruct factbase(op='check')");
+        assert!(
+            instr.contains("factbase(op='check')"),
+            "step 3 must instruct factbase(op='check')"
+        );
     }
 
     #[test]
     fn test_update_cross_validate_step_when_enabled() {
         let (db, _tmp) = test_db();
-        let step = update_step(5, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
+        let step = update_step(
+            5,
+            &serde_json::json!({"cross_validate": true}),
+            &None,
+            &wf(),
+            &db,
+        );
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("factbase(op='fact_pairs')"), "step 5 with cross_validate=true must instruct factbase(op='fact_pairs')");
+        assert!(
+            instr.contains("factbase(op='fact_pairs')"),
+            "step 5 with cross_validate=true must instruct factbase(op='fact_pairs')"
+        );
     }
 
     #[test]
@@ -2910,7 +3420,10 @@ mod tests {
         // Without cross_validate, step 5 is organize
         let step = update_step(5, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("factbase(op='organize'"), "step 5 without cross_validate should be organize");
+        assert!(
+            instr.contains("factbase(op='organize'"),
+            "step 5 without cross_validate should be organize"
+        );
     }
 
     #[test]
@@ -2918,13 +3431,22 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = update_step(4, &serde_json::json!({}), &None, &wf(), &db);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("factbase(op='links')"), "step 4 must instruct factbase(op='links')");
+        assert!(
+            instr.contains("factbase(op='links')"),
+            "step 4 must instruct factbase(op='links')"
+        );
     }
 
     #[test]
     fn test_update_total_steps_with_cross_validate() {
         let (db, _tmp) = test_db();
-        let step = update_step(1, &serde_json::json!({"cross_validate": true}), &None, &wf(), &db);
+        let step = update_step(
+            1,
+            &serde_json::json!({"cross_validate": true}),
+            &None,
+            &wf(),
+            &db,
+        );
         assert_eq!(step["total_steps"], 7);
     }
 
@@ -2950,7 +3472,10 @@ mod tests {
         assert_eq!(step["confirmation_reason"], "full embedding rebuild");
         let details = step["confirmation_details"].as_str().unwrap();
         assert!(details.contains("1 documents"), "should mention doc count");
-        assert!(details.contains("dimension"), "should mention dimension change");
+        assert!(
+            details.contains("dimension"),
+            "should mention dimension change"
+        );
     }
 
     #[test]
@@ -2959,7 +3484,8 @@ mod tests {
         insert_test_doc(&db, "bbb222", "<!-- factbase:bbb222 -->\n# Test\n\n- Fact");
         let config = crate::Config::load(None).unwrap_or_default();
         // Matching dimension but different model
-        db.set_embedding_info("old-model-that-doesnt-match", config.embedding.dimension).unwrap();
+        db.set_embedding_info("old-model-that-doesnt-match", config.embedding.dimension)
+            .unwrap();
         // Insert embedding with DB schema dimension (1024)
         db.upsert_embedding("bbb222", &vec![0.0f32; 1024]).unwrap();
 
@@ -2978,7 +3504,10 @@ mod tests {
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
         assert_eq!(step["requires_confirmation"], true);
         let details = step["confirmation_details"].as_str().unwrap();
-        assert!(details.contains("first-time"), "should mention first-time generation");
+        assert!(
+            details.contains("first-time"),
+            "should mention first-time generation"
+        );
     }
 
     #[test]
@@ -2986,12 +3515,16 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_test_doc(&db, "ddd444", "<!-- factbase:ddd444 -->\n# Test\n\n- Fact");
         let config = crate::Config::load(None).unwrap_or_default();
-        db.set_embedding_info(&config.embedding.model, config.embedding.dimension).unwrap();
+        db.set_embedding_info(&config.embedding.model, config.embedding.dimension)
+            .unwrap();
         // Insert embedding with DB schema dimension (1024)
         db.upsert_embedding("ddd444", &vec![0.0f32; 1024]).unwrap();
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
-        assert!(step.get("requires_confirmation").is_none(), "incremental update should not require confirmation");
+        assert!(
+            step.get("requires_confirmation").is_none(),
+            "incremental update should not require confirmation"
+        );
     }
 
     #[test]
@@ -2999,26 +3532,52 @@ mod tests {
         let (db, _tmp) = test_db();
         // No documents at all
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
-        assert!(step.get("requires_confirmation").is_none(), "empty repo should not require confirmation");
+        assert!(
+            step.get("requires_confirmation").is_none(),
+            "empty repo should not require confirmation"
+        );
     }
-
 
     #[test]
     fn test_resolve_intro_requires_evidence() {
         let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
-        assert!(intro.contains("EVIDENCE REQUIREMENT"), "intro must mention evidence requirement");
-        assert!(intro.contains("verified"), "intro must mention verified confidence");
-        assert!(intro.contains("believed"), "intro must mention believed confidence");
-        assert!(intro.contains("defer"), "intro must mention defer as valid action");
-        assert!(intro.contains("GOOD defer"), "intro must frame defer positively");
+        assert!(
+            intro.contains("EVIDENCE REQUIREMENT"),
+            "intro must mention evidence requirement"
+        );
+        assert!(
+            intro.contains("verified"),
+            "intro must mention verified confidence"
+        );
+        assert!(
+            intro.contains("believed"),
+            "intro must mention believed confidence"
+        );
+        assert!(
+            intro.contains("defer"),
+            "intro must mention defer as valid action"
+        );
+        assert!(
+            intro.contains("GOOD defer"),
+            "intro must frame defer positively"
+        );
     }
 
     #[test]
     fn test_resolve_answer_instruction_requires_research() {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
-        assert!(instr.contains("ANSWER questions"), "answer instruction must prioritize answering");
-        assert!(instr.contains("confidence"), "answer instruction must mention confidence field");
-        assert!(instr.contains("Minimize research"), "answer instruction must discourage excessive research");
+        assert!(
+            instr.contains("ANSWER questions"),
+            "answer instruction must prioritize answering"
+        );
+        assert!(
+            instr.contains("confidence"),
+            "answer instruction must mention confidence field"
+        );
+        assert!(
+            instr.contains("Minimize research"),
+            "answer instruction must discourage excessive research"
+        );
     }
 
     #[test]
@@ -3091,7 +3650,11 @@ mod tests {
         assert_eq!(batch["resolved_believed"], 1);
         assert_eq!(batch["questions_remaining"], 1);
         let questions = batch["questions"].as_array().unwrap();
-        assert_eq!(questions.len(), 1, "Only unanswered question should be in batch, got: {questions:?}");
+        assert_eq!(
+            questions.len(),
+            1,
+            "Only unanswered question should be in batch, got: {questions:?}"
+        );
         assert_eq!(questions[0]["type"], "temporal");
     }
 
@@ -3107,7 +3670,10 @@ mod tests {
             > believed: Circa 2020 based on context\n";
         insert_test_doc(&db, "bonly1", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert_eq!(step["all_resolved"], true, "should be all_resolved when only believed remain");
+        assert_eq!(
+            step["all_resolved"], true,
+            "should be all_resolved when only believed remain"
+        );
         assert_eq!(step["continue"], false);
         assert_eq!(step["batch"]["resolved_believed"], 2);
         assert_eq!(step["batch"]["questions_remaining"], 0);
@@ -3139,11 +3705,15 @@ mod tests {
             > believed: Confirmed via search\n\
             - [ ] `@q[temporal]` Truly unanswered\n\
             > believed: Circa 2020\n";
-        db.update_document_content("cyc01", updated, "hash2").unwrap();
+        db.update_document_content("cyc01", updated, "hash2")
+            .unwrap();
 
         // Second batch: both are now believed, should be all_resolved
         let step2 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert_eq!(step2["all_resolved"], true, "no infinite loop: believed answers not re-served");
+        assert_eq!(
+            step2["all_resolved"], true,
+            "no infinite loop: believed answers not re-served"
+        );
         assert_eq!(step2["batch"]["resolved_believed"], 2);
         assert_eq!(step2["batch"]["questions_remaining"], 0);
     }
@@ -3175,11 +3745,15 @@ mod tests {
             > defer: cannot determine correct filing\n\
             - [ ] `@q[temporal]` Truly unanswered\n\
             > defer: no source available\n";
-        db.update_document_content("dfc01", updated, "hash2").unwrap();
+        db.update_document_content("dfc01", updated, "hash2")
+            .unwrap();
 
         // Second batch: both are now deferred, should be all_resolved
         let step2 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert_eq!(step2["all_resolved"], true, "no infinite loop: deferred answers not re-served");
+        assert_eq!(
+            step2["all_resolved"], true,
+            "no infinite loop: deferred answers not re-served"
+        );
         assert_eq!(step2["batch"]["resolved_deferred"], 2);
         assert_eq!(step2["batch"]["questions_remaining"], 0);
     }
@@ -3187,8 +3761,14 @@ mod tests {
     #[test]
     fn test_resolve_answer_instruction_prohibits_scan_check() {
         let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
-        assert!(instr.contains("Do NOT call factbase(op='scan')"), "answer instruction must prohibit scan");
-        assert!(instr.contains("factbase(op='check')"), "answer instruction must prohibit check");
+        assert!(
+            instr.contains("Do NOT call factbase(op='scan')"),
+            "answer instruction must prohibit scan"
+        );
+        assert!(
+            instr.contains("factbase(op='check')"),
+            "answer instruction must prohibit check"
+        );
     }
 
     #[test]
@@ -3199,7 +3779,10 @@ mod tests {
         let workflows = result["workflows"].as_array().unwrap();
         let resolve_wf = workflows.iter().find(|w| w["name"] == "resolve").unwrap();
         let desc = resolve_wf["description"].as_str().unwrap();
-        assert!(desc.contains("clean"), "resolve description should mention cleanup");
+        assert!(
+            desc.contains("clean"),
+            "resolve description should mention cleanup"
+        );
     }
 
     // --- resolve variant tests ---
@@ -3224,15 +3807,27 @@ mod tests {
         assert_eq!(step["variant"], "type_evidence");
         let questions = step["batch"]["questions"].as_array().unwrap();
         for q in questions {
-            assert!(q["evidence_guidance"].is_string(), "type_evidence variant should add evidence_guidance to each question");
+            assert!(
+                q["evidence_guidance"].is_string(),
+                "type_evidence variant should add evidence_guidance to each question"
+            );
         }
         // Check type-specific guidance content
         let temporal_q = questions.iter().find(|q| q["type"] == "temporal").unwrap();
-        assert!(temporal_q["evidence_guidance"].as_str().unwrap().contains("specific event date"));
+        assert!(temporal_q["evidence_guidance"]
+            .as_str()
+            .unwrap()
+            .contains("specific event date"));
         let stale_q = questions.iter().find(|q| q["type"] == "stale").unwrap();
-        assert!(stale_q["evidence_guidance"].as_str().unwrap().contains("current year"));
+        assert!(stale_q["evidence_guidance"]
+            .as_str()
+            .unwrap()
+            .contains("current year"));
         let ambiguous_q = questions.iter().find(|q| q["type"] == "ambiguous").unwrap();
-        assert!(ambiguous_q["evidence_guidance"].as_str().unwrap().contains("Check the KB first"));
+        assert!(ambiguous_q["evidence_guidance"]
+            .as_str()
+            .unwrap()
+            .contains("Check the KB first"));
     }
 
     #[test]
@@ -3242,12 +3837,30 @@ mod tests {
         let args = serde_json::json!({"variant": "type_evidence"});
         let step = resolve_step(2, &args, &None, 0, &db, &wf());
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("varies by question type"), "type_evidence intro should mention type-specific evidence");
-        assert!(intro.contains("STALE:"), "type_evidence intro should have STALE section");
-        assert!(intro.contains("TEMPORAL:"), "type_evidence intro should have TEMPORAL section");
-        assert!(intro.contains("AMBIGUOUS:"), "type_evidence intro should have AMBIGUOUS section");
-        assert!(intro.contains("CONFLICT:"), "type_evidence intro should have CONFLICT section");
-        assert!(intro.contains("PRECISION:"), "type_evidence intro should have PRECISION section");
+        assert!(
+            intro.contains("varies by question type"),
+            "type_evidence intro should mention type-specific evidence"
+        );
+        assert!(
+            intro.contains("STALE:"),
+            "type_evidence intro should have STALE section"
+        );
+        assert!(
+            intro.contains("TEMPORAL:"),
+            "type_evidence intro should have TEMPORAL section"
+        );
+        assert!(
+            intro.contains("AMBIGUOUS:"),
+            "type_evidence intro should have AMBIGUOUS section"
+        );
+        assert!(
+            intro.contains("CONFLICT:"),
+            "type_evidence intro should have CONFLICT section"
+        );
+        assert!(
+            intro.contains("PRECISION:"),
+            "type_evidence intro should have PRECISION section"
+        );
     }
 
     #[test]
@@ -3257,7 +3870,10 @@ mod tests {
         let args = serde_json::json!({"variant": "type_evidence"});
         let step = resolve_step(2, &args, &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("evidence_guidance"), "type_evidence answer instruction should reference evidence_guidance field");
+        assert!(
+            instr.contains("evidence_guidance"),
+            "type_evidence answer instruction should reference evidence_guidance field"
+        );
     }
 
     #[test]
@@ -3286,10 +3902,22 @@ mod tests {
         let args = serde_json::json!({"variant": "research_batch"});
         let step = resolve_step(2, &args, &None, 0, &db, &wf());
         let intro = step["intro"].as_str().unwrap();
-        assert!(intro.contains("research-first"), "research_batch intro should mention research-first approach");
-        assert!(intro.contains("PHASE 1"), "research_batch intro should have Phase 1");
-        assert!(intro.contains("PHASE 2"), "research_batch intro should have Phase 2");
-        assert!(intro.contains("get_entity"), "research_batch intro should mention get_entity");
+        assert!(
+            intro.contains("research-first"),
+            "research_batch intro should mention research-first approach"
+        );
+        assert!(
+            intro.contains("PHASE 1"),
+            "research_batch intro should have Phase 1"
+        );
+        assert!(
+            intro.contains("PHASE 2"),
+            "research_batch intro should have Phase 2"
+        );
+        assert!(
+            intro.contains("get_entity"),
+            "research_batch intro should mention get_entity"
+        );
     }
 
     #[test]
@@ -3299,8 +3927,14 @@ mod tests {
         let args = serde_json::json!({"variant": "research_batch"});
         let step = resolve_step(2, &args, &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("research-first"), "research_batch answer instruction should mention research-first");
-        assert!(instr.contains("document group"), "research_batch answer instruction should mention document groups");
+        assert!(
+            instr.contains("research-first"),
+            "research_batch answer instruction should mention research-first"
+        );
+        assert!(
+            instr.contains("document group"),
+            "research_batch answer instruction should mention document groups"
+        );
     }
 
     #[test]
@@ -3339,7 +3973,11 @@ mod tests {
         ];
         for qt in &types {
             let guidance = type_evidence_guidance(qt);
-            assert!(!guidance.is_empty(), "type_evidence_guidance should be non-empty for {:?}", qt);
+            assert!(
+                !guidance.is_empty(),
+                "type_evidence_guidance should be non-empty for {:?}",
+                qt
+            );
         }
     }
 
@@ -3358,12 +3996,19 @@ mod tests {
     #[test]
     fn test_resolve_step2_comma_separated_type_filter() {
         let (db, _tmp) = test_db();
-        insert_doc_with_questions(&db, "cft001", &["temporal", "stale", "missing", "ambiguous"]);
+        insert_doc_with_questions(
+            &db,
+            "cft001",
+            &["temporal", "stale", "missing", "ambiguous"],
+        );
         let args = serde_json::json!({"question_type": "stale,missing"});
         let step = resolve_step(2, &args, &None, 0, &db, &wf());
         let questions = step["batch"]["questions"].as_array().unwrap();
         assert_eq!(questions.len(), 2);
-        let types: Vec<&str> = questions.iter().filter_map(|q| q["type"].as_str()).collect();
+        let types: Vec<&str> = questions
+            .iter()
+            .filter_map(|q| q["type"].as_str())
+            .collect();
         assert!(types.contains(&"stale"));
         assert!(types.contains(&"missing"));
         assert!(!types.contains(&"temporal"));
@@ -3375,7 +4020,10 @@ mod tests {
         insert_doc_with_questions(&db, "tdi001", &["temporal", "temporal", "stale", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // type_distribution moved to checkpoint file
-        assert!(step.get("type_distribution").is_none(), "type_distribution should not be in response");
+        assert!(
+            step.get("type_distribution").is_none(),
+            "type_distribution should not be in response"
+        );
     }
 
     #[test]
@@ -3384,7 +4032,10 @@ mod tests {
         insert_doc_with_questions(&db, "tdf001", &["temporal", "stale", "missing"]);
         let args = serde_json::json!({"question_type": "stale"});
         let step = resolve_step(2, &args, &None, 0, &db, &wf());
-        assert!(step.get("type_distribution").is_none(), "type_distribution should not be in response");
+        assert!(
+            step.get("type_distribution").is_none(),
+            "type_distribution should not be in response"
+        );
         // But only stale questions in the batch
         assert_eq!(step["batch"]["questions"].as_array().unwrap().len(), 1);
     }
@@ -3394,7 +4045,14 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "tfr001", &["temporal", "stale"]);
         // With filter
-        let step = resolve_step(2, &serde_json::json!({"question_type": "stale"}), &None, 0, &db, &wf());
+        let step = resolve_step(
+            2,
+            &serde_json::json!({"question_type": "stale"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
         let filter = step["type_filter"].as_array().unwrap();
         assert_eq!(filter.len(), 1);
         assert_eq!(filter[0], "stale");
@@ -3408,7 +4066,14 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "cfr001", &["temporal", "stale"]);
         // Filter for a type that has no questions
-        let step = resolve_step(2, &serde_json::json!({"question_type": "conflict"}), &None, 0, &db, &wf());
+        let step = resolve_step(
+            2,
+            &serde_json::json!({"question_type": "conflict"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
         assert_eq!(step["all_resolved"], true);
         assert_eq!(step["batch"]["questions_remaining"], 0);
         // type_distribution no longer in response (moved to checkpoint)
@@ -3421,7 +4086,10 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
         let props = &wf_tool["inputSchema"]["properties"];
-        assert!(props.get("variant").is_some(), "workflow schema should have variant param");
+        assert!(
+            props.get("variant").is_some(),
+            "workflow schema should have variant param"
+        );
         let variant_enum = props["variant"]["enum"].as_array().unwrap();
         let values: Vec<&str> = variant_enum.iter().filter_map(|v| v.as_str()).collect();
         assert!(values.contains(&"baseline"));
@@ -3433,7 +4101,8 @@ mod tests {
     fn test_resolve_step2_glossary_auto_resolves_acronym_questions() {
         let (db, _tmp) = test_db();
         // Insert a glossary document defining "HCLS"
-        let glossary_content = "<!-- factbase:gls001 -->\n# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n";
+        let glossary_content =
+            "<!-- factbase:gls001 -->\n# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n";
         use crate::database::tests::test_repo_in_db;
         use crate::models::Document;
         test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
@@ -3444,7 +4113,8 @@ mod tests {
             file_path: "definitions/glossary.md".to_string(),
             doc_type: Some("definition".to_string()),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         // Insert a doc with an ambiguous acronym question about HCLS
         let doc_content = "<!-- factbase:acr001 -->\n# Project\n\n- Expanding HCLS practice\n\n<!-- factbase:review -->\n- [ ] `@q[ambiguous]` \"Expanding HCLS practice\" - what does \"HCLS\" mean in this context?\n";
@@ -3454,14 +4124,21 @@ mod tests {
             title: "Project".to_string(),
             file_path: "acr001.md".to_string(),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
         // The HCLS question should be auto-resolved, not in the batch
-        assert_eq!(batch["questions_remaining"], 0, "glossary-defined acronym question should be auto-resolved");
+        assert_eq!(
+            batch["questions_remaining"], 0,
+            "glossary-defined acronym question should be auto-resolved"
+        );
         // resolved_so_far should include the auto-resolved question
-        assert!(batch["resolved_so_far"].as_u64().unwrap() >= 1, "should count auto-resolved question");
+        assert!(
+            batch["resolved_so_far"].as_u64().unwrap() >= 1,
+            "should count auto-resolved question"
+        );
     }
 
     #[test]
@@ -3478,7 +4155,8 @@ mod tests {
             file_path: "definitions/glossary.md".to_string(),
             doc_type: Some("definition".to_string()),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         // Insert a doc with a non-acronym ambiguous question (location)
         let doc_content = "<!-- factbase:loc001 -->\n# Person\n\n- Lives in NYC\n\n<!-- factbase:review -->\n- [ ] `@q[ambiguous]` \"Lives in NYC\" - is this home, work, or another type of location?\n";
@@ -3488,12 +4166,16 @@ mod tests {
             title: "Person".to_string(),
             file_path: "loc001.md".to_string(),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
         // Location question should NOT be auto-resolved
-        assert_eq!(batch["questions_remaining"], 1, "non-acronym question should remain");
+        assert_eq!(
+            batch["questions_remaining"], 1,
+            "non-acronym question should remain"
+        );
     }
 
     #[test]
@@ -3517,7 +4199,9 @@ mod tests {
         // Explicit arg overrides config
         let step = resolve_step2_batch(
             &serde_json::json!({"variant": "research_batch"}),
-            &None, &db, &wf_config,
+            &None,
+            &db,
+            &wf_config,
         );
         assert_eq!(step["variant"], "research_batch");
         assert_eq!(step["variant_source"], "arg");
@@ -3546,24 +4230,33 @@ mod tests {
             title: "Entity".to_string(),
             file_path: "cst001.md".to_string(),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         let mut wf_config = WorkflowsConfig::default();
-        wf_config.templates.insert("resolve.answer".into(), "CUSTOM INSTRUCTION {ctx}".into());
+        wf_config
+            .templates
+            .insert("resolve.answer".into(), "CUSTOM INSTRUCTION {ctx}".into());
 
         let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf_config);
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.starts_with("CUSTOM INSTRUCTION"), "should use custom prompt override");
+        assert!(
+            instruction.starts_with("CUSTOM INSTRUCTION"),
+            "should use custom prompt override"
+        );
     }
 
     #[test]
     fn test_merge_repo_prompts_overrides_global() {
         let mut global = WorkflowsConfig::default();
-        global.templates.insert("resolve.answer".into(), "global answer".into());
+        global
+            .templates
+            .insert("resolve.answer".into(), "global answer".into());
         global.resolve_variant = Some("baseline".into());
 
         let mut repo = WorkflowsConfig::default();
-        repo.templates.insert("resolve.answer".into(), "repo answer".into());
+        repo.templates
+            .insert("resolve.answer".into(), "repo answer".into());
         repo.resolve_variant = Some("type_evidence".into());
 
         global.merge(&repo);
@@ -3589,7 +4282,8 @@ mod tests {
             title: "Disk Test".to_string(),
             file_path: "dsk001.md".to_string(),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         // Disk file HAS review queue with weak-source questions
         let disk_content = "<!-- factbase:dsk001 -->\n# Disk Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Line 4: Citation needed\n";
@@ -3597,7 +4291,10 @@ mod tests {
 
         let docs = load_review_docs_from_disk(&db);
         assert_eq!(docs.len(), 1, "should find the doc via disk content");
-        assert!(docs[0].content.contains("@q[weak-source]"), "should use disk content");
+        assert!(
+            docs[0].content.contains("@q[weak-source]"),
+            "should use disk content"
+        );
     }
 
     #[test]
@@ -3630,16 +4327,28 @@ mod tests {
             title: "Disk Only".to_string(),
             file_path: "dsk002.md".to_string(),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         // Disk file has weak-source questions
         let disk_content = "<!-- factbase:dsk002 -->\n# Disk Only\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Line 4: Vague citation\n- [ ] `@q[weak-source]` Line 5: Missing URL\n";
         std::fs::write(repo_path.join("dsk002.md"), disk_content).unwrap();
 
         // Type filter for weak-source should find the questions from disk
-        let step = resolve_step(2, &serde_json::json!({"question_type": "weak-source"}), &None, 0, &db, &wf());
+        let step = resolve_step(
+            2,
+            &serde_json::json!({"question_type": "weak-source"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
         let questions = step["batch"]["questions"].as_array().unwrap();
-        assert_eq!(questions.len(), 2, "should find weak-source questions from disk");
+        assert_eq!(
+            questions.len(),
+            2,
+            "should find weak-source questions from disk"
+        );
         assert_eq!(questions[0]["type"], "weak-source");
     }
 
@@ -3660,7 +4369,8 @@ mod tests {
                 file_path: "per001.md".to_string(),
                 doc_type: Some("person".to_string()),
                 ..Document::test_default()
-            }).unwrap();
+            })
+            .unwrap();
             db.upsert_document(&Document {
                 id: "svc001".to_string(),
                 content: service_content.to_string(),
@@ -3668,29 +4378,60 @@ mod tests {
                 file_path: "svc001.md".to_string(),
                 doc_type: Some("service".to_string()),
                 ..Document::test_default()
-            }).unwrap();
+            })
+            .unwrap();
         }
 
         // Without filter: both questions returned
         let step = resolve_step2_batch(&serde_json::json!({}), &None, &db, &wf());
         let questions = step["batch"]["questions"].as_array().unwrap();
-        assert_eq!(questions.len(), 2, "without filter should return all questions");
+        assert_eq!(
+            questions.len(),
+            2,
+            "without filter should return all questions"
+        );
 
         // With doc_type=person: only person question returned
-        let step = resolve_step2_batch(&serde_json::json!({"doc_type": "person"}), &None, &db, &wf());
+        let step = resolve_step2_batch(
+            &serde_json::json!({"doc_type": "person"}),
+            &None,
+            &db,
+            &wf(),
+        );
         let questions = step["batch"]["questions"].as_array().unwrap();
-        assert_eq!(questions.len(), 1, "doc_type=person should return only person questions");
+        assert_eq!(
+            questions.len(),
+            1,
+            "doc_type=person should return only person questions"
+        );
         assert_eq!(questions[0]["doc_id"], "per001");
 
         // With doc_type=service: only service question returned
-        let step = resolve_step2_batch(&serde_json::json!({"doc_type": "service"}), &None, &db, &wf());
+        let step = resolve_step2_batch(
+            &serde_json::json!({"doc_type": "service"}),
+            &None,
+            &db,
+            &wf(),
+        );
         let questions = step["batch"]["questions"].as_array().unwrap();
-        assert_eq!(questions.len(), 1, "doc_type=service should return only service questions");
+        assert_eq!(
+            questions.len(),
+            1,
+            "doc_type=service should return only service questions"
+        );
         assert_eq!(questions[0]["doc_id"], "svc001");
 
         // With doc_type=nonexistent: no questions
-        let step = resolve_step2_batch(&serde_json::json!({"doc_type": "nonexistent"}), &None, &db, &wf());
-        assert!(step["all_resolved"].as_bool().unwrap_or(false), "nonexistent doc_type should yield no questions");
+        let step = resolve_step2_batch(
+            &serde_json::json!({"doc_type": "nonexistent"}),
+            &None,
+            &db,
+            &wf(),
+        );
+        assert!(
+            step["all_resolved"].as_bool().unwrap_or(false),
+            "nonexistent doc_type should yield no questions"
+        );
     }
 
     #[test]
@@ -3699,9 +4440,18 @@ mod tests {
         let step = resolve_step(1, &serde_json::json!({}), &None, 713, &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         // Must not contain language that causes agents to stop
-        assert!(!instruction.contains("human attention"), "instruction must not say 'human attention'");
-        assert!(!instruction.contains("before proceeding"), "instruction must not say 'before proceeding'");
-        assert!(!instruction.contains("deferred"), "instruction must not mention deferred items");
+        assert!(
+            !instruction.contains("human attention"),
+            "instruction must not say 'human attention'"
+        );
+        assert!(
+            !instruction.contains("before proceeding"),
+            "instruction must not say 'before proceeding'"
+        );
+        assert!(
+            !instruction.contains("deferred"),
+            "instruction must not mention deferred items"
+        );
         // Deferred count still available as data
         assert_eq!(step["deferred_count"], 713);
     }
@@ -3723,7 +4473,8 @@ mod tests {
             title: "Dist".to_string(),
             file_path: "dist01.md".to_string(),
             ..Document::test_default()
-        }).unwrap();
+        })
+        .unwrap();
 
         // Disk file has questions
         std::fs::write(
@@ -3745,9 +4496,15 @@ mod tests {
         let result = build_continuation_guidance(5, 10, 50, &dist, &[]);
         // Small queues still get the anti-early-stopping directive
         let guidance = result.unwrap();
-        assert!(guidance.contains("quit too early"), "should warn about early stopping even for small queues");
+        assert!(
+            guidance.contains("quit too early"),
+            "should warn about early stopping even for small queues"
+        );
         // But should NOT have the >100 or >500 directive
-        assert!(!guidance.contains("DO NOT STOP"), "should not have strong directive for small queue");
+        assert!(
+            !guidance.contains("DO NOT STOP"),
+            "should not have strong directive for small queue"
+        );
     }
 
     #[test]
@@ -3755,12 +4512,21 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert(QuestionType::Temporal, 150);
         let result = build_continuation_guidance(150, 50, 50, &dist, &[]).unwrap();
-        assert!(result.contains("DO NOT STOP"), "should have directive language");
+        assert!(
+            result.contains("DO NOT STOP"),
+            "should have directive language"
+        );
         assert!(result.contains("150"), "should mention remaining count");
         assert!(result.contains("cleared 50"), "should mention progress");
-        assert!(result.contains("quit too early"), "should warn about early stopping");
+        assert!(
+            result.contains("quit too early"),
+            "should warn about early stopping"
+        );
         // Should NOT have batch estimate (that's >500 only)
-        assert!(!result.contains("batches)"), "should not have batch estimate under 500");
+        assert!(
+            !result.contains("batches)"),
+            "should not have batch estimate under 500"
+        );
     }
 
     #[test]
@@ -3769,11 +4535,20 @@ mod tests {
         dist.insert(QuestionType::WeakSource, 4421);
         let filter = vec![QuestionType::WeakSource];
         let result = build_continuation_guidance(4421, 79, 50, &dist, &filter).unwrap();
-        assert!(result.contains("DO NOT STOP"), "should have directive language");
+        assert!(
+            result.contains("DO NOT STOP"),
+            "should have directive language"
+        );
         assert!(result.contains("4421"), "should mention remaining count");
         assert!(result.contains("batches)"), "should have batch estimate");
-        assert!(result.contains("question_type=weak-source"), "should include filter hint");
-        assert!(result.contains("quit too early"), "should warn about early stopping");
+        assert!(
+            result.contains("question_type=weak-source"),
+            "should include filter hint"
+        );
+        assert!(
+            result.contains("quit too early"),
+            "should warn about early stopping"
+        );
     }
 
     #[test]
@@ -3785,9 +4560,15 @@ mod tests {
         // remaining=25 is the ambiguous count (temporal is cleared, agent sees ambiguous next)
         let result = build_continuation_guidance(25, 30, 50, &dist, &filter).unwrap();
         assert!(result.contains("✅"), "should have checkmark");
-        assert!(result.contains("temporal: 0 remaining"), "should note cleared type");
+        assert!(
+            result.contains("temporal: 0 remaining"),
+            "should note cleared type"
+        );
         assert!(result.contains("ambiguous"), "should suggest next type");
-        assert!(result.contains("25 remaining"), "should show next type count");
+        assert!(
+            result.contains("25 remaining"),
+            "should show next type count"
+        );
     }
 
     #[test]
@@ -3795,8 +4576,14 @@ mod tests {
         let mut dist = HashMap::new();
         dist.insert(QuestionType::WeakSource, 200);
         let result = build_continuation_guidance(200, 100, 50, &dist, &[]).unwrap();
-        assert!(result.contains("Only weak-source remains"), "should note only weak-source left");
-        assert!(result.contains("repetitive patterns"), "should mention patterns");
+        assert!(
+            result.contains("Only weak-source remains"),
+            "should note only weak-source left"
+        );
+        assert!(
+            result.contains("repetitive patterns"),
+            "should mention patterns"
+        );
     }
 
     #[test]
@@ -3808,7 +4595,10 @@ mod tests {
             insert_doc_with_questions(&db, &format!("cg{:03}", i), &types_10);
         }
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("continuation_guidance").is_none(), "continuation_guidance should not be in response (moved to checkpoint)");
+        assert!(
+            step.get("continuation_guidance").is_none(),
+            "continuation_guidance should not be in response (moved to checkpoint)"
+        );
     }
 
     #[test]
@@ -3816,7 +4606,10 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "sm001", &["temporal", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("continuation_guidance").is_none(), "continuation_guidance should not be in response");
+        assert!(
+            step.get("continuation_guidance").is_none(),
+            "continuation_guidance should not be in response"
+        );
     }
 
     #[test]
@@ -3830,14 +4623,38 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let json_str = serde_json::to_string(&step).unwrap().to_lowercase();
         // Must not reference specific token counts or model context sizes
-        assert!(!json_str.contains("token"), "should not reference tokens: found in response");
-        assert!(!json_str.contains("context window"), "should not reference context window");
-        assert!(!json_str.contains("context size"), "should not reference context sizes");
-        assert!(!json_str.contains("128k"), "should not reference specific context sizes");
-        assert!(!json_str.contains("200k"), "should not reference specific context sizes");
-        assert!(!json_str.contains("gpt"), "should not reference specific models");
-        assert!(!json_str.contains("claude"), "should not reference specific models");
-        assert!(!json_str.contains("sonnet"), "should not reference specific models");
+        assert!(
+            !json_str.contains("token"),
+            "should not reference tokens: found in response"
+        );
+        assert!(
+            !json_str.contains("context window"),
+            "should not reference context window"
+        );
+        assert!(
+            !json_str.contains("context size"),
+            "should not reference context sizes"
+        );
+        assert!(
+            !json_str.contains("128k"),
+            "should not reference specific context sizes"
+        );
+        assert!(
+            !json_str.contains("200k"),
+            "should not reference specific context sizes"
+        );
+        assert!(
+            !json_str.contains("gpt"),
+            "should not reference specific models"
+        );
+        assert!(
+            !json_str.contains("claude"),
+            "should not reference specific models"
+        );
+        assert!(
+            !json_str.contains("sonnet"),
+            "should not reference specific models"
+        );
     }
 
     // --- checkpoint file tests removed (checkpoint file no longer written) ---
@@ -3848,34 +4665,86 @@ mod tests {
         insert_doc_with_questions(&db, "nrf001", &["temporal", "stale", "missing"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         // These fields should NOT be in the response
-        assert!(step.get("progress").is_none(), "progress should not be in response");
-        assert!(step.get("type_distribution").is_none(), "type_distribution should not be in response");
-        assert!(step.get("continuation_guidance").is_none(), "continuation_guidance should not be in response");
-        assert!(step.get("checkpoint_file").is_none(), "checkpoint_file should not be in response");
-        assert!(step.get("checkpoint_hint").is_none(), "checkpoint_hint should not be in response");
+        assert!(
+            step.get("progress").is_none(),
+            "progress should not be in response"
+        );
+        assert!(
+            step.get("type_distribution").is_none(),
+            "type_distribution should not be in response"
+        );
+        assert!(
+            step.get("continuation_guidance").is_none(),
+            "continuation_guidance should not be in response"
+        );
+        assert!(
+            step.get("checkpoint_file").is_none(),
+            "checkpoint_file should not be in response"
+        );
+        assert!(
+            step.get("checkpoint_hint").is_none(),
+            "checkpoint_hint should not be in response"
+        );
         // These fields SHOULD be in the response
         assert!(step.get("batch").is_some(), "batch should be in response");
-        assert!(step.get("instruction").is_some(), "instruction should be in response");
-        assert!(step.get("completion_gate").is_some(), "completion_gate should be in response");
-        assert!(step.get("when_done").is_some(), "when_done should be in response");
-        assert!(step.get("continue").is_some(), "continue should be in response");
-        assert!(step.get("variant").is_some(), "variant should be in response");
-        assert!(step.get("type_filter").is_some(), "type_filter should be in response");
-        assert!(step.get("checkpoint_file").is_none(), "checkpoint_file removed from response");
-        assert!(step.get("checkpoint_hint").is_none(), "checkpoint_hint removed from response");
+        assert!(
+            step.get("instruction").is_some(),
+            "instruction should be in response"
+        );
+        assert!(
+            step.get("completion_gate").is_some(),
+            "completion_gate should be in response"
+        );
+        assert!(
+            step.get("when_done").is_some(),
+            "when_done should be in response"
+        );
+        assert!(
+            step.get("continue").is_some(),
+            "continue should be in response"
+        );
+        assert!(
+            step.get("variant").is_some(),
+            "variant should be in response"
+        );
+        assert!(
+            step.get("type_filter").is_some(),
+            "type_filter should be in response"
+        );
+        assert!(
+            step.get("checkpoint_file").is_none(),
+            "checkpoint_file removed from response"
+        );
+        assert!(
+            step.get("checkpoint_hint").is_none(),
+            "checkpoint_hint removed from response"
+        );
     }
 
     #[test]
     fn test_resolve_step2_response_smaller_without_progress_fields() {
         let (db, _tmp) = test_db();
-        insert_doc_with_questions(&db, "rsz001", &["temporal", "stale", "missing", "conflict", "weak-source"]);
+        insert_doc_with_questions(
+            &db,
+            "rsz001",
+            &["temporal", "stale", "missing", "conflict", "weak-source"],
+        );
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let json_str = serde_json::to_string(&step).unwrap();
         // Response should not contain the removed field names
-        assert!(!json_str.contains("\"progress\""), "response should not contain progress field");
-        assert!(!json_str.contains("\"continuation_guidance\""), "response should not contain continuation_guidance field");
+        assert!(
+            !json_str.contains("\"progress\""),
+            "response should not contain progress field"
+        );
+        assert!(
+            !json_str.contains("\"continuation_guidance\""),
+            "response should not contain continuation_guidance field"
+        );
         // But should still have completion_gate with progress
-        assert!(json_str.contains("completion_gate"), "response should have completion_gate");
+        assert!(
+            json_str.contains("completion_gate"),
+            "response should have completion_gate"
+        );
     }
 
     #[test]
@@ -3883,7 +4752,10 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "fbi001", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("intro").is_some(), "first batch should still have intro");
+        assert!(
+            step.get("intro").is_some(),
+            "first batch should still have intro"
+        );
     }
 
     #[test]
@@ -3892,8 +4764,14 @@ mod tests {
         insert_doc_with_questions(&db, "cg001", &["temporal"]);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let gate = step["completion_gate"].as_str().unwrap();
-        assert!(gate.contains("resolved"), "completion_gate should show resolved count");
-        assert!(gate.contains("step=2"), "completion_gate should tell agent to call step=2");
+        assert!(
+            gate.contains("resolved"),
+            "completion_gate should show resolved count"
+        );
+        assert!(
+            gate.contains("step=2"),
+            "completion_gate should tell agent to call step=2"
+        );
     }
 
     #[test]
@@ -3907,7 +4785,10 @@ mod tests {
     fn test_resolve_step4_verify_not_complete() {
         let (db, _tmp) = test_db();
         let step = resolve_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("complete").is_none(), "step 4 should not be complete");
+        assert!(
+            step.get("complete").is_none(),
+            "step 4 should not be complete"
+        );
         assert_eq!(step["next_tool"], "factbase");
         assert!(step["when_done"].as_str().unwrap().contains("step=5"));
     }
@@ -3919,8 +4800,14 @@ mod tests {
         assert_eq!(step["next_tool"], "factbase");
         let instr = step["instruction"].as_str().unwrap();
         assert!(instr.contains("scan"), "cleanup step should mention scan");
-        assert!(!instr.contains("op='check'"), "cleanup step should NOT instruct running check");
-        assert!(step.get("complete").is_none(), "step 5 should not be complete");
+        assert!(
+            !instr.contains("op='check'"),
+            "cleanup step should NOT instruct running check"
+        );
+        assert!(
+            step.get("complete").is_none(),
+            "step 5 should not be complete"
+        );
     }
 
     #[test]
@@ -3976,9 +4863,18 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("TEMPORAL QUESTION FILTERING"), "check instruction should include temporal filtering guidance");
-        assert!(instr.contains("confidence='low'"), "should mention low confidence");
-        assert!(instr.contains("dismiss"), "should tell agent to dismiss low-confidence questions");
+        assert!(
+            instr.contains("TEMPORAL QUESTION FILTERING"),
+            "check instruction should include temporal filtering guidance"
+        );
+        assert!(
+            instr.contains("confidence='low'"),
+            "should mention low confidence"
+        );
+        assert!(
+            instr.contains("dismiss"),
+            "should tell agent to dismiss low-confidence questions"
+        );
     }
 
     #[test]
@@ -4011,8 +4907,14 @@ mod tests {
         assert_eq!(step["suggested_args"]["workflow"], "resolve");
         assert_eq!(step["total_unanswered"], 2);
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("LOOP:"), "maintain resolve must include LOOP protocol: {instr}");
-        assert!(instr.contains("You do not decide when to stop"), "maintain resolve must forbid self-stopping");
+        assert!(
+            instr.contains("LOOP:"),
+            "maintain resolve must include LOOP protocol: {instr}"
+        );
+        assert!(
+            instr.contains("You do not decide when to stop"),
+            "maintain resolve must forbid self-stopping"
+        );
     }
 
     #[test]
@@ -4043,8 +4945,17 @@ mod tests {
             }),
             ..Default::default()
         });
-        let step = maintain_step(7, &serde_json::json!({}), &obsidian_perspective, 0, &db, &wf());
-        let tip = step["tip"].as_str().expect("tip should be present for obsidian format");
+        let step = maintain_step(
+            7,
+            &serde_json::json!({}),
+            &obsidian_perspective,
+            0,
+            &db,
+            &wf(),
+        );
+        let tip = step["tip"]
+            .as_str()
+            .expect("tip should be present for obsidian format");
         assert!(tip.contains("scan"), "tip should mention scan");
         assert!(tip.contains("renamed"), "tip should mention renaming");
     }
@@ -4086,15 +4997,23 @@ mod tests {
         let when_done = step["when_done"].as_str().unwrap();
         // Cleanup should suggest scan only, not check
         assert_eq!(step["suggested_op"], "scan");
-        assert!(!when_done.contains("check"), "when_done should not instruct running check: {when_done}");
-        assert!(!instruction.contains("op='check'"), "instruction should not tell agent to run check: {instruction}");
+        assert!(
+            !when_done.contains("check"),
+            "when_done should not instruct running check: {when_done}"
+        );
+        assert!(
+            !instruction.contains("op='check'"),
+            "instruction should not tell agent to run check: {instruction}"
+        );
     }
 
     #[test]
     fn test_resolve_cleanup_instruction_constant_no_check() {
         // The default instruction text must not reference running check
-        assert!(!DEFAULT_RESOLVE_CLEANUP_INSTRUCTION.contains("op='check'"),
-            "DEFAULT_RESOLVE_CLEANUP_INSTRUCTION should not reference op='check'");
+        assert!(
+            !DEFAULT_RESOLVE_CLEANUP_INSTRUCTION.contains("op='check'"),
+            "DEFAULT_RESOLVE_CLEANUP_INSTRUCTION should not reference op='check'"
+        );
     }
 
     #[test]
@@ -4107,8 +5026,14 @@ mod tests {
         // No other maintain step should suggest check
         for s in [1, 2, 4, 5, 6, 7] {
             let step = maintain_step(s, &serde_json::json!({}), &None, 0, &db, &wf());
-            let suggested = step.get("suggested_op").and_then(|v| v.as_str()).unwrap_or("");
-            assert_ne!(suggested, "check", "maintain step {s} should not suggest check");
+            let suggested = step
+                .get("suggested_op")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert_ne!(
+                suggested, "check",
+                "maintain step {s} should not suggest check"
+            );
         }
     }
 
@@ -4145,9 +5070,18 @@ mod tests {
         assert_eq!(result["workflow"], "create");
         assert_eq!(result["complete"], true);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("workflow='add'"), "should mention add workflow");
-        assert!(instr.contains("workflow='maintain'"), "should mention maintain workflow");
-        assert!(instr.contains("workflow='refresh'"), "should mention refresh workflow");
+        assert!(
+            instr.contains("workflow='add'"),
+            "should mention add workflow"
+        );
+        assert!(
+            instr.contains("workflow='maintain'"),
+            "should mention maintain workflow"
+        );
+        assert!(
+            instr.contains("workflow='refresh'"),
+            "should mention refresh workflow"
+        );
     }
 
     #[test]
@@ -4156,7 +5090,10 @@ mod tests {
         let args = serde_json::json!({"workflow": "add", "topic": "mushrooms"});
         let result = workflow(&db, &args).unwrap();
         assert_eq!(result["workflow"], "add");
-        assert!(result["instruction"].as_str().unwrap().contains("mushrooms"));
+        assert!(result["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("mushrooms"));
     }
 
     #[test]
@@ -4174,7 +5111,10 @@ mod tests {
         let args = serde_json::json!({"workflow": "add"});
         let result = workflow(&db, &args).unwrap();
         assert_eq!(result["workflow"], "add");
-        assert!(result.get("entity_quality").is_some(), "enrich mode should include entity_quality");
+        assert!(
+            result.get("entity_quality").is_some(),
+            "enrich mode should include entity_quality"
+        );
     }
 
     #[test]
@@ -4266,8 +5206,22 @@ mod tests {
         let args = serde_json::json!({"workflow": "list"});
         let result = workflow(&db, &args).unwrap();
         let workflows = result["workflows"].as_array().unwrap();
-        let names: Vec<&str> = workflows.iter().filter_map(|w| w["name"].as_str()).collect();
-        assert_eq!(names, vec!["create", "add", "maintain", "refresh", "correct", "transition", "resolve"]);
+        let names: Vec<&str> = workflows
+            .iter()
+            .filter_map(|w| w["name"].as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "create",
+                "add",
+                "maintain",
+                "refresh",
+                "correct",
+                "transition",
+                "resolve"
+            ]
+        );
         assert!(result["aliases"].is_object());
     }
 
@@ -4280,8 +5234,14 @@ mod tests {
         });
         let rebranded = rebrand_step(val, "ingest", "add");
         assert_eq!(rebranded["workflow"], "add");
-        assert!(rebranded["instruction"].as_str().unwrap().contains("workflow='add'"));
-        assert!(rebranded["when_done"].as_str().unwrap().contains("workflow='add'"));
+        assert!(rebranded["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("workflow='add'"));
+        assert!(rebranded["when_done"]
+            .as_str()
+            .unwrap()
+            .contains("workflow='add'"));
     }
 
     // --- Correct workflow: parse dimension tests ---
@@ -4289,12 +5249,22 @@ mod tests {
     #[test]
     fn test_correct_parse_extracts_temporal_context() {
         let wf = WorkflowsConfig::default();
-        let args = serde_json::json!({"correction": "The migration completed in January, not March"});
+        let args =
+            serde_json::json!({"correction": "The migration completed in January, not March"});
         let result = correct_step(1, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("Temporal context"), "parse should ask for temporal context");
-        assert!(instr.contains("dates, date ranges, or temporal markers"), "parse should explain what temporal context means");
-        assert!(instr.contains("\"none\""), "parse should handle no-temporal case");
+        assert!(
+            instr.contains("Temporal context"),
+            "parse should ask for temporal context"
+        );
+        assert!(
+            instr.contains("dates, date ranges, or temporal markers"),
+            "parse should explain what temporal context means"
+        );
+        assert!(
+            instr.contains("\"none\""),
+            "parse should handle no-temporal case"
+        );
     }
 
     #[test]
@@ -4303,10 +5273,23 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(1, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        for ty in &["relational", "temporal", "factual", "status", "identity", "classification"] {
-            assert!(instr.contains(ty), "parse should list correction type: {ty}");
+        for ty in &[
+            "relational",
+            "temporal",
+            "factual",
+            "status",
+            "identity",
+            "classification",
+        ] {
+            assert!(
+                instr.contains(ty),
+                "parse should list correction type: {ty}"
+            );
         }
-        assert!(instr.contains("Correction type:"), "parse output should include Correction type field");
+        assert!(
+            instr.contains("Correction type:"),
+            "parse output should include Correction type field"
+        );
     }
 
     #[test]
@@ -4315,9 +5298,18 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(1, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("Old value:"), "parse output should include Old value");
-        assert!(instr.contains("New value:"), "parse output should include New value");
-        assert!(instr.contains("Scope:"), "parse output should include Scope");
+        assert!(
+            instr.contains("Old value:"),
+            "parse output should include Old value"
+        );
+        assert!(
+            instr.contains("New value:"),
+            "parse output should include New value"
+        );
+        assert!(
+            instr.contains("Scope:"),
+            "parse output should include Scope"
+        );
         assert!(instr.contains("single"), "scope should mention single");
         assert!(instr.contains("systemic"), "scope should mention systemic");
     }
@@ -4328,10 +5320,22 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(1, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("Entities:"), "parse should still extract entities");
-        assert!(instr.contains("False claim:"), "parse should still extract false claim");
-        assert!(instr.contains("True fact:"), "parse should still extract true fact");
-        assert!(instr.contains("Search terms:"), "parse should still extract search terms");
+        assert!(
+            instr.contains("Entities:"),
+            "parse should still extract entities"
+        );
+        assert!(
+            instr.contains("False claim:"),
+            "parse should still extract false claim"
+        );
+        assert!(
+            instr.contains("True fact:"),
+            "parse should still extract true fact"
+        );
+        assert!(
+            instr.contains("Search terms:"),
+            "parse should still extract search terms"
+        );
     }
 
     #[test]
@@ -4340,9 +5344,18 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("correction date"), "fix should prefer correction date for @t tag");
-        assert!(instr.contains("temporal context"), "fix should reference temporal context from step 1");
-        assert!(instr.contains("fall back to today"), "fix should fall back to today when no temporal context");
+        assert!(
+            instr.contains("correction date"),
+            "fix should prefer correction date for @t tag"
+        );
+        assert!(
+            instr.contains("temporal context"),
+            "fix should reference temporal context from step 1"
+        );
+        assert!(
+            instr.contains("fall back to today"),
+            "fix should fall back to today when no temporal context"
+        );
     }
 
     #[test]
@@ -4352,7 +5365,10 @@ mod tests {
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        assert!(instr.contains(&today), "fix fallback should contain today's date");
+        assert!(
+            instr.contains(&today),
+            "fix fallback should contain today's date"
+        );
     }
 
     #[test]
@@ -4362,8 +5378,19 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(1, &args, &wf);
         let instr = result["instruction"].as_str().unwrap().to_lowercase();
-        for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
-            assert!(!instr.contains(term), "parse instruction should not contain domain term: {term}");
+        for term in &[
+            "employee",
+            "career",
+            "company",
+            "person",
+            "people",
+            "hire",
+            "promotion",
+        ] {
+            assert!(
+                !instr.contains(term),
+                "parse instruction should not contain domain term: {term}"
+            );
         }
     }
 
@@ -4373,9 +5400,18 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("IN THE CONTEXT OF THIS DOCUMENT"), "fix should instruct context-aware rephrasing");
-        assert!(instr.contains("AS IF THE FALSE CLAIM NEVER EXISTED"), "fix should instruct writing as if false claim never existed");
-        assert!(instr.contains("read naturally"), "fix should require natural reading");
+        assert!(
+            instr.contains("IN THE CONTEXT OF THIS DOCUMENT"),
+            "fix should instruct context-aware rephrasing"
+        );
+        assert!(
+            instr.contains("AS IF THE FALSE CLAIM NEVER EXISTED"),
+            "fix should instruct writing as if false claim never existed"
+        );
+        assert!(
+            instr.contains("read naturally"),
+            "fix should require natural reading"
+        );
     }
 
     #[test]
@@ -4384,9 +5420,18 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("only mention what is relevant to THAT entity"), "fix should scope entity docs to relevant facts");
-        assert!(instr.contains("overview/hub"), "fix should identify overview docs as the place for full explanation");
-        assert!(instr.contains("cross-references"), "fix should handle cross-reference docs");
+        assert!(
+            instr.contains("only mention what is relevant to THAT entity"),
+            "fix should scope entity docs to relevant facts"
+        );
+        assert!(
+            instr.contains("overview/hub"),
+            "fix should identify overview docs as the place for full explanation"
+        );
+        assert!(
+            instr.contains("cross-references"),
+            "fix should handle cross-reference docs"
+        );
     }
 
     #[test]
@@ -4396,9 +5441,18 @@ mod tests {
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
         // Must explicitly forbid disclaimer patterns
-        assert!(instr.contains("FORBIDDEN patterns"), "fix should list forbidden patterns");
-        assert!(instr.contains("Do NOT add notes, disclaimers, parentheticals"), "fix should forbid disclaimers");
-        assert!(instr.contains("deny the old claim"), "fix should forbid sentences that deny the old claim");
+        assert!(
+            instr.contains("FORBIDDEN patterns"),
+            "fix should list forbidden patterns"
+        );
+        assert!(
+            instr.contains("Do NOT add notes, disclaimers, parentheticals"),
+            "fix should forbid disclaimers"
+        );
+        assert!(
+            instr.contains("deny the old claim"),
+            "fix should forbid sentences that deny the old claim"
+        );
     }
 
     #[test]
@@ -4408,7 +5462,10 @@ mod tests {
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
         // Must show correct approach with before/after examples
-        assert!(instr.contains("CORRECT approach"), "fix should show correct approach");
+        assert!(
+            instr.contains("CORRECT approach"),
+            "fix should show correct approach"
+        );
         assert!(instr.contains("OLD:"), "fix should show OLD example");
         assert!(instr.contains("WRITE:"), "fix should show WRITE example");
     }
@@ -4419,8 +5476,14 @@ mod tests {
         let args = serde_json::json!({"correction": "test", "source": "CEO memo 2026-03-01"});
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("source footnote"), "fix should still require source footnote on every fixed doc");
-        assert!(instr.contains("CEO memo 2026-03-01"), "fix should include the provided source");
+        assert!(
+            instr.contains("source footnote"),
+            "fix should still require source footnote on every fixed doc"
+        );
+        assert!(
+            instr.contains("CEO memo 2026-03-01"),
+            "fix should include the provided source"
+        );
     }
 
     #[test]
@@ -4429,8 +5492,19 @@ mod tests {
         let args = serde_json::json!({"correction": "test"});
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap().to_lowercase();
-        for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
-            assert!(!instr.contains(term), "fix instruction should not contain domain term: {term}");
+        for term in &[
+            "employee",
+            "career",
+            "company",
+            "person",
+            "people",
+            "hire",
+            "promotion",
+        ] {
+            assert!(
+                !instr.contains(term),
+                "fix instruction should not contain domain term: {term}"
+            );
         }
     }
 
@@ -4463,7 +5537,10 @@ mod tests {
         let result = transition_step(1, &args, &wf);
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains(&today), "parse should include today as fallback date");
+        assert!(
+            instr.contains(&today),
+            "parse should include today as fallback date"
+        );
     }
 
     #[test]
@@ -4493,7 +5570,8 @@ mod tests {
     #[test]
     fn test_transition_step2_with_nomenclature_proceeds_to_search() {
         let wf = WorkflowsConfig::default();
-        let args = serde_json::json!({"change": "test", "nomenclature": "NewCo (formerly Acme Corp)"});
+        let args =
+            serde_json::json!({"change": "test", "nomenclature": "NewCo (formerly Acme Corp)"});
         let result = transition_step(2, &args, &wf);
         // Should jump to step 3 (search)
         assert_eq!(result["step"], 3);
@@ -4514,8 +5592,14 @@ mod tests {
         });
         let result = transition_step(4, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("@t[..2026-03-11]"), "apply should add end-date on old value");
-        assert!(instr.contains("@t[2026-03-11..]"), "apply should add start-date on new value");
+        assert!(
+            instr.contains("@t[..2026-03-11]"),
+            "apply should add end-date on old value"
+        );
+        assert!(
+            instr.contains("@t[2026-03-11..]"),
+            "apply should add start-date on new value"
+        );
     }
 
     #[test]
@@ -4528,7 +5612,10 @@ mod tests {
         });
         let result = transition_step(4, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("Board memo 2026-03-11"), "apply should include source footnote");
+        assert!(
+            instr.contains("Board memo 2026-03-11"),
+            "apply should include source footnote"
+        );
     }
 
     #[test]
@@ -4537,9 +5624,18 @@ mod tests {
         let args = serde_json::json!({"change": "test", "nomenclature": "new"});
         let result = transition_step(4, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("Entity overview doc"), "apply should handle entity overview docs");
-        assert!(instr.contains("Current reference docs"), "apply should handle current reference docs");
-        assert!(instr.contains("Historical reference docs"), "apply should handle historical docs");
+        assert!(
+            instr.contains("Entity overview doc"),
+            "apply should handle entity overview docs"
+        );
+        assert!(
+            instr.contains("Current reference docs"),
+            "apply should handle current reference docs"
+        );
+        assert!(
+            instr.contains("Historical reference docs"),
+            "apply should handle historical docs"
+        );
     }
 
     #[test]
@@ -4548,8 +5644,14 @@ mod tests {
         let args = serde_json::json!({"change": "test", "nomenclature": "new"});
         let result = transition_step(4, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("historical footnotes"), "apply should preserve historical references");
-        assert!(instr.contains("correct at the time"), "apply should acknowledge old info was valid");
+        assert!(
+            instr.contains("historical footnotes"),
+            "apply should preserve historical references"
+        );
+        assert!(
+            instr.contains("correct at the time"),
+            "apply should acknowledge old info was valid"
+        );
     }
 
     #[test]
@@ -4558,7 +5660,10 @@ mod tests {
         let args = serde_json::json!({"change": "test"});
         let result = transition_step(5, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("execute_suggestions"), "step 5 should execute org suggestions");
+        assert!(
+            instr.contains("execute_suggestions"),
+            "step 5 should execute org suggestions"
+        );
     }
 
     #[test]
@@ -4614,8 +5719,19 @@ mod tests {
             let args = serde_json::json!({"change": "test", "nomenclature": "new"});
             let result = transition_step(step, &args, &wf);
             let instr = result["instruction"].as_str().unwrap().to_lowercase();
-            for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
-                assert!(!instr.contains(term), "step {step} instruction should not contain domain term: {term}");
+            for term in &[
+                "employee",
+                "career",
+                "company",
+                "person",
+                "people",
+                "hire",
+                "promotion",
+            ] {
+                assert!(
+                    !instr.contains(term),
+                    "step {step} instruction should not contain domain term: {term}"
+                );
             }
         }
     }
@@ -4635,7 +5751,10 @@ mod tests {
         let args = serde_json::json!({"workflow": "list"});
         let result = workflow(&db, &args).unwrap();
         let workflows = result["workflows"].as_array().unwrap();
-        let transition = workflows.iter().find(|w| w["name"] == "transition").unwrap();
+        let transition = workflows
+            .iter()
+            .find(|w| w["name"] == "transition")
+            .unwrap();
         let desc = transition["description"].as_str().unwrap();
         assert!(desc.contains("temporal entity changes"));
         assert!(desc.contains("rename"));
@@ -4649,7 +5768,11 @@ mod tests {
         let result = transition_step(2, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
         // Options should use generic placeholders, not domain-specific examples
-        assert!(instr.contains("<new value>") || instr.contains("<old value>") || instr.contains("new value"),
-            "nomenclature options should use generic placeholders");
+        assert!(
+            instr.contains("<new value>")
+                || instr.contains("<old value>")
+                || instr.contains("new value"),
+            "nomenclature options should use generic placeholders"
+        );
     }
 }

@@ -116,7 +116,9 @@ pub fn build_inbox_prompt(
 ) -> String {
     let file_override = repo_path
         .and_then(|p| crate::config::prompts::load_file_override(p, "prompts/inbox-merge.txt"));
-    let default = file_override.as_deref().unwrap_or(DEFAULT_INBOX_MERGE_PROMPT);
+    let default = file_override
+        .as_deref()
+        .unwrap_or(DEFAULT_INBOX_MERGE_PROMPT);
     crate::config::prompts::resolve_prompt(
         prompts,
         "inbox_merge",
@@ -237,7 +239,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let prompts_dir = tmp.path().join(".factbase").join("prompts");
         std::fs::create_dir_all(&prompts_dir).unwrap();
-        std::fs::write(prompts_dir.join("inbox-merge.txt"), "Merge: {document_content} + {inbox_content}").unwrap();
+        std::fs::write(
+            prompts_dir.join("inbox-merge.txt"),
+            "Merge: {document_content} + {inbox_content}",
+        )
+        .unwrap();
         let prompts = crate::config::PromptsConfig::default();
         let result = build_inbox_prompt("doc content", "inbox content", &prompts, Some(tmp.path()));
         assert_eq!(result, "Merge: doc content + inbox content");
@@ -248,6 +254,9 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let prompts = crate::config::PromptsConfig::default();
         let result = build_inbox_prompt("doc", "inbox", &prompts, Some(tmp.path()));
-        assert!(result.contains("DOCUMENT:"), "should use compiled-in default");
+        assert!(
+            result.contains("DOCUMENT:"),
+            "should use compiled-in default"
+        );
     }
 }

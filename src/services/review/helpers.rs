@@ -23,9 +23,14 @@ pub fn parse_type_filter(type_str: &str) -> Option<QuestionType> {
 pub fn format_question_json(q: &ReviewQuestion, doc_context: Option<(&str, &str)>) -> Value {
     let mut json = q.to_json();
     if let Some((doc_id, doc_title)) = doc_context {
-        let obj = json.as_object_mut().expect("to_json() returns a JSON object");
+        let obj = json
+            .as_object_mut()
+            .expect("to_json() returns a JSON object");
         obj.insert("doc_id".to_string(), Value::String(doc_id.to_string()));
-        obj.insert("doc_title".to_string(), Value::String(doc_title.to_string()));
+        obj.insert(
+            "doc_title".to_string(),
+            Value::String(doc_title.to_string()),
+        );
         obj.insert("answered".to_string(), Value::Bool(q.answered));
         obj.insert("answer".to_string(), serde_json::json!(q.answer));
     }
@@ -37,14 +42,19 @@ pub fn count_question_types(
     docs: &[crate::models::Document],
 ) -> (std::collections::HashMap<QuestionType, usize>, usize) {
     use crate::processor::parse_review_queue;
-    let mut counts: std::collections::HashMap<QuestionType, usize> = std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<QuestionType, usize> =
+        std::collections::HashMap::new();
     let mut believed = 0usize;
     for doc in docs {
         if let Some(questions) = parse_review_queue(&doc.content) {
             for q in &questions {
-                if q.answered { continue; }
+                if q.answered {
+                    continue;
+                }
                 if q.is_deferred() {
-                    if q.is_believed() { believed += 1; }
+                    if q.is_believed() {
+                        believed += 1;
+                    }
                     continue;
                 }
                 *counts.entry(q.question_type).or_insert(0) += 1;
@@ -65,7 +75,9 @@ pub fn count_queue_questions(
         if q.answered {
             // skip — already applied
         } else if q.is_deferred() {
-            if q.is_believed() { *believed += 1; }
+            if q.is_believed() {
+                *believed += 1;
+            }
             *deferred += 1;
         } else {
             *unanswered += 1;
@@ -74,7 +86,10 @@ pub fn count_queue_questions(
 }
 
 /// Resolve confidence from args: "believed" answers are stored as deferred.
-pub fn resolve_confidence(answer: &str, confidence: Option<&str>) -> Result<(bool, String), FactbaseError> {
+pub fn resolve_confidence(
+    answer: &str,
+    confidence: Option<&str>,
+) -> Result<(bool, String), FactbaseError> {
     let lower = answer.to_lowercase();
     let explicit_defer = lower.starts_with("defer:");
     if explicit_defer {
@@ -133,7 +148,11 @@ pub fn modify_question_in_queue(
         }
     }
 
-    if modified { Some(new_queue_lines.join("\n")) } else { None }
+    if modified {
+        Some(new_queue_lines.join("\n"))
+    } else {
+        None
+    }
 }
 
 /// Resolve a document's absolute file path by joining the repository root

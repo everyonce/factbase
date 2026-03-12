@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-fn is_zero(v: &usize) -> bool { *v == 0 }
+fn is_zero(v: &usize) -> bool {
+    *v == 0
+}
 
 /// Results from a scan operation, tracking document changes.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

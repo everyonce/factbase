@@ -230,7 +230,9 @@ fn question_description_matches(line: &str, valid: &HashSet<String>) -> bool {
         // also try matching with the trailing (line:N) stripped.
         let normalized = normalize_conflict_desc(&stripped);
         if normalized != stripped {
-            return valid.iter().any(|v| normalize_conflict_desc(v) == normalized);
+            return valid
+                .iter()
+                .any(|v| normalize_conflict_desc(v) == normalized);
         }
         return false;
     }
@@ -248,7 +250,10 @@ mod tests {
                        - [ ] `@q[temporal]` \"Old fact\" - when was this true?\n  > \n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(!result.contains("Old fact"), "Stale question should be removed");
+        assert!(
+            !result.contains("Old fact"),
+            "Stale question should be removed"
+        );
     }
 
     #[test]
@@ -258,7 +263,10 @@ mod tests {
         let mut valid = HashSet::new();
         valid.insert("\"Current fact\" - when was this true?".to_string());
         let result = prune_stale_questions(content, &valid, false);
-        assert!(result.contains("Current fact"), "Valid question should be kept");
+        assert!(
+            result.contains("Current fact"),
+            "Valid question should be kept"
+        );
     }
 
     #[test]
@@ -267,8 +275,14 @@ mod tests {
                        - [x] `@q[temporal]` \"Old fact\" - when was this true?\n  > 2024\n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(!result.contains("Old fact"), "Answered question should be pruned");
-        assert!(!result.contains("Review Queue"), "Empty review section should be removed");
+        assert!(
+            !result.contains("Old fact"),
+            "Answered question should be pruned"
+        );
+        assert!(
+            !result.contains("Review Queue"),
+            "Empty review section should be removed"
+        );
     }
 
     #[test]
@@ -277,7 +291,10 @@ mod tests {
                        - [ ] `@q[stale]` Cross-check with doc2: fact is outdated\n  > \n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(result.contains("Cross-check"), "Cross-check kept when no LLM");
+        assert!(
+            result.contains("Cross-check"),
+            "Cross-check kept when no LLM"
+        );
     }
 
     #[test]
@@ -286,16 +303,23 @@ mod tests {
                        - [ ] `@q[stale]` Cross-check with doc2: fact is outdated\n  > \n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, true);
-        assert!(!result.contains("Cross-check"), "Cross-check pruned when LLM ran");
+        assert!(
+            !result.contains("Cross-check"),
+            "Cross-check pruned when LLM ran"
+        );
     }
 
     #[test]
     fn test_prune_removes_entire_section_when_empty() {
-        let content = "# Doc\n\nContent here.\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+        let content =
+            "# Doc\n\nContent here.\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
                        - [ ] `@q[temporal]` stale question\n  > \n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(!result.contains("Review Queue"), "Empty section should be removed");
+        assert!(
+            !result.contains("Review Queue"),
+            "Empty section should be removed"
+        );
         assert!(result.contains("Content here"), "Body should be preserved");
     }
 
@@ -313,8 +337,14 @@ mod tests {
                        - [ ] `@q[stale]` Old fact is stale\n> believed: Still accurate per Wikipedia\n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(result.contains("Old fact is stale"), "Deferred question should be preserved");
-        assert!(result.contains("believed: Still accurate"), "Believed answer should be preserved");
+        assert!(
+            result.contains("Old fact is stale"),
+            "Deferred question should be preserved"
+        );
+        assert!(
+            result.contains("believed: Still accurate"),
+            "Believed answer should be preserved"
+        );
     }
 
     #[test]
@@ -323,8 +353,14 @@ mod tests {
                        - [ ] `@q[temporal]` When was this true?\n> defer: could not find source\n";
         let valid = HashSet::new();
         let result = prune_stale_questions(content, &valid, false);
-        assert!(result.contains("When was this true?"), "Deferred question should be preserved");
-        assert!(result.contains("defer: could not find source"), "Defer note should be preserved");
+        assert!(
+            result.contains("When was this true?"),
+            "Deferred question should be preserved"
+        );
+        assert!(
+            result.contains("defer: could not find source"),
+            "Defer note should be preserved"
+        );
     }
 
     #[test]
@@ -336,9 +372,18 @@ mod tests {
         let mut valid = HashSet::new();
         valid.insert("Valid unanswered".to_string());
         let result = prune_stale_questions(content, &valid, false);
-        assert!(!result.contains("Answered fact"), "Answered [x] question should be pruned");
-        assert!(result.contains("Deferred fact"), "Deferred question should be preserved");
-        assert!(result.contains("Valid unanswered"), "Valid unanswered question should be preserved");
+        assert!(
+            !result.contains("Answered fact"),
+            "Answered [x] question should be pruned"
+        );
+        assert!(
+            result.contains("Deferred fact"),
+            "Deferred question should be preserved"
+        );
+        assert!(
+            result.contains("Valid unanswered"),
+            "Valid unanswered question should be preserved"
+        );
     }
 
     #[test]

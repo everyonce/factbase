@@ -34,9 +34,14 @@ pub struct FactEmbeddingOutput {
 /// For each changed document, extracts facts, skips those with unchanged
 /// hashes, and generates embeddings for new/modified facts.
 /// Respects an optional deadline — returns early if time runs out.
-pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow::Result<FactEmbeddingOutput> {
+pub async fn run_fact_embedding_phase(
+    input: &FactEmbeddingInput<'_>,
+) -> anyhow::Result<FactEmbeddingOutput> {
     if input.changed_ids.is_empty() {
-        return Ok(FactEmbeddingOutput { generated: 0, docs_processed: 0 });
+        return Ok(FactEmbeddingOutput {
+            generated: 0,
+            docs_processed: 0,
+        });
     }
 
     let mut total_generated = 0usize;
@@ -80,7 +85,10 @@ pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow:
             .zip(meta.chunks(input.embedding_batch_size))
         {
             if crate::shutdown::is_shutdown_requested() {
-                return Ok(FactEmbeddingOutput { generated: total_generated, docs_processed });
+                return Ok(FactEmbeddingOutput {
+                    generated: total_generated,
+                    docs_processed,
+                });
             }
 
             let embeddings = input.embedding.generate_batch(batch_texts).await?;
@@ -115,7 +123,10 @@ pub async fn run_fact_embedding_phase(input: &FactEmbeddingInput<'_>) -> anyhow:
             .log(&format!("{total_generated} fact embeddings generated"));
     }
 
-    Ok(FactEmbeddingOutput { generated: total_generated, docs_processed })
+    Ok(FactEmbeddingOutput {
+        generated: total_generated,
+        docs_processed,
+    })
 }
 
 #[cfg(test)]
@@ -288,6 +299,12 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result, FactEmbeddingOutput { generated: 0, docs_processed: 0 });
+        assert_eq!(
+            result,
+            FactEmbeddingOutput {
+                generated: 0,
+                docs_processed: 0
+            }
+        );
     }
 }

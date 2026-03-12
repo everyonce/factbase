@@ -42,7 +42,7 @@ pub fn tags_from_path(relative_path: &std::path::Path) -> Vec<String> {
 ///
 /// Handles flow style `tags: [a, b]` and scalar `tags: a`.
 fn parse_tags_line(line: &str) -> Vec<String> {
-    let value = match line.splitn(2, ':').nth(1) {
+    let value = match line.split_once(':').map(|x| x.1) {
         Some(v) => v.trim(),
         None => return Vec::new(),
     };
@@ -85,7 +85,10 @@ pub fn merge_path_tags(extra: &mut Vec<String>, path_tags: &[String]) {
 
     let tags_line = format!("tags: [{}]", merged.join(", "));
 
-    if let Some(pos) = extra.iter().position(|l| l.trim_start().starts_with("tags:")) {
+    if let Some(pos) = extra
+        .iter()
+        .position(|l| l.trim_start().starts_with("tags:"))
+    {
         extra[pos] = tags_line;
     } else {
         extra.push(tags_line);
@@ -338,28 +341,55 @@ mod tests {
 
     #[test]
     fn test_format_link_factbase() {
-        assert_eq!(format_link("abc123", None, None, LinkStyle::Factbase), "[[abc123]]");
-        assert_eq!(format_link("abc123", Some("John"), None, LinkStyle::Factbase), "[[abc123]]");
+        assert_eq!(
+            format_link("abc123", None, None, LinkStyle::Factbase),
+            "[[abc123]]"
+        );
+        assert_eq!(
+            format_link("abc123", Some("John"), None, LinkStyle::Factbase),
+            "[[abc123]]"
+        );
     }
 
     #[test]
     fn test_format_link_wikilink_no_path() {
-        assert_eq!(format_link("abc123", Some("John Doe"), None, LinkStyle::Wikilink), "[[John Doe]]");
-        assert_eq!(format_link("abc123", None, None, LinkStyle::Wikilink), "[[abc123]]");
+        assert_eq!(
+            format_link("abc123", Some("John Doe"), None, LinkStyle::Wikilink),
+            "[[John Doe]]"
+        );
+        assert_eq!(
+            format_link("abc123", None, None, LinkStyle::Wikilink),
+            "[[abc123]]"
+        );
     }
 
     #[test]
     fn test_format_link_wikilink_with_path() {
         assert_eq!(
-            format_link("abc123", Some("Tim Leidig"), Some("people/tim-leidig.md"), LinkStyle::Wikilink),
+            format_link(
+                "abc123",
+                Some("Tim Leidig"),
+                Some("people/tim-leidig.md"),
+                LinkStyle::Wikilink
+            ),
             "[[people/tim-leidig|Tim Leidig]]"
         );
     }
 
     #[test]
     fn test_format_link_wikilink_path_disambiguates() {
-        let person = format_link("aaa111", Some("Joshua"), Some("people/joshua.md"), LinkStyle::Wikilink);
-        let book = format_link("bbb222", Some("Joshua"), Some("books/joshua.md"), LinkStyle::Wikilink);
+        let person = format_link(
+            "aaa111",
+            Some("Joshua"),
+            Some("people/joshua.md"),
+            LinkStyle::Wikilink,
+        );
+        let book = format_link(
+            "bbb222",
+            Some("Joshua"),
+            Some("books/joshua.md"),
+            LinkStyle::Wikilink,
+        );
         assert_eq!(person, "[[people/joshua|Joshua]]");
         assert_eq!(book, "[[books/joshua|Joshua]]");
         assert_ne!(person, book);
@@ -368,15 +398,26 @@ mod tests {
     #[test]
     fn test_format_link_wikilink_root_file() {
         assert_eq!(
-            format_link("abc123", Some("Notes"), Some("notes.md"), LinkStyle::Wikilink),
+            format_link(
+                "abc123",
+                Some("Notes"),
+                Some("notes.md"),
+                LinkStyle::Wikilink
+            ),
             "[[notes|Notes]]"
         );
     }
 
     #[test]
     fn test_format_link_markdown() {
-        assert_eq!(format_link("abc123", Some("John"), None, LinkStyle::Markdown), "[John](abc123)");
-        assert_eq!(format_link("abc123", None, None, LinkStyle::Markdown), "[abc123](abc123)");
+        assert_eq!(
+            format_link("abc123", Some("John"), None, LinkStyle::Markdown),
+            "[John](abc123)"
+        );
+        assert_eq!(
+            format_link("abc123", None, None, LinkStyle::Markdown),
+            "[abc123](abc123)"
+        );
     }
 
     #[test]
@@ -393,12 +434,18 @@ mod tests {
             ("def456", Some("Acme Corp"), Some("companies/acme-corp.md")),
         ];
         let line = format_references_line(&ids, LinkStyle::Wikilink);
-        assert_eq!(line, "References: [[people/john|John]] [[companies/acme-corp|Acme Corp]]");
+        assert_eq!(
+            line,
+            "References: [[people/john|John]] [[companies/acme-corp|Acme Corp]]"
+        );
     }
 
     #[test]
     fn test_format_references_line_wikilink_no_paths() {
-        let ids = vec![("abc123", Some("John"), None), ("def456", Some("Acme Corp"), None)];
+        let ids = vec![
+            ("abc123", Some("John"), None),
+            ("def456", Some("Acme Corp"), None),
+        ];
         let line = format_references_line(&ids, LinkStyle::Wikilink);
         assert_eq!(line, "References: [[John]] [[Acme Corp]]");
     }
@@ -440,7 +487,8 @@ mod tests {
 
     #[test]
     fn test_extract_extra_frontmatter_with_comment_header() {
-        let content = "<!-- factbase:abc123 -->\n---\ntype: person\nreviewed: 2026-03-06\n---\n# Title\n";
+        let content =
+            "<!-- factbase:abc123 -->\n---\ntype: person\nreviewed: 2026-03-06\n---\n# Title\n";
         let extra = extract_extra_frontmatter(content);
         assert_eq!(extra, vec!["reviewed: 2026-03-06"]);
     }
@@ -474,7 +522,10 @@ mod tests {
             frontmatter: true,
             ..Default::default()
         };
-        let extra = vec!["reviewed: 2026-02-21".to_string(), "tags: important".to_string()];
+        let extra = vec![
+            "reviewed: 2026-02-21".to_string(),
+            "tags: important".to_string(),
+        ];
         let h = build_document_header("abc123", "Test", Some("note"), &fmt, &extra);
         assert!(h.contains("type: note\n"));
         assert!(h.contains("reviewed: 2026-02-21\n"));
@@ -588,7 +639,8 @@ mod tests {
 
     #[test]
     fn test_update_frontmatter_type_preserves_other_fields() {
-        let content = "---\nfactbase_id: abc123\nreviewed: 2026-03-10\ntags: [people]\n---\n# Title\n";
+        let content =
+            "---\nfactbase_id: abc123\nreviewed: 2026-03-10\ntags: [people]\n---\n# Title\n";
         let result = update_frontmatter_type(content, "person");
         assert!(result.contains("reviewed: 2026-03-10\n"));
         assert!(result.contains("tags: [people]\n"));

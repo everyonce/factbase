@@ -1,6 +1,4 @@
-use super::{
-    auto_init_repo, setup_cached_embedding,
-};
+use super::{auto_init_repo, setup_cached_embedding};
 use crate::commands::setup::Setup;
 use factbase::mcp::run_stdio;
 

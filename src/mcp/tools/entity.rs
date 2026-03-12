@@ -101,14 +101,20 @@ mod tests {
         std::fs::write(
             tmp.path().join("perspective.yaml"),
             "focus: \"test focus\"\norganization: \"test org\"\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let repo = crate::models::Repository {
-            id: "test".to_string(), name: "Test".to_string(),
-            path: tmp.path().to_path_buf(), perspective: None,
-            created_at: chrono::Utc::now(), last_indexed_at: None, last_check_at: None,
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            path: tmp.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
         };
-        let perspective = repo.perspective
+        let perspective = repo
+            .perspective
             .or_else(|| crate::models::load_perspective_from_file(&repo.path));
         assert!(perspective.is_some());
         assert_eq!(perspective.unwrap().focus.as_deref(), Some("test focus"));

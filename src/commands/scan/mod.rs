@@ -24,12 +24,12 @@ pub use args::ScanArgs;
 
 use super::setup_embedding_with_timeout;
 use crate::commands::setup::Setup;
+use factbase::config::validate_timeout;
 use factbase::output::format_json;
 use factbase::processor::DocumentProcessor;
 use factbase::progress::ProgressReporter;
-use factbase::scanner::{ScanContext, ScanOptions, Scanner, full_scan};
-use factbase::watcher::{FileWatcher, ScanCoordinator, find_repo_for_path};
-use factbase::config::validate_timeout;
+use factbase::scanner::{full_scan, ScanContext, ScanOptions, Scanner};
+use factbase::watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
 use prune::cmd_scan_prune;
 use stats::{cmd_scan_check, cmd_scan_stats_only};
 use std::io::{self, IsTerminal};
@@ -171,9 +171,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         if actual_table_dim.is_some() && actual_table_dim != Some(provider_dim) {
             // Table exists with different dimension (e.g., default 1024 but provider is 384)
             if !quiet {
-                eprintln!(
-                    "Adjusting embedding tables for {provider_dim}-dim vectors."
-                );
+                eprintln!("Adjusting embedding tables for {provider_dim}-dim vectors.");
             }
             db.rebuild_embedding_tables(provider_dim)?;
         }
@@ -234,7 +232,9 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
     }
 
     if args.no_embed && !quiet {
-        println!("Embedding generation skipped. Use `factbase embeddings import` to load embeddings.");
+        println!(
+            "Embedding generation skipped. Use `factbase embeddings import` to load embeddings."
+        );
     }
 
     if args.reindex && !quiet {
@@ -277,7 +277,10 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
             println!("{} links detected", result.links_detected);
         }
         if result.fact_embeddings_generated > 0 {
-            println!("{} fact embeddings generated", result.fact_embeddings_generated);
+            println!(
+                "{} fact embeddings generated",
+                result.fact_embeddings_generated
+            );
         }
         if let Some(ref stats) = result.stats {
             println!("\nTiming:");

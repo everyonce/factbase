@@ -157,7 +157,10 @@ mod tests {
 
     #[test]
     fn test_format_json() {
-        let data = TestData { name: "test".to_string(), value: 42 };
+        let data = TestData {
+            name: "test".to_string(),
+            value: 42,
+        };
         let result = format_json(&data).unwrap();
         assert!(result.contains("\"name\": \"test\""));
         assert!(result.contains("\"value\": 42"));
@@ -165,7 +168,10 @@ mod tests {
 
     #[test]
     fn test_format_yaml() {
-        let data = TestData { name: "test".to_string(), value: 42 };
+        let data = TestData {
+            name: "test".to_string(),
+            value: 42,
+        };
         let result = format_yaml(&data).unwrap();
         assert!(result.contains("name: test"));
         assert!(result.contains("value: 42"));
@@ -188,7 +194,12 @@ mod tests {
         assert_eq!(highlight_text("hello world", "xyz"), "hello world");
 
         // Multiple matches
-        assert_eq!(highlight_text("hello hello hello", "hello").matches(ansi::BOLD_RED).count(), 3);
+        assert_eq!(
+            highlight_text("hello hello hello", "hello")
+                .matches(ansi::BOLD_RED)
+                .count(),
+            3
+        );
     }
 
     #[test]
@@ -211,10 +222,10 @@ mod tests {
 
     #[test]
     fn test_truncate_str() {
-        assert_eq!(truncate_str("hello", 10), "hello");   // short
-        assert_eq!(truncate_str("hello", 5), "hello");    // exact
+        assert_eq!(truncate_str("hello", 10), "hello"); // short
+        assert_eq!(truncate_str("hello", 5), "hello"); // exact
         assert_eq!(truncate_str("hello world", 7), "hello w"); // long
-        assert_eq!(truncate_str("café", 4), "caf");       // multibyte
+        assert_eq!(truncate_str("café", 4), "caf"); // multibyte
     }
 
     #[test]
@@ -222,7 +233,10 @@ mod tests {
         assert_eq!(truncate_at_word_boundary("Short text", 100), "Short text");
         assert_eq!(truncate_at_word_boundary("Hello world", 11), "Hello world");
         assert_eq!(truncate_at_word_boundary("Hello world ", 6), "Hello...");
-        assert_eq!(truncate_at_word_boundary("Verylongwordwithoutspaces", 10), "Verylongwo...");
+        assert_eq!(
+            truncate_at_word_boundary("Verylongwordwithoutspaces", 10),
+            "Verylongwo..."
+        );
         let long = truncate_at_word_boundary("This is a longer text that needs truncation", 20);
         assert!(long.ends_with("...") && long.len() <= 23);
     }

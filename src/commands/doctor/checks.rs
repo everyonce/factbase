@@ -161,10 +161,7 @@ mod tests {
 
     #[test]
     fn test_model_available() {
-        let models = vec![
-            "qwen3-embedding:0.6b".to_string(),
-            "llama3.2".to_string(),
-        ];
+        let models = vec!["qwen3-embedding:0.6b".to_string(), "llama3.2".to_string()];
         assert!(model_available(&models, "qwen3-embedding"));
         assert!(model_available(&models, "llama3.2"));
         assert!(!model_available(&models, "nonexistent"));

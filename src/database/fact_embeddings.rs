@@ -45,8 +45,7 @@ impl Database {
         let conn = self.get_conn()?;
         // Get IDs to delete from vec0 table
         let ids: Vec<String> = {
-            let mut stmt =
-                conn.prepare("SELECT id FROM fact_metadata WHERE document_id = ?1")?;
+            let mut stmt = conn.prepare("SELECT id FROM fact_metadata WHERE document_id = ?1")?;
             let result = stmt
                 .query_map([doc_id], |row| row.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -55,10 +54,7 @@ impl Database {
         for id in &ids {
             conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [id])?;
         }
-        conn.execute(
-            "DELETE FROM fact_metadata WHERE document_id = ?1",
-            [doc_id],
-        )?;
+        conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [doc_id])?;
         Ok(())
     }
 
@@ -151,7 +147,8 @@ impl Database {
                    AND d.id NOT IN (SELECT DISTINCT document_id FROM fact_metadata)
                  ORDER BY d.id",
             )?;
-            let ids = stmt.query_map([rid], |row| row.get(0))?
+            let ids = stmt
+                .query_map([rid], |row| row.get(0))?
                 .collect::<Result<Vec<String>, _>>()?;
             Ok(ids)
         } else {
@@ -161,7 +158,8 @@ impl Database {
                    AND d.id NOT IN (SELECT DISTINCT document_id FROM fact_metadata)
                  ORDER BY d.id",
             )?;
-            let ids = stmt.query_map([], |row| row.get(0))?
+            let ids = stmt
+                .query_map([], |row| row.get(0))?
                 .collect::<Result<Vec<String>, _>>()?;
             Ok(ids)
         }
@@ -336,7 +334,10 @@ impl Database {
 
         // Clear old cache for this scope
         conn.execute("DELETE FROM cached_fact_pairs WHERE scope = ?1", [scope])?;
-        conn.execute("DELETE FROM cached_fact_pairs_meta WHERE scope = ?1", [scope])?;
+        conn.execute(
+            "DELETE FROM cached_fact_pairs_meta WHERE scope = ?1",
+            [scope],
+        )?;
 
         let current_count = if scope.is_empty() {
             self.get_fact_embedding_count()?
@@ -417,9 +418,17 @@ impl Database {
                  JOIN documents d ON m.document_id = d.id
                  WHERE d.repo_id = ?1",
             )?;
-            let rows = stmt.query_map([rid], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-            })?.collect::<Result<_, _>>()?;
+            let rows = stmt
+                .query_map([rid], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })?
+                .collect::<Result<_, _>>()?;
             rows
         } else {
             let mut stmt = conn.prepare(
@@ -427,16 +436,23 @@ impl Database {
                  FROM fact_metadata m
                  JOIN fact_embeddings e ON m.id = e.id",
             )?;
-            let rows = stmt.query_map([], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
-            })?.collect::<Result<_, _>>()?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                })?
+                .collect::<Result<_, _>>()?;
             rows
         };
         drop(conn);
 
-        let repo_doc_ids: Option<std::collections::HashSet<&str>> = repo_id.map(|_| {
-            facts.iter().map(|(_, did, _, _, _)| did.as_str()).collect()
-        });
+        let repo_doc_ids: Option<std::collections::HashSet<&str>> =
+            repo_id.map(|_| facts.iter().map(|(_, did, _, _, _)| did.as_str()).collect());
 
         let mut seen = std::collections::HashSet::new();
         let mut pairs = Vec::new();
@@ -477,7 +493,11 @@ impl Database {
             }
         }
 
-        pairs.sort_by(|a, b| b.similarity.partial_cmp(&a.similarity).unwrap_or(std::cmp::Ordering::Equal));
+        pairs.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         Ok(pairs)
     }
 
@@ -487,10 +507,9 @@ impl Database {
         repo_id: Option<&str>,
     ) -> Result<Vec<crate::embeddings_io::FactEmbeddingRecord>, FactbaseError> {
         let conn = self.get_conn()?;
-        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(rid) =
-            repo_id
-        {
-            (
+        let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
+            if let Some(rid) = repo_id {
+                (
                 "SELECT m.id, m.document_id, m.line_number, m.fact_text, m.fact_hash, e.embedding
                  FROM fact_metadata m
                  JOIN fact_embeddings e ON m.id = e.id
@@ -500,8 +519,8 @@ impl Database {
                     .to_string(),
                 vec![Box::new(rid.to_string())],
             )
-        } else {
-            (
+            } else {
+                (
                 "SELECT m.id, m.document_id, m.line_number, m.fact_text, m.fact_hash, e.embedding
                  FROM fact_metadata m
                  JOIN fact_embeddings e ON m.id = e.id
@@ -509,7 +528,7 @@ impl Database {
                     .to_string(),
                 vec![],
             )
-        };
+            };
 
         let mut stmt = conn.prepare(&sql)?;
         let mut rows = stmt.query(rusqlite::params_from_iter(&params))?;
@@ -572,13 +591,16 @@ mod tests {
         assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 0);
 
         let emb: Vec<f32> = vec![0.1; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact", "h1", &emb)
+            .unwrap();
         assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 1);
 
-        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact 2", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact 2", "h2", &emb)
+            .unwrap();
         assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 1); // still 1 doc
 
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact 3", "h3", &emb).unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact 3", "h3", &emb)
+            .unwrap();
         assert_eq!(db.count_documents_with_fact_embeddings().unwrap(), 2);
     }
 
@@ -654,9 +676,7 @@ mod tests {
         assert!(results[0].similarity > results[1].similarity);
 
         // Search excluding doc1
-        let results = db
-            .search_fact_embeddings(&emb1, 10, Some("doc1"))
-            .unwrap();
+        let results = db.search_fact_embeddings(&emb1, 10, Some("doc1")).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].document_id, "doc2");
     }
@@ -717,18 +737,25 @@ mod tests {
         let mut emb_c = vec![0.0f32; 1024];
         emb_c[500] = 1.0; // very different
 
-        db.upsert_fact_embedding("doc1_5", "doc1", 5, "Fact A", "h1", &emb_a).unwrap();
-        db.upsert_fact_embedding("doc2_3", "doc2", 3, "Fact B", "h2", &emb_b).unwrap();
-        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact C", "h3", &emb_c).unwrap();
+        db.upsert_fact_embedding("doc1_5", "doc1", 5, "Fact A", "h1", &emb_a)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_3", "doc2", 3, "Fact B", "h2", &emb_b)
+            .unwrap();
+        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact C", "h3", &emb_c)
+            .unwrap();
 
         // Search from doc1's fact — should find doc2 (similar) but not doc3 (dissimilar) at high threshold
-        let results = db.search_similar_facts("doc1_5", "doc1", &emb_a, 10, 0.9).unwrap();
+        let results = db
+            .search_similar_facts("doc1_5", "doc1", &emb_a, 10, 0.9)
+            .unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].document_id, "doc2");
         assert!(results[0].similarity >= 0.9);
 
         // Excludes self-match (same fact_id)
-        let results = db.search_similar_facts("doc1_5", "doc1", &emb_a, 10, 0.0).unwrap();
+        let results = db
+            .search_similar_facts("doc1_5", "doc1", &emb_a, 10, 0.0)
+            .unwrap();
         assert!(results.iter().all(|r| r.id != "doc1_5"));
         // Excludes same-doc matches
         assert!(results.iter().all(|r| r.document_id != "doc1"));
@@ -747,11 +774,15 @@ mod tests {
         let mut emb_b = vec![0.0f32; 1024];
         emb_b[500] = 1.0; // orthogonal — similarity ~0
 
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb_a).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb_b).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb_a)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb_b)
+            .unwrap();
 
         // High threshold should filter out the dissimilar fact
-        let results = db.search_similar_facts("doc1_1", "doc1", &emb_a, 10, 0.5).unwrap();
+        let results = db
+            .search_similar_facts("doc1_1", "doc1", &emb_a, 10, 0.5)
+            .unwrap();
         assert!(results.is_empty());
     }
 
@@ -771,8 +802,10 @@ mod tests {
         emb_b[0] = 1.0;
         emb_b[1] = 0.2;
 
-        db.upsert_fact_embedding("doc1_5", "doc1", 5, "Fact A", "h1", &emb_a).unwrap();
-        db.upsert_fact_embedding("doc2_3", "doc2", 3, "Fact B", "h2", &emb_b).unwrap();
+        db.upsert_fact_embedding("doc1_5", "doc1", 5, "Fact A", "h1", &emb_a)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_3", "doc2", 3, "Fact B", "h2", &emb_b)
+            .unwrap();
 
         let pairs = db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
         assert_eq!(pairs.len(), 1);
@@ -791,8 +824,10 @@ mod tests {
 
         // Two identical facts in the SAME doc
         let emb = vec![0.5f32; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact X", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact Y", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact X", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact Y", "h2", &emb)
+            .unwrap();
 
         let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
         assert!(pairs.is_empty());
@@ -824,13 +859,20 @@ mod tests {
         emb3[0] = 1.0;
         emb3[1] = 0.3; // still close but less similar
 
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact 1", "h1", &emb1).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact 2", "h2", &emb2).unwrap();
-        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact 3", "h3", &emb3).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact 1", "h1", &emb1)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact 2", "h2", &emb2)
+            .unwrap();
+        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact 3", "h3", &emb3)
+            .unwrap();
 
         // Use threshold 0.0 so all pairs are included
         let pairs = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
-        assert!(pairs.len() >= 2, "expected at least 2 pairs, got {}", pairs.len());
+        assert!(
+            pairs.len() >= 2,
+            "expected at least 2 pairs, got {}",
+            pairs.len()
+        );
         // Should be sorted descending by similarity
         for w in pairs.windows(2) {
             assert!(w[0].similarity >= w[1].similarity);
@@ -847,28 +889,47 @@ mod tests {
         repo2.path = std::path::PathBuf::from("/tmp/other");
         db.upsert_repository(&repo2).unwrap();
 
-        db.upsert_document(&test_doc_with_repo("d1", "test-repo", "Doc 1")).unwrap();
-        db.upsert_document(&test_doc_with_repo("d2", "test-repo", "Doc 2")).unwrap();
-        db.upsert_document(&test_doc_with_repo("d3", "other-repo", "Doc 3")).unwrap();
+        db.upsert_document(&test_doc_with_repo("d1", "test-repo", "Doc 1"))
+            .unwrap();
+        db.upsert_document(&test_doc_with_repo("d2", "test-repo", "Doc 2"))
+            .unwrap();
+        db.upsert_document(&test_doc_with_repo("d3", "other-repo", "Doc 3"))
+            .unwrap();
 
         let emb = vec![0.5f32; 1024];
-        db.upsert_fact_embedding("d1_1", "d1", 1, "Fact 1", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("d2_1", "d2", 1, "Fact 2", "h2", &emb).unwrap();
-        db.upsert_fact_embedding("d3_1", "d3", 1, "Fact 3", "h3", &emb).unwrap();
+        db.upsert_fact_embedding("d1_1", "d1", 1, "Fact 1", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("d2_1", "d2", 1, "Fact 2", "h2", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("d3_1", "d3", 1, "Fact 3", "h3", &emb)
+            .unwrap();
 
         // Unscoped: all cross-doc pairs (d1-d2, d1-d3, d2-d3)
         let all = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
-        assert!(all.len() >= 2, "expected cross-repo pairs, got {}", all.len());
+        assert!(
+            all.len() >= 2,
+            "expected cross-repo pairs, got {}",
+            all.len()
+        );
 
         // Scoped to test-repo: only d1-d2 pair
-        let scoped = db.find_all_cross_doc_fact_pairs(0.0, 10, Some("test-repo")).unwrap();
-        assert_eq!(scoped.len(), 1, "expected 1 intra-repo pair, got {}", scoped.len());
+        let scoped = db
+            .find_all_cross_doc_fact_pairs(0.0, 10, Some("test-repo"))
+            .unwrap();
+        assert_eq!(
+            scoped.len(),
+            1,
+            "expected 1 intra-repo pair, got {}",
+            scoped.len()
+        );
         let pair = &scoped[0];
         assert!(pair.fact_a.document_id == "d1" || pair.fact_a.document_id == "d2");
         assert!(pair.fact_b.document_id == "d1" || pair.fact_b.document_id == "d2");
 
         // Scoped to other-repo: only 1 doc, so no cross-doc pairs
-        let other = db.find_all_cross_doc_fact_pairs(0.0, 10, Some("other-repo")).unwrap();
+        let other = db
+            .find_all_cross_doc_fact_pairs(0.0, 10, Some("other-repo"))
+            .unwrap();
         assert!(other.is_empty());
     }
 
@@ -886,8 +947,10 @@ mod tests {
         emb_b[0] = 1.0;
         emb_b[1] = 0.1;
 
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb_a).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb_b).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb_a)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb_b)
+            .unwrap();
 
         // First call computes and caches
         let pairs1 = db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
@@ -909,8 +972,10 @@ mod tests {
         db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
 
         let emb = vec![0.5f32; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb)
+            .unwrap();
 
         // Populate cache
         let pairs1 = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
@@ -918,10 +983,15 @@ mod tests {
 
         // Add a third fact — cache should invalidate due to count change
         db.upsert_document(&test_doc("doc3", "Doc 3")).unwrap();
-        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact C", "h3", &emb).unwrap();
+        db.upsert_fact_embedding("doc3_1", "doc3", 1, "Fact C", "h3", &emb)
+            .unwrap();
 
         let pairs2 = db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
-        assert!(pairs2.len() > 1, "cache should have been invalidated, got {} pairs", pairs2.len());
+        assert!(
+            pairs2.len() > 1,
+            "cache should have been invalidated, got {} pairs",
+            pairs2.len()
+        );
     }
 
     #[test]
@@ -933,8 +1003,10 @@ mod tests {
         db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
 
         let emb = vec![0.5f32; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb)
+            .unwrap();
 
         // Populate cache
         db.find_all_cross_doc_fact_pairs(0.0, 10, None).unwrap();
@@ -944,7 +1016,11 @@ mod tests {
 
         // Verify cache meta is cleared
         let conn = db.get_conn().unwrap();
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM cached_fact_pairs_meta", [], |r| r.get(0)).unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM cached_fact_pairs_meta", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
         assert_eq!(count, 0);
     }
 
@@ -957,8 +1033,10 @@ mod tests {
         db.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
 
         let emb = vec![0.5f32; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact B", "h2", &emb)
+            .unwrap();
 
         // Cache with threshold=0.5
         db.find_all_cross_doc_fact_pairs(0.5, 10, None).unwrap();
@@ -983,14 +1061,17 @@ mod tests {
 
         // Add fact embedding for doc1
         let emb = vec![0.5f32; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb)
+            .unwrap();
 
         let ids = db.get_doc_ids_without_fact_embeddings(None).unwrap();
         assert_eq!(ids.len(), 2);
         assert!(!ids.contains(&"doc1".to_string()));
 
         // Scoped to repo
-        let ids = db.get_doc_ids_without_fact_embeddings(Some("test-repo")).unwrap();
+        let ids = db
+            .get_doc_ids_without_fact_embeddings(Some("test-repo"))
+            .unwrap();
         assert_eq!(ids.len(), 2);
     }
 }

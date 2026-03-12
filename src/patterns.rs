@@ -41,18 +41,19 @@ pub(crate) static TEMPORAL_TAG_FULL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     // DATE = YEAR(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?
     Regex::new(concat!(
         r"@t\[(?:",
-            r"([=~])?",                                                    // G1: prefix
-            r"((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)",     // G2: start date
-            r"(",                                                           // G3: range part
-                r"\.\.",
-                r"((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)?", // G4: end date
-            r")?",
+        r"([=~])?",                                               // G1: prefix
+        r"((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)", // G2: start date
+        r"(",                                                     // G3: range part
+        r"\.\.",
+        r"((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)?", // G4: end date
+        r")?",
         r"|",
-            r"\.\.((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)", // G5: historical
+        r"\.\.((?:-\d{1,4}|\d{4})(?:-(?:Q[1-4]|\d{2}(?:-\d{2})?))?)", // G5: historical
         r"|",
-            r"\?",
+        r"\?",
         r")\]",
-    )).expect("temporal tag regex should be valid")
+    ))
+    .expect("temporal tag regex should be valid")
 });
 
 /// Simple temporal tag detection regex (no capture groups).
@@ -102,7 +103,10 @@ pub(crate) static SOURCE_DEF_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Strip footnote references (`[^N]`) from an extracted title and trim whitespace.
 pub fn clean_title(title: &str) -> String {
-    SOURCE_REF_DETECT_REGEX.replace_all(title, "").trim().to_string()
+    SOURCE_REF_DETECT_REGEX
+        .replace_all(title, "")
+        .trim()
+        .to_string()
 }
 
 /// Extract the first `# ` heading from content and clean it.
@@ -232,9 +236,8 @@ pub static MANUAL_LINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Wikilink regex - matches `[[Name]]` references (any non-bracket content).
-pub static WIKILINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\[([^\[\]]+)\]\]").expect("wikilink regex should be valid")
-});
+pub static WIKILINK_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\[\]]+)\]\]").expect("wikilink regex should be valid"));
 
 /// Review Queue marker comment.
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
@@ -261,10 +264,7 @@ pub(crate) fn body_end_offset(content: &str) -> usize {
     let marker = content.find(REVIEW_QUEUE_MARKER).map(|pos| {
         // If marker is inside a callout line (`> <!-- factbase:review -->`),
         // walk back to the start of that line.
-        content[..pos]
-            .rfind('\n')
-            .map(|nl| nl + 1)
-            .unwrap_or(0)
+        content[..pos].rfind('\n').map(|nl| nl + 1).unwrap_or(0)
     });
     let heading = content
         .lines()
@@ -275,7 +275,9 @@ pub(crate) fn body_end_offset(content: &str) -> usize {
         })
         .find(|(_, line)| {
             let t = line.trim();
-            t == "## Review Queue" || t == REVIEW_CALLOUT_HEADER || t == REVIEW_CALLOUT_HEADER_LEGACY
+            t == "## Review Queue"
+                || t == REVIEW_CALLOUT_HEADER
+                || t == REVIEW_CALLOUT_HEADER_LEGACY
         })
         .map(|(pos, _)| pos);
     match (marker, heading) {
@@ -389,7 +391,9 @@ pub(crate) fn add_or_update_reviewed_marker(line: &str, date: &chrono::NaiveDate
 /// Used to measure how many questions would be generated without suppression.
 pub fn strip_reviewed_markers(content: &str) -> String {
     let stripped = REVIEWED_MARKER_REGEX.replace_all(content, "");
-    SEQUENTIAL_MARKER_REGEX.replace_all(&stripped, "").to_string()
+    SEQUENTIAL_MARKER_REGEX
+        .replace_all(&stripped, "")
+        .to_string()
 }
 
 /// Extract the `reviewed: YYYY-MM-DD` date from YAML frontmatter.
@@ -420,7 +424,11 @@ pub fn set_frontmatter_reviewed_date(content: &str, date: &chrono::NaiveDate) ->
 
     if lines.first().map(|l| l.trim()) == Some("---") {
         // Find closing ---
-        let close = lines.iter().skip(1).position(|l| l.trim() == "---").map(|i| i + 1);
+        let close = lines
+            .iter()
+            .skip(1)
+            .position(|l| l.trim() == "---")
+            .map(|i| i + 1);
         if let Some(close_idx) = close {
             // Check if reviewed: already exists
             let mut found = false;
@@ -447,7 +455,9 @@ pub fn set_frontmatter_reviewed_date(content: &str, date: &chrono::NaiveDate) ->
 
 /// Strip all inline `<!-- reviewed:... -->` markers from content and return
 /// the cleaned content plus the latest reviewed date found (if any).
-pub fn convert_inline_reviewed_to_frontmatter(content: &str) -> (String, Option<chrono::NaiveDate>) {
+pub fn convert_inline_reviewed_to_frontmatter(
+    content: &str,
+) -> (String, Option<chrono::NaiveDate>) {
     let mut latest: Option<chrono::NaiveDate> = None;
     for line in content.lines() {
         if let Some(d) = extract_reviewed_date(line) {
@@ -460,7 +470,11 @@ pub fn convert_inline_reviewed_to_frontmatter(content: &str) -> (String, Option<
     }
     let stripped = strip_reviewed_markers(content);
     // Clean up trailing whitespace left by marker removal on each line
-    let cleaned: String = stripped.lines().map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
+    let cleaned: String = stripped
+        .lines()
+        .map(|l| l.trim_end())
+        .collect::<Vec<_>>()
+        .join("\n");
     (cleaned, latest)
 }
 
@@ -539,8 +553,8 @@ pub(crate) fn normalize_date_for_comparison(date: &str) -> String {
     }
 
     match rest.len() {
-        4 => format!("{prefix}{rest}-01-01"),  // YYYY -> YYYY-01-01
-        7 => format!("{prefix}{rest}-01"),      // YYYY-MM -> YYYY-MM-01
+        4 => format!("{prefix}{rest}-01-01"), // YYYY -> YYYY-01-01
+        7 => format!("{prefix}{rest}-01"),    // YYYY-MM -> YYYY-MM-01
         // YYYY-MM-DD and unknown formats returned as-is
         _ => date.to_string(),
     }
@@ -607,8 +621,12 @@ mod tests {
 
     #[test]
     fn test_is_reference_doc() {
-        assert!(is_reference_doc("<!-- factbase:reference -->\n# AWS Lambda\n"));
-        assert!(is_reference_doc("<!-- factbase:abc123 -->\n<!-- factbase:reference -->\n# AWS Lambda\n"));
+        assert!(is_reference_doc(
+            "<!-- factbase:reference -->\n# AWS Lambda\n"
+        ));
+        assert!(is_reference_doc(
+            "<!-- factbase:abc123 -->\n<!-- factbase:reference -->\n# AWS Lambda\n"
+        ));
         assert!(!is_reference_doc("# Regular Doc\n\nContent"));
         assert!(!is_reference_doc("<!-- factbase:review -->\n# Doc\n"));
     }
@@ -770,10 +788,16 @@ mod tests {
     fn test_extract_reviewed_date() {
         // Valid date
         let line = "- VP of Engineering @t[~2026-02] [^1] <!-- reviewed:2026-02-15 -->";
-        assert_eq!(extract_reviewed_date(line).unwrap(), chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap());
+        assert_eq!(
+            extract_reviewed_date(line).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap()
+        );
         // With explanation text
         let line2 = "- CTO @t[2020..] <!-- reviewed:2026-02-21 Not a conflict: advisory role -->";
-        assert_eq!(extract_reviewed_date(line2).unwrap(), chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap());
+        assert_eq!(
+            extract_reviewed_date(line2).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap()
+        );
         // No marker / invalid date
         assert!(extract_reviewed_date("- Some fact @t[~2026-02]").is_none());
         assert!(extract_reviewed_date("<!-- reviewed:2026-13-45 -->").is_none());
@@ -796,7 +820,10 @@ mod tests {
         );
         // Update existing
         assert_eq!(
-            add_or_update_reviewed_marker("- VP of Engineering @t[~2026-02] <!-- reviewed:2025-01-01 -->", &date),
+            add_or_update_reviewed_marker(
+                "- VP of Engineering @t[~2026-02] <!-- reviewed:2025-01-01 -->",
+                &date
+            ),
             "- VP of Engineering @t[~2026-02] <!-- reviewed:2026-02-15 -->"
         );
         // No existing tags
@@ -857,7 +884,11 @@ mod tests {
             "- I've revised the entry to correct the facts",
             "- Note: I've rephrased the document",
         ] {
-            assert!(META_COMMENTARY_REGEX.is_match(text), "Should match: {}", text);
+            assert!(
+                META_COMMENTARY_REGEX.is_match(text),
+                "Should match: {}",
+                text
+            );
         }
         // Negative cases: real facts
         for text in [
@@ -865,7 +896,11 @@ mod tests {
             "- Lives in San Francisco @t[~2024]",
             "- Notable for pioneering work in AI",
         ] {
-            assert!(!META_COMMENTARY_REGEX.is_match(text), "Should NOT match: {}", text);
+            assert!(
+                !META_COMMENTARY_REGEX.is_match(text),
+                "Should NOT match: {}",
+                text
+            );
         }
     }
 
@@ -924,7 +959,10 @@ mod tests {
     fn test_body_end_offset() {
         // With marker
         let c1 = "# Title\n\n- fact\n\n<!-- factbase:review -->\n- [ ] question";
-        assert_eq!(body_end_offset(c1), c1.find("<!-- factbase:review -->").unwrap());
+        assert_eq!(
+            body_end_offset(c1),
+            c1.find("<!-- factbase:review -->").unwrap()
+        );
         // With heading only
         let c2 = "# Title\n\n- fact\n\n## Review Queue\n\n- [ ] question";
         assert_eq!(body_end_offset(c2), c2.find("## Review Queue").unwrap());
@@ -936,10 +974,16 @@ mod tests {
         assert_eq!(body_end_offset(c4), c4.len());
         // Callout format — body ends at callout header
         let c5 = "# Title\n\n- fact\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] q\n";
-        assert_eq!(body_end_offset(c5), c5.find("> [!review]- Review Queue").unwrap());
+        assert_eq!(
+            body_end_offset(c5),
+            c5.find("> [!review]- Review Queue").unwrap()
+        );
         // Callout marker without header — body ends at start of marker line
         let c6 = "# Title\n\n- fact\n\n> <!-- factbase:review -->\n> - [ ] q\n";
-        assert_eq!(body_end_offset(c6), c6.find("> <!-- factbase:review -->").unwrap());
+        assert_eq!(
+            body_end_offset(c6),
+            c6.find("> <!-- factbase:review -->").unwrap()
+        );
     }
 
     #[test]
@@ -1126,7 +1170,10 @@ mod tests {
         assert!(!cleaned.contains("<!-- reviewed:"));
         assert!(cleaned.contains("- Fact one"));
         assert!(cleaned.contains("- Fact two"));
-        assert_eq!(latest, Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 20).unwrap()));
+        assert_eq!(
+            latest,
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 20).unwrap())
+        );
     }
 
     #[test]
@@ -1145,7 +1192,10 @@ mod tests {
         let (cleaned, latest) = convert_inline_reviewed_to_frontmatter(content);
         assert!(!cleaned.contains("<!-- reviewed:"));
         // Frontmatter date (March) is later than inline (Feb), so it wins
-        assert_eq!(latest, Some(chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap()));
+        assert_eq!(
+            latest,
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 3, 1).unwrap())
+        );
     }
 
     // --- Robustness / edge case tests ---
@@ -1200,17 +1250,23 @@ mod tests {
         assert!(DOC_ID_REGEX.is_match("abcdef"));
         assert!(DOC_ID_REGEX.is_match("000000"));
         assert!(DOC_ID_REGEX.is_match("ffffff"));
-        assert!(!DOC_ID_REGEX.is_match("abcde"));   // too short
+        assert!(!DOC_ID_REGEX.is_match("abcde")); // too short
         assert!(!DOC_ID_REGEX.is_match("abcdefg")); // too long
-        assert!(!DOC_ID_REGEX.is_match("ABCDEF"));  // uppercase
-        assert!(!DOC_ID_REGEX.is_match("abcdeg"));  // 'g' not hex
+        assert!(!DOC_ID_REGEX.is_match("ABCDEF")); // uppercase
+        assert!(!DOC_ID_REGEX.is_match("abcdeg")); // 'g' not hex
     }
 
     #[test]
     fn test_extract_heading_title_various() {
         assert_eq!(extract_heading_title("# Title"), Some("Title".into()));
-        assert_eq!(extract_heading_title("# Title\n\nContent"), Some("Title".into()));
-        assert_eq!(extract_heading_title("<!-- factbase:abc123 -->\n# Title"), Some("Title".into()));
+        assert_eq!(
+            extract_heading_title("# Title\n\nContent"),
+            Some("Title".into())
+        );
+        assert_eq!(
+            extract_heading_title("<!-- factbase:abc123 -->\n# Title"),
+            Some("Title".into())
+        );
         assert_eq!(extract_heading_title("No heading here"), None);
         assert_eq!(extract_heading_title(""), None);
     }
@@ -1225,12 +1281,16 @@ mod tests {
 
     #[test]
     fn test_has_corruption_artifacts_clean_doc() {
-        assert!(!has_corruption_artifacts("# Title\n\n- Normal fact @t[2024]\n"));
+        assert!(!has_corruption_artifacts(
+            "# Title\n\n- Normal fact @t[2024]\n"
+        ));
     }
 
     #[test]
     fn test_is_reference_doc_with_marker() {
-        assert!(is_reference_doc("<!-- factbase:reference -->\n# Glossary\n\nTerms here."));
+        assert!(is_reference_doc(
+            "<!-- factbase:reference -->\n# Glossary\n\nTerms here."
+        ));
         assert!(!is_reference_doc("# Normal Doc\n\nContent."));
     }
 

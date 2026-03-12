@@ -59,7 +59,6 @@ async fn test_concurrent_file_changes_and_mcp() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = Arc::new(format!("http://127.0.0.1:{}", port));
 
@@ -238,7 +237,6 @@ async fn test_scan_during_active_mcp_requests() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 
@@ -349,7 +347,6 @@ async fn test_mcp_writes_during_scan() {
         port,
         config.rate_limit.clone(),
         &config.embedding.base_url,
-        None,
     );
     let base_url = format!("http://127.0.0.1:{}", port);
 

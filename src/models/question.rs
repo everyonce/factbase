@@ -106,11 +106,7 @@ impl ReviewQuestion {
     }
 
     /// Create a new review question with confidence metadata.
-    pub fn with_confidence(
-        mut self,
-        confidence: &str,
-        reason: &str,
-    ) -> Self {
+    pub fn with_confidence(mut self, confidence: &str, reason: &str) -> Self {
         self.confidence = Some(confidence.to_string());
         self.confidence_reason = Some(reason.to_string());
         self

@@ -684,9 +684,6 @@ mod tests {
             )
             .expect("query table");
 
-        assert!(
-            table_exists,
-            "query_embedding_cache table should exist"
-        );
+        assert!(table_exists, "query_embedding_cache table should exist");
     }
 }

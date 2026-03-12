@@ -10,8 +10,14 @@ use std::path::Path;
 /// Load a schema description override from `.factbase/schema/<tool>.md`.
 fn load_schema_override(tool_name: &str, repo_path: Option<&Path>) -> Option<String> {
     let rp = repo_path?;
-    let path = rp.join(".factbase").join("schema").join(format!("{tool_name}.md"));
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    let path = rp
+        .join(".factbase")
+        .join("schema")
+        .join(format!("{tool_name}.md"));
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Returns the complete list of available MCP tools with their schemas.
@@ -41,14 +47,28 @@ pub fn tools_list() -> Value {
 pub fn legacy_tool_names() -> &'static [&'static str] {
     &[
         "search_knowledge",
-        "get_entity", "list_entities", "get_perspective",
-        "create_document", "update_document", "delete_document", "bulk_create_documents",
-        "get_review_queue", "get_deferred_items", "answer_questions",
-        "check_repository", "scan_repository", "detect_links",
+        "get_entity",
+        "list_entities",
+        "get_perspective",
+        "create_document",
+        "update_document",
+        "delete_document",
+        "bulk_create_documents",
+        "get_review_queue",
+        "get_deferred_items",
+        "answer_questions",
+        "check_repository",
+        "scan_repository",
+        "detect_links",
         "get_authoring_guide",
-        "organize_analyze", "organize",
-        "embeddings_export", "embeddings_import", "embeddings_status",
-        "get_link_suggestions", "store_links", "get_fact_pairs",
+        "organize_analyze",
+        "organize",
+        "embeddings_export",
+        "embeddings_import",
+        "embeddings_status",
+        "get_link_suggestions",
+        "store_links",
+        "get_fact_pairs",
     ]
 }
 
@@ -64,16 +84,29 @@ pub fn removed_op_messages() -> &'static [(&'static str, &'static str)] {
 /// Legacy tool names that were removed but return helpful errors.
 pub fn removed_legacy_tool_messages() -> &'static [(&'static str, &'static str)] {
     &[
-        ("list_repositories", "'list_repositories' removed. Use factbase(op='perspective') instead."),
-        ("init_repository", "'init_repository' removed. Repositories auto-initialize on first scan."),
-        ("search_content", "'search_content' removed. Use the 'search' tool with mode='content' instead."),
-        ("migrate_links", "'migrate_links' removed. Link migration is no longer needed."),
+        (
+            "list_repositories",
+            "'list_repositories' removed. Use factbase(op='perspective') instead.",
+        ),
+        (
+            "init_repository",
+            "'init_repository' removed. Repositories auto-initialize on first scan.",
+        ),
+        (
+            "search_content",
+            "'search_content' removed. Use the 'search' tool with mode='content' instead.",
+        ),
+        (
+            "migrate_links",
+            "'migrate_links' removed. Link migration is no longer needed.",
+        ),
     ]
 }
 
 fn search_schema(repo_path: Option<&Path>) -> Value {
     let default_desc = "Search the factbase. Returns entities with outgoing links.\nModes: semantic (default) or content (exact text/regex).\nFilters: doc_type, title_filter, as_of, during, exclude_unknown, boost_recent.";
-    let desc = load_schema_override("search", repo_path).unwrap_or_else(|| default_desc.to_string());
+    let desc =
+        load_schema_override("search", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
         "name": "search",
         "description": desc,
@@ -100,7 +133,8 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
     let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.";
-    let desc = load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
+    let desc =
+        load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
         "name": "workflow",
         "description": desc,
@@ -138,7 +172,8 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
 
 fn factbase_schema(repo_path: Option<&Path>) -> Value {
     let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)";
-    let desc = load_schema_override("factbase", repo_path).unwrap_or_else(|| default_desc.to_string());
+    let desc =
+        load_schema_override("factbase", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
         "name": "factbase",
         "description": desc,
@@ -226,7 +261,11 @@ mod tests {
     fn test_tools_list_has_three_tools() {
         let result = tools_list();
         let tools = result["tools"].as_array().expect("tools should be array");
-        assert_eq!(tools.len(), 3, "should have exactly 3 tools: search + workflow + factbase");
+        assert_eq!(
+            tools.len(),
+            3,
+            "should have exactly 3 tools: search + workflow + factbase"
+        );
 
         let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
         assert!(names.contains(&"search"));
@@ -263,11 +302,23 @@ mod tests {
         let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
 
         let expected = [
-            "get_entity", "list", "perspective",
-            "create", "update", "delete", "bulk_create",
-            "scan", "check", "detect_links",
-            "review_queue", "answer", "deferred",
-            "organize", "links", "fact_pairs", "embeddings",
+            "get_entity",
+            "list",
+            "perspective",
+            "create",
+            "update",
+            "delete",
+            "bulk_create",
+            "scan",
+            "check",
+            "detect_links",
+            "review_queue",
+            "answer",
+            "deferred",
+            "organize",
+            "links",
+            "fact_pairs",
+            "embeddings",
             "authoring_guide",
         ];
         for op in &expected {
@@ -283,8 +334,15 @@ mod tests {
         let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
         let desc = fb["description"].as_str().unwrap();
         let lines: Vec<&str> = desc.lines().collect();
-        assert!(lines.len() <= 15, "factbase description should be <=15 lines, got {}", lines.len());
-        assert!(desc.contains("op="), "factbase description should mention op=");
+        assert!(
+            lines.len() <= 15,
+            "factbase description should be <=15 lines, got {}",
+            lines.len()
+        );
+        assert!(
+            desc.contains("op="),
+            "factbase description should mention op="
+        );
     }
 
     #[test]
@@ -294,7 +352,11 @@ mod tests {
         let s = tools.iter().find(|t| t["name"] == "search").unwrap();
         let desc = s["description"].as_str().unwrap();
         let lines: Vec<&str> = desc.lines().collect();
-        assert!(lines.len() <= 15, "search description should be <=15 lines, got {}", lines.len());
+        assert!(
+            lines.len() <= 15,
+            "search description should be <=15 lines, got {}",
+            lines.len()
+        );
     }
 
     #[test]
@@ -305,7 +367,11 @@ mod tests {
             let name = tool["name"].as_str().unwrap();
             let desc = tool["description"].as_str().unwrap();
             let lines: Vec<&str> = desc.lines().collect();
-            assert!(lines.len() <= 15, "{name} description should be <=15 lines, got {}", lines.len());
+            assert!(
+                lines.len() <= 15,
+                "{name} description should be <=15 lines, got {}",
+                lines.len()
+            );
         }
     }
 
@@ -419,7 +485,11 @@ mod tests {
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
         let lines: Vec<&str> = desc.lines().collect();
-        assert!(lines.len() <= 15, "workflow description should be <=15 lines, got {}", lines.len());
+        assert!(
+            lines.len() <= 15,
+            "workflow description should be <=15 lines, got {}",
+            lines.len()
+        );
         assert!(desc.contains("create"));
         assert!(desc.contains("maintain"));
     }
@@ -455,7 +525,10 @@ mod tests {
         let result = tools_list_with_overrides(Some(dir.path()));
         let tools = result["tools"].as_array().unwrap();
         let search = tools.iter().find(|t| t["name"] == "search").unwrap();
-        assert_eq!(search["description"].as_str().unwrap(), "Custom search description");
+        assert_eq!(
+            search["description"].as_str().unwrap(),
+            "Custom search description"
+        );
     }
 
     #[test]
@@ -468,7 +541,10 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let search = tools.iter().find(|t| t["name"] == "search").unwrap();
         let desc = search["description"].as_str().unwrap();
-        assert!(desc.contains("Search the factbase"), "Empty file should fall back to default");
+        assert!(
+            desc.contains("Search the factbase"),
+            "Empty file should fall back to default"
+        );
     }
 
     #[test]
@@ -483,6 +559,9 @@ mod tests {
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         assert_eq!(wf["description"].as_str().unwrap(), "Custom workflow desc");
         let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
-        assert!(fb["description"].as_str().unwrap().contains("op="), "factbase should keep default");
+        assert!(
+            fb["description"].as_str().unwrap().contains("op="),
+            "factbase should keep default"
+        );
     }
 }

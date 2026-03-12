@@ -98,7 +98,9 @@ impl FormatConfig {
             inline_links: self.inline_links.unwrap_or(base.inline_links),
             id_placement: self.id_placement.unwrap_or(base.id_placement),
             review_callout: self.review_callout.unwrap_or(base.review_callout),
-            reviewed_in_frontmatter: self.reviewed_in_frontmatter.unwrap_or(base.reviewed_in_frontmatter),
+            reviewed_in_frontmatter: self
+                .reviewed_in_frontmatter
+                .unwrap_or(base.reviewed_in_frontmatter),
         }
     }
 }
@@ -163,7 +165,9 @@ const OBSIDIAN_GITIGNORE_ENTRIES: &[&str] = &[
 /// `.obsidian/snippets/factbase.css` and `.obsidian/app.json` to be tracked
 /// while keeping the rest of `.obsidian/` gitignored.
 /// Returns the list of entries that were added (empty if all already present).
-pub fn ensure_obsidian_gitignore(repo_root: &std::path::Path) -> std::io::Result<Vec<&'static str>> {
+pub fn ensure_obsidian_gitignore(
+    repo_root: &std::path::Path,
+) -> std::io::Result<Vec<&'static str>> {
     let path = repo_root.join(".gitignore");
     let existing = std::fs::read_to_string(&path).unwrap_or_default();
     let lines: std::collections::HashSet<&str> = existing.lines().map(|l| l.trim()).collect();
@@ -192,7 +196,6 @@ pub fn ensure_obsidian_gitignore(repo_root: &std::path::Path) -> std::io::Result
     }
     Ok(missing)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -313,7 +316,11 @@ mod tests {
     fn test_write_obsidian_css_snippet_creates_file() {
         let tmp = tempfile::TempDir::new().unwrap();
         write_obsidian_css_snippet(tmp.path()).unwrap();
-        let css_path = tmp.path().join(".obsidian").join("snippets").join("factbase.css");
+        let css_path = tmp
+            .path()
+            .join(".obsidian")
+            .join("snippets")
+            .join("factbase.css");
         assert!(css_path.exists());
         let content = std::fs::read_to_string(&css_path).unwrap();
         assert!(content.contains("[data-callout=\"review\"]"));
@@ -328,7 +335,11 @@ mod tests {
         std::fs::create_dir_all(&factbase_dir).unwrap();
         std::fs::write(factbase_dir.join("obsidian.css"), "/* custom override */").unwrap();
         write_obsidian_css_snippet(tmp.path()).unwrap();
-        let css_path = tmp.path().join(".obsidian").join("snippets").join("factbase.css");
+        let css_path = tmp
+            .path()
+            .join(".obsidian")
+            .join("snippets")
+            .join("factbase.css");
         let content = std::fs::read_to_string(&css_path).unwrap();
         assert_eq!(content, "/* custom override */");
         assert!(!content.contains("245, 158, 11")); // default not used
@@ -350,7 +361,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         write_obsidian_css_snippet(tmp.path()).unwrap();
         write_obsidian_css_snippet(tmp.path()).unwrap(); // second call should not error
-        let css_path = tmp.path().join(".obsidian").join("snippets").join("factbase.css");
+        let css_path = tmp
+            .path()
+            .join(".obsidian")
+            .join("snippets")
+            .join("factbase.css");
         assert!(css_path.exists());
     }
 

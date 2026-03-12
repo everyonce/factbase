@@ -12,7 +12,10 @@ use crate::processor::{
 };
 use serde_json::Value;
 
-use super::helpers::{get_str_arg, get_str_array_arg as get_str_array_arg_opt, get_u64_arg, resolve_repo_filter, run_blocking};
+use super::helpers::{
+    get_str_arg, get_str_array_arg as get_str_array_arg_opt, get_u64_arg, resolve_repo_filter,
+    run_blocking,
+};
 
 /// Parse a JSON string array argument, lowercasing values.
 fn get_str_array_arg_lower(args: &Value, key: &str) -> Vec<String> {
@@ -40,10 +43,7 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
     // Get all docs with link counts and types
     let db2 = db.clone();
     let repo2 = repo.clone();
-    let all_docs = run_blocking(move || {
-        db2.get_document_link_counts(repo2.as_deref())
-    })
-    .await?;
+    let all_docs = run_blocking(move || db2.get_document_link_counts(repo2.as_deref())).await?;
 
     // Build type lookup map
     let type_map: HashMap<String, String> = all_docs
@@ -62,10 +62,7 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
         let db3 = db.clone();
         let did = doc_id.clone();
         let threshold = min_similarity;
-        let similar = match run_blocking(move || {
-            db3.find_similar_documents(&did, threshold)
-        })
-        .await
+        let similar = match run_blocking(move || db3.find_similar_documents(&did, threshold)).await
         {
             Ok(s) => s,
             Err(_) => continue,
@@ -79,7 +76,11 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
         let db4 = db.clone();
         let did2 = doc_id.clone();
         let existing_links: HashSet<String> = run_blocking(move || {
-            Ok(db4.get_links_from(&did2)?.into_iter().map(|l| l.target_id).collect())
+            Ok(db4
+                .get_links_from(&did2)?
+                .into_iter()
+                .map(|l| l.target_id)
+                .collect())
         })
         .await?;
 
@@ -89,7 +90,10 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
                 if existing_links.contains(sid) {
                     return false;
                 }
-                let candidate_type = type_map.get(sid).map(|s| s.to_lowercase()).unwrap_or_default();
+                let candidate_type = type_map
+                    .get(sid)
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default();
                 if !include_types.is_empty() && !include_types.contains(&candidate_type) {
                     return false;
                 }
@@ -126,12 +130,17 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
     let avg_similarity = if suggestions.is_empty() {
         0.0
     } else {
-        let total_sim: f64 = suggestions.iter().filter_map(|s| {
-            s.get("candidates").and_then(|c| c.as_array()).map(|arr| {
-                arr.iter().filter_map(|c| c.get("similarity").and_then(|v| v.as_f64())).sum::<f64>()
-                    / arr.len().max(1) as f64
+        let total_sim: f64 = suggestions
+            .iter()
+            .filter_map(|s| {
+                s.get("candidates").and_then(|c| c.as_array()).map(|arr| {
+                    arr.iter()
+                        .filter_map(|c| c.get("similarity").and_then(|v| v.as_f64()))
+                        .sum::<f64>()
+                        / arr.len().max(1) as f64
+                })
             })
-        }).sum();
+            .sum();
         ((total_sim / suggestions.len() as f64) * 1000.0).round() / 1000.0
     };
 
@@ -352,9 +361,8 @@ pub fn migrate_repo_links(db: &Database, args: &Value) -> Result<Value, Factbase
         }
 
         let content = std::fs::read_to_string(&file_path)?;
-        let updated = crate::processor::migrate_links(&content, style, |id| {
-            doc_map.get(id).cloned()
-        });
+        let updated =
+            crate::processor::migrate_links(&content, style, |id| doc_map.get(id).cloned());
 
         if updated != content {
             std::fs::write(&file_path, &updated)?;
@@ -522,7 +530,11 @@ mod tests {
         let src_path = tmp_dir.path().join("doc1.md");
         let tgt_path = tmp_dir.path().join("target.md");
         std::fs::write(&src_path, "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.").unwrap();
-        std::fs::write(&tgt_path, "<!-- factbase:abc123 -->\n# Target Doc\n\nContent.").unwrap();
+        std::fs::write(
+            &tgt_path,
+            "<!-- factbase:abc123 -->\n# Target Doc\n\nContent.",
+        )
+        .unwrap();
 
         let mut doc = test_doc("doc001", "Doc 1");
         doc.file_path = src_path.to_string_lossy().to_string();
@@ -611,8 +623,14 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
         let props = fb["inputSchema"]["properties"].as_object().unwrap();
-        assert!(props.contains_key("include_types"), "should have include_types");
-        assert!(props.contains_key("exclude_types"), "should have exclude_types");
+        assert!(
+            props.contains_key("include_types"),
+            "should have include_types"
+        );
+        assert!(
+            props.contains_key("exclude_types"),
+            "should have exclude_types"
+        );
     }
 
     #[test]
@@ -623,13 +641,19 @@ mod tests {
         let args = serde_json::json!({"workflow": "ingest", "step": 5, "topic": "test"});
         let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("factbase(op='links')"), "ingest step 5 should mention factbase(op='links')");
-        assert!(result["complete"].as_bool().unwrap_or(false), "ingest step 5 should be complete");
+        assert!(
+            instr.contains("factbase(op='links')"),
+            "ingest step 5 should mention factbase(op='links')"
+        );
+        assert!(
+            result["complete"].as_bool().unwrap_or(false),
+            "ingest step 5 should be complete"
+        );
     }
 
     fn test_repo_wikilink(path: &std::path::Path) -> crate::models::Repository {
-        use crate::models::Perspective;
         use crate::models::format::FormatConfig;
+        use crate::models::Perspective;
         crate::models::Repository {
             id: "test-repo".to_string(),
             name: "Test Repo".to_string(),
@@ -735,8 +759,14 @@ mod tests {
         assert_eq!(result["added"], 2);
 
         let content = std::fs::read_to_string(&src_path).unwrap();
-        assert!(content.contains("[[people/joshua|Joshua]]"), "Should have people path: {content}");
-        assert!(content.contains("[[books/joshua|Joshua]]"), "Should have books path: {content}");
+        assert!(
+            content.contains("[[people/joshua|Joshua]]"),
+            "Should have people path: {content}"
+        );
+        assert!(
+            content.contains("[[books/joshua|Joshua]]"),
+            "Should have books path: {content}"
+        );
     }
 
     #[test]

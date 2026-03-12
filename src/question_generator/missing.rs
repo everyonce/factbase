@@ -7,7 +7,9 @@ use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::output::truncate_str;
-use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, SOURCE_REF_DETECT_REGEX};
+use crate::patterns::{
+    extract_frontmatter_reviewed_date, extract_reviewed_date, SOURCE_REF_DETECT_REGEX,
+};
 use crate::processor::{parse_source_definitions, parse_source_references};
 
 use super::iter_fact_lines;
@@ -230,8 +232,7 @@ mod tests {
 
     #[test]
     fn test_source_quality_vague_slack() {
-        let content =
-            "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Slack message";
+        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Slack message";
         let questions = generate_source_quality_questions(content);
         assert_eq!(questions.len(), 1);
         assert!(questions[0].description.contains("lacks traceability"));
@@ -282,7 +283,8 @@ mod tests {
 
     #[test]
     fn test_source_quality_author_knowledge_ok() {
-        let content = "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Author knowledge, see [[a1b2c3]]";
+        let content =
+            "# Person\n\n- Works at Acme [^1]\n\n---\n[^1]: Author knowledge, see [[a1b2c3]]";
         let questions = generate_source_quality_questions(content);
         assert!(questions.is_empty());
     }

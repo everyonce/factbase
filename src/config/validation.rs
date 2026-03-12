@@ -71,22 +71,34 @@ mod tests {
     #[test]
     fn test_require_non_empty() {
         assert!(require_non_empty("hello", "field").is_ok());
-        assert!(require_non_empty("", "my.field").unwrap_err().to_string().contains("must not be empty"));
+        assert!(require_non_empty("", "my.field")
+            .unwrap_err()
+            .to_string()
+            .contains("must not be empty"));
     }
 
     #[test]
     fn test_require_positive() {
         assert!(require_positive(1, "field").is_ok());
-        assert!(require_positive(0, "my.field").unwrap_err().to_string().contains("must be greater than 0"));
+        assert!(require_positive(0, "my.field")
+            .unwrap_err()
+            .to_string()
+            .contains("must be greater than 0"));
     }
 
     #[test]
     fn test_require_range() {
-        assert!(require_range(1, 1, 10, "field").is_ok());   // at min
-        assert!(require_range(5, 1, 10, "field").is_ok());   // middle
-        assert!(require_range(10, 1, 10, "field").is_ok());  // at max
-        assert!(require_range(0, 1, 10, "my.field").unwrap_err().to_string().contains("must be between 1 and 10"));
-        assert!(require_range(11, 1, 10, "my.field").unwrap_err().to_string().contains("must be between 1 and 10"));
+        assert!(require_range(1, 1, 10, "field").is_ok()); // at min
+        assert!(require_range(5, 1, 10, "field").is_ok()); // middle
+        assert!(require_range(10, 1, 10, "field").is_ok()); // at max
+        assert!(require_range(0, 1, 10, "my.field")
+            .unwrap_err()
+            .to_string()
+            .contains("must be between 1 and 10"));
+        assert!(require_range(11, 1, 10, "my.field")
+            .unwrap_err()
+            .to_string()
+            .contains("must be between 1 and 10"));
         // f64
         assert!(require_range(0.5, 0.0, 1.0, "field").is_ok());
         assert!(require_range(-0.1, 0.0, 1.0, "field").is_err());

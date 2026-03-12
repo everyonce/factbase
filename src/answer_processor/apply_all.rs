@@ -7,12 +7,12 @@ use crate::error::FactbaseError;
 use crate::models::QuestionType;
 use crate::organize::fs_helpers::write_file;
 use crate::processor::{content_hash, normalize_review_section, parse_review_queue};
-use crate::progress::ProgressReporter;use crate::{
+use crate::progress::ProgressReporter;
+use crate::{
     apply_changes_to_section, apply_confirmations, apply_source_citations, dedup_titles,
     identify_affected_section, interpret_answer, remove_processed_questions, replace_section,
-    stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers,
-    stamp_sequential_by_text, stamp_sequential_lines, uncheck_deferred_questions,
-    InterpretedAnswer,
+    stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
+    stamp_sequential_lines, uncheck_deferred_questions, InterpretedAnswer,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -244,7 +244,10 @@ pub async fn apply_all_review_answers(
         match apply_result {
             Ok(Ok((applied, new_content))) => {
                 // Strip reviewed markers that are now redundant due to glossary coverage
-                let new_content = if !config.dry_run && !new_content.is_empty() && !glossary_terms.is_empty() {
+                let new_content = if !config.dry_run
+                    && !new_content.is_empty()
+                    && !glossary_terms.is_empty()
+                {
                     crate::processor::strip_glossary_reviewed_markers(&new_content, &glossary_terms)
                 } else {
                     new_content
@@ -358,7 +361,14 @@ async fn apply_one_document(
     });
 
     if dry_run {
-        return Ok((if has_active_changes { review_questions.len() } else { 0 }, String::new()));
+        return Ok((
+            if has_active_changes {
+                review_questions.len()
+            } else {
+                0
+            },
+            String::new(),
+        ));
     }
 
     let today = chrono::Local::now().date_naive();
@@ -392,9 +402,10 @@ async fn apply_one_document(
             let source_pairs: Vec<(&str, &str)> = deterministic
                 .iter()
                 .filter_map(|ia| match &ia.instruction {
-                    crate::ChangeInstruction::AddSource { line_text, source_info } => {
-                        Some((line_text.as_str(), source_info.as_str()))
-                    }
+                    crate::ChangeInstruction::AddSource {
+                        line_text,
+                        source_info,
+                    } => Some((line_text.as_str(), source_info.as_str())),
                     _ => None,
                 })
                 .collect();
@@ -403,9 +414,11 @@ async fn apply_one_document(
             let temporal_updates: Vec<(&str, Option<&str>, &str)> = deterministic
                 .iter()
                 .filter_map(|ia| match &ia.instruction {
-                    crate::ChangeInstruction::UpdateTemporal { line_text, old_tag, new_tag } => {
-                        Some((line_text.as_str(), Some(old_tag.as_str()), new_tag.as_str()))
-                    }
+                    crate::ChangeInstruction::UpdateTemporal {
+                        line_text,
+                        old_tag,
+                        new_tag,
+                    } => Some((line_text.as_str(), Some(old_tag.as_str()), new_tag.as_str())),
                     crate::ChangeInstruction::AddTemporal { line_text, tag } => {
                         Some((line_text.as_str(), None, tag.as_str()))
                     }
@@ -426,22 +439,29 @@ async fn apply_one_document(
                 }
             }
 
-            let det_line_refs: Vec<usize> =
-                deterministic.iter().filter_map(|ia| ia.question.line_ref).collect();
+            let det_line_refs: Vec<usize> = deterministic
+                .iter()
+                .filter_map(|ia| ia.question.line_ref)
+                .collect();
             new_content = stamp_reviewed_lines(&new_content, &det_line_refs, &today);
         }
 
         // Apply LLM-dependent instructions
-        let needs_llm: Vec<_> = active.iter().copied().filter(|ia| !is_deterministic(ia)).collect();
+        let needs_llm: Vec<_> = active
+            .iter()
+            .copied()
+            .filter(|ia| !is_deterministic(ia))
+            .collect();
         if !needs_llm.is_empty() {
             let llm_questions: Vec<_> = needs_llm.iter().map(|ia| ia.question.clone()).collect();
             let Some((start, end, section)) =
                 identify_affected_section(&new_content, &llm_questions)
             else {
-                return Err(FactbaseError::internal("Could not identify affected section"));
+                return Err(FactbaseError::internal(
+                    "Could not identify affected section",
+                ));
             };
-            let llm_interpreted: Vec<InterpretedAnswer> =
-                needs_llm.into_iter().cloned().collect();
+            let llm_interpreted: Vec<InterpretedAnswer> = needs_llm.into_iter().cloned().collect();
             let new_section = apply_changes_to_section(&section, &llm_interpreted).await?;
             let new_section = stamp_reviewed_markers(&new_section, &today);
             new_content = replace_section(&new_content, start, end, &new_section);
@@ -513,7 +533,11 @@ async fn apply_one_document(
     }
 
     write_file(file_path, &new_content)?;
-    let applied = if has_active_changes { review_questions.len() } else { 0 };
+    let applied = if has_active_changes {
+        review_questions.len()
+    } else {
+        0
+    };
     Ok((applied, new_content))
 }
 
@@ -588,8 +612,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -607,8 +631,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -645,8 +669,8 @@ mod tests {
                 answered: true,
                 answer: Some("dismiss".to_string()),
                 line_number: 10,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
             instruction: crate::ChangeInstruction::Dismiss,
         };
@@ -727,15 +751,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("abc123"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -743,7 +766,11 @@ mod tests {
             .unwrap();
 
         // Should find the answered question from disk even though DB is stale
-        assert_eq!(result.documents.len(), 1, "Should process 1 document from disk");
+        assert_eq!(
+            result.documents.len(),
+            1,
+            "Should process 1 document from disk"
+        );
     }
 
     /// Reproduces the bug where review apply returns 0 when the disk
@@ -820,15 +847,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("abc123"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -837,7 +863,11 @@ mod tests {
 
         // Should have processed the document via DB fallback (dismiss returns 0 applied
         // but still processes the document — removes the question from the review queue)
-        assert_eq!(result.documents.len(), 1, "Should process 1 document via DB fallback");
+        assert_eq!(
+            result.documents.len(),
+            1,
+            "Should process 1 document via DB fallback"
+        );
 
         // Disk file should have been modified — the dismissed question should be removed
         let final_disk = std::fs::read_to_string(&doc_file).unwrap();
@@ -908,15 +938,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("abc123"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -982,15 +1011,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("abc123"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -1069,15 +1097,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("abc123"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -1159,15 +1186,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("543601"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("543601"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -1240,15 +1266,14 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-
         let config = ApplyConfig {
-                    doc_id_filter: Some("abc123"),
-                    repo_filter: None,
-                    dry_run: false,
-                    since: None,
-                    deadline: None,
-                    acquire_write_guard: false,
-                };
+            doc_id_filter: Some("abc123"),
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
         let progress = ProgressReporter::Silent;
 
         let result = apply_all_review_answers(&db, &config, &progress)
@@ -1257,7 +1282,11 @@ mod tests {
 
         // Should report an error instead of silently returning "no questions"
         assert_eq!(result.total_errors, 1, "Should report disk sync error");
-        assert_eq!(result.documents.len(), 1, "Should include error document in results");
+        assert_eq!(
+            result.documents.len(),
+            1,
+            "Should include error document in results"
+        );
         assert!(
             result.documents[0].error.is_some(),
             "Should include error message"
@@ -1326,7 +1355,6 @@ mod tests {
             is_deleted: false,
         };
         db.upsert_document(&doc).unwrap();
-
 
         let config = ApplyConfig {
             doc_id_filter: Some("aaa111"),

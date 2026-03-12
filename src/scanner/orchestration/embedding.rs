@@ -6,8 +6,8 @@ use std::fs;
 use std::mem;
 use std::time::Instant;
 
-use crate::{chunk_document, Database, Document, EmbeddingProvider};
 use crate::progress::ProgressReporter;
+use crate::{chunk_document, Database, Document, EmbeddingProvider};
 
 use super::{ChunkInfo, PendingDoc};
 use crate::scanner::progress::OptionalProgress;
@@ -160,11 +160,9 @@ pub async fn run_embedding_phase(
                 db_write_ms += db_start.elapsed().as_millis() as u64;
 
                 saved_doc_ids.insert(chunk_info.doc_idx, id);
-                input.progress.report(
-                    saved_doc_ids.len(),
-                    total_docs,
-                    "documents embedded",
-                );
+                input
+                    .progress
+                    .report(saved_doc_ids.len(), total_docs, "documents embedded");
                 saved_doc_ids
                     .get(&chunk_info.doc_idx)
                     .expect("just inserted")
@@ -222,11 +220,7 @@ mod tests {
         PendingDoc {
             id: id.into(),
             content: content.into(),
-            relative: path
-                .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned(),
+            relative: path.file_name().unwrap().to_string_lossy().into_owned(),
             hash: crate::processor::content_hash(content),
             title: format!("Title {id}"),
             doc_type: "document".into(),

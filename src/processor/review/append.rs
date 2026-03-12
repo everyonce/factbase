@@ -124,9 +124,7 @@ fn append_review_questions_inner(
                     .unwrap_or(result.len() - heading_pos);
             // Skip blank lines after heading
             let mut insert_at = after_heading;
-            while insert_at < result.len()
-                && result.as_bytes().get(insert_at) == Some(&b'\n')
-            {
+            while insert_at < result.len() && result.as_bytes().get(insert_at) == Some(&b'\n') {
                 insert_at += 1;
             }
             result.insert_str(insert_at, &format!("{}\n", REVIEW_QUEUE_MARKER));
@@ -147,10 +145,7 @@ fn append_review_questions_inner(
 
         // Collect existing question descriptions to skip duplicates
         let existing_qs = parse_review_queue(&result).unwrap_or_default();
-        let existing: HashSet<&str> = existing_qs
-            .iter()
-            .map(|q| q.description.as_str())
-            .collect();
+        let existing: HashSet<&str> = existing_qs.iter().map(|q| q.description.as_str()).collect();
 
         let mut questions_text = String::new();
 
@@ -210,10 +205,7 @@ pub fn ensure_review_section(content: &str, use_callout: bool) -> (String, bool)
             REVIEW_CALLOUT_HEADER, REVIEW_QUEUE_MARKER
         ));
     } else {
-        result.push_str(&format!(
-            "\n{}\n## Review Queue\n",
-            REVIEW_QUEUE_MARKER
-        ));
+        result.push_str(&format!("\n{}\n## Review Queue\n", REVIEW_QUEUE_MARKER));
     }
     (result, true)
 }
@@ -278,10 +270,22 @@ mod tests {
             confidence_reason: None,
         }];
         let result = append_review_questions(content, &questions, false);
-        let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
-        assert_eq!(heading_count, 1, "Should have exactly one ## Review Queue heading, got:\n{result}");
-        assert!(result.contains(REVIEW_QUEUE_MARKER), "Should contain marker");
-        assert!(result.contains("@q[temporal]"), "Should contain the question");
+        let heading_count = result
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
+        assert_eq!(
+            heading_count, 1,
+            "Should have exactly one ## Review Queue heading, got:\n{result}"
+        );
+        assert!(
+            result.contains(REVIEW_QUEUE_MARKER),
+            "Should contain marker"
+        );
+        assert!(
+            result.contains("@q[temporal]"),
+            "Should contain the question"
+        );
     }
 
     #[test]
@@ -298,7 +302,10 @@ mod tests {
             confidence_reason: None,
         }];
         let after_first = append_review_questions(content, &q1, false);
-        let heading_count = after_first.lines().filter(|l| l.trim() == "## Review Queue").count();
+        let heading_count = after_first
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
         assert_eq!(heading_count, 1, "First append: one heading");
 
         let q2 = vec![ReviewQuestion {
@@ -312,8 +319,14 @@ mod tests {
             confidence_reason: None,
         }];
         let after_second = append_review_questions(&after_first, &q2, false);
-        let heading_count = after_second.lines().filter(|l| l.trim() == "## Review Queue").count();
-        assert_eq!(heading_count, 1, "Second append: still one heading, got:\n{after_second}");
+        let heading_count = after_second
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
+        assert_eq!(
+            heading_count, 1,
+            "Second append: still one heading, got:\n{after_second}"
+        );
         let marker_count = after_second.matches(REVIEW_QUEUE_MARKER).count();
         assert_eq!(marker_count, 1, "Should have exactly one marker");
     }
@@ -325,12 +338,24 @@ mod tests {
                        ---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
                        - [ ] `@q[missing]` question two\n  > \n";
         let result = merge_duplicate_review_sections(content);
-        let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
-        assert_eq!(heading_count, 1, "Should merge to one heading, got:\n{result}");
+        let heading_count = result
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
+        assert_eq!(
+            heading_count, 1,
+            "Should merge to one heading, got:\n{result}"
+        );
         let marker_count = result.matches(REVIEW_QUEUE_MARKER).count();
         assert_eq!(marker_count, 1, "Should have one marker");
-        assert!(result.contains("question one"), "Should preserve first question");
-        assert!(result.contains("question two"), "Should preserve second question");
+        assert!(
+            result.contains("question one"),
+            "Should preserve first question"
+        );
+        assert!(
+            result.contains("question two"),
+            "Should preserve second question"
+        );
     }
 
     #[test]
@@ -343,11 +368,18 @@ mod tests {
 
     #[test]
     fn test_merge_duplicate_headings_without_markers() {
-        let content = "# Doc\n\n- Fact\n\n## Review Queue\n\n## Review Queue\n\n<!-- factbase:review -->\n\
+        let content =
+            "# Doc\n\n- Fact\n\n## Review Queue\n\n## Review Queue\n\n<!-- factbase:review -->\n\
                        - [ ] `@q[temporal]` question\n  > \n";
         let result = merge_duplicate_review_sections(content);
-        let heading_count = result.lines().filter(|l| l.trim() == "## Review Queue").count();
-        assert_eq!(heading_count, 1, "Should merge duplicate headings, got:\n{result}");
+        let heading_count = result
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
+        assert_eq!(
+            heading_count, 1,
+            "Should merge duplicate headings, got:\n{result}"
+        );
     }
 
     #[test]
@@ -440,7 +472,10 @@ mod tests {
         let db = "# Doc\n\nSome content\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         let (result, changed) = recover_review_section(disk, db);
         assert!(changed);
-        assert!(result.contains("> [!review]- Review Queue"), "should preserve callout format from DB");
+        assert!(
+            result.contains("> [!review]- Review Queue"),
+            "should preserve callout format from DB"
+        );
         assert!(result.contains("> <!-- factbase:review -->"));
         assert!(result.contains("When?"));
     }

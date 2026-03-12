@@ -88,7 +88,10 @@ pub async fn plan_split(
                     &fact.id,
                     FactDestination::Document,
                     Some(format!("section_{idx}")),
-                    Some(format!("line {} in section \"{}\"", fact.source_line, section.title)),
+                    Some(format!(
+                        "line {} in section \"{}\"",
+                        fact.source_line, section.title
+                    )),
                 );
                 assigned = true;
                 break;

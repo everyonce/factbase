@@ -93,7 +93,10 @@ impl WorkflowsConfig {
             if path.extension().and_then(|e| e.to_str()) != Some("toml") {
                 continue;
             }
-            let workflow_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            let workflow_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
             if workflow_name.is_empty() {
                 continue;
             }
@@ -113,15 +116,18 @@ impl WorkflowsConfig {
             };
             for (step_name, value) in &table {
                 if let Some(text) = value.as_str() {
-                    config.templates.insert(
-                        format!("{workflow_name}.{step_name}"),
-                        text.to_string(),
-                    );
+                    config
+                        .templates
+                        .insert(format!("{workflow_name}.{step_name}"), text.to_string());
                     found_any = true;
                 }
             }
         }
-        if found_any { Some(config) } else { None }
+        if found_any {
+            Some(config)
+        } else {
+            None
+        }
     }
 }
 
@@ -183,7 +189,10 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("improve.check", &["doc_hint", "compare_note"]),
         ("correct.parse", &["correction", "source_note"]),
         ("correct.search", &["correction"]),
-        ("correct.fix", &["correction", "source_note", "source_footnote", "today"]),
+        (
+            "correct.fix",
+            &["correction", "source_note", "source_footnote", "today"],
+        ),
         ("correct.cleanup", &["correction", "source"]),
     ])
 }
@@ -239,15 +248,27 @@ mod tests {
     #[test]
     fn test_resolve_workflow_text_uses_default() {
         let config = WorkflowsConfig::default();
-        let result = resolve_workflow_text(&config, "improve.cleanup", "Default {ctx}", &[("ctx", "here")]);
+        let result = resolve_workflow_text(
+            &config,
+            "improve.cleanup",
+            "Default {ctx}",
+            &[("ctx", "here")],
+        );
         assert_eq!(result, "Default here");
     }
 
     #[test]
     fn test_resolve_workflow_text_uses_override() {
         let mut config = WorkflowsConfig::default();
-        config.templates.insert("improve.cleanup".into(), "Custom: {ctx}".into());
-        let result = resolve_workflow_text(&config, "improve.cleanup", "Default {ctx}", &[("ctx", "here")]);
+        config
+            .templates
+            .insert("improve.cleanup".into(), "Custom: {ctx}".into());
+        let result = resolve_workflow_text(
+            &config,
+            "improve.cleanup",
+            "Default {ctx}",
+            &[("ctx", "here")],
+        );
         assert_eq!(result, "Custom: here");
     }
 
@@ -261,21 +282,27 @@ mod tests {
     #[test]
     fn test_validate_workflows_warns_unknown_key() {
         let mut config = WorkflowsConfig::default();
-        config.templates.insert("nonexistent.step".into(), "template".into());
+        config
+            .templates
+            .insert("nonexistent.step".into(), "template".into());
         validate_workflows(&config); // should not panic, just warn
     }
 
     #[test]
     fn test_validate_workflows_warns_unknown_placeholder() {
         let mut config = WorkflowsConfig::default();
-        config.templates.insert("improve.cleanup".into(), "{doc_hint} {unknown_var}".into());
+        config
+            .templates
+            .insert("improve.cleanup".into(), "{doc_hint} {unknown_var}".into());
         validate_workflows(&config); // should not panic, just warn
     }
 
     #[test]
     fn test_validate_workflows_ok_for_valid() {
         let mut config = WorkflowsConfig::default();
-        config.templates.insert("improve.cleanup".into(), "Fix {doc_hint} with {ctx}".into());
+        config
+            .templates
+            .insert("improve.cleanup".into(), "Fix {doc_hint} with {ctx}".into());
         validate_workflows(&config); // no warnings
     }
 
@@ -320,11 +347,15 @@ workflows:
     #[test]
     fn test_merge_templates_override() {
         let mut base = WorkflowsConfig::default();
-        base.templates.insert("resolve.answer".into(), "base answer".into());
-        base.templates.insert("resolve.queue".into(), "base queue".into());
+        base.templates
+            .insert("resolve.answer".into(), "base answer".into());
+        base.templates
+            .insert("resolve.queue".into(), "base queue".into());
 
         let mut overlay = WorkflowsConfig::default();
-        overlay.templates.insert("resolve.answer".into(), "custom answer".into());
+        overlay
+            .templates
+            .insert("resolve.answer".into(), "custom answer".into());
 
         base.merge(&overlay);
         assert_eq!(base.templates["resolve.answer"], "custom answer");
@@ -374,7 +405,10 @@ workflows:
   resolve.answer: "Custom {ctx}"
 "#;
         let config: crate::Config = serde_yaml_ng::from_str(yaml).unwrap();
-        assert_eq!(config.workflows.resolve_variant.as_deref(), Some("research_batch"));
+        assert_eq!(
+            config.workflows.resolve_variant.as_deref(),
+            Some("research_batch")
+        );
         assert_eq!(config.workflows.templates.len(), 1);
     }
 
@@ -392,7 +426,8 @@ workflows:
         std::fs::write(
             factbase_dir.join("prompts.yaml"),
             "resolve_variant: type_evidence\nresolve.answer: \"Custom answer\"\n",
-        ).unwrap();
+        )
+        .unwrap();
         let config = WorkflowsConfig::load_repo_prompts(dir.path()).unwrap();
         assert_eq!(config.resolve_variant.as_deref(), Some("type_evidence"));
         assert_eq!(config.templates["resolve.answer"], "Custom answer");
@@ -492,7 +527,8 @@ workflows:
             r#"scan = "Custom scan instruction"
 check = "Custom check {ctx}"
 "#,
-        ).unwrap();
+        )
+        .unwrap();
         let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
         assert_eq!(config.templates["maintain.scan"], "Custom scan instruction");
         assert_eq!(config.templates["maintain.check"], "Custom check {ctx}");
@@ -541,7 +577,8 @@ check = "Custom check {ctx}"
         std::fs::write(
             instr_dir.join("improve.toml"),
             "cleanup = \"\"\"\nLine 1\nLine 2\nLine 3\n\"\"\"",
-        ).unwrap();
+        )
+        .unwrap();
         let config = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
         assert!(config.templates["improve.cleanup"].contains("Line 1"));
         assert!(config.templates["improve.cleanup"].contains("Line 3"));
@@ -561,7 +598,9 @@ check = "Custom check {ctx}"
         wf_config.merge(&toml_overrides);
         // Merge config.yaml (higher priority)
         let mut yaml_config = WorkflowsConfig::default();
-        yaml_config.templates.insert("maintain.scan".into(), "from yaml".into());
+        yaml_config
+            .templates
+            .insert("maintain.scan".into(), "from yaml".into());
         wf_config.merge(&yaml_config);
 
         assert_eq!(wf_config.templates["maintain.scan"], "from yaml");
@@ -581,13 +620,22 @@ check = "Custom check {ctx}"
         let dir = tempfile::tempdir().unwrap();
         let instr_dir = dir.path().join(".factbase/instructions");
         std::fs::create_dir_all(&instr_dir).unwrap();
-        std::fs::write(instr_dir.join("maintain.toml"), "scan = \"from toml {ctx}\"").unwrap();
+        std::fs::write(
+            instr_dir.join("maintain.toml"),
+            "scan = \"from toml {ctx}\"",
+        )
+        .unwrap();
 
         let mut wf_config = WorkflowsConfig::default();
         let toml_overrides = WorkflowsConfig::load_instruction_files(dir.path()).unwrap();
         wf_config.merge(&toml_overrides);
 
-        let result = resolve_workflow_text(&wf_config, "maintain.scan", "compiled default", &[("ctx", "here")]);
+        let result = resolve_workflow_text(
+            &wf_config,
+            "maintain.scan",
+            "compiled default",
+            &[("ctx", "here")],
+        );
         assert_eq!(result, "from toml here");
     }
 

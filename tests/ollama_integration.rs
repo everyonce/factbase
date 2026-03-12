@@ -10,7 +10,7 @@ use factbase::{
     cosine_similarity,
     database::Database,
     embedding::OllamaEmbedding,
-    llm::{LinkDetector, OllamaLlm},
+    LinkDetector,
     models::Document,
     processor::DocumentProcessor,
     scanner::Scanner,
@@ -156,8 +156,7 @@ async fn test_llm_link_detection() {
     let detector = LinkDetector::new();
 
     let content = "# Meeting Notes\nDiscussed the Widget Project with Alice Smith.";
-    let links = detector
-        .detect_links(content, "source1", &known_entities);
+    let links = detector.detect_links(content, "source1", &known_entities);
 
     println!("Detected links: {:?}", links);
 
@@ -738,8 +737,7 @@ async fn test_link_detection_scale() {
     let content = "# Test Document\n\nThis document mentions Entity Number 5 and Entity Number 15. It also references Entity Number 25.";
 
     let start = std::time::Instant::now();
-    let links = detector
-        .detect_links(content, "source", &known_entities);
+    let links = detector.detect_links(content, "source", &known_entities);
     let elapsed = start.elapsed();
 
     println!("Link detection with 30 entities: {:?}", elapsed);
@@ -799,11 +797,10 @@ async fn test_merge_planning() {
     db.upsert_document(&doc2).expect("upsert doc2");
 
     // Create LLM provider
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
 
     // Plan the merge
     let start = std::time::Instant::now();
-    let plan = plan_merge("doc1", &["doc2"], &db, &llm).await;
+    let plan = plan_merge("doc1", &["doc2"], &db).await;
     let elapsed = start.elapsed();
 
     println!("Merge planning took: {:?}", elapsed);
@@ -1049,11 +1046,10 @@ async fn test_split_planning() {
     );
 
     // Create LLM provider
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
 
     // Plan the split
     let start = std::time::Instant::now();
-    let plan = plan_split("split_me", &valid_sections, &db, &llm).await;
+    let plan = plan_split("split_me", &valid_sections, &db).await;
     let elapsed = start.elapsed();
 
     println!("Split planning took: {:?}", elapsed);
@@ -1152,8 +1148,7 @@ async fn test_split_execution() {
     );
 
     // Create LLM provider and plan the split
-    let llm = OllamaLlm::new(&config.llm.base_url, &config.llm.model);
-    let plan = plan_split("split_me", &valid_sections, &db, &llm)
+    let plan = plan_split("split_me", &valid_sections, &db)
         .await
         .expect("plan should succeed");
 

@@ -103,9 +103,7 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
 /// to document edits or pattern classification changes.
 pub fn normalize_conflict_desc(desc: &str) -> &str {
     // Strip trailing [pattern:...] tag first
-    let desc = desc
-        .rfind(" [pattern:")
-        .map_or(desc, |idx| &desc[..idx]);
+    let desc = desc.rfind(" [pattern:").map_or(desc, |idx| &desc[..idx]);
     // Then strip (line:N)
     if let Some(idx) = desc.rfind(" (line:") {
         if desc[idx..].ends_with(')') {
@@ -439,7 +437,9 @@ Line 3
     #[test]
     fn test_normalize_conflict_desc_pattern_tag_without_line_ref() {
         assert_eq!(
-            normalize_conflict_desc("\"Role A\" overlaps with \"Role B\" [pattern:same_entity_transition]"),
+            normalize_conflict_desc(
+                "\"Role A\" overlaps with \"Role B\" [pattern:same_entity_transition]"
+            ),
             "\"Role A\" overlaps with \"Role B\""
         );
     }

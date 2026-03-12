@@ -61,7 +61,10 @@ fn resolve_repo_format(repo: &crate::models::Repository) -> crate::models::Resol
 fn merge_frontmatter_fields(base: &mut Vec<String>, overrides: &[String]) {
     for new_line in overrides {
         let new_key = new_line.split(':').next().unwrap_or("").trim();
-        if let Some(pos) = base.iter().position(|l| l.split(':').next().unwrap_or("").trim() == new_key) {
+        if let Some(pos) = base
+            .iter()
+            .position(|l| l.split(':').next().unwrap_or("").trim() == new_key)
+        {
             base[pos] = new_line.clone();
         } else {
             base.push(new_line.clone());
@@ -156,12 +159,13 @@ fn strip_leading_title<'a>(content: &'a str, title: &str) -> &'a str {
         if first_line.eq_ignore_ascii_case(title.trim()) {
             let after_title = &rest[first_line_end..];
             // Skip leading blank lines after the stripped title
-            return after_title.trim_start_matches('\n').trim_start_matches('\r');
+            return after_title
+                .trim_start_matches('\n')
+                .trim_start_matches('\r');
         }
     }
     content
 }
-
 
 /// Creates a new document in a repository.
 ///
@@ -203,8 +207,8 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
 
     // Build document content with header and title using format config
     let resolved_format = resolve_repo_format(&repo);
-    let doc_type = crate::processor::DocumentProcessor::new()
-        .derive_type(&repo.path.join(&path), &repo.path);
+    let doc_type =
+        crate::processor::DocumentProcessor::new().derive_type(&repo.path.join(&path), &repo.path);
     let mut extra: Vec<String> = Vec::new();
     if resolved_format.frontmatter {
         let rel_path = std::path::Path::new(&path);
@@ -278,7 +282,8 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let suggested_rename = get_str_arg(args, "suggested_rename");
     let suggested_title = get_str_arg(args, "suggested_title");
 
-    let has_suggestions = suggested_move.is_some() || suggested_rename.is_some() || suggested_title.is_some();
+    let has_suggestions =
+        suggested_move.is_some() || suggested_rename.is_some() || suggested_title.is_some();
     let has_content_update = new_title.is_some() || new_content.is_some();
 
     if !has_content_update && !has_suggestions {
@@ -350,8 +355,8 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         let doc_content = {
             let repo = db.require_repository(&doc.repo_id)?;
             let resolved_format = resolve_repo_format(&repo);
-            let doc_type = crate::processor::DocumentProcessor::new()
-                .derive_type(&file_path, &repo.path);
+            let doc_type =
+                crate::processor::DocumentProcessor::new().derive_type(&file_path, &repo.path);
             let mut extra = crate::processor::extract_extra_frontmatter(&doc.content);
             if new_content.is_some() {
                 let new_extra = crate::processor::extract_extra_frontmatter(content);
@@ -725,10 +730,7 @@ mod tests {
     #[test]
     fn test_strip_factbase_header_preserves_later_h1() {
         let content = "<!-- factbase:a1cb2b -->\n# Title\n\n## Section\n# Another H1";
-        assert_eq!(
-            strip_factbase_header(content),
-            "## Section\n# Another H1"
-        );
+        assert_eq!(strip_factbase_header(content), "## Section\n# Another H1");
     }
 
     #[test]
@@ -794,8 +796,14 @@ mod tests {
         assert_eq!(result["title"], "Old Title");
 
         let on_disk = fs::read_to_string(&file).unwrap();
-        assert!(on_disk.contains("New body here"), "file should have new body: {on_disk}");
-        assert!(on_disk.contains("# Old Title"), "title preserved when not in content");
+        assert!(
+            on_disk.contains("New body here"),
+            "file should have new body: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("# Old Title"),
+            "title preserved when not in content"
+        );
     }
 
     #[test]
@@ -840,9 +848,18 @@ mod tests {
         assert_eq!(result["title"], "Fixed Title");
 
         let on_disk = fs::read_to_string(&file).unwrap();
-        assert!(on_disk.contains("# Fixed Title"), "title should be extracted from content: {on_disk}");
-        assert!(on_disk.contains("Cleaned body"), "body should be updated: {on_disk}");
-        assert!(!on_disk.contains("Old body"), "old body should be gone: {on_disk}");
+        assert!(
+            on_disk.contains("# Fixed Title"),
+            "title should be extracted from content: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("Cleaned body"),
+            "body should be updated: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("Old body"),
+            "old body should be gone: {on_disk}"
+        );
     }
 
     #[test]
@@ -888,7 +905,10 @@ mod tests {
         assert_eq!(result["title"], "Explicit Title");
 
         let on_disk = fs::read_to_string(&file).unwrap();
-        assert!(on_disk.contains("# Explicit Title"), "explicit title wins: {on_disk}");
+        assert!(
+            on_disk.contains("# Explicit Title"),
+            "explicit title wins: {on_disk}"
+        );
     }
 
     #[test]
@@ -928,7 +948,10 @@ mod tests {
         update_document(&db, &args).unwrap();
 
         let updated = db.get_document("abc123").unwrap().unwrap();
-        assert!(updated.content.contains("New content"), "DB should have new content");
+        assert!(
+            updated.content.contains("New content"),
+            "DB should have new content"
+        );
     }
 
     #[test]
@@ -971,7 +994,10 @@ mod tests {
 
         let on_disk = fs::read_to_string(&file).unwrap();
         assert!(on_disk.contains("Updated facts here"), "new body present");
-        assert!(on_disk.contains("## Review Queue"), "review queue preserved");
+        assert!(
+            on_disk.contains("## Review Queue"),
+            "review queue preserved"
+        );
         assert!(on_disk.contains("@q[temporal]"), "question preserved");
     }
 
@@ -1018,7 +1044,10 @@ mod tests {
 
         let on_disk = fs::read_to_string(&file).unwrap();
         assert!(on_disk.contains("@q[missing]"), "new queue used: {on_disk}");
-        assert!(!on_disk.contains("@q[temporal]"), "old queue not preserved: {on_disk}");
+        assert!(
+            !on_disk.contains("@q[temporal]"),
+            "old queue not preserved: {on_disk}"
+        );
     }
 
     #[test]
@@ -1061,7 +1090,10 @@ mod tests {
 
         let on_disk = fs::read_to_string(&file).unwrap();
         assert!(on_disk.contains("Updated facts"), "body updated");
-        assert!(!on_disk.contains("Review Queue"), "no queue injected: {on_disk}");
+        assert!(
+            !on_disk.contains("Review Queue"),
+            "no queue injected: {on_disk}"
+        );
     }
 
     #[test]
@@ -1091,7 +1123,10 @@ mod tests {
         });
         let result = create_document(&db, &args).unwrap();
         assert!(result.get("warning").is_some());
-        assert!(result["warning"].as_str().unwrap().contains("0/2 facts have temporal tags"));
+        assert!(result["warning"]
+            .as_str()
+            .unwrap()
+            .contains("0/2 facts have temporal tags"));
     }
 
     #[test]
@@ -1248,8 +1283,14 @@ mod tests {
         let on_disk = fs::read_to_string(&file).unwrap();
         // First expansion kept, subsequent stripped
         assert!(on_disk.contains("DR (Disaster Recovery) plan"), "{on_disk}");
-        assert!(on_disk.contains("- DR site"), "second should be stripped: {on_disk}");
-        assert!(on_disk.contains("- DR budget"), "third should be stripped: {on_disk}");
+        assert!(
+            on_disk.contains("- DR site"),
+            "second should be stripped: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("- DR budget"),
+            "third should be stripped: {on_disk}"
+        );
     }
 
     #[test]
@@ -1278,7 +1319,8 @@ mod tests {
             file_path: "glossary.md".into(),
             title: "Glossary".into(),
             doc_type: Some("glossary".into()),
-            content: "# Glossary\n\n**SLA**: Service Level Agreement\n**DR**: Disaster Recovery".into(),
+            content: "# Glossary\n\n**SLA**: Service Level Agreement\n**DR**: Disaster Recovery"
+                .into(),
             file_hash: "g1".into(),
             ..Document::test_default()
         };
@@ -1306,8 +1348,14 @@ mod tests {
 
         let on_disk = fs::read_to_string(&file).unwrap();
         // Both terms in glossary → all expansions stripped
-        assert!(on_disk.contains("- SLA defined"), "glossary term stripped: {on_disk}");
-        assert!(on_disk.contains("- DR plan"), "glossary term stripped: {on_disk}");
+        assert!(
+            on_disk.contains("- SLA defined"),
+            "glossary term stripped: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("- DR plan"),
+            "glossary term stripped: {on_disk}"
+        );
     }
 
     #[test]
@@ -1406,11 +1454,26 @@ mod tests {
 
         let on_disk = fs::read_to_string(repo_dir.path().join("people/john.md")).unwrap();
         // Should have YAML frontmatter with factbase_id
-        assert!(on_disk.starts_with("---\n"), "should start with frontmatter: {on_disk}");
-        assert!(on_disk.contains("factbase_id:"), "should have factbase_id: {on_disk}");
-        assert!(on_disk.contains("type: people"), "should have type: {on_disk}");
-        assert!(!on_disk.contains("<!-- factbase:"), "should NOT have HTML comment: {on_disk}");
-        assert!(on_disk.contains("# John Doe"), "should have title: {on_disk}");
+        assert!(
+            on_disk.starts_with("---\n"),
+            "should start with frontmatter: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("factbase_id:"),
+            "should have factbase_id: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("type: people"),
+            "should have type: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("<!-- factbase:"),
+            "should NOT have HTML comment: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("# John Doe"),
+            "should have title: {on_disk}"
+        );
     }
 
     #[test]
@@ -1446,10 +1509,13 @@ mod tests {
         });
         create_document(&db, &args).unwrap();
 
-        let on_disk = fs::read_to_string(
-            repo_dir.path().join("customers/acme/people/alice-chen.md")
-        ).unwrap();
-        assert!(on_disk.contains("tags: [acme, people]"), "path tags present: {on_disk}");
+        let on_disk =
+            fs::read_to_string(repo_dir.path().join("customers/acme/people/alice-chen.md"))
+                .unwrap();
+        assert!(
+            on_disk.contains("tags: [acme, people]"),
+            "path tags present: {on_disk}"
+        );
     }
 
     #[test]
@@ -1485,10 +1551,12 @@ mod tests {
         });
         create_document(&db, &args).unwrap();
 
-        let on_disk = fs::read_to_string(
-            repo_dir.path().join("services/amazon-aurora.md")
-        ).unwrap();
-        assert!(on_disk.contains("tags: [services]"), "single dir tag: {on_disk}");
+        let on_disk =
+            fs::read_to_string(repo_dir.path().join("services/amazon-aurora.md")).unwrap();
+        assert!(
+            on_disk.contains("tags: [services]"),
+            "single dir tag: {on_disk}"
+        );
     }
 
     #[test]
@@ -1517,7 +1585,8 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         // Existing doc with user-added tag "vip"
-        let original = "---\nfactbase_id: abc123\ntype: people\ntags: [vip]\n---\n# Alice Chen\n\n- Old fact";
+        let original =
+            "---\nfactbase_id: abc123\ntype: people\ntags: [vip]\n---\n# Alice Chen\n\n- Old fact";
         let file = repo_dir.path().join("customers/acme/people/alice-chen.md");
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, original).unwrap();
@@ -1538,7 +1607,10 @@ mod tests {
 
         let on_disk = fs::read_to_string(&file).unwrap();
         // Path tags [acme, people] merged with user tag [vip]
-        assert!(on_disk.contains("tags: [acme, people, vip]"), "merged tags: {on_disk}");
+        assert!(
+            on_disk.contains("tags: [acme, people, vip]"),
+            "merged tags: {on_disk}"
+        );
     }
 
     #[test]
@@ -1569,7 +1641,10 @@ mod tests {
         create_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(repo_dir.path().join("services/aurora.md")).unwrap();
-        assert!(!on_disk.contains("tags:"), "no tags in default format: {on_disk}");
+        assert!(
+            !on_disk.contains("tags:"),
+            "no tags in default format: {on_disk}"
+        );
     }
 
     #[test]
@@ -1601,8 +1676,14 @@ mod tests {
 
         let on_disk = fs::read_to_string(repo_dir.path().join("notes/test.md")).unwrap();
         // Default format: HTML comment, no frontmatter
-        assert!(on_disk.starts_with("<!-- factbase:"), "should start with HTML comment: {on_disk}");
-        assert!(!on_disk.contains("---\n"), "should NOT have frontmatter: {on_disk}");
+        assert!(
+            on_disk.starts_with("<!-- factbase:"),
+            "should start with HTML comment: {on_disk}"
+        );
+        assert!(
+            !on_disk.contains("---\n"),
+            "should NOT have frontmatter: {on_disk}"
+        );
     }
 
     #[test]
@@ -1653,12 +1734,27 @@ mod tests {
         update_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(&file).unwrap();
-        assert!(on_disk.contains("reviewed: 2026-02-21"), "reviewed field preserved: {on_disk}");
+        assert!(
+            on_disk.contains("reviewed: 2026-02-21"),
+            "reviewed field preserved: {on_disk}"
+        );
         // Path tag "people" merged with user tag "important"
-        assert!(on_disk.contains("tags: [people, important]"), "tags merged: {on_disk}");
-        assert!(on_disk.contains("factbase_id: abc123"), "factbase_id preserved: {on_disk}");
-        assert!(on_disk.contains("type: people"), "type preserved: {on_disk}");
-        assert!(on_disk.contains("- New fact"), "new content present: {on_disk}");
+        assert!(
+            on_disk.contains("tags: [people, important]"),
+            "tags merged: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("factbase_id: abc123"),
+            "factbase_id preserved: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("type: people"),
+            "type preserved: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("- New fact"),
+            "new content present: {on_disk}"
+        );
     }
 
     #[test]
@@ -1709,8 +1805,14 @@ mod tests {
         update_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(&file).unwrap();
-        assert!(on_disk.contains("reviewed: 2026-03-06"), "reviewed preserved: {on_disk}");
-        assert!(on_disk.contains("type: people"), "type preserved: {on_disk}");
+        assert!(
+            on_disk.contains("reviewed: 2026-03-06"),
+            "reviewed preserved: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("type: people"),
+            "type preserved: {on_disk}"
+        );
         assert!(on_disk.contains("- Updated fact"), "new content: {on_disk}");
     }
 
@@ -1758,7 +1860,10 @@ mod tests {
         let result = create_document(&db, &args);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("No repository found"), "error should be helpful: {err}");
+        assert!(
+            err.contains("No repository found"),
+            "error should be helpful: {err}"
+        );
     }
 
     #[test]
@@ -1806,6 +1911,9 @@ mod tests {
         let result = bulk_create_documents(&db, &args, &ProgressReporter::Silent);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("No repository found"), "error should be helpful: {err}");
+        assert!(
+            err.contains("No repository found"),
+            "error should be helpful: {err}"
+        );
     }
 }

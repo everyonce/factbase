@@ -51,20 +51,15 @@ pub use status::cmd_status;
 pub use version::cmd_version;
 
 // Re-export setup helpers
-pub use setup::{
-    auto_init_repo, setup_cached_embedding, setup_embedding_with_timeout,
-};
 #[cfg(feature = "mcp")]
 pub use setup::setup_embedding;
+pub use setup::{auto_init_repo, setup_cached_embedding, setup_embedding_with_timeout};
 
 // Re-export error helpers
 pub use errors::repo_path_not_found_error;
 
 // Re-export utils
-pub use utils::{
-    confirm_prompt, create_repository,
-    parse_since, parse_since_filter, print_output,
-};
+pub use utils::{confirm_prompt, create_repository, parse_since, parse_since_filter, print_output};
 
 #[cfg(test)]
 mod tests {

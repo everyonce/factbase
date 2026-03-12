@@ -20,7 +20,9 @@ use factbase::processor::content_hash;
 use factbase::processor::repair::repair_document;
 use std::path::Path;
 
-fn db_repos(db: &factbase::database::Database) -> anyhow::Result<Vec<factbase::models::Repository>> {
+fn db_repos(
+    db: &factbase::database::Database,
+) -> anyhow::Result<Vec<factbase::models::Repository>> {
     let repos = db.list_repositories()?;
     if repos.is_empty() {
         anyhow::bail!("No repository found");
@@ -70,7 +72,8 @@ pub fn cmd_repair(args: RepairArgs) -> anyhow::Result<()> {
                     if path.exists() {
                         std::fs::write(path, repaired)?;
                         let new_hash = content_hash(repaired);
-                        ctx.db.update_document_content(&doc.id, repaired, &new_hash)?;
+                        ctx.db
+                            .update_document_content(&doc.id, repaired, &new_hash)?;
                         if !args.quiet {
                             println!("  ✓ Written to disk");
                         }
@@ -87,9 +90,7 @@ pub fn cmd_repair(args: RepairArgs) -> anyhow::Result<()> {
             println!("No corruption detected.");
         } else {
             let action = if args.dry_run { "would fix" } else { "fixed" };
-            println!(
-                "\n{total_fixed} issue(s) {action} across {total_docs} document(s)."
-            );
+            println!("\n{total_fixed} issue(s) {action} across {total_docs} document(s).");
         }
     }
 

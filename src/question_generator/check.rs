@@ -3,17 +3,21 @@
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
 use crate::models::{Document, QuestionType, ReviewQuestion};
-use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, has_corruption_artifacts, FACT_LINE_REGEX};
+use crate::patterns::{
+    extract_frontmatter_reviewed_date, extract_reviewed_date, has_corruption_artifacts,
+    FACT_LINE_REGEX,
+};
 use crate::processor::{
     append_review_questions, content_hash, parse_review_queue, prune_stale_questions,
 };
 use crate::progress::ProgressReporter;
 use crate::question_generator::{
-    collect_defined_terms_with_types, filter_sequential_conflicts, generate_ambiguous_questions_with_type,
-    generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
-    generate_missing_questions, generate_precision_questions,
-    generate_required_field_questions, generate_source_quality_questions,
-    generate_stale_questions, generate_temporal_questions, generate_weak_source_questions,
+    collect_defined_terms_with_types, filter_sequential_conflicts,
+    generate_ambiguous_questions_with_type, generate_conflict_questions,
+    generate_corruption_questions, generate_duplicate_entry_questions, generate_missing_questions,
+    generate_precision_questions, generate_required_field_questions,
+    generate_source_quality_questions, generate_stale_questions, generate_temporal_questions,
+    generate_weak_source_questions,
 };
 use chrono::Utc;
 use std::collections::{HashMap, HashSet};
@@ -25,7 +29,16 @@ const REVIEWED_SKIP_DAYS: i64 = 180;
 
 /// Result of checking a single document: (doc, questions, pruned_content, pruned_count,
 /// existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review)
-type CheckResult<'a> = (&'a &'a Document, Vec<ReviewQuestion>, String, usize, usize, usize, usize, usize);
+type CheckResult<'a> = (
+    &'a &'a Document,
+    Vec<ReviewQuestion>,
+    String,
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+);
 
 /// Run all rule-based question generators on a document body.
 ///
@@ -50,7 +63,11 @@ pub fn run_generators(
         questions.extend(generate_source_quality_questions(body));
         questions.extend(generate_weak_source_questions(body));
     }
-    questions.extend(generate_ambiguous_questions_with_type(body, doc_type, defined_terms));
+    questions.extend(generate_ambiguous_questions_with_type(
+        body,
+        doc_type,
+        defined_terms,
+    ));
     questions.extend(generate_stale_questions(body, stale_days));
     questions.extend(generate_precision_questions(body));
     if full {
@@ -125,10 +142,7 @@ pub async fn check_all_documents(
     let rf_ref = &config.required_fields;
 
     // Filter out archived documents — they're indexed for search/links but not checked
-    let active_docs: Vec<_> = docs
-        .iter()
-        .filter(|d| !is_archived(&d.file_path))
-        .collect();
+    let active_docs: Vec<_> = docs.iter().filter(|d| !is_archived(&d.file_path)).collect();
     if active_docs.len() < total {
         progress.log(&format!(
             "Skipping {} archived document(s)",
@@ -137,7 +151,10 @@ pub async fn check_all_documents(
     }
 
     // Filter out reference entities — they exist for linking, not quality checks
-    let reference_count = active_docs.iter().filter(|d| crate::patterns::is_reference_doc(&d.content)).count();
+    let reference_count = active_docs
+        .iter()
+        .filter(|d| crate::patterns::is_reference_doc(&d.content))
+        .count();
     let active_docs: Vec<_> = active_docs
         .into_iter()
         .filter(|d| !crate::patterns::is_reference_doc(&d.content))
@@ -177,7 +194,9 @@ pub async fn check_all_documents(
         for doc in docs {
             if !paths.contains_key(&doc.repo_id) {
                 if let Ok(Some(repo)) = db.get_repository(&doc.repo_id) {
-                    let uc = repo.perspective.as_ref()
+                    let uc = repo
+                        .perspective
+                        .as_ref()
                         .and_then(|p| p.format.as_ref())
                         .map(|f| f.resolve().review_callout)
                         .unwrap_or(false);
@@ -383,7 +402,17 @@ pub async fn check_all_documents(
 
     // Write results (sequential for filesystem safety)
     let mut results = Vec::new();
-    for (doc, mut questions, pruned_content, pruned_count, existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review) in all_results {
+    for (
+        doc,
+        mut questions,
+        pruned_content,
+        pruned_count,
+        existing_unanswered,
+        existing_answered,
+        skipped_reviewed,
+        suppressed_by_review,
+    ) in all_results
+    {
         // Post-filter: remove conflict questions for boundary-month sequential entries.
         let abs_path = repo_paths
             .get(&doc.repo_id)
@@ -400,7 +429,8 @@ pub async fn check_all_documents(
         // even when a deferred/believed copy already exists.
         if !questions.is_empty() {
             let existing = parse_review_queue(&pruned_content).unwrap_or_default();
-            let existing_descs: HashSet<_> = existing.iter().map(|q| q.description.clone()).collect();
+            let existing_descs: HashSet<_> =
+                existing.iter().map(|q| q.description.clone()).collect();
             questions.retain(|q| !existing_descs.contains(&q.description));
         }
 
@@ -409,21 +439,26 @@ pub async fn check_all_documents(
         let disk_missing_marker = !content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
             && doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
         // Disk has marker but no questions while DB has unanswered questions
-        let disk_empty_review = content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
-            && existing_unanswered == 0
-            && {
+        let disk_empty_review =
+            content.contains(crate::patterns::REVIEW_QUEUE_MARKER) && existing_unanswered == 0 && {
                 let db_qs = parse_review_queue(&doc.content).unwrap_or_default();
                 db_qs.iter().any(|q| !q.answered)
             };
-        let needs_write = count > 0 || pruned_count > 0 || has_dup_sections || disk_missing_marker || disk_empty_review;
+        let needs_write = count > 0
+            || pruned_count > 0
+            || has_dup_sections
+            || disk_missing_marker
+            || disk_empty_review;
         if needs_write && !config.dry_run {
             // If the disk file lost its marker or questions but DB has them, recover
-            let base_content = if (disk_missing_marker || disk_empty_review) && count == 0 && pruned_count == 0 {
-                let (recovered, _) = crate::processor::recover_review_section(&pruned_content, &doc.content);
-                recovered
-            } else {
-                pruned_content.clone()
-            };
+            let base_content =
+                if (disk_missing_marker || disk_empty_review) && count == 0 && pruned_count == 0 {
+                    let (recovered, _) =
+                        crate::processor::recover_review_section(&pruned_content, &doc.content);
+                    recovered
+                } else {
+                    pruned_content.clone()
+                };
             let use_callout = repo_callout_ref.get(&doc.repo_id).copied().unwrap_or(false);
             let updated = append_review_questions(&base_content, &questions, use_callout);
             let path = abs_path.unwrap_or_else(|| PathBuf::from(&doc.file_path));
@@ -440,13 +475,20 @@ pub async fn check_all_documents(
             info!("{}: pruned {} stale questions", doc.title, pruned_count);
         }
         // Include docs with any activity
-        if count > 0 || pruned_count > 0 || existing_unanswered > 0 || existing_answered > 0 || skipped_reviewed > 0 || suppressed_by_review > 0 {
+        if count > 0
+            || pruned_count > 0
+            || existing_unanswered > 0
+            || existing_answered > 0
+            || skipped_reviewed > 0
+            || suppressed_by_review > 0
+        {
             results.push(CheckDocResult {
                 doc_id: doc.id.clone(),
                 doc_title: doc.title.clone(),
                 new_questions: count,
                 pruned_questions: pruned_count,
-                existing_unanswered: existing_unanswered.saturating_sub(pruned_count.saturating_sub(existing_answered)),
+                existing_unanswered: existing_unanswered
+                    .saturating_sub(pruned_count.saturating_sub(existing_answered)),
                 existing_answered: 0, // answered questions are now pruned
                 skipped_reviewed,
                 suppressed_by_review,
@@ -479,11 +521,7 @@ pub async fn extract_vocabulary(
 /// Check if a document path is in an archive folder.
 /// Matches paths containing `/archive/` or starting with `archive/`.
 /// Run folder placement check and merge questions into all_results.
-fn run_placement_check(
-    docs: &[Document],
-    db: &Database,
-    all_results: &mut Vec<CheckResult<'_>>,
-) {
+fn run_placement_check(docs: &[Document], db: &Database, all_results: &mut Vec<CheckResult<'_>>) {
     match super::placement::check_folder_placement(docs, db) {
         Ok(placement_qs) => {
             for (doc, questions, _, _, _, _, _, _) in all_results.iter_mut() {
@@ -538,19 +576,20 @@ mod tests {
                        - [ ] `@q[temporal]` \"Fact one\" - when was this true?\n  > \n";
         let docs = vec![make_doc("aaa", "Test", content)];
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
-            .unwrap().results;
+            .unwrap()
+            .results;
         assert!(!results.is_empty());
         // The existing question matches what generators would produce, so it's kept
         assert_eq!(results[0].existing_unanswered, 1);
@@ -567,23 +606,27 @@ mod tests {
                        > confirmed\n";
         let docs = vec![make_doc("bbb", "Test", content)];
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
-            .unwrap().results;
+            .unwrap()
+            .results;
         assert!(!results.is_empty());
         // Answered questions are now pruned, so existing_answered should be 0
         assert_eq!(results[0].existing_answered, 0);
-        assert!(results[0].pruned_questions > 0, "answered question should be counted as pruned");
+        assert!(
+            results[0].pruned_questions > 0,
+            "answered question should be counted as pruned"
+        );
     }
 
     #[tokio::test]
@@ -594,19 +637,20 @@ mod tests {
         let content = format!("- Fact one <!-- reviewed:{today} -->\n- Fact two\n");
         let docs = vec![make_doc("ccc", "Test", &content)];
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
-            .unwrap().results;
+            .unwrap()
+            .results;
         let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
         assert_eq!(total_skipped, 1);
     }
@@ -620,22 +664,29 @@ mod tests {
                        - [ ] `@q[temporal]` \"Fact one\" - when was this true?\n  > \n";
         let docs = vec![make_doc("ccc", "Test", content)];
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
-            .unwrap().results;
+            .unwrap()
+            .results;
         assert!(!results.is_empty());
-        assert_eq!(results[0].pruned_questions, 1, "Should prune the stale temporal question");
-        assert_eq!(results[0].existing_unanswered, 0, "No unanswered after pruning");
+        assert_eq!(
+            results[0].pruned_questions, 1,
+            "Should prune the stale temporal question"
+        );
+        assert_eq!(
+            results[0].existing_unanswered, 0,
+            "No unanswered after pruning"
+        );
     }
 
     #[tokio::test]
@@ -652,15 +703,15 @@ mod tests {
         }
         // Deadline already in the past → should process 0 docs
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: Some(Instant::now() - std::time::Duration::from_secs(1)),
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
@@ -679,15 +730,15 @@ mod tests {
             make_doc("bbb", "Doc B", "- Fact B\n"),
         ];
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 1,
-                    deadline: None,
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 1,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
@@ -712,18 +763,22 @@ mod tests {
         let embedding = MockEmbedding::new(4);
         let docs = vec![
             make_doc("aaa", "Regular", "- Fact A\n"),
-            make_doc("bbb", "Reference", "<!-- factbase:reference -->\n# AWS Lambda\n\n- Serverless compute\n"),
+            make_doc(
+                "bbb",
+                "Reference",
+                "<!-- factbase:reference -->\n# AWS Lambda\n\n- Serverless compute\n",
+            ),
         ];
         let config = CheckConfig {
-                    stale_days: 365,
-                    required_fields: None,
-                    dry_run: true,
-                    concurrency: 2,
-                    deadline: None,
-                    acquire_write_guard: false,
-                    repo_id: None,
-                    glossary_types: None,
-                };
+            stale_days: 365,
+            required_fields: None,
+            dry_run: true,
+            concurrency: 2,
+            deadline: None,
+            acquire_write_guard: false,
+            repo_id: None,
+            glossary_types: None,
+        };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
@@ -753,9 +808,11 @@ mod tests {
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
-        let result = check_all_documents(&docs, &db, &embedding, &config, &progress)
-            .await;
-        assert!(result.is_ok(), "dry-run should never be blocked by write guard");
+        let result = check_all_documents(&docs, &db, &embedding, &config, &progress).await;
+        assert!(
+            result.is_ok(),
+            "dry-run should never be blocked by write guard"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -828,25 +885,34 @@ mod tests {
         for r in &output.results {
             if r.doc_id == "rrr" {
                 // The only questions should be temporal/missing, not ambiguous about HCLS
-                assert_eq!(r.new_questions, output.results.iter().find(|x| x.doc_id == "rrr").map(|x| x.new_questions).unwrap_or(0));
+                assert_eq!(
+                    r.new_questions,
+                    output
+                        .results
+                        .iter()
+                        .find(|x| x.doc_id == "rrr")
+                        .map(|x| x.new_questions)
+                        .unwrap_or(0)
+                );
             }
         }
         // Verify by running generators directly with the collected terms
-        let terms = crate::question_generator::collect_defined_terms(&[
-            Document {
-                id: "ggg".to_string(),
-                title: "Glossary".to_string(),
-                content: "# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n".to_string(),
-                doc_type: Some("glossary".to_string()),
-                ..Document::test_default()
-            },
-        ]);
+        let terms = crate::question_generator::collect_defined_terms(&[Document {
+            id: "ggg".to_string(),
+            title: "Glossary".to_string(),
+            content: "# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n".to_string(),
+            doc_type: Some("glossary".to_string()),
+            ..Document::test_default()
+        }]);
         let qs = crate::question_generator::generate_ambiguous_questions_with_type(
             "- Expanding HCLS practice\n",
             Some("project"),
             &terms,
         );
-        assert!(qs.iter().all(|q| !q.description.contains("HCLS")), "HCLS should be suppressed by glossary");
+        assert!(
+            qs.iter().all(|q| !q.description.contains("HCLS")),
+            "HCLS should be suppressed by glossary"
+        );
     }
 
     #[tokio::test]
@@ -856,7 +922,10 @@ mod tests {
         let defined = HashSet::new();
         let progress = ProgressReporter::Silent;
         let (result, processed) = extract_vocabulary(&docs, &defined, None, &progress, 0).await;
-        assert!(result.is_empty(), "vocabulary extraction is now agent-driven");
+        assert!(
+            result.is_empty(),
+            "vocabulary extraction is now agent-driven"
+        );
         assert_eq!(processed, 1);
     }
 
@@ -864,14 +933,20 @@ mod tests {
     async fn test_vocabulary_candidates_always_empty() {
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
-        let doc = make_doc("vvv", "History", "# History\n\n- Battle of Marathon 490 BCE\n");
+        let doc = make_doc(
+            "vvv",
+            "History",
+            "# History\n\n- Battle of Marathon 490 BCE\n",
+        );
         let config = default_check_config();
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
             .await
             .unwrap();
-        assert!(output.vocabulary_candidates.is_empty(),
-            "vocabulary_candidates should always be empty (agent-driven)");
+        assert!(
+            output.vocabulary_candidates.is_empty(),
+            "vocabulary_candidates should always be empty (agent-driven)"
+        );
     }
 
     #[tokio::test]
@@ -884,7 +959,11 @@ mod tests {
         // Create a temp "repo" directory with a markdown file
         let repo_dir = tempfile::tempdir().unwrap();
         let md_path = repo_dir.path().join("test-doc.md");
-        std::fs::write(&md_path, "<!-- factbase:ttt -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+        std::fs::write(
+            &md_path,
+            "<!-- factbase:ttt -->\n# Test\n\n- Fact without temporal tag\n",
+        )
+        .unwrap();
 
         // Register the repo in the database
         let repo = crate::models::Repository {
@@ -925,11 +1004,17 @@ mod tests {
 
         // Should have generated questions (at least temporal)
         assert!(!output.results.is_empty(), "should generate questions");
-        assert!(output.results[0].new_questions > 0, "should have new questions");
+        assert!(
+            output.results[0].new_questions > 0,
+            "should have new questions"
+        );
 
         // Verify questions were written to the file on disk
         let on_disk = std::fs::read_to_string(&md_path).unwrap();
-        assert!(on_disk.contains("@q["), "questions should be written to file at resolved path");
+        assert!(
+            on_disk.contains("@q["),
+            "questions should be written to file at resolved path"
+        );
     }
 
     /// When question gen exhausts the deadline but fact pairs exist,
@@ -957,7 +1042,10 @@ mod tests {
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
             .await
             .unwrap();
-        assert_eq!(output.docs_processed, 2, "questions mode should count question-gen docs");
+        assert_eq!(
+            output.docs_processed, 2,
+            "questions mode should count question-gen docs"
+        );
         assert_eq!(output.docs_total, 2);
     }
 
@@ -971,7 +1059,11 @@ mod tests {
         // Create a temp repo with a markdown file
         let repo_dir = tempfile::tempdir().unwrap();
         let md_path = repo_dir.path().join("test-doc.md");
-        std::fs::write(&md_path, "<!-- factbase:ddd -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+        std::fs::write(
+            &md_path,
+            "<!-- factbase:ddd -->\n# Test\n\n- Fact without temporal tag\n",
+        )
+        .unwrap();
 
         let repo = crate::models::Repository {
             id: "test-repo".to_string(),
@@ -1009,11 +1101,17 @@ mod tests {
         let output1 = check_all_documents(&[doc.clone()], &db, &embedding, &config, &progress)
             .await
             .unwrap();
-        assert!(output1.results.iter().any(|r| r.new_questions > 0), "First check should generate questions");
+        assert!(
+            output1.results.iter().any(|r| r.new_questions > 0),
+            "First check should generate questions"
+        );
 
         // Read the file after first check
         let after_first = std::fs::read_to_string(&md_path).unwrap();
-        let heading_count = after_first.lines().filter(|l| l.trim() == "## Review Queue").count();
+        let heading_count = after_first
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
         assert_eq!(heading_count, 1, "After first check: one heading");
 
         // Update doc content to match what's on disk
@@ -1028,8 +1126,14 @@ mod tests {
             .unwrap();
 
         let after_second = std::fs::read_to_string(&md_path).unwrap();
-        let heading_count = after_second.lines().filter(|l| l.trim() == "## Review Queue").count();
-        assert_eq!(heading_count, 1, "After second check: still one heading, got:\n{after_second}");
+        let heading_count = after_second
+            .lines()
+            .filter(|l| l.trim() == "## Review Queue")
+            .count();
+        assert_eq!(
+            heading_count, 1,
+            "After second check: still one heading, got:\n{after_second}"
+        );
         let marker_count = after_second.matches("<!-- factbase:review -->").count();
         assert_eq!(marker_count, 1, "After second check: still one marker");
     }
@@ -1088,7 +1192,10 @@ mod tests {
 
         // The disk file should now have the review marker
         let after = std::fs::read_to_string(&md_path).unwrap();
-        assert!(after.contains("<!-- factbase:review -->"), "Disk file should have marker after check, got:\n{after}");
+        assert!(
+            after.contains("<!-- factbase:review -->"),
+            "Disk file should have marker after check, got:\n{after}"
+        );
     }
 
     /// When the disk file has a review marker but no questions, and the DB has
@@ -1195,7 +1302,10 @@ mod tests {
         // Verify the deferred question is detected
         let questions = parse_review_queue(content).unwrap();
         assert_eq!(questions.len(), 1);
-        assert!(questions[0].is_deferred(), "Question should be detected as deferred");
+        assert!(
+            questions[0].is_deferred(),
+            "Question should be detected as deferred"
+        );
 
         // Run check — it should NOT add a duplicate of the deferred question
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
@@ -1224,7 +1334,11 @@ mod tests {
 
         let repo_dir = tempfile::tempdir().unwrap();
         let md_path = repo_dir.path().join("test-doc.md");
-        std::fs::write(&md_path, "<!-- factbase:ooo -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+        std::fs::write(
+            &md_path,
+            "<!-- factbase:ooo -->\n# Test\n\n- Fact without temporal tag\n",
+        )
+        .unwrap();
 
         let repo = crate::models::Repository {
             id: "obs-repo".to_string(),
@@ -1279,8 +1393,10 @@ mod tests {
         assert!(output.results.iter().any(|r| r.new_questions > 0));
 
         let on_disk = std::fs::read_to_string(&md_path).unwrap();
-        assert!(on_disk.contains("> [!review]- Review Queue"),
-            "Obsidian preset should produce callout format, got:\n{on_disk}");
+        assert!(
+            on_disk.contains("> [!review]- Review Queue"),
+            "Obsidian preset should produce callout format, got:\n{on_disk}"
+        );
     }
 
     #[tokio::test]
@@ -1290,7 +1406,11 @@ mod tests {
 
         let repo_dir = tempfile::tempdir().unwrap();
         let md_path = repo_dir.path().join("test-doc.md");
-        std::fs::write(&md_path, "<!-- factbase:ppp -->\n# Test\n\n- Fact without temporal tag\n").unwrap();
+        std::fs::write(
+            &md_path,
+            "<!-- factbase:ppp -->\n# Test\n\n- Fact without temporal tag\n",
+        )
+        .unwrap();
 
         let repo = crate::models::Repository {
             id: "plain-repo".to_string(),
@@ -1329,9 +1449,13 @@ mod tests {
         assert!(output.results.iter().any(|r| r.new_questions > 0));
 
         let on_disk = std::fs::read_to_string(&md_path).unwrap();
-        assert!(on_disk.contains("## Review Queue"),
-            "No obsidian config should produce plain format, got:\n{on_disk}");
-        assert!(!on_disk.contains("> [!review]- Review Queue"),
-            "Should NOT have callout format without obsidian config");
+        assert!(
+            on_disk.contains("## Review Queue"),
+            "No obsidian config should produce plain format, got:\n{on_disk}"
+        );
+        assert!(
+            !on_disk.contains("> [!review]- Review Queue"),
+            "Should NOT have callout format without obsidian config"
+        );
     }
 }
