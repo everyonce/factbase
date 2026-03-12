@@ -68,10 +68,10 @@ Factbase's workflow tools pick up natural requests automatically:
 
 | You say | What happens |
 |---------|-------------|
-| "Research Jane Smith and add her to factbase" | Ingest workflow: searches existing data, researches externally, creates/updates documents |
+| "Research Jane Smith and add her to factbase" | `add` workflow: searches existing data, researches externally, creates/updates documents |
 | "Search factbase for info on Project Alpha" | Semantic search across all documents |
-| "Fix the factbase review queue" | Resolve workflow: finds stale/conflicting/missing data, researches fixes, applies answers |
-| "Improve the person documents in factbase" | Enrich workflow: scans for gaps, researches missing info, updates documents |
+| "Fix the factbase review queue" | `resolve` workflow: finds stale/conflicting/missing data, researches fixes, applies answers |
+| "Run maintenance on the KB" | `maintain` workflow: scans for gaps, checks quality, resolves questions |
 | "Lint factbase" or "check factbase for quality issues" | Runs quality checks across all documents |
 
 ## Repository Perspective
@@ -95,7 +95,7 @@ This flows into workflow instructions automatically — the agent knows your org
 
 Factbase improves iteratively:
 
-1. **Ingest** — agent adds documents from your data sources
+1. **Add** — agent adds documents from your data sources
 2. **Check** — tell your agent "check factbase for quality issues" — it generates review questions
 3. **Resolve** — tell your agent "fix the factbase review queue" — it researches and resolves each question
 4. **Repeat** — each cycle produces fewer questions until documents stabilize

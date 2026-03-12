@@ -76,7 +76,7 @@ factbase mcp
 ### From source
 
 ```bash
-git clone https://gitea.home.everyonce.com/daniel/factbase.git
+git clone https://github.com/everyonce/factbase.git
 cd factbase
 cargo install --path .
 ```
@@ -226,8 +226,6 @@ This switches to wikilinks (`[[Entity Name]]`), YAML frontmatter, and a collapse
 **General Diagnostics** — Run `factbase doctor` to check system health. For Ollama setup, see [docs/inference-providers.md](docs/inference-providers.md).
 
 ## Architecture
-
-See [.kiro/steering/architecture.md](.kiro/steering/architecture.md) for details.
 
 ```
 Markdown Files → Scanner/Processor → SQLite + sqlite-vec
