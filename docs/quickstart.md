@@ -12,46 +12,53 @@ cargo install --path .
 
 This installs `factbase` to `~/.cargo/bin/`.
 
-## 2. Set up your knowledge base
+## 2. Index your knowledge base
 
 Point factbase at a folder of markdown files:
 
 ```bash
 cd ~/notes          # or wherever your markdown lives
-factbase init .
+factbase scan
 ```
 
-This creates a `.factbase` config directory. If you don't have markdown files yet, create a few:
+Factbase auto-initializes on first scan — no separate setup step needed. It reads every `.md` file, generates embeddings for semantic search and cross-document validation, and detects cross-references between documents.
+
+By default, factbase uses local CPU embeddings (BGE-small-en-v1.5, 384-dim) — no cloud credentials or external services needed. First scan downloads the model (~33MB, one-time) and takes a few seconds per document. Subsequent scans only process changed files.
+
+If you don't have markdown files yet, create a few:
 
 ```bash
 mkdir -p people projects
 echo "# Alice\n\n- Engineer at Acme Corp\n- Based in Seattle" > people/alice.md
 echo "# Project Alpha\n\n- Started Q1 2025\n- Lead: Alice" > projects/alpha.md
-```
-
-## 3. Index
-
-```bash
 factbase scan
 ```
 
-Factbase reads every `.md` file, generates embeddings for semantic search and cross-document validation, and detects cross-references between documents.
+## 3. Search via MCP
 
-By default, factbase uses local CPU embeddings (BGE-small-en-v1.5, 384-dim) — no cloud credentials or external services needed. First scan downloads the model (~33MB, one-time) and takes a few seconds per document. Subsequent scans only process changed files.
+Factbase is designed for AI agent access via MCP. Add it to your agent's config:
 
-## 4. Search
-
-```bash
-factbase search "who works on alpha"
+```json
+{
+  "mcpServers": {
+    "factbase": {
+      "command": "factbase",
+      "args": ["mcp"],
+      "cwd": "/path/to/your/notes"
+    }
+  }
+}
 ```
 
-Returns documents ranked by semantic similarity — it understands meaning, not just keywords. For exact text matching, use `grep`:
+Then talk to your agent:
 
-```bash
-factbase grep "Acme Corp"
-```
+- **"Search factbase for info on Project Alpha"** — semantic search
+- **"Research Jane Smith and add her to factbase"** — the agent creates structured documents
+- **"Fix the factbase review queue"** — the agent resolves stale or conflicting facts
 
-## 5. Keep it updated
+Factbase's workflow tools guide the agent step by step.
+
+## 4. Keep it updated
 
 Edit your markdown files with any tool. Then either:
 
@@ -62,7 +69,7 @@ Edit your markdown files with any tool. Then either:
 
 Factbase works with any markdown files — no special syntax required. Just write normal markdown and factbase handles indexing and search.
 
-Temporal tags (`@t[...]`), source footnotes (`[^n]`), review questions (`@q[...]`), and inbox blocks (`<!-- factbase:inbox -->`) are optional power features for users who want structured fact tracking. You can adopt them later, or never — `factbase scan` and `factbase search` work perfectly without them.
+Temporal tags (`@t[...]`), source footnotes (`[^n]`), review questions (`@q[...]`), and inbox blocks (`<!-- factbase:inbox -->`) are optional power features for users who want structured fact tracking. You can adopt them later, or never.
 
 ## What just happened?
 
@@ -102,51 +109,6 @@ If you switch providers after scanning, run `factbase scan --reindex` to rebuild
 
 For self-hosted inference with Ollama, see [inference-providers.md](inference-providers.md).
 
-## MCP integration
-
-Factbase includes an MCP server so AI agents can search and manage your knowledge base. Choose a transport:
-
-**Stdio (recommended for local use)** — the agent launches factbase as a subprocess, no server to manage:
-
-```json
-{
-  "mcpServers": {
-    "factbase": {
-      "command": "factbase",
-      "args": ["mcp"],
-      "cwd": "/path/to/your/knowledge-base"
-    }
-  }
-}
-```
-
-Set `cwd` to the directory where you ran `factbase init`. Run `factbase scan` first to index your documents — the stdio transport doesn't auto-scan. It automatically exits when the parent process dies or after 5 minutes of inactivity.
-
-**HTTP (for shared or remote access)** — start the server first, then point your agent at it:
-
-```bash
-factbase serve
-```
-
-```json
-{
-  "mcpServers": {
-    "factbase": {
-      "url": "http://localhost:3000"
-    }
-  }
-}
-```
-
-Then just talk to your agent:
-
-- **"Search factbase for info on Project Alpha"** — finds documents by meaning
-- **"Research Jane Smith and add her to factbase"** — the agent will search your other tools (Slack, Outlook, web) for information and create a structured document
-- **"Fix the factbase review queue"** — the agent will find stale or conflicting facts and resolve them using your data sources
-- **"Improve the person documents in factbase"** — the agent will scan for gaps and fill them in
-
-Factbase's workflow tools guide the agent step by step — you don't need to write prompts or know tool names.
-
 ## Set your perspective
 
 Edit `perspective.yaml` in your repository root to tell agents what this knowledge base is about:
@@ -167,6 +129,6 @@ This context flows into the workflow instructions automatically — the agent wi
 ## Next steps
 
 - `factbase status` — see what's indexed
-- `factbase check` — check for quality issues (orphan docs, broken links)
-- `factbase doctor` — verify your inference backend is working
+- `factbase doctor` — verify your embedding provider is working
 - See the full [README](../README.md) for all commands and configuration options
+- See the [agent integration guide](agent-integration.md) for MCP setup

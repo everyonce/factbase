@@ -93,7 +93,7 @@ Factbase automatically injects a tracking ID on first scan:
 
 ### For Link Detection (Entity Recognition)
 
-The LLM scans documents to find mentions of other entities. To maximize detection:
+Factbase uses string matching to find mentions of other entities during scan. To maximize detection:
 
 1. **Use exact entity names** - Match titles of other documents:
    - If you have `people/alice-chen.md` with title "Alice Chen"
@@ -113,7 +113,7 @@ The LLM scans documents to find mentions of other entities. To maximize detectio
    ```markdown
    See [[platform-api]] for the full specification.
    ```
-   Use the filename stem (lowercase-with-hyphens) rather than the hex document ID. Readable names make cross-references understandable without looking up IDs. The `factbase check` command flags hex-ID cross-refs and suggests the readable alternative.
+   Use the filename stem (lowercase-with-hyphens) rather than the hex document ID. Readable names make cross-references understandable without looking up IDs. Quality checks flag hex-ID cross-refs and suggest the readable alternative.
 
 5. **Link blocks** - Add directional link blocks at the bottom of the document (after footnotes) to declare explicit cross-references using hex document IDs:
    ```markdown
@@ -263,7 +263,7 @@ Use nesting for large entities:
 
 ### Archiving Documents
 
-Move stable documents into an `archive/` subfolder. They stay indexed and searchable but are skipped by `factbase check` — no review questions, no deep-check cycles.
+Move stable documents into an `archive/` subfolder. They stay indexed and searchable but are skipped by quality checks — no review questions, no deep-check cycles.
 
 ```
 /people/archive/former-employee.md    ← searchable, not checked
@@ -301,7 +301,7 @@ Factbase will warn about documents in folders that don't match allowed types.
 
 ## Content Length Guidelines
 
-- **Minimum**: 100+ characters of meaningful content (very short docs may be flagged by `factbase check`)
+- **Minimum**: 100+ characters of meaningful content (very short docs may be flagged by quality checks)
 - **Optimal**: 500-5000 characters for best embedding quality
 - **Maximum**: No hard limit, but documents over 100K characters will be chunked for embedding
 
@@ -384,7 +384,7 @@ Education degrees are static, but graduation years should still use `@t[=YYYY]`.
 
 4. **Orphan documents** - Documents with no links to/from other docs are harder to discover. Add context.
 
-5. **Stale content** - Update documents when information changes. Use `factbase check --stale-days 365` to find old docs.
+5. **Stale content** - Update documents when information changes. Use quality checks via MCP to find old docs.
 
 6. **Undated dynamic facts** - Employment, contact info, and relationships without dates are unreliable. Always include "as of [date]" for facts that change over time.
 
@@ -407,18 +407,15 @@ After creating documents:
 factbase scan
 
 # Verify document was indexed
-factbase search "your document title"
+factbase status
 
-# Check links were detected
-factbase status --detailed
-
-# Find quality issues
-factbase check
+# Find quality issues (via MCP agent)
+# Tell your agent: "check factbase for quality issues"
 ```
 
 ## Inbox Blocks
 
-Use inbox blocks to stage corrections or updates for LLM-assisted integration:
+Use inbox blocks to stage corrections or updates for agent-assisted integration:
 
 ```markdown
 <!-- factbase:inbox -->
@@ -427,6 +424,4 @@ Use inbox blocks to stage corrections or updates for LLM-assisted integration:
 <!-- /factbase:inbox -->
 ```
 
-Run `factbase review --apply` to have the LLM integrate inbox content into the document, adding temporal tags and source footnotes as appropriate. The inbox block is removed after successful integration.
-
-Use `factbase review --apply --dry-run` to preview what will be integrated.
+The agent integrates inbox content into the document body via the `update_document` MCP operation, adding temporal tags and source footnotes as appropriate. The inbox block is removed after successful integration.

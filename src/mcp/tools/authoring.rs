@@ -95,19 +95,19 @@ pub fn get_authoring_guide() -> Value {
             "example": "- First described by Linnaeus @t[=1753] [^1][^2]\n\n---\n[^1]: Linnaeus, Species Plantarum, vol. 2, p. 1171, 1753\n[^2]: MycoBank record #120098, accessed 2024-01-10"
         },
         "linking": {
-            "description": "Factbase detects cross-entity links in TWO ways: (1) During scan_repository, an LLM scans each document's text for mentions of other entity TITLES — if your document text contains another entity's exact title, a link is created automatically. (2) Manual [[name]] syntax for explicit references, where 'name' is the target document's filename stem (e.g., [[alice-chen]] for alice-chen.md).",
+            "description": "Factbase detects cross-entity links in TWO ways: (1) During scan, string matching finds mentions of other entity TITLES in each document's text — if your document text contains another entity's exact title, a link is created automatically. (2) Manual [[name]] syntax for explicit references, where 'name' is the target document's filename stem (e.g., [[alice-chen]] for alice-chen.md).",
             "warning": "⚠️ Markdown links like [Entity Name](../path/file.md) are NOT detected by factbase and do NOT create cross-entity links. Only plain text entity title mentions and [[name]] syntax work.",
             "good": "Amanita muscaria forms mycorrhizal associations with Betula pendula ← 'Betula pendula' matches a document title, auto-detected as a link",
             "bad": "[Betula pendula](../species/betula-pendula.md) ← NOT detected, creates no link",
             "tip": "Use the EXACT entity title as it appears in the document's # heading. 'Delta Air Lines' not 'Delta' or 'the airline'. 'Mount Vesuvius' not 'the volcano'.",
             "manual": "See [[betula-pendula]] for the full specification ← use the filename stem (lowercase-with-hyphens), not the hex ID",
-            "style": "Always use the filename stem (e.g., [[alice-chen]], [[project-atlas]]) rather than the hex document ID (e.g., [[a1b2c3]]). Readable names make cross-references understandable without looking up IDs. The `factbase check` command flags hex-ID cross-refs and suggests the readable alternative.",
-            "links_block": "Factbase uses directional link blocks at the bottom of documents:\n\n`References: [[abc123]] [[def456]]` — outbound links FROM this document TO those documents.\n`Referenced by: [[ghi789]]` — inbound links FROM those documents TO this document.\n\nIn Obsidian mode (preset: obsidian), links use folder/filename format for disambiguation:\n`References: [[people/alice|Alice]] [[companies/acme-corp|Acme Corp]]`\n\nThe store_links MCP tool manages both blocks automatically and respects the repo's link style. Use `factbase(op='links', action='migrate', repo='...')` to convert existing refs to the repo's configured style. Legacy `Links:` format is treated as `References:` for backward compatibility. Use get_link_suggestions to discover missing cross-references."
+            "style": "Always use the filename stem (e.g., [[alice-chen]], [[project-atlas]]) rather than the hex document ID (e.g., [[a1b2c3]]). Readable names make cross-references understandable without looking up IDs. Quality checks flag hex-ID cross-refs and suggest the readable alternative.",
+            "links_block": "Factbase uses directional link blocks at the bottom of documents:\n\n`References: [[abc123]] [[def456]]` — outbound links FROM this document TO those documents.\n`Referenced by: [[ghi789]]` — inbound links FROM those documents TO this document.\n\nIn Obsidian mode (preset: obsidian), links use folder/filename format for disambiguation:\n`References: [[people/alice|Alice]] [[companies/acme-corp|Acme Corp]]`\n\nThe store_links MCP tool manages both blocks automatically and respects the repo's link style. Legacy `Links:` format is treated as `References:` for backward compatibility. Use get_link_suggestions to discover missing cross-references."
         },
         "inbox_blocks": {
             "description": "Stage corrections or new facts for LLM-assisted integration into the document body.",
             "format": "<!-- factbase:inbox -->\n- New fact here\n<!-- /factbase:inbox -->",
-            "processing": "Processed by `factbase review --apply` or agent via update_document, then the block is removed"
+            "processing": "Processed by the agent via update_document, then the block is removed"
         },
         "common_mistakes": [
             "Putting text/descriptions inside @t[...] instead of dates — WRONG: @t[seasonal], @t[Wolfgang Amadeus Mozart], @t[Active Production Status: Ongoing], @t[Total Produced: 650+] — RIGHT: @t[~2024] or @t[2020..2023] or @t[?]",
@@ -208,7 +208,7 @@ mod tests {
         let linking = &guide["linking"];
         let desc = linking["description"].as_str().unwrap();
         assert!(desc.contains("TWO ways"), "should explain two detection methods");
-        assert!(desc.contains("LLM scans"), "should mention LLM scanning");
+        assert!(desc.contains("string matching"), "should mention string matching");
         assert!(desc.contains("[[name]]"), "should mention manual syntax with readable names");
         assert!(linking["warning"].as_str().unwrap().contains("NOT detected"), "should warn about markdown links");
         assert!(linking["tip"].as_str().unwrap().contains("EXACT entity title"), "should emphasize exact titles");

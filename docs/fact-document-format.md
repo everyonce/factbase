@@ -247,7 +247,7 @@ Factbase can analyze documents and generate questions about inconsistencies, mis
 
 1. Check the box `[x]` to mark as answered
 2. Add response in the blockquote line below (`> your answer here`)
-3. Run `factbase review --apply` to process answers
+3. Process answers via the agent or `factbase(op='answer')` MCP operation
 
 ### Question Lifecycle
 
@@ -273,7 +273,7 @@ A well-formed fact document:
 
 ## Inbox Blocks
 
-Inbox blocks stage corrections or updates for LLM-assisted integration:
+Inbox blocks stage corrections or updates for agent-assisted integration:
 
 ```markdown
 <!-- factbase:inbox -->
@@ -281,8 +281,7 @@ Notes, corrections, or new facts to integrate.
 <!-- /factbase:inbox -->
 ```
 
-- Processed by `factbase review --apply` alongside review questions
-- LLM integrates content into the document body with appropriate temporal tags and sources
+- Processed by the agent via `update_document` MCP operation
+- Agent integrates content into the document body with appropriate temporal tags and sources
 - Block is removed after successful integration
 - Multiple inbox blocks per document are supported
-- Use `--dry-run` to preview integration
