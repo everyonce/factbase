@@ -132,7 +132,7 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.";
+    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g., \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own analysis.";
     let desc =
         load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -141,7 +141,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "workflow": { "type": "string", "description": "Workflow name: 'create', 'add', 'maintain', 'refresh', 'correct', 'transition', 'resolve', or 'list'. Legacy aliases also accepted: bootstrap, setup, update, ingest, enrich, improve" },
+                "workflow": { "type": "string", "description": "Workflow name: 'create', 'add', 'maintain', 'refresh', 'correct', 'transition', 'resolve', or 'list'. Legacy aliases also accepted: bootstrap, setup, update, ingest, enrich, improve\n\ncorrect: Use when the old information was ALWAYS WRONG — a factual error, misidentification, or false claim that was never true. Example: a company name was consistently misspelled (it was NEVER called 48U, it was always FortyAU). The agent analyzed the situation wrongly and stored a false fact.\n\ntransition: Use when the old information WAS TRUE at the time, but the entity itself changed. Example: a company that used to be called Advent Health Partners and was ACQUIRED and renamed to Trend Health Partners. The name Advent was valid until the acquisition date.\n\nKey test: ask 'was the old value ever actually true?' — if NO → correct. If YES, it was true until a specific date → transition." },
                 "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
                 "domain": { "type": "string", "description": "For create: domain description (e.g. 'mycology', 'ancient Mediterranean history')" },
                 "entity_types": { "type": "string", "description": "For create: optional comma-separated entity types (e.g. 'species, habitats, researchers')" },
