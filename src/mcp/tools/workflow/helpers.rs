@@ -139,15 +139,19 @@ pub(super) fn build_bootstrap_prompt(
     domain: &str,
     entity_types: Option<&str>,
     prompts: &crate::config::PromptsConfig,
+    repo_path: Option<&std::path::Path>,
 ) -> String {
     let entity_hint = entity_types
         .map(|t| format!("\nThe user has suggested these entity types: {t}"))
         .unwrap_or_default();
 
+    let file_override = repo_path
+        .and_then(|p| crate::config::prompts::load_file_override(p, "prompts/bootstrap.txt"));
+    let default = file_override.as_deref().unwrap_or(DEFAULT_BOOTSTRAP_PROMPT);
     crate::config::prompts::resolve_prompt(
         prompts,
         "bootstrap",
-        DEFAULT_BOOTSTRAP_PROMPT,
+        default,
         &[("domain", domain), ("entity_types", &entity_hint)],
     )
 }

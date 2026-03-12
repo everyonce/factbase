@@ -222,7 +222,7 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
     let prompts = crate::Config::load(None)
         .unwrap_or_default()
         .prompts;
-    let prompt = build_bootstrap_prompt(&domain, entity_types, &prompts);
+    let prompt = build_bootstrap_prompt(&domain, entity_types, &prompts, None);
 
     Ok(serde_json::json!({
         "workflow": "bootstrap",
@@ -2206,7 +2206,7 @@ mod tests {
     #[test]
     fn test_build_bootstrap_prompt_basic() {
         let prompts = crate::config::PromptsConfig::default();
-        let prompt = build_bootstrap_prompt("mycology", None, &prompts);
+        let prompt = build_bootstrap_prompt("mycology", None, &prompts, None);
         assert!(prompt.contains("mycology"));
         assert!(prompt.contains("document_types"));
         assert!(prompt.contains("folder_structure"));
@@ -2218,7 +2218,7 @@ mod tests {
     #[test]
     fn test_build_bootstrap_prompt_with_entity_types() {
         let prompts = crate::config::PromptsConfig::default();
-        let prompt = build_bootstrap_prompt("mycology", Some("species, habitats, researchers"), &prompts);
+        let prompt = build_bootstrap_prompt("mycology", Some("species, habitats, researchers"), &prompts, None);
         assert!(prompt.contains("mycology"));
         assert!(prompt.contains("species, habitats, researchers"));
         assert!(prompt.contains("suggested these entity types"));
@@ -2270,11 +2270,31 @@ mod tests {
             "aviation",
             Some("aircraft, airlines, airports"),
             &prompts,
+            None,
         );
         assert!(prompt.contains("aviation"));
         assert!(prompt.contains("aircraft, airlines, airports"));
         assert!(prompt.contains("document_types"));
         assert!(prompt.contains("templates"));
+    }
+
+    #[test]
+    fn test_build_bootstrap_prompt_file_override() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts_dir = tmp.path().join(".factbase").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("bootstrap.txt"), "Custom bootstrap for {domain}").unwrap();
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_bootstrap_prompt("mycology", None, &prompts, Some(tmp.path()));
+        assert_eq!(result, "Custom bootstrap for mycology");
+    }
+
+    #[test]
+    fn test_build_bootstrap_prompt_no_override_uses_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_bootstrap_prompt("mycology", None, &prompts, Some(tmp.path()));
+        assert!(result.contains("document_types"), "should use compiled-in default");
     }
 
     #[test]

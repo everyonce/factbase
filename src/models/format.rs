@@ -128,10 +128,14 @@ pub const OBSIDIAN_CSS_SNIPPET: &str = r#"/* Factbase custom styles — auto-gen
 
 /// Write `.obsidian/snippets/factbase.css` under `repo_path` if the repo uses
 /// the obsidian preset.  Creates the directory if needed.  Idempotent.
+/// If `.factbase/obsidian.css` exists under `repo_path`, its content is used
+/// instead of the compiled-in default.
 pub fn write_obsidian_css_snippet(repo_path: &std::path::Path) -> std::io::Result<()> {
+    let css = crate::load_file_override(repo_path, "obsidian.css")
+        .unwrap_or_else(|| OBSIDIAN_CSS_SNIPPET.to_string());
     let snippets_dir = repo_path.join(".obsidian").join("snippets");
     std::fs::create_dir_all(&snippets_dir)?;
-    std::fs::write(snippets_dir.join("factbase.css"), OBSIDIAN_CSS_SNIPPET)
+    std::fs::write(snippets_dir.join("factbase.css"), css)
 }
 
 /// Write `.obsidian/app.json` with `enabledCssSnippets: ["factbase"]` so the
@@ -315,6 +319,19 @@ mod tests {
         assert!(content.contains("[data-callout=\"review\"]"));
         assert!(content.contains("245, 158, 11")); // amber
         assert!(content.contains("lucide-clipboard-check"));
+    }
+
+    #[test]
+    fn test_write_obsidian_css_snippet_uses_file_override() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let factbase_dir = tmp.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        std::fs::write(factbase_dir.join("obsidian.css"), "/* custom override */").unwrap();
+        write_obsidian_css_snippet(tmp.path()).unwrap();
+        let css_path = tmp.path().join(".obsidian").join("snippets").join("factbase.css");
+        let content = std::fs::read_to_string(&css_path).unwrap();
+        assert_eq!(content, "/* custom override */");
+        assert!(!content.contains("245, 158, 11")); // default not used
     }
 
     #[test]

@@ -112,7 +112,7 @@ pub use answer_processor::{
 #[deprecated(note = "use factbase::config::Config")]
 pub use config::Config;
 #[deprecated(note = "use factbase::config::prompts::*")]
-pub use config::prompts::{resolve_prompt, PromptsConfig};
+pub use config::prompts::{load_file_override, resolve_prompt, PromptsConfig};
 #[deprecated(note = "use factbase::config::workflows::*")]
 pub use config::workflows::{resolve_workflow_text, WorkflowsConfig};
 #[deprecated(note = "use factbase::database::{ContentSearchParams, Database}")]
