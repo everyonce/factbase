@@ -4,9 +4,9 @@ Add factbase as an MCP server to your agent, then talk to it naturally.
 
 ## Setup
 
-1. Download the factbase binary for your platform from the [releases page](https://gitea.home.everyonce.com/daniel/factbase/releases), or build from source:
+1. Download the factbase binary for your platform from the [releases page](https://github.com/everyonce/factbase/releases), or build from source:
    ```bash
-   git clone https://gitea.home.everyonce.com/daniel/factbase.git
+   git clone https://github.com/everyonce/factbase.git
    cd factbase && cargo install --path .
    ```
 

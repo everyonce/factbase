@@ -34,9 +34,9 @@ Nested folders use only the immediate parent:
 
 **Entity folder convention:** When an entity is large enough for its own directory, name the entity file the same as the folder. The type is derived from the grandparent:
 ```
-/companies/xsolis/xsolis.md       → type: "company" (entity doc)
-/companies/xsolis/people/jane.md  → type: "person"  (normal)
-/companies/xsolis/overview.md     → type: "xsolis"  (no match, normal)
+/companies/acme-corp/acme-corp.md       → type: "company" (entity doc)
+/companies/acme-corp/people/jane.md  → type: "person"  (normal)
+/companies/acme-corp/overview.md     → type: "acme-corp"  (no match, normal)
 ```
 
 Folder names are automatically singularized: `people/` → "person", `projects/` → "project".
@@ -349,10 +349,10 @@ Only dates go inside `@t[...]`. Never put names, descriptions, statuses, or stat
 ### Employment & Roles
 ```markdown
 ## Role
-- CTO at XSOLIS @t[2021..]
+- CTO at Acme Corp @t[2021..]
 - VP Engineering at Acme @t[2018..2021]
 ```
-Not: "CTO at XSOLIS" (when? still true?)
+Not: "CTO at Acme Corp" (when? still true?)
 
 ### Contact Information
 ```markdown
