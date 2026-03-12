@@ -88,9 +88,9 @@ fn default_llm_provider() -> String {
 
 fn default_llm_model() -> String {
     if cfg!(feature = "bedrock") {
-        "us.anthropic.claude-haiku-4-5-20251001-v1:0".into()
+        "us.meta.llama3-2-3b-instruct-v1:0".into()
     } else {
-        "rnj-1-extended".into()
+        "llama3.2".into()
     }
 }
 
@@ -223,12 +223,12 @@ mod tests {
             assert_eq!(config.provider, "bedrock");
             assert_eq!(config.base_url, "us-east-1");
             assert_eq!(config.effective_base_url(), "us-east-1");
-            assert_eq!(config.model, "us.anthropic.claude-haiku-4-5-20251001-v1:0");
+            assert_eq!(config.model, "us.meta.llama3-2-3b-instruct-v1:0");
         } else {
             assert_eq!(config.provider, "ollama");
             assert_eq!(config.base_url, "http://localhost:11434");
             assert_eq!(config.effective_base_url(), "http://localhost:11434");
-            assert_eq!(config.model, "rnj-1-extended");
+            assert_eq!(config.model, "llama3.2");
         }
         assert_eq!(config.timeout_secs, 60);
     }

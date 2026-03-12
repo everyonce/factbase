@@ -116,7 +116,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
                 "doc_type": { "type": "string", "description": "For add/refresh/resolve: document type to focus on" },
                 "doc_id": { "type": "string", "description": "For add: document ID to improve. For refresh: specific document to refresh." },
                 "correction": { "type": "string", "description": "For correct: free text describing what is wrong and what the true fact is." },
-                "change": { "type": "string", "description": "For transition: what changed — free text (e.g. 'XSOLIS renamed to PRIMA-X as of today')." },
+                "change": { "type": "string", "description": "For transition: what changed — free text (e.g. 'Acme Corp rebranded to NewCo as of today')." },
                 "effective_date": { "type": "string", "description": "For transition: when the change happened (ISO date). Defaults to today if omitted." },
                 "nomenclature": { "type": "string", "description": "For transition step 2: how to reference the entity going forward (user's choice from the options presented)." },
                 "source": { "type": "string", "description": "For correct/transition: optional citation (who said it, when)." },

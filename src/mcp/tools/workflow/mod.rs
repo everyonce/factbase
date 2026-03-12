@@ -4439,13 +4439,13 @@ mod tests {
     #[test]
     fn test_transition_step1_parses_change() {
         let wf = WorkflowsConfig::default();
-        let args = serde_json::json!({"change": "XSOLIS renamed to PRIMA-X"});
+        let args = serde_json::json!({"change": "Acme Corp renamed to NewCo"});
         let result = transition_step(1, &args, &wf);
         assert_eq!(result["workflow"], "transition");
         assert_eq!(result["step"], 1);
         assert_eq!(result["total_steps"], 7);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("XSOLIS renamed to PRIMA-X"));
+        assert!(instr.contains("Acme Corp renamed to NewCo"));
         assert!(instr.contains("Change type:"));
         assert!(instr.contains("rename"));
         assert!(instr.contains("merger"));
@@ -4493,14 +4493,14 @@ mod tests {
     #[test]
     fn test_transition_step2_with_nomenclature_proceeds_to_search() {
         let wf = WorkflowsConfig::default();
-        let args = serde_json::json!({"change": "test", "nomenclature": "PRIMA-X (formerly XSOLIS)"});
+        let args = serde_json::json!({"change": "test", "nomenclature": "NewCo (formerly Acme Corp)"});
         let result = transition_step(2, &args, &wf);
         // Should jump to step 3 (search)
         assert_eq!(result["step"], 3);
-        assert_eq!(result["nomenclature"], "PRIMA-X (formerly XSOLIS)");
+        assert_eq!(result["nomenclature"], "NewCo (formerly Acme Corp)");
         assert!(result.get("awaiting_input").is_none());
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("PRIMA-X (formerly XSOLIS)"));
+        assert!(instr.contains("NewCo (formerly Acme Corp)"));
         assert!(instr.contains("search"));
     }
 
@@ -4575,18 +4575,18 @@ mod tests {
     fn test_transition_step7_report_complete() {
         let wf = WorkflowsConfig::default();
         let args = serde_json::json!({
-            "change": "XSOLIS renamed to PRIMA-X",
+            "change": "Acme Corp renamed to NewCo",
             "effective_date": "2026-03-11",
             "source": "CEO memo",
-            "nomenclature": "PRIMA-X (formerly XSOLIS)"
+            "nomenclature": "NewCo (formerly Acme Corp)"
         });
         let result = transition_step(7, &args, &wf);
         assert_eq!(result["complete"], true);
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("XSOLIS renamed to PRIMA-X"));
+        assert!(instr.contains("Acme Corp renamed to NewCo"));
         assert!(instr.contains("2026-03-11"));
         assert!(instr.contains("CEO memo"));
-        assert!(instr.contains("PRIMA-X (formerly XSOLIS)"));
+        assert!(instr.contains("NewCo (formerly Acme Corp)"));
     }
 
     #[test]

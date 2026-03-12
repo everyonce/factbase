@@ -198,8 +198,8 @@ impl DocumentProcessor {
                 return "document".to_string();
             }
 
-            // If filename matches parent folder (e.g., xsolis/xsolis.md),
-            // derive type from grandparent instead (e.g., companies/xsolis/xsolis.md → "company")
+            // If filename matches parent folder (e.g., acme/acme.md),
+            // derive type from grandparent instead (e.g., companies/acme/acme.md → "company")
             if !parent_name.is_empty()
                 && parent_name.eq_ignore_ascii_case(file_stem)
             {
@@ -425,8 +425,8 @@ mod tests {
     #[test]
     fn test_derive_type_deep_path_with_structural_folder() {
         let processor = DocumentProcessor::new();
-        // customers/xsolis/people/archive/john-smith.md → skips archive → people → person
-        let path = PathBuf::from("/repo/customers/xsolis/people/archive/john-smith.md");
+        // customers/acme/people/archive/john-smith.md → skips archive → people → person
+        let path = PathBuf::from("/repo/customers/acme/people/archive/john-smith.md");
         let repo_root = PathBuf::from("/repo");
         assert_eq!(processor.derive_type(&path, &repo_root), "people");
     }
