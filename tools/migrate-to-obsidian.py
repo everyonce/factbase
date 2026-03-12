@@ -130,6 +130,52 @@ def tags_from_path(relative_path):
         return dirs[1:]
     return dirs
 
+
+# Mirrors STRUCTURAL_FOLDERS in src/processor/core.rs
+STRUCTURAL_FOLDERS = {
+    'archive', 'archived', 'old', 'inactive', 'deprecated', 'drafts', 'temp',
+}
+
+
+def derive_type_from_path(relative_path):
+    """Derive document type from folder structure, mirroring Rust derive_type().
+
+    Skips structural/organizational folder names and uses the grandparent instead.
+
+    Examples:
+      customers/xsolis/people/archive/john.md -> 'people' (skips archive)
+      services/deprecated/old-api.md          -> 'service' (skips deprecated)
+      people/john.md                          -> 'people'
+      doc.md                                  -> 'document'
+    """
+    parts = relative_path.replace('\\', '/').split('/')
+    dirs = parts[:-1]   # directory components only
+    filename_stem = os.path.splitext(parts[-1])[0]
+
+    if not dirs:
+        return 'document'
+
+    parent = dirs[-1]
+
+    # Skip structural folders — use grandparent
+    if parent.lower() in STRUCTURAL_FOLDERS:
+        if len(dirs) >= 2:
+            return _normalize_type(dirs[-2])
+        return 'document'
+
+    # Entity-folder convention: xsolis/xsolis.md -> use grandparent
+    if parent.lower() == filename_stem.lower() and len(dirs) >= 2:
+        return _normalize_type(dirs[-2])
+
+    return _normalize_type(parent)
+
+
+def _normalize_type(word):
+    """Lowercase and strip trailing 's' (naive singularization)."""
+    lower = word.lower()
+    if lower.endswith('s') and len(lower) > 1:
+        return lower[:-1]
+    return lower
 def merge_path_tags_into_frontmatter(content, path_tags):
     """Merge path-derived tags into existing YAML frontmatter.
     
@@ -166,6 +212,34 @@ def merge_path_tags_into_frontmatter(content, path_tags):
         fm_text = fm_text.rstrip('\n') + f'\n{tags_line}'
     
     return f"---\n{fm_text}\n---\n{content[fm_end+5:]}"
+
+
+def set_frontmatter_type(content, doc_type):
+    """Set or update the type: field in YAML frontmatter.
+    
+    Inserts after factbase_id: if present, otherwise appends.
+    Assumes content starts with '---\\n'.
+    """
+    fm_end = content.find('\n---\n', 4)
+    if fm_end < 0:
+        return content
+    
+    fm_text = content[4:fm_end]
+    after = content[fm_end + 5:]
+    type_line = f"type: {doc_type}"
+    
+    if re.search(r'^type:', fm_text, re.MULTILINE):
+        fm_text = re.sub(r'^type:.*$', type_line, fm_text, flags=re.MULTILINE)
+    else:
+        lines = fm_text.split('\n')
+        insert_pos = next(
+            (i + 1 for i, l in enumerate(lines) if l.startswith('factbase_id:')),
+            len(lines)
+        )
+        lines.insert(insert_pos, type_line)
+        fm_text = '\n'.join(lines)
+    
+    return f"---\n{fm_text}\n---\n{after}"
 
 def convert_reviewed_to_frontmatter(content):
     """Strip inline <!-- reviewed:YYYY-MM-DD --> markers and store latest date in frontmatter."""
@@ -257,6 +331,11 @@ def convert_file(filepath, id_map, kb_path, dry_run=False):
     path_tags = tags_from_path(rel_path)
     if path_tags and content.startswith('---\n'):
         content = merge_path_tags_into_frontmatter(content, path_tags)
+    
+    # 7. Write derived type to frontmatter
+    if content.startswith('---\n'):
+        doc_type = derive_type_from_path(rel_path)
+        content = set_frontmatter_type(content, doc_type)
     
     if content == original:
         return False

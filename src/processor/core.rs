@@ -9,6 +9,13 @@ use getrandom::getrandom;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+/// Organizational folder names that are skipped when deriving document type.
+/// When a document lives directly inside one of these folders, the grandparent
+/// folder is used for type derivation instead.
+pub(crate) const STRUCTURAL_FOLDERS: &[&str] = &[
+    "archive", "archived", "old", "inactive", "deprecated", "drafts", "temp",
+];
+
 /// Compute SHA256 hash of content, returning lowercase hex string.
 pub fn content_hash(content: &str) -> String {
     hex::encode(Sha256::digest(content.as_bytes()))
@@ -85,13 +92,14 @@ impl DocumentProcessor {
     /// Inject the factbase ID into content according to format config.
     ///
     /// For `IdPlacement::Comment`: prepends `<!-- factbase:id -->` (default behavior).
-    /// For `IdPlacement::Frontmatter`: adds `factbase_id: id` to existing frontmatter,
-    /// or creates a new frontmatter block if none exists.
+    /// For `IdPlacement::Frontmatter`: adds `factbase_id: id` (and optionally `type: …`)
+    /// to existing frontmatter, or creates a new frontmatter block if none exists.
     pub fn inject_id_with_format(
         &self,
         content: &str,
         id: &str,
         format: &crate::models::format::ResolvedFormat,
+        doc_type: Option<&str>,
     ) -> String {
         use crate::models::format::IdPlacement;
         match format.id_placement {
@@ -100,9 +108,12 @@ impl DocumentProcessor {
                 let mut lines = content.lines();
                 if let Some(first) = lines.next() {
                     if first.trim() == "---" {
-                        // Existing frontmatter — insert factbase_id after opening ---
+                        // Existing frontmatter — insert factbase_id (and type) after opening ---
                         let mut result = String::from("---\n");
                         result.push_str(&format!("factbase_id: {id}\n"));
+                        if let Some(t) = doc_type {
+                            result.push_str(&format!("type: {t}\n"));
+                        }
                         for line in lines {
                             result.push_str(line);
                             result.push('\n');
@@ -111,7 +122,13 @@ impl DocumentProcessor {
                     }
                 }
                 // No existing frontmatter — create one
-                format!("---\nfactbase_id: {id}\n---\n{content}")
+                let mut fm = format!("---\nfactbase_id: {id}\n");
+                if let Some(t) = doc_type {
+                    fm.push_str(&format!("type: {t}\n"));
+                }
+                fm.push_str("---\n");
+                fm.push_str(content);
+                fm
             }
         }
     }
@@ -149,6 +166,10 @@ impl DocumentProcessor {
     }
 
     /// Derive the document type from the parent folder name (e.g., "people/" → "person").
+    ///
+    /// Structural/organizational folder names are skipped in favour of the grandparent:
+    /// - `people/archive/john.md` → skips "archive" → type "people" → "person"
+    /// - `services/deprecated/old-api.md` → skips "deprecated" → type "services" → "service"
     pub fn derive_type(&self, path: &Path, repo_root: &Path) -> String {
         let relative = path.strip_prefix(repo_root).unwrap_or(path);
         let file_stem = path
@@ -161,6 +182,21 @@ impl DocumentProcessor {
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or("");
+
+            // Skip structural/organizational folder names — use grandparent instead.
+            if !parent_name.is_empty()
+                && STRUCTURAL_FOLDERS.iter().any(|&s| s.eq_ignore_ascii_case(parent_name))
+            {
+                if let Some(grandparent) = parent.parent() {
+                    if let Some(gp_name) = grandparent.file_name().and_then(|s| s.to_str()) {
+                        if !gp_name.is_empty() {
+                            return normalize_type(gp_name);
+                        }
+                    }
+                }
+                // Structural folder at repo root with no grandparent → fall through to "document"
+                return "document".to_string();
+            }
 
             // If filename matches parent folder (e.g., xsolis/xsolis.md),
             // derive type from grandparent instead (e.g., companies/xsolis/xsolis.md → "company")
@@ -346,6 +382,56 @@ mod tests {
     }
 
     #[test]
+    fn test_derive_type_skips_archive_folder() {
+        let processor = DocumentProcessor::new();
+        let path = PathBuf::from("/repo/people/archive/john-smith.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "people");
+    }
+
+    #[test]
+    fn test_derive_type_skips_old_folder() {
+        let processor = DocumentProcessor::new();
+        let path = PathBuf::from("/repo/people/old/tim-leidig.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "people");
+    }
+
+    #[test]
+    fn test_derive_type_skips_deprecated_folder() {
+        let processor = DocumentProcessor::new();
+        let path = PathBuf::from("/repo/services/deprecated/old-api.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "service");
+    }
+
+    #[test]
+    fn test_derive_type_skips_inactive_folder() {
+        let processor = DocumentProcessor::new();
+        let path = PathBuf::from("/repo/customers/inactive/acme.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "customer");
+    }
+
+    #[test]
+    fn test_derive_type_structural_at_root_falls_back_to_document() {
+        let processor = DocumentProcessor::new();
+        // archive/john.md — structural folder at repo root, no grandparent
+        let path = PathBuf::from("/repo/archive/john.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "document");
+    }
+
+    #[test]
+    fn test_derive_type_deep_path_with_structural_folder() {
+        let processor = DocumentProcessor::new();
+        // customers/xsolis/people/archive/john-smith.md → skips archive → people → person
+        let path = PathBuf::from("/repo/customers/xsolis/people/archive/john-smith.md");
+        let repo_root = PathBuf::from("/repo");
+        assert_eq!(processor.derive_type(&path, &repo_root), "people");
+    }
+
+    #[test]
     fn test_compute_hash() {
         let hash = content_hash("test content");
         assert_eq!(hash.len(), 64); // SHA256 = 32 bytes = 64 hex chars
@@ -433,7 +519,7 @@ mod tests {
         let processor = DocumentProcessor::new();
         let fmt = crate::models::format::ResolvedFormat::default();
         let content = "# Title\nContent";
-        let result = processor.inject_id_with_format(content, "abc123", &fmt);
+        let result = processor.inject_id_with_format(content, "abc123", &fmt, None);
         assert_eq!(result, "<!-- factbase:abc123 -->\n# Title\nContent");
     }
 
@@ -445,7 +531,7 @@ mod tests {
             ..Default::default()
         };
         let content = "# Title\nContent";
-        let result = processor.inject_id_with_format(content, "abc123", &fmt);
+        let result = processor.inject_id_with_format(content, "abc123", &fmt, None);
         assert!(result.starts_with("---\nfactbase_id: abc123\n---\n"));
         assert!(result.contains("# Title"));
     }
@@ -458,9 +544,22 @@ mod tests {
             ..Default::default()
         };
         let content = "---\ntype: person\ntags: [test]\n---\n# Title\nContent";
-        let result = processor.inject_id_with_format(content, "abc123", &fmt);
+        let result = processor.inject_id_with_format(content, "abc123", &fmt, None);
         assert!(result.starts_with("---\nfactbase_id: abc123\n"));
         assert!(result.contains("type: person"));
         assert!(result.contains("# Title"));
+    }
+
+    #[test]
+    fn test_inject_id_frontmatter_with_type() {
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat {
+            id_placement: crate::models::format::IdPlacement::Frontmatter,
+            ..Default::default()
+        };
+        let content = "# John Smith\nContent";
+        let result = processor.inject_id_with_format(content, "abc123", &fmt, Some("person"));
+        assert!(result.contains("factbase_id: abc123\n"));
+        assert!(result.contains("type: person\n"));
     }
 }

@@ -311,9 +311,11 @@ pub async fn full_scan(
                     .and_then(|p| p.format.as_ref())
                     .map(|f| f.resolve())
                     .unwrap_or_default();
+                // Derive type now so it can be written to frontmatter alongside the ID
+                let new_doc_type = ctx.processor.derive_type(&pre.path, &repo.path);
                 let new_content =
                     ctx.processor
-                        .inject_id_with_format(&content, &id, &resolved_format);
+                        .inject_id_with_format(&content, &id, &resolved_format, Some(&new_doc_type));
                 fs::write(&pre.path, &new_content)?;
                 id
             };
@@ -386,6 +388,22 @@ pub async fn full_scan(
 
             let doc_type = ctx.processor.derive_type(&pre.path, &repo.path);
 
+            // When a file moves, update the type in frontmatter (Obsidian format) so
+            // Dataview queries stay accurate after reorganisation.
+            if is_moved && !is_modified {
+                let resolved_format = repo
+                    .perspective
+                    .as_ref()
+                    .and_then(|p| p.format.as_ref())
+                    .map(|f| f.resolve())
+                    .unwrap_or_default();
+                if resolved_format.id_placement == crate::models::format::IdPlacement::Frontmatter {
+                    let updated = crate::processor::update_frontmatter_type(&content, &doc_type);
+                    if updated != content {
+                        fs::write(&pre.path, &updated)?;
+                    }
+                }
+            }
             // Validate type against allowed_types if configured
             if let Some(ref perspective) = repo.perspective {
                 if let Some(ref allowed) = perspective.allowed_types {
