@@ -10,7 +10,7 @@
 
 ```bash
 # Clone and build
-git clone https://gitea.home.everyonce.com/daniel/factbase.git
+git clone https://github.com/everyonce/factbase.git
 cd factbase
 cargo build
 

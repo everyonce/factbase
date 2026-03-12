@@ -4,67 +4,57 @@
 
 Factbase has comprehensive test coverage across multiple categories:
 
-1. **Unit Tests** - Fast, no external dependencies (~83 tests)
-2. **Integration Tests** - Require live Ollama instance
+1. **Unit Tests** - Fast, no external dependencies (~2500+ tests)
+2. **Integration Tests** - Require live Ollama instance or Bedrock credentials
 3. **E2E Tests** - Full system tests with MCP server
-4. **Performance Tests** - Stress and load testing
-5. **Phase 5 Tests** - Comprehensive end-to-end testing with real Ollama
+4. **Frontend Tests** - Web UI component tests (requires `web` feature)
 
 ## Prerequisites
 
-### Ollama Setup
+### Ollama Setup (for integration tests)
 
-All integration and E2E tests require Ollama with specific models:
+Integration and E2E tests that require an embedding backend use Ollama:
 
 ```bash
 # Start Ollama
 ollama serve
 
-# Pull required models
+# Pull required model
 ollama pull qwen3-embedding:0.6b
-
-# Create extended context model for link detection
-cat > /tmp/rnj-1-extended.modelfile << 'EOF'
-FROM rnj-1:latest
-PARAMETER num_ctx 49152
-EOF
-ollama create rnj-1-extended -f /tmp/rnj-1-extended.modelfile
 ```
 
 ### Verify Setup
 
 ```bash
 factbase doctor
-# ✓ Ollama server: http://localhost:11434 (running)
-# ✓ Embedding model: qwen3-embedding:0.6b (available)
-# ✓ LLM model: rnj-1-extended (available)
-```
-
-Or use the setup script:
-
-```bash
-./scripts/setup-test-env.sh
+# ✓ Embedding provider: local (bge-small-en-v1.5, 384-dim)
+# All checks passed. Ready to scan.
 ```
 
 ## Running Tests
 
-### Unit Tests Only (Fast, No Ollama)
+### Unit Tests Only (Fast, No External Dependencies)
 
 ```bash
 cargo test --lib
 ```
 
-Runs ~83 unit tests in <1 second.
-
-### All Integration Tests (Requires Ollama)
+### Binary/CLI Tests
 
 ```bash
-# Run all tests (unit + integration)
-cargo test
+cargo test --bin factbase
+```
 
-# Or run specific test files
+### All Tests (Unit + Integration, Requires Ollama or Bedrock)
+
+```bash
+cargo test
+```
+
+### Specific Test Files
+
+```bash
 cargo test --test ollama_integration
-cargo test --test multi_repo_integration
 cargo test --test mcp_integration
 cargo test --test watcher_integration
 ```
@@ -74,32 +64,20 @@ cargo test --test watcher_integration
 ```bash
 cargo test --test serve_e2e
 cargo test --test full_scan_e2e
-cargo test --test multi_repo_e2e
-cargo test --test watcher_e2e
 cargo test --test mcp_e2e
+cargo test --test watcher_e2e
 ```
 
-### Phase 5 Comprehensive Tests
+### Frontend Tests (web feature)
 
 ```bash
-# All Phase 5 tests
-cargo test --test concurrent_stress
-cargo test --test error_recovery
-cargo test --test stability
-cargo test --test benchmarks
-cargo test --test edge_cases
-cargo test --test data_integrity
-cargo test --test cli_integration
-
-# Long-running stability test (10 minutes)
-cargo test test_stability_long -- --ignored --nocapture
+cd web && npm test
 ```
 
-### Performance Benchmarks
+### E2E Frontend Tests (requires running server)
 
 ```bash
-# Run benchmarks with output
-cargo test benchmark --release -- --nocapture
+cd web && npm run test:e2e
 ```
 
 ## Test Files
@@ -108,20 +86,19 @@ cargo test benchmark --release -- --nocapture
 
 | Module | Tests |
 |--------|-------|
-| `src/config.rs` | Config loading and validation |
-| `src/database.rs` | Database operations |
+| `src/config/` | Config loading and validation |
+| `src/database/` | Database operations |
 | `src/embedding.rs` | Embedding provider |
-| `src/llm.rs` | LLM and link detection |
-| `src/processor.rs` | Document processing |
-| `src/scanner.rs` | File scanning |
+| `src/processor/` | Document processing |
+| `src/scanner/` | File scanning |
 | `src/watcher.rs` | File watching |
-| `src/mcp/tools.rs` | MCP tool implementations |
+| `src/mcp/tools/` | MCP tool implementations |
 
 ### Integration Tests
 
 | File | Description |
 |------|-------------|
-| `tests/ollama_integration.rs` | Embedding and LLM tests |
+| `tests/ollama_integration.rs` | Embedding tests with Ollama |
 | `tests/multi_repo_integration.rs` | Multi-repository workflows |
 | `tests/mcp_integration.rs` | MCP server tool tests |
 | `tests/watcher_integration.rs` | File watcher tests |
@@ -131,12 +108,12 @@ cargo test benchmark --release -- --nocapture
 | File | Description |
 |------|-------------|
 | `tests/serve_e2e.rs` | Serve command E2E tests |
-| `tests/full_scan_e2e.rs` | Full scan with real Ollama |
-| `tests/multi_repo_e2e.rs` | Multi-repo with real Ollama |
+| `tests/full_scan_e2e.rs` | Full scan with real embedding backend |
+| `tests/multi_repo_e2e.rs` | Multi-repo workflows |
 | `tests/watcher_e2e.rs` | File watcher with real rescans |
 | `tests/mcp_e2e.rs` | MCP server with real search |
 
-### Phase 5 Tests
+### Additional Tests
 
 | File | Description |
 |------|-------------|
@@ -146,91 +123,23 @@ cargo test benchmark --release -- --nocapture
 | `tests/benchmarks.rs` | Performance benchmarks |
 | `tests/edge_cases.rs` | Edge case and boundary tests |
 | `tests/data_integrity.rs` | Data consistency tests |
-| `tests/cli_integration.rs` | CLI command integration tests |
+| `tests/cli.rs` | CLI command integration tests |
 
 ## Test Fixtures
 
-### Fixture Repository
-
-A comprehensive test fixture repository is available at `tests/fixtures/test-repo/`:
-
-```
-tests/fixtures/test-repo/
-├── people/           # 10 person documents
-├── projects/         # 8 project documents
-├── concepts/         # 5 concept documents
-├── notes/            # 5 edge case documents
-└── perspective.yaml  # Repository configuration
-```
-
-### Using Fixtures
+A test fixture repository is available at `tests/fixtures/`:
 
 ```rust
-use common::fixtures::{copy_fixture_repo, create_temp_repo};
+use common::TestContext;
 
-// Copy fixture repo to temp directory
-let temp = TempDir::new().unwrap();
-copy_fixture_repo(temp.path());
+#[tokio::test]
+async fn test_something() {
+    let ctx = TestContext::new("test-repo");
+    ctx.add_file("doc.md", "# Test\nContent here");
 
-// Or create empty temp repo
-let temp = create_temp_repo("test");
-```
-
-## Test Helpers
-
-### Common Module
-
-`tests/common/mod.rs` provides shared test utilities:
-
-```rust
-// Ollama availability check
-require_ollama().await;  // Panics with helpful message if unavailable
-
-// Test server helper
-let server = TestServer::start_with_data().await;
-let resp = server.call_tool("search_knowledge", json!({"query": "test"})).await;
-```
-
-### Ollama Helpers
-
-`tests/common/ollama_helpers.rs`:
-
-```rust
-// Require Ollama (fails fast if unavailable)
-require_ollama().await;
-
-// Require specific models
-require_models().await;
-
-// Wait for Ollama with retries
-wait_for_ollama(10, Duration::from_secs(2)).await;
-```
-
-## CI Configuration
-
-### GitHub Actions
-
-The CI workflow runs:
-
-1. **Unit tests** - Always run, no Ollama needed
-2. **Integration tests** - Run on self-hosted runners with Ollama
-3. **Clippy** - Lint checks
-4. **Format** - Code formatting checks
-
-See `.github/workflows/ci.yml` for configuration.
-
-### Running in CI
-
-```yaml
-# Unit tests only (any runner)
-- run: cargo test --lib
-
-# Integration tests (requires Ollama)
-- run: |
-    ollama serve &
-    sleep 5
-    ollama pull qwen3-embedding:0.6b
-    cargo test
+    let result = run_scan(&ctx.db, &ctx.repo, &ctx.config).await;
+    assert!(result.is_ok());
+}
 ```
 
 ## Code Quality
@@ -247,6 +156,27 @@ cargo build --release
 
 # Run all checks
 cargo fmt --check && cargo clippy -- -D warnings && cargo test --lib
+```
+
+## CI Configuration
+
+The CI workflow runs:
+
+1. **Unit tests** — Always run, no external dependencies needed
+2. **Integration tests** — Run on runners with Ollama or Bedrock access
+3. **Clippy** — Lint checks
+4. **Format** — Code formatting checks
+
+```yaml
+# Unit tests only (any runner)
+- run: cargo test --lib
+
+# Integration tests (requires Ollama)
+- run: |
+    ollama serve &
+    sleep 5
+    ollama pull qwen3-embedding:0.6b
+    cargo test
 ```
 
 ## Troubleshooting

@@ -4,7 +4,7 @@
 
 If you discover a security vulnerability in factbase, please report it responsibly.
 
-**Email**: Open a private issue on the [repository](https://gitea.home.everyonce.com/daniel/factbase) or contact the maintainer directly.
+**Email**: Open a private issue on the [repository](https://github.com/everyonce/factbase) or contact the maintainer directly.
 
 Please include:
 - Description of the vulnerability
@@ -40,7 +40,7 @@ The optional web UI binds to `127.0.0.1:3001` with the same constraints.
 
 ### File System Access
 
-Factbase reads and writes markdown files in registered repositories. It injects a tracking comment (`<!-- factbase:XXXXXX -->`) into files on first scan. The `review --apply` and `organize` commands modify file content based on LLM output — use `--dry-run` to preview changes.
+Factbase reads and writes markdown files in registered repositories. It injects a tracking comment (`<!-- factbase:XXXXXX -->`) into files on first scan. The `review --apply` and `organize` commands modify file content via the agent — use `--dry-run` to preview changes.
 
 ## Supported Versions
 
