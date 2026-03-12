@@ -1227,6 +1227,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_resume_past_end_does_not_reprocess_files() {
         // When file_offset >= files.len(), the scan should skip the file loop
         // and not reprocess all files from the beginning.

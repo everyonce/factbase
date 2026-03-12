@@ -174,4 +174,145 @@ mod tests {
         let preview = generate_preview(content, 30);
         assert!(preview.ends_with("..."));
     }
+
+    #[test]
+    fn test_get_entity_returns_content_and_links() {
+        use crate::database::tests::{test_db, test_doc, test_repo};
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        let doc = test_doc("abc123", "Test Entity");
+        db.upsert_document(&doc).unwrap();
+        let params = GetEntityParams {
+            id: "abc123".into(),
+            detail: None,
+            include_preview: false,
+            max_content_length: 0,
+        };
+        let result = get_entity(&db, &params).unwrap();
+        assert_eq!(result["id"], "abc123");
+        assert_eq!(result["title"], "Test Entity");
+        assert!(result["content"].as_str().unwrap().contains("Test Entity"));
+        assert!(result["links_to"].is_array());
+        assert!(result["linked_from"].is_array());
+    }
+
+    #[test]
+    fn test_get_entity_with_preview() {
+        use crate::database::tests::{test_db, test_doc, test_repo};
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        let doc = test_doc("abc123", "Test Entity");
+        db.upsert_document(&doc).unwrap();
+        let params = GetEntityParams {
+            id: "abc123".into(),
+            detail: None,
+            include_preview: true,
+            max_content_length: 0,
+        };
+        let result = get_entity(&db, &params).unwrap();
+        assert!(result.get("preview").is_some());
+    }
+
+    #[test]
+    fn test_get_entity_truncates_content() {
+        use crate::database::tests::{test_db, test_repo};
+        use crate::models::Document;
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        let doc = Document {
+            id: "abc123".into(),
+            content: "x ".repeat(500),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+        let params = GetEntityParams {
+            id: "abc123".into(),
+            detail: None,
+            include_preview: false,
+            max_content_length: 50,
+        };
+        let result = get_entity(&db, &params).unwrap();
+        assert_eq!(result["content_truncated"], true);
+    }
+
+    #[test]
+    fn test_get_entity_not_found() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let params = GetEntityParams {
+            id: "nonexistent".into(),
+            ..Default::default()
+        };
+        assert!(get_entity(&db, &params).is_err());
+    }
+
+    #[test]
+    fn test_get_entity_stats_detail() {
+        use crate::database::tests::{test_db, test_doc, test_repo};
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        let doc = test_doc("abc123", "Test Entity");
+        db.upsert_document(&doc).unwrap();
+        let params = GetEntityParams {
+            id: "abc123".into(),
+            detail: Some("stats".into()),
+            include_preview: false,
+            max_content_length: 0,
+        };
+        let result = get_entity(&db, &params).unwrap();
+        assert!(result.get("temporal").is_some());
+        assert!(result.get("sources").is_some());
+        assert!(result.get("links").is_some());
+        assert!(result.get("word_count").is_some());
+    }
+
+    #[test]
+    fn test_list_entities_empty() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let params = ListEntitiesParams { limit: 10, ..Default::default() };
+        let result = list_entities(&db, &params).unwrap();
+        assert_eq!(result["entities"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_list_entities_with_docs() {
+        use crate::database::tests::{test_db, test_doc, test_repo};
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        db.upsert_document(&test_doc("a1", "Doc A")).unwrap();
+        db.upsert_document(&test_doc("b2", "Doc B")).unwrap();
+        let params = ListEntitiesParams { limit: 10, ..Default::default() };
+        let result = list_entities(&db, &params).unwrap();
+        assert_eq!(result["entities"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_list_entities_respects_limit() {
+        use crate::database::tests::{test_db, test_doc, test_repo};
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        for i in 0..5 {
+            db.upsert_document(&test_doc(&format!("d{i:02}"), &format!("Doc {i}"))).unwrap();
+        }
+        let params = ListEntitiesParams { limit: 2, ..Default::default() };
+        let result = list_entities(&db, &params).unwrap();
+        assert_eq!(result["entities"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_list_repositories_returns_repos() {
+        use crate::database::tests::{test_db, test_repo};
+        let (db, _tmp) = test_db();
+        db.upsert_repository(&test_repo()).unwrap();
+        let result = list_repositories(&db).unwrap();
+        let repos = result["repositories"].as_array().unwrap();
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0]["id"], "test-repo");
+    }
+
+    #[test]
+    fn test_generate_preview_empty_content() {
+        assert_eq!(generate_preview("", 500), "");
+    }
 }

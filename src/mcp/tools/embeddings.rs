@@ -82,3 +82,45 @@ pub fn embeddings_status_tool(db: &Database) -> Result<Value, FactbaseError> {
 
     Ok(result)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_embeddings_status_returns_config_info() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let result = embeddings_status_tool(&db).unwrap();
+        assert!(result.get("config_model").is_some());
+        assert!(result.get("config_dimension").is_some());
+    }
+
+    #[test]
+    fn test_embeddings_import_missing_data() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({});
+        let result = embeddings_import(&db, &args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_embeddings_import_empty_data() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"data": ""});
+        // Empty JSONL may fail or succeed depending on parser — just verify no panic
+        let _ = embeddings_import(&db, &args);
+    }
+
+    #[test]
+    fn test_embeddings_export_empty_db() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({});
+        let result = embeddings_export(&db, &args).unwrap();
+        assert_eq!(result["chunk_count"], 0);
+        assert_eq!(result["format"], "jsonl");
+    }
+}

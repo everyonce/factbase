@@ -238,4 +238,46 @@ mod tests {
         assert_eq!(candidate.suggested_type, "person");
         assert!(candidate.confidence > 0.0);
     }
+
+    #[test]
+    fn test_group_by_type_filters_empty_types() {
+        let docs = vec![
+            ("d1".into(), "Doc 1".into(), "".into()),
+            ("d2".into(), "Doc 2".into(), "note".into()),
+        ];
+        let grouped = group_by_type(&docs);
+        assert!(!grouped.contains_key(""));
+        assert_eq!(grouped["note"].len(), 1);
+    }
+
+    #[test]
+    fn test_group_by_type_multiple_same_type() {
+        let docs = vec![
+            ("d1".into(), "A".into(), "person".into()),
+            ("d2".into(), "B".into(), "person".into()),
+            ("d3".into(), "C".into(), "project".into()),
+        ];
+        let grouped = group_by_type(&docs);
+        assert_eq!(grouped["person"].len(), 2);
+        assert_eq!(grouped["project"].len(), 1);
+    }
+
+    #[test]
+    fn test_find_closest_centroid_single_type() {
+        let mut centroids = HashMap::new();
+        centroids.insert("only_type".to_string(), vec![1.0, 0.0]);
+        let (closest, _) = find_closest_centroid(&[0.5, 0.5], &centroids);
+        assert_eq!(closest, "only_type");
+    }
+
+    #[test]
+    fn test_detect_misplaced_empty_repo() {
+        use crate::database::tests::{test_db, test_repo_in_db};
+        use tempfile::TempDir;
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        test_repo_in_db(&db, "test", repo_dir.path());
+        let result = detect_misplaced(&db, Some("test"), &crate::ProgressReporter::Silent).unwrap();
+        assert!(result.is_empty());
+    }
 }

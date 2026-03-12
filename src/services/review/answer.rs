@@ -358,4 +358,55 @@ mod tests {
         }).collect();
         assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
     }
+
+    #[test]
+    fn test_answer_question_doc_not_found() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let result = answer_question(&db, &AnswerQuestionParams {
+            doc_id: "nonexistent".into(), question_index: 0,
+            answer: "yes".into(), confidence: None,
+        });
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_answer_question_with_confidence() {
+        use tempfile::TempDir;
+        let dir = TempDir::new().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
+        std::fs::write(repo_dir.join("test.md"), content).unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(), name: "r1".into(), path: repo_dir,
+            perspective: None, created_at: chrono::Utc::now(),
+            last_indexed_at: None, last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(), repo_id: "r1".into(), file_path: "test.md".into(),
+            title: "Test".into(), content: content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let result = answer_question(&db, &AnswerQuestionParams {
+            doc_id: "abc123".into(), question_index: 0,
+            answer: "2024".into(), confidence: Some("believed".into()),
+        }).unwrap();
+        assert_eq!(result["success"], true);
+    }
+
+    #[test]
+    fn test_bulk_answer_doc_not_found_reports_error() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let items = vec![BulkAnswerItem {
+            doc_id: "nonexistent".into(), question_index: 0,
+            answer: "yes".into(), confidence: None,
+        }];
+        // Doc not found propagates as an error
+        assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
+    }
 }
