@@ -26,7 +26,7 @@ pub struct Link {
 
 // Re-export all public items for backward compatibility
 pub use document::{word_count, Document};
-pub use format::{FormatConfig, IdPlacement, LinkStyle, ResolvedFormat};
+pub use format::{write_obsidian_css_snippet, FormatConfig, IdPlacement, LinkStyle, ResolvedFormat};
 pub use question::{QuestionType, ReviewQuestion};
 pub use repository::{load_perspective_from_file, Perspective, Repository, ReviewPerspective, PERSPECTIVE_TEMPLATE};
 pub use scan::{DuplicatePair, FileTimingInfo, ScanResult, ScanStats, TemporalScanStats};

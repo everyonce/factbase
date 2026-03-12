@@ -294,7 +294,7 @@ mod tests {
         let content = "# Doc\n\n\
             - Fact A\n\
             - Fact B\n\
-            \n> [!info]- Review Queue\n> <!-- factbase:review -->\n\
+            \n> [!review]- Review Queue\n> <!-- factbase:review -->\n\
             > - [x] @q[temporal] Q1? > A1\n\
             > - [x] @q[conflict] Q2? > A2\n";
         assert_eq!(count_fact_lines(content), 2);
@@ -304,7 +304,7 @@ mod tests {
     fn test_validate_document_callout_review_no_false_content_loss() {
         let original = "<!-- factbase:abc123 -->\n# Topic\n\n\
             - Fact 1\n- Fact 2\n- Fact 3\n\
-            \n> [!info]- Review Queue\n> <!-- factbase:review -->\n\
+            \n> [!review]- Review Queue\n> <!-- factbase:review -->\n\
             > - [x] @q[temporal] Q? > A\n";
         // Remove answered review question but keep all facts
         let new_content = "<!-- factbase:abc123 -->\n# Topic\n\n\

@@ -240,7 +240,10 @@ pub static WIKILINK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
 
 /// Callout header used for Obsidian-format review sections.
-pub(crate) const REVIEW_CALLOUT_HEADER: &str = "> [!info]- Review Queue";
+pub(crate) const REVIEW_CALLOUT_HEADER: &str = "> [!review]- Review Queue";
+
+/// Legacy callout header (pre-v53) — accepted on read for backward compatibility.
+pub(crate) const REVIEW_CALLOUT_HEADER_LEGACY: &str = "> [!info]- Review Queue";
 
 /// Reference entity marker comment.
 pub const REFERENCE_MARKER: &str = "<!-- factbase:reference -->";
@@ -272,7 +275,7 @@ pub(crate) fn body_end_offset(content: &str) -> usize {
         })
         .find(|(_, line)| {
             let t = line.trim();
-            t == "## Review Queue" || t == REVIEW_CALLOUT_HEADER
+            t == "## Review Queue" || t == REVIEW_CALLOUT_HEADER || t == REVIEW_CALLOUT_HEADER_LEGACY
         })
         .map(|(pos, _)| pos);
     match (marker, heading) {
@@ -932,8 +935,8 @@ mod tests {
         let c4 = "# Title\n\n- fact one\n- fact two\n";
         assert_eq!(body_end_offset(c4), c4.len());
         // Callout format — body ends at callout header
-        let c5 = "# Title\n\n- fact\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] q\n";
-        assert_eq!(body_end_offset(c5), c5.find("> [!info]- Review Queue").unwrap());
+        let c5 = "# Title\n\n- fact\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] q\n";
+        assert_eq!(body_end_offset(c5), c5.find("> [!review]- Review Queue").unwrap());
         // Callout marker without header — body ends at start of marker line
         let c6 = "# Title\n\n- fact\n\n> <!-- factbase:review -->\n> - [ ] q\n";
         assert_eq!(body_end_offset(c6), c6.find("> <!-- factbase:review -->").unwrap());
@@ -1167,6 +1170,15 @@ mod tests {
 
     #[test]
     fn test_body_end_offset_with_callout_review() {
+        let content = "# Title\n\nContent.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let offset = body_end_offset(content);
+        assert!(offset < content.len());
+        assert!(!content[..offset].contains("@q["));
+    }
+
+    #[test]
+    fn test_body_end_offset_with_legacy_callout_review() {
+        // Legacy [!info] header still accepted on read
         let content = "# Title\n\nContent.\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let offset = body_end_offset(content);
         assert!(offset < content.len());

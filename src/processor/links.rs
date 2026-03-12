@@ -730,10 +730,10 @@ mod tests {
 
     #[test]
     fn test_append_links_before_callout_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_links_to_content(content, &["abc123"]);
         let refs_pos = result.find("References:").unwrap();
-        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        let review_pos = result.find("> [!review]- Review Queue").unwrap();
         assert!(refs_pos < review_pos, "References should appear before review section:\n{result}");
     }
 
@@ -748,10 +748,10 @@ mod tests {
 
     #[test]
     fn test_append_referenced_by_before_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_referenced_by_to_content(content, &["abc123"]);
         let refby_pos = result.find("Referenced by:").unwrap();
-        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        let review_pos = result.find("> [!review]- Review Queue").unwrap();
         assert!(refby_pos < review_pos, "Referenced by should appear before review section:\n{result}");
     }
 
@@ -765,7 +765,7 @@ mod tests {
 
     #[test]
     fn test_append_links_styled_before_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nContent.\n\n> [!info]- Review Queue\n> - [ ] @q[stale] Check?\n> <!-- factbase:review -->";
+        let content = "<!-- factbase:aaa111 -->\n# Title\n\nContent.\n\n> [!review]- Review Queue\n> - [ ] @q[stale] Check?\n> <!-- factbase:review -->";
         let ids = vec![("abc123", Some("Doc"), Some("notes/doc.md"))];
         let result = append_links_to_content_styled(
             content,
@@ -773,7 +773,7 @@ mod tests {
             crate::models::format::LinkStyle::Wikilink,
         );
         let refs_pos = result.find("References:").unwrap();
-        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        let review_pos = result.find("> [!review]- Review Queue").unwrap();
         assert!(refs_pos < review_pos, "Styled references should appear before review section:\n{result}");
     }
 
@@ -793,11 +793,11 @@ mod tests {
 
     #[test]
     fn test_replace_existing_links_with_review_section_unchanged() {
-        let content = "# Title\n\nReferences: [[abc123]]\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "# Title\n\nReferences: [[abc123]]\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_links_to_content(content, &["def456"]);
         assert!(result.contains("References: [[abc123]] [[def456]]"));
         let refs_pos = result.find("References:").unwrap();
-        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        let review_pos = result.find("> [!review]- Review Queue").unwrap();
         assert!(refs_pos < review_pos);
     }
 
@@ -805,13 +805,13 @@ mod tests {
 
     #[test]
     fn test_append_links_with_footnotes_and_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\n> [!info]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "<!-- factbase:aaa111 -->\n# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_links_to_content(content, &["abc123"]);
         assert!(result.contains("References: [[abc123]]"));
         assert!(result.contains("[^1]: Source"));
         let footnote_pos = result.find("[^1]: Source").unwrap();
         let refs_pos = result.find("References:").unwrap();
-        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        let review_pos = result.find("> [!review]- Review Queue").unwrap();
         assert!(refs_pos > footnote_pos, "References should be after footnotes");
         assert!(refs_pos < review_pos, "References should be before review section");
     }

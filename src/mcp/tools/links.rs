@@ -362,10 +362,24 @@ pub fn migrate_repo_links(db: &Database, args: &Value) -> Result<Value, Factbase
         }
     }
 
+    // Generate Obsidian CSS snippet if the repo uses the obsidian preset
+    let css_written = if repo
+        .perspective
+        .as_ref()
+        .and_then(|p| p.format.as_ref())
+        .map(|f| f.preset.as_deref() == Some("obsidian"))
+        .unwrap_or(false)
+    {
+        crate::models::write_obsidian_css_snippet(&repo.path).is_ok()
+    } else {
+        false
+    };
+
     Ok(serde_json::json!({
         "migrated": migrated,
         "total_documents": docs.len(),
-        "link_style": format!("{:?}", style).to_lowercase()
+        "link_style": format!("{:?}", style).to_lowercase(),
+        "obsidian_css_written": css_written
     }))
 }
 

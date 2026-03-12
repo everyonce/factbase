@@ -437,22 +437,22 @@ mod tests {
     #[test]
     fn test_recover_review_section_callout_from_db() {
         let disk = "# Doc\n\nSome content\n";
-        let db = "# Doc\n\nSome content\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let db = "# Doc\n\nSome content\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         let (result, changed) = recover_review_section(disk, db);
         assert!(changed);
-        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format from DB");
+        assert!(result.contains("> [!review]- Review Queue"), "should preserve callout format from DB");
         assert!(result.contains("> <!-- factbase:review -->"));
         assert!(result.contains("When?"));
     }
 
     #[test]
     fn test_recover_review_section_callout_disk_empty() {
-        let disk = "# Doc\n\nContent\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n";
-        let db = "# Doc\n\nContent\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let disk = "# Doc\n\nContent\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n";
+        let db = "# Doc\n\nContent\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         let (result, changed) = recover_review_section(disk, db);
         assert!(changed);
         assert!(result.contains("When?"));
-        assert!(result.contains("> [!info]- Review Queue"));
+        assert!(result.contains("> [!review]- Review Queue"));
     }
 
     #[test]
