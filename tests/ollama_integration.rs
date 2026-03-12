@@ -6,15 +6,9 @@ mod common;
 use common::create_test_db;
 use common::ollama_helpers::require_ollama;
 use factbase::{
-    config::Config,
-    cosine_similarity,
-    database::Database,
-    embedding::OllamaEmbedding,
+    config::Config, cosine_similarity, database::Database, embedding::OllamaEmbedding,
+    models::Document, processor::DocumentProcessor, scanner::Scanner, EmbeddingProvider,
     LinkDetector,
-    models::Document,
-    processor::DocumentProcessor,
-    scanner::Scanner,
-    EmbeddingProvider,
 };
 use tempfile::TempDir;
 

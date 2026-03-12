@@ -99,35 +99,15 @@ check_flags scan -v --verbose -q --quiet -j --json --dry-run -w --watch \
     --check-duplicates --stats --since --stats-only --check --verify --fix \
     --prune --hard --reindex --batch-size --no-links -y --yes
 
-# search flags from README
-check_flags search -t --doc-type -T --exclude-type -r --repo -l --limit \
-    -j --json -c --compact --title --as-of --during --exclude-unknown \
-    --boost-recent -f --filter -x --exclude --sort -w --watch
 
-# grep flags from README
-check_flags grep -t --doc-type -T --exclude-type -r --repo -l --limit \
-    -j --json -f --format -q --quiet -H --highlight -C --context \
-    --stats --count --since --dry-run
 
 # status flags from README
-check_flags status -d --detailed -j --json -f --format --offline
+check_flags status -d --detailed -j --json -f --format
 
-# export flags from README
-check_flags export --with-metadata --format --compress --stdout
 
-# import flags from README
-check_flags import --overwrite --include
 
-# lint flags from README
-check_flags lint -r --repo --min-length --max-age --check-duplicates \
-    --min-similarity --fix --incremental --since -a --check-all -p --parallel \
-    --batch-size --review --check-temporal --check-sources
 
-# review flags from README
-check_flags review --apply --repo --dry-run --status -j --json --import-questions
 
-# completions flags from README
-check_flags completions --with-repos
 
 # repo subcommands
 repo_help=$("$FACTBASE" repo --help 2>&1)

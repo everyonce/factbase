@@ -212,7 +212,10 @@ async fn test_store_links_writes_to_files_and_db() {
     let moon_content = std::fs::read_to_string(ctx.repo_path.join("the-moon.md")).unwrap();
     let titan_content = std::fs::read_to_string(ctx.repo_path.join("titan.md")).unwrap();
     let has_links = moon_content.contains("References:") || titan_content.contains("References:");
-    assert!(has_links, "At least one file should have a References: block");
+    assert!(
+        has_links,
+        "At least one file should have a References: block"
+    );
 
     // Verify links in DB — check that the target docs are reachable
     let moon_links = ctx.db.get_links_from("de0004").unwrap();
