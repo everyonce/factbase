@@ -503,14 +503,18 @@ fn maintain_step(
             let type_dist = compute_type_distribution(db);
             let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
             let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
-            serde_json::json!({
+            let mut resp = serde_json::json!({
                 "workflow": "maintain",
                 "step": 7, "total_steps": total,
                 "instruction": resolve(wf, "maintain.report", DEFAULT_MAINTAIN_REPORT_INSTRUCTION, &[]),
                 "remaining_questions": remaining,
                 "deferred_questions": new_deferred,
                 "complete": true
-            })
+            });
+            if is_obsidian_format(perspective) {
+                resp["tip"] = serde_json::json!("If you renamed files in Obsidian since the last scan, run factbase(op=scan) to sync the database with the new paths.");
+            }
+            resp
         }
     }
 }
@@ -596,14 +600,18 @@ fn refresh_step(
             let type_dist = compute_type_distribution(db);
             let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
             let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
-            serde_json::json!({
+            let mut resp = serde_json::json!({
                 "workflow": "refresh",
                 "step": 6, "total_steps": total,
                 "instruction": resolve(wf, "refresh.report", DEFAULT_REFRESH_REPORT_INSTRUCTION, &[]),
                 "remaining_questions": remaining,
                 "deferred_questions": new_deferred,
                 "complete": true
-            })
+            });
+            if is_obsidian_format(perspective) {
+                resp["tip"] = serde_json::json!("If you renamed files in Obsidian since the last scan, run factbase(op=scan) to sync the database with the new paths.");
+            }
+            resp
         }
     }
 }
@@ -4003,6 +4011,29 @@ mod tests {
         assert_eq!(step["complete"], true);
         assert!(step.get("remaining_questions").is_some());
         assert!(step.get("deferred_questions").is_some());
+    }
+
+    #[test]
+    fn test_maintain_step7_obsidian_tip_when_obsidian_format() {
+        let (db, _tmp) = test_db();
+        let obsidian_perspective = Some(Perspective {
+            format: Some(crate::models::format::FormatConfig {
+                preset: Some("obsidian".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let step = maintain_step(7, &serde_json::json!({}), &obsidian_perspective, 0, &db, &wf());
+        let tip = step["tip"].as_str().expect("tip should be present for obsidian format");
+        assert!(tip.contains("scan"), "tip should mention scan");
+        assert!(tip.contains("renamed"), "tip should mention renaming");
+    }
+
+    #[test]
+    fn test_maintain_step7_no_tip_without_obsidian_format() {
+        let (db, _tmp) = test_db();
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert!(step.get("tip").is_none(), "no tip without obsidian format");
     }
 
     #[test]
