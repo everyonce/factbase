@@ -141,7 +141,7 @@ impl McpResponse {
 /// # Supported Tools
 /// - Primary: `workflow` (guided multi-step), `factbase` (unified operations)
 /// - Legacy aliases: all old tool names still dispatched for backward compat
-
+///
 /// Dispatch a single tool operation by name. Used by both the `factbase` unified
 /// tool (via op→name mapping) and legacy tool name aliases.
 async fn dispatch_tool<E: EmbeddingProvider>(

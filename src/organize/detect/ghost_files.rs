@@ -13,6 +13,9 @@ use crate::scanner::Scanner;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Entry for a file found on disk: (relative_path, doc_id, title, line_count)
+type FileEntry = (String, Option<String>, Option<String>, usize);
+
 /// Scan repository directories for files sharing a factbase ID or title within the same folder.
 pub fn detect_ghost_files(
     db: &Database,
@@ -48,7 +51,7 @@ pub fn detect_ghost_files(
         progress.report(0, files.len(), "Scanning for ghost files");
 
         // Group files by directory: dir -> Vec<(relative_path, doc_id, title, line_count)>
-        let mut by_dir: HashMap<String, Vec<(String, Option<String>, Option<String>, usize)>> =
+        let mut by_dir: HashMap<String, Vec<FileEntry>> =
             HashMap::new();
 
         for (i, path) in files.iter().enumerate() {
@@ -83,7 +86,7 @@ pub fn detect_ghost_files(
         // Detect duplicates within each directory
         for entries in by_dir.values() {
             // Check for shared factbase IDs
-            let mut by_id: HashMap<&str, Vec<&(String, Option<String>, Option<String>, usize)>> =
+            let mut by_id: HashMap<&str, Vec<&FileEntry>> =
                 HashMap::new();
             for entry in entries {
                 if let Some(ref id) = entry.1 {
@@ -133,7 +136,7 @@ pub fn detect_ghost_files(
                 .flat_map(|g| [g.tracked_path.as_str(), g.ghost_path.as_str()])
                 .collect();
 
-            let mut by_title: HashMap<&str, Vec<&(String, Option<String>, Option<String>, usize)>> =
+            let mut by_title: HashMap<&str, Vec<&FileEntry>> =
                 HashMap::new();
             for entry in entries {
                 if flagged_paths.contains(entry.0.as_str()) {

@@ -21,14 +21,12 @@ use std::collections::HashMap;
 use crate::config::workflows::WorkflowsConfig;
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
-use super::helpers::load_perspective;
+use super::helpers::{load_glossary_terms, load_perspective, resolve_repo_filter};
 use super::{get_str_arg, get_str_arg_required, get_u64_arg};
 use super::review::format_question_json;
 use helpers::*;
 use instructions::*;
 use variants::*;
-
-use super::helpers::resolve_repo_filter;
 
 /// Start a guided workflow.
 pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
@@ -195,8 +193,6 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
         }),
     }
 }
-
-/// Default template for the bootstrap prompt.
 
 /// Run the bootstrap workflow: return instructions for the agent to generate domain-specific KB structure.
 pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
@@ -634,13 +630,13 @@ fn resolve_step2_batch(
     let mut type_distribution: HashMap<QuestionType, usize> = HashMap::new();
 
     // Load glossary terms to auto-dismiss acronym questions already covered
-    let glossary_terms = load_all_glossary_terms(db);
+    let glossary_terms = load_glossary_terms(db, None);
     let mut glossary_auto_resolved: usize = 0;
 
     for doc in &docs {
         // Apply doc_type filter
         if let Some(dt_filter) = doc_type_filter {
-            let matches = doc.doc_type.as_deref().map_or(false, |dt| dt.eq_ignore_ascii_case(dt_filter));
+            let matches = doc.doc_type.as_deref().is_some_and(|dt| dt.eq_ignore_ascii_case(dt_filter));
             if !matches {
                 continue;
             }

@@ -1,6 +1,6 @@
 //! Document CRUD MCP tools: create_document, update_document, delete_document, bulk_create_documents
 
-use super::helpers::resolve_doc_path;
+use super::helpers::{load_glossary_terms, resolve_doc_path};
 use super::{get_str_arg, get_str_arg_required, resolve_repo};
 use crate::database::Database;
 use crate::error::FactbaseError;
@@ -8,7 +8,6 @@ use crate::patterns::{body_end_offset, ID_REGEX};
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
-use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
@@ -163,20 +162,6 @@ fn strip_leading_title<'a>(content: &'a str, title: &str) -> &'a str {
     content
 }
 
-/// Load glossary-defined terms for a repository (for acronym dedup).
-fn load_glossary_terms(db: &Database, repo_id: &str) -> HashSet<String> {
-    // Query glossary-type documents; fall back to empty set on error.
-    let types = ["definition", "glossary", "reference"];
-    let mut terms = HashSet::new();
-    for t in &types {
-        if let Ok(docs) = db.list_documents(Some(t), Some(repo_id), None, 50) {
-            for doc in &docs {
-                terms.extend(crate::extract_defined_terms(&doc.content));
-            }
-        }
-    }
-    terms
-}
 
 /// Creates a new document in a repository.
 ///
@@ -213,7 +198,7 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let content_trimmed = strip_leading_title(content, &title);
 
     // Deduplicate inline acronym expansions
-    let glossary = load_glossary_terms(db, &repo_id);
+    let glossary = load_glossary_terms(db, Some(repo_id));
     let content_deduped = crate::processor::dedup_acronym_expansions(content_trimmed, &glossary);
 
     // Build document content with header and title using format config
@@ -352,7 +337,7 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         // Deduplicate inline acronym expansions (e.g. "DR (Disaster Recovery)" repeated 4x).
         // Strip all expansions for terms defined in glossary documents.
         if new_content.is_some() {
-            let glossary = load_glossary_terms(db, &doc.repo_id);
+            let glossary = load_glossary_terms(db, Some(&doc.repo_id));
             body = crate::processor::dedup_acronym_expansions(&body, &glossary);
         }
 
@@ -573,7 +558,7 @@ pub fn bulk_create_documents(
     // Create all documents using validated data
     let mut created: Vec<Value> = Vec::with_capacity(validated_docs.len());
     let total = validated_docs.len();
-    let glossary = load_glossary_terms(db, &repo_id);
+    let glossary = load_glossary_terms(db, Some(repo_id));
     let resolved_format = resolve_repo_format(&repo);
     for (i, validated) in validated_docs.iter().enumerate() {
         let id = processor.generate_unique_id(db);

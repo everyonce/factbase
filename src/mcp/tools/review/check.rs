@@ -12,25 +12,8 @@ use serde_json::Value;
 const LINT_CONCURRENCY: usize = 5;
 
 /// Load active (non-deleted) documents for the given repo scope.
-fn load_docs(db: &Database, repo_id: Option<&str>) -> Result<Vec<crate::models::Document>, FactbaseError> {
-    match repo_id {
-        Some(rid) => Ok(db
-            .get_documents_for_repo(rid)?
-            .into_values()
-            .filter(|d| !d.is_deleted)
-            .collect()),
-        None => {
-            let mut all = Vec::new();
-            for repo in db.list_repositories()? {
-                all.extend(
-                    db.get_documents_for_repo(&repo.id)?
-                        .into_values()
-                        .filter(|d| !d.is_deleted),
-                );
-            }
-            Ok(all)
-        }
-    }
+pub(crate) fn load_docs(db: &Database, repo_id: Option<&str>) -> Result<Vec<crate::models::Document>, FactbaseError> {
+    crate::organize::detect::collect_active_documents(db, repo_id)
 }
 
 /// Runs rule-based quality checks across documents in a repository.

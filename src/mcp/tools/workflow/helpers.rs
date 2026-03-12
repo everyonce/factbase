@@ -7,7 +7,7 @@ use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::models::{Document, Perspective, QuestionType};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
 use super::instructions::DEFAULT_BOOTSTRAP_PROMPT;
@@ -360,19 +360,6 @@ pub(super) fn recommended_resolve_order(dist: &[(QuestionType, usize)]) -> Vec<S
     with_questions.iter().map(|(qt, _)| qt.to_string()).collect()
 }
 
-/// Load glossary terms from all repositories.
-pub(super) fn load_all_glossary_terms(db: &Database) -> HashSet<String> {
-    let types = ["definition", "glossary", "reference"];
-    let mut terms = HashSet::new();
-    for t in &types {
-        if let Ok(docs) = db.list_documents(Some(t), None, None, 100) {
-            for doc in &docs {
-                terms.extend(crate::extract_defined_terms(&doc.content));
-            }
-        }
-    }
-    terms
-}
 
 /// Auto-dismiss a single question by marking it answered in the document.
 pub(super) fn auto_dismiss_question(db: &Database, doc_id: &str, question_index: usize) -> Result<(), FactbaseError> {
