@@ -123,8 +123,16 @@ mod tests {
 
         let scanner = Scanner::new(&[]);
         let files = scanner.find_markdown_files(temp.path());
-        let names: Vec<_> = files.iter().map(|f| f.file_name().unwrap().to_str().unwrap()).collect();
-        assert_eq!(files.len(), 2, "Expected only doc.md and note.md, got: {:?}", names);
+        let names: Vec<_> = files
+            .iter()
+            .map(|f| f.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(
+            files.len(),
+            2,
+            "Expected only doc.md and note.md, got: {:?}",
+            names
+        );
         assert!(names.contains(&"doc.md"));
         assert!(names.contains(&"note.md"));
     }

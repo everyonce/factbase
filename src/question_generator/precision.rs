@@ -52,7 +52,10 @@ const VAGUE_QUALIFIERS: &[(&str, &str)] = &[
     ("recently", "when specifically?"),
     ("eventually", "when specifically?"),
     // Vague scope
-    ("overall", "does this mean personally directed, or delegated with oversight?"),
+    (
+        "overall",
+        "does this mean personally directed, or delegated with oversight?",
+    ),
     ("generally", "are there exceptions?"),
     ("largely", "what portion specifically?"),
     ("mostly", "what portion specifically?"),

@@ -13,7 +13,9 @@ use std::path::Path;
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::organize::fs_helpers::read_file;
-use crate::organize::{extract_facts, FactDestination, MergePlan, MergeResult, SplitPlan, SplitResult};
+use crate::organize::{
+    extract_facts, FactDestination, MergePlan, MergeResult, SplitPlan, SplitResult,
+};
 
 /// Result of verification with detailed counts.
 #[derive(Debug, Clone)]
@@ -110,7 +112,10 @@ pub fn verify_merge(
     let actual_doc_facts = actual_facts.len();
 
     if actual_doc_facts >= expected_doc_facts {
-        Ok(VerificationResult::success(expected_doc_facts, actual_doc_facts))
+        Ok(VerificationResult::success(
+            expected_doc_facts,
+            actual_doc_facts,
+        ))
     } else {
         let details = build_failure_details(
             "Merge",
@@ -119,7 +124,11 @@ pub fn verify_merge(
             &actual_facts,
             &kept_content,
         );
-        Ok(VerificationResult::failure(expected_doc_facts, actual_doc_facts, details))
+        Ok(VerificationResult::failure(
+            expected_doc_facts,
+            actual_doc_facts,
+            details,
+        ))
     }
 }
 
@@ -152,7 +161,10 @@ pub fn verify_split(
     }
 
     if actual_doc_facts >= expected_doc_facts {
-        Ok(VerificationResult::success(expected_doc_facts, actual_doc_facts))
+        Ok(VerificationResult::success(
+            expected_doc_facts,
+            actual_doc_facts,
+        ))
     } else {
         let details = build_failure_details(
             "Split",
@@ -161,7 +173,11 @@ pub fn verify_split(
             &all_facts,
             &all_content,
         );
-        Ok(VerificationResult::failure(expected_doc_facts, actual_doc_facts, details))
+        Ok(VerificationResult::failure(
+            expected_doc_facts,
+            actual_doc_facts,
+            details,
+        ))
     }
 }
 
@@ -206,9 +222,24 @@ mod tests {
         }
 
         let fact_ids: Vec<_> = ledger.source_facts.iter().map(|f| f.id.clone()).collect();
-        ledger.assign(&fact_ids[0], FactDestination::Document, Some("keep".to_string()), None);
-        ledger.assign(&fact_ids[1], FactDestination::Document, Some("keep".to_string()), None);
-        ledger.assign(&fact_ids[2], FactDestination::Document, Some("keep".to_string()), None);
+        ledger.assign(
+            &fact_ids[0],
+            FactDestination::Document,
+            Some("keep".to_string()),
+            None,
+        );
+        ledger.assign(
+            &fact_ids[1],
+            FactDestination::Document,
+            Some("keep".to_string()),
+            None,
+        );
+        ledger.assign(
+            &fact_ids[2],
+            FactDestination::Document,
+            Some("keep".to_string()),
+            None,
+        );
         ledger.assign(&fact_ids[3], FactDestination::Orphan, None, None);
         ledger.assign(&fact_ids[4], FactDestination::Duplicate, None, None);
 
@@ -229,7 +260,8 @@ mod tests {
             TrackedFact::new("doc1", 3, "**Role:** Engineer", None, vec![]),
             TrackedFact::new("doc1", 5, "- Hired: 2020", None, vec![]),
         ];
-        let content = "<!-- factbase:abc123 -->\n# Test Doc\n\n**Role:** Engineer\n\n- Hired: 2020\n";
+        let content =
+            "<!-- factbase:abc123 -->\n# Test Doc\n\n**Role:** Engineer\n\n- Hired: 2020\n";
 
         let details = build_failure_details("Merge", 5, 2, &facts, content);
 

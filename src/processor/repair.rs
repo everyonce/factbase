@@ -95,9 +95,11 @@ fn repair_title(lines: &mut [String], result: &mut RepairResult) {
             if new_line != original {
                 *line = new_line;
                 result.fixes += 1;
-                result
-                    .descriptions
-                    .push(format!("Cleaned title: \"{}\" → \"{}\"", original.trim(), line.trim()));
+                result.descriptions.push(format!(
+                    "Cleaned title: \"{}\" → \"{}\"",
+                    original.trim(),
+                    line.trim()
+                ));
             }
             break;
         }
@@ -206,9 +208,10 @@ fn repair_duplicate_fact_lines(lines: &mut Vec<String>, result: &mut RepairResul
         if !seen.insert(normalized) {
             to_remove.push(i);
             result.fixes += 1;
-            result
-                .descriptions
-                .push(format!("Removed duplicate fact: {}", truncate_str(line.trim(), 60)));
+            result.descriptions.push(format!(
+                "Removed duplicate fact: {}",
+                truncate_str(line.trim(), 60)
+            ));
         }
     }
     remove_lines(lines, &to_remove);
@@ -228,7 +231,8 @@ mod tests {
 
     #[test]
     fn test_repair_clean_document_no_changes() {
-        let content = "<!-- factbase:abc123 -->\n# Test Entity\n\n- Fact one [^1]\n\n[^1]: Source A\n";
+        let content =
+            "<!-- factbase:abc123 -->\n# Test Entity\n\n- Fact one [^1]\n\n[^1]: Source A\n";
         let result = repair_document(content);
         assert_eq!(result.fixes, 0);
         assert!(result.content.is_none());
@@ -290,9 +294,14 @@ mod tests {
 
     #[test]
     fn test_repair_multiple_issues() {
-        let content = "# Bad Title @t[?]\n\n- Dup fact\n- Dup fact\n\n[^1]: Not a conflict\n[^9]: Orphaned\n";
+        let content =
+            "# Bad Title @t[?]\n\n- Dup fact\n- Dup fact\n\n[^1]: Not a conflict\n[^9]: Orphaned\n";
         let result = repair_document(content);
-        assert!(result.fixes >= 3, "Expected at least 3 fixes, got {}", result.fixes);
+        assert!(
+            result.fixes >= 3,
+            "Expected at least 3 fixes, got {}",
+            result.fixes
+        );
     }
 
     #[test]

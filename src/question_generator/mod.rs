@@ -39,14 +39,14 @@
 //! - [`generate_required_field_questions`] - Generate missing required field questions
 
 mod ambiguous;
+pub mod check;
 mod citation;
 mod conflict;
-pub mod cross_validate;
 pub(crate) mod corruption;
+pub mod cross_validate;
 mod duplicate;
 pub(crate) mod facts;
 mod fields;
-pub mod check;
 pub(crate) mod missing;
 pub(crate) mod placement;
 mod precision;
@@ -56,7 +56,12 @@ mod temporal;
 use crate::patterns::{FACT_LINE_REGEX, META_COMMENTARY_REGEX};
 
 // Re-export all public items
-pub use ambiguous::{collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question, extract_defined_terms, is_glossary_doc, is_glossary_doc_with_types, generate_ambiguous_questions, generate_ambiguous_questions_with_type};
+pub use ambiguous::{
+    collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question,
+    extract_defined_terms, generate_ambiguous_questions, generate_ambiguous_questions_with_type,
+    is_glossary_doc, is_glossary_doc_with_types,
+};
+pub use citation::generate_weak_source_questions;
 pub use conflict::{
     classify_conflict_pattern, filter_sequential_conflicts, generate_conflict_questions,
     generate_duplicate_entry_questions, ConflictPattern,
@@ -65,7 +70,6 @@ pub use corruption::generate_corruption_questions;
 pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};
-pub use citation::generate_weak_source_questions;
 pub use precision::generate_precision_questions;
 pub use stale::generate_stale_questions;
 pub use temporal::generate_temporal_questions;

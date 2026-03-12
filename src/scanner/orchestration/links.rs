@@ -4,8 +4,8 @@ use std::collections::HashSet;
 use std::time::Instant;
 use tracing::info;
 
-use crate::{Database, LinkDetector};
 use crate::progress::ProgressReporter;
+use crate::{Database, LinkDetector};
 
 use crate::scanner::progress::OptionalProgress;
 
@@ -272,8 +272,10 @@ mod tests {
         // Store embeddings so find_similar works
         let emb = MockEmbedding::new(1024);
         let dim = emb.dimension();
-        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &vec![0.1; dim]).unwrap();
-        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &vec![0.1; dim]).unwrap();
+        db.upsert_embedding_chunk("aaa111", 0, 0, 100, &vec![0.1; dim])
+            .unwrap();
+        db.upsert_embedding_chunk("bbb222", 0, 0, 100, &vec![0.1; dim])
+            .unwrap();
 
         (tmp, "test".into())
     }

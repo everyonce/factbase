@@ -505,8 +505,7 @@ mod tests {
     async fn test_persistent_cached_embedding_hit() {
         let (db, _tmp) = crate::database::tests::test_db();
         let mock = MockEmbedding::new(4);
-        let persistent =
-            PersistentCachedEmbedding::new(mock, db.clone(), "test-model".into(), 100);
+        let persistent = PersistentCachedEmbedding::new(mock, db.clone(), "test-model".into(), 100);
 
         // First call: miss, stores in SQLite
         let result1 = persistent.generate("hello").await.unwrap();
@@ -534,9 +533,7 @@ mod tests {
         // Second instance should find it in SQLite
         assert_eq!(db.count_query_cache().unwrap(), 1);
         let hash = text_hash("hello");
-        let cached = db
-            .get_cached_query_embedding(&hash, "test-model")
-            .unwrap();
+        let cached = db.get_cached_query_embedding(&hash, "test-model").unwrap();
         assert!(cached.is_some());
     }
 
@@ -544,8 +541,7 @@ mod tests {
     async fn test_persistent_cached_embedding_model_isolation() {
         let (db, _tmp) = crate::database::tests::test_db();
         let mock = MockEmbedding::new(4);
-        let persistent =
-            PersistentCachedEmbedding::new(mock, db.clone(), "model-a".into(), 100);
+        let persistent = PersistentCachedEmbedding::new(mock, db.clone(), "model-a".into(), 100);
         persistent.generate("hello").await.unwrap();
 
         // Different model should not find the cached entry
@@ -560,8 +556,7 @@ mod tests {
     async fn test_persistent_cached_embedding_dimension() {
         let (db, _tmp) = crate::database::tests::test_db();
         let mock = MockEmbedding::new(512);
-        let persistent =
-            PersistentCachedEmbedding::new(mock, db, "test-model".into(), 100);
+        let persistent = PersistentCachedEmbedding::new(mock, db, "test-model".into(), 100);
         assert_eq!(persistent.dimension(), 512);
     }
 }

@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
-use factbase::models::{DetailedStats, PoolStats, RepoStats, Repository, SourceStats, TemporalStats};
+use factbase::models::{
+    DetailedStats, PoolStats, RepoStats, Repository, SourceStats, TemporalStats,
+};
 use factbase::output::format_bytes;
 
 use super::format_coverage;

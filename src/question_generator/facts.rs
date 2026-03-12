@@ -59,8 +59,7 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
         if fm_reviewed.is_some() {
             continue;
         }
-        if extract_reviewed_date(line)
-            .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+        if extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
         {
             continue;
         }
@@ -293,9 +292,7 @@ mod tests {
     #[test]
     fn test_extract_skips_recently_reviewed_lines() {
         let today = chrono::Local::now().format("%Y-%m-%d");
-        let content = format!(
-            "- Reviewed fact <!-- reviewed:{today} -->\n- Unreviewed fact"
-        );
+        let content = format!("- Reviewed fact <!-- reviewed:{today} -->\n- Unreviewed fact");
         let facts = extract_all_facts(&content);
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].text, "Unreviewed fact");
@@ -304,11 +301,10 @@ mod tests {
     #[test]
     fn test_extract_includes_old_reviewed_lines() {
         // 200 days ago exceeds the 180-day skip window
-        let old_date = (chrono::Local::now().date_naive() - chrono::Duration::days(200))
-            .format("%Y-%m-%d");
-        let content = format!(
-            "- Old reviewed fact <!-- reviewed:{old_date} -->\n- Unreviewed fact"
-        );
+        let old_date =
+            (chrono::Local::now().date_naive() - chrono::Duration::days(200)).format("%Y-%m-%d");
+        let content =
+            format!("- Old reviewed fact <!-- reviewed:{old_date} -->\n- Unreviewed fact");
         let facts = extract_all_facts(&content);
         assert_eq!(facts.len(), 2);
     }
@@ -320,17 +316,25 @@ mod tests {
             "---\nfactbase_id: abc123\nreviewed: {today}\n---\n# Title\n\n- Fact one\n- Fact two\n"
         );
         let facts = extract_all_facts(&content);
-        assert_eq!(facts.len(), 0, "All facts should be skipped when frontmatter reviewed date is recent");
+        assert_eq!(
+            facts.len(),
+            0,
+            "All facts should be skipped when frontmatter reviewed date is recent"
+        );
     }
 
     #[test]
     fn test_extract_includes_facts_with_old_frontmatter_reviewed() {
-        let old_date = (chrono::Local::now().date_naive() - chrono::Duration::days(200))
-            .format("%Y-%m-%d");
+        let old_date =
+            (chrono::Local::now().date_naive() - chrono::Duration::days(200)).format("%Y-%m-%d");
         let content = format!(
             "---\nfactbase_id: abc123\nreviewed: {old_date}\n---\n# Title\n\n- Fact one\n- Fact two\n"
         );
         let facts = extract_all_facts(&content);
-        assert_eq!(facts.len(), 2, "Facts should not be skipped when frontmatter reviewed date is old");
+        assert_eq!(
+            facts.len(),
+            2,
+            "Facts should not be skipped when frontmatter reviewed date is old"
+        );
     }
 }

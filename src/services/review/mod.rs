@@ -8,8 +8,8 @@ mod queue;
 
 pub use answer::{answer_question, bulk_answer_questions, AnswerQuestionParams, BulkAnswerItem};
 pub use helpers::{
-    count_queue_questions, count_question_types, format_question_json,
-    modify_question_in_queue, resolve_confidence,
+    count_question_types, count_queue_questions, format_question_json, modify_question_in_queue,
+    resolve_confidence,
 };
 pub use queue::{get_deferred_items, get_review_queue, ReviewQueueParams};
 
@@ -35,31 +35,62 @@ pub fn answer_questions(
             .enumerate()
             .map(|(i, a)| {
                 Ok(BulkAnswerItem {
-                    doc_id: a.get("doc_id").and_then(|v| v.as_str()).map(String::from)
-                        .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: doc_id is required")))?,
-                    question_index: a.get("question_index").and_then(Value::as_u64)
-                        .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: question_index is required")))? as usize,
-                    answer: a.get("answer").and_then(|v| v.as_str()).map(String::from)
-                        .ok_or_else(|| FactbaseError::parse(format!("answers[{i}]: answer is required")))?,
-                    confidence: a.get("confidence").and_then(|v| v.as_str()).map(String::from),
+                    doc_id: a
+                        .get("doc_id")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .ok_or_else(|| {
+                            FactbaseError::parse(format!("answers[{i}]: doc_id is required"))
+                        })?,
+                    question_index: a.get("question_index").and_then(Value::as_u64).ok_or_else(
+                        || {
+                            FactbaseError::parse(format!(
+                                "answers[{i}]: question_index is required"
+                            ))
+                        },
+                    )? as usize,
+                    answer: a
+                        .get("answer")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .ok_or_else(|| {
+                            FactbaseError::parse(format!("answers[{i}]: answer is required"))
+                        })?,
+                    confidence: a
+                        .get("confidence")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                 })
             })
             .collect::<Result<Vec<_>, FactbaseError>>()?;
         bulk_answer_questions(db, &items, progress)
     } else {
-        let doc_id = args.get("doc_id").and_then(|v| v.as_str())
+        let doc_id = args
+            .get("doc_id")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| FactbaseError::parse("Missing doc_id parameter"))?;
-        let question_index = args.get("question_index").and_then(Value::as_u64)
-            .ok_or_else(|| FactbaseError::parse("Missing question_index parameter"))? as usize;
-        let answer_text = args.get("answer").and_then(|v| v.as_str())
+        let question_index = args
+            .get("question_index")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| FactbaseError::parse("Missing question_index parameter"))?
+            as usize;
+        let answer_text = args
+            .get("answer")
+            .and_then(|v| v.as_str())
             .ok_or_else(|| FactbaseError::parse("Missing answer parameter"))?;
-        let confidence = args.get("confidence").and_then(|v| v.as_str()).map(String::from);
-        answer_question(db, &AnswerQuestionParams {
-            doc_id: doc_id.to_string(),
-            question_index,
-            answer: answer_text.to_string(),
-            confidence,
-        })
+        let confidence = args
+            .get("confidence")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        answer_question(
+            db,
+            &AnswerQuestionParams {
+                doc_id: doc_id.to_string(),
+                question_index,
+                answer: answer_text.to_string(),
+                confidence,
+            },
+        )
     }
 }
 

@@ -54,9 +54,9 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
         let text = text.to_string();
         Box::pin(async move {
             let result = tokio::task::spawn_blocking(move || {
-                let mut m = model.lock().map_err(|e| {
-                    FactbaseError::embedding(format!("Model lock poisoned: {e}"))
-                })?;
+                let mut m = model
+                    .lock()
+                    .map_err(|e| FactbaseError::embedding(format!("Model lock poisoned: {e}")))?;
                 m.embed(vec![text.as_str()], None)
                     .map_err(|e| FactbaseError::embedding(format!("Local embedding error: {e}")))
             })
@@ -82,11 +82,12 @@ impl EmbeddingProvider for LocalEmbeddingProvider {
             }
             tokio::task::spawn_blocking(move || {
                 let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-                let mut m = model.lock().map_err(|e| {
-                    FactbaseError::embedding(format!("Model lock poisoned: {e}"))
-                })?;
-                m.embed(refs, None)
-                    .map_err(|e| FactbaseError::embedding(format!("Local batch embedding error: {e}")))
+                let mut m = model
+                    .lock()
+                    .map_err(|e| FactbaseError::embedding(format!("Model lock poisoned: {e}")))?;
+                m.embed(refs, None).map_err(|e| {
+                    FactbaseError::embedding(format!("Local batch embedding error: {e}"))
+                })
             })
             .await
             .map_err(|e| FactbaseError::embedding(format!("Batch embedding task failed: {e}")))?

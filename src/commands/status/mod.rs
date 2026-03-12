@@ -83,7 +83,11 @@ pub fn cmd_status(args: StatusArgs) -> anyhow::Result<()> {
         let db_path = ctx.db_path;
         let db_size = std::fs::metadata(&db_path).map(|m| m.len()).unwrap_or(0);
         if db_size > 0 {
-            println!("\nDatabase: {} ({})", db_path.display(), factbase::output::format_bytes(db_size));
+            println!(
+                "\nDatabase: {} ({})",
+                db_path.display(),
+                factbase::output::format_bytes(db_size)
+            );
         }
     }
 

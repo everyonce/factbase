@@ -167,216 +167,35 @@ fn test_version_shows_build_info() {
 
 /// Test status --offline flag is accepted
 #[test]
+#[ignore]
 fn test_status_offline_flag() {
-    use std::process::Command;
-
-    // Test that --offline is a valid flag (--help should show it)
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "status", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("--offline"),
-        "status --help should show --offline flag"
-    );
-    assert!(
-        stdout.contains("no-op") || stdout.contains("never contacts Ollama"),
-        "status --help should clarify --offline is a no-op"
-    );
+    // `status` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test show command displays document details
 #[test]
+#[ignore]
 fn test_show_command_help() {
-    use std::process::Command;
-
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "show", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Show document details"),
-        "show --help should show description"
-    );
-    assert!(
-        stdout.contains("Document ID"),
-        "show --help should mention Document ID"
-    );
-    assert!(
-        stdout.contains("--json"),
-        "show --help should show --json flag"
-    );
-    assert!(
-        stdout.contains("--format"),
-        "show --help should show --format flag"
-    );
+    // `show` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test show command with non-existent document
 #[test]
+#[ignore]
 fn test_show_nonexistent_document() {
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("factbase.db");
-
-    // Create empty database
-    let db = factbase::Database::new(&db_path).unwrap();
-    drop(db);
-
-    // Create minimal config pointing to temp database
-    let config_dir = temp_dir.path().join(".config").join("factbase");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    let config_content = format!(
-        r#"database:
-  path: {}
-  pool_size: 4
-  compression: none
-repositories: []
-watcher:
-  debounce_ms: 500
-  ignore_patterns: []
-processor:
-  max_file_size: 1048576
-  snippet_length: 200
-  embedding_batch_size: 10
-  metadata_cache_size: 100
-embedding:
-  provider: ollama
-  base_url: http://localhost:11434
-  model: qwen3-embedding:0.6b
-  dimension: 1024
-  cache_size: 100
-  timeout_secs: 30
-llm:
-  provider: ollama
-  base_url: http://localhost:11434
-  model: rnj-1-extended
-  timeout_secs: 30
-"#,
-        db_path.display()
-    );
-    std::fs::write(config_dir.join("config.yaml"), config_content).unwrap();
-
-    // Run show with non-existent ID
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "show", "abc123"])
-        .env("HOME", temp_dir.path())
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not found") || stderr.contains("abc123"),
-        "show should report document not found: {}",
-        stderr
-    );
+    // `show` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test links command help output
 #[test]
+#[ignore]
 fn test_links_command_help() {
-    use std::process::Command;
-
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "links", "--help"])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("Explore document link relationships"),
-        "links --help should show description"
-    );
-    assert!(
-        stdout.contains("--reverse"),
-        "links --help should show --reverse flag"
-    );
-    assert!(
-        stdout.contains("--orphans"),
-        "links --help should show --orphans flag"
-    );
-    assert!(
-        stdout.contains("--top"),
-        "links --help should show --top flag"
-    );
-    assert!(
-        stdout.contains("--json"),
-        "links --help should show --json flag"
-    );
-    assert!(
-        stdout.contains("--format"),
-        "links --help should show --format flag"
-    );
+    // `links` command was removed from CLI; this test is kept as a placeholder.
 }
 
 /// Test links command with non-existent document
 #[test]
+#[ignore]
 fn test_links_nonexistent_document() {
-    use std::process::Command;
-    use tempfile::TempDir;
-
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("factbase.db");
-
-    // Create empty database
-    let db = factbase::Database::new(&db_path).unwrap();
-    drop(db);
-
-    // Create minimal config pointing to temp database
-    let config_dir = temp_dir.path().join(".config").join("factbase");
-    std::fs::create_dir_all(&config_dir).unwrap();
-    let config_content = format!(
-        r#"database:
-  path: {}
-  pool_size: 4
-  compression: none
-repositories: []
-watcher:
-  debounce_ms: 500
-  ignore_patterns: []
-processor:
-  max_file_size: 1048576
-  snippet_length: 200
-  embedding_batch_size: 10
-  metadata_cache_size: 100
-embedding:
-  provider: ollama
-  base_url: http://localhost:11434
-  model: qwen3-embedding:0.6b
-  dimension: 1024
-  cache_size: 100
-  timeout_secs: 30
-llm:
-  provider: ollama
-  base_url: http://localhost:11434
-  model: rnj-1-extended
-  timeout_secs: 30"#,
-        db_path.display()
-    );
-    std::fs::write(config_dir.join("config.yaml"), config_content).unwrap();
-
-    // Run links with non-existent ID
-    let output = Command::new("cargo")
-        .args(["run", "--quiet", "--", "links", "abc123"])
-        .env("HOME", temp_dir.path())
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .output()
-        .expect("Failed to run cargo");
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("not found") || stderr.contains("abc123"),
-        "links should report document not found: {}",
-        stderr
-    );
+    // `links` command was removed from CLI; this test is kept as a placeholder.
 }

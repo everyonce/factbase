@@ -25,10 +25,7 @@ pub fn get_fact_pairs(db: &Database, args: &Value) -> Result<Value, FactbaseErro
         .get("min_similarity")
         .and_then(Value::as_f64)
         .unwrap_or(default_threshold as f64) as f32;
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(50) as usize;
+    let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(50) as usize;
 
     // Resolve repo-local DB for fact embeddings
     let fact_db = repo_id.and_then(|id| db.resolve_repo_fact_db(id));
@@ -51,7 +48,8 @@ pub fn get_fact_pairs(db: &Database, args: &Value) -> Result<Value, FactbaseErro
     let reviewed_lines = build_reviewed_lines(db, &all_pairs);
 
     // Filter out already-reviewed pairs and enrich with doc titles
-    let mut doc_title_cache: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut doc_title_cache: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     let mut pairs_json: Vec<Value> = Vec::new();
 
     for pair in &all_pairs {
@@ -95,8 +93,12 @@ pub fn get_fact_pairs(db: &Database, args: &Value) -> Result<Value, FactbaseErro
     for p in &pairs_json {
         if let Some(s) = p.get("similarity").and_then(|v| v.as_f64()) {
             let s = s as f32;
-            if s < min_sim { min_sim = s; }
-            if s > max_sim { max_sim = s; }
+            if s < min_sim {
+                min_sim = s;
+            }
+            if s > max_sim {
+                max_sim = s;
+            }
         }
         if let Some(id) = p.pointer("/fact_a/doc_id").and_then(|v| v.as_str()) {
             docs_involved.insert(id);
@@ -208,10 +210,24 @@ mod tests {
         db.upsert_document(&doc_b).unwrap();
 
         // Insert similar fact embeddings
-        db.upsert_fact_embedding("fp1111_4", "fp1111", 4, "Revenue: $10M", "h1", &spike_embedding(0))
-            .unwrap();
-        db.upsert_fact_embedding("fp2222_4", "fp2222", 4, "Revenue: $50M", "h2", &near_spike(0, 0.1))
-            .unwrap();
+        db.upsert_fact_embedding(
+            "fp1111_4",
+            "fp1111",
+            4,
+            "Revenue: $10M",
+            "h1",
+            &spike_embedding(0),
+        )
+        .unwrap();
+        db.upsert_fact_embedding(
+            "fp2222_4",
+            "fp2222",
+            4,
+            "Revenue: $50M",
+            "h2",
+            &near_spike(0, 0.1),
+        )
+        .unwrap();
 
         let args = serde_json::json!({"min_similarity": 0.3});
         let result = get_fact_pairs(&db, &args).unwrap();
@@ -237,15 +253,33 @@ mod tests {
         db.upsert_document(&doc_b).unwrap();
 
         // Insert similar fact embeddings at line 4
-        db.upsert_fact_embedding("rv1111_4", "rv1111", 4, "Revenue: $10M", "h1", &spike_embedding(0))
-            .unwrap();
-        db.upsert_fact_embedding("rv2222_4", "rv2222", 4, "Revenue: $50M", "h2", &near_spike(0, 0.1))
-            .unwrap();
+        db.upsert_fact_embedding(
+            "rv1111_4",
+            "rv1111",
+            4,
+            "Revenue: $10M",
+            "h1",
+            &spike_embedding(0),
+        )
+        .unwrap();
+        db.upsert_fact_embedding(
+            "rv2222_4",
+            "rv2222",
+            4,
+            "Revenue: $50M",
+            "h2",
+            &near_spike(0, 0.1),
+        )
+        .unwrap();
 
         let args = serde_json::json!({"min_similarity": 0.3});
         let result = get_fact_pairs(&db, &args).unwrap();
         let pairs = result["pairs"].as_array().unwrap();
-        assert_eq!(pairs.len(), 0, "should exclude pairs with existing cross-check questions");
+        assert_eq!(
+            pairs.len(),
+            0,
+            "should exclude pairs with existing cross-check questions"
+        );
     }
 
     #[test]

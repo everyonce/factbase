@@ -37,7 +37,8 @@ fn cmd_export(args: args::ExportArgs) -> anyhow::Result<()> {
 fn cmd_import(args: args::ImportArgs) -> anyhow::Result<()> {
     let db = Setup::new().build()?.db;
 
-    let result = factbase::embeddings_io::import_embeddings_from_file(&db, &args.input, args.force)?;
+    let result =
+        factbase::embeddings_io::import_embeddings_from_file(&db, &args.input, args.force)?;
 
     eprintln!(
         "Imported {} chunks ({} skipped), {} fact embeddings ({} skipped) — model: {}, dimension: {}",
@@ -59,7 +60,10 @@ fn cmd_status(args: args::StatusArgs) -> anyhow::Result<()> {
         println!("{}", serde_json::to_string_pretty(&info)?);
     } else {
         println!("Embedding model:    {}", info.model);
-        println!("Dimension:          {}", info.dimension.map_or("none".into(), |d| d.to_string()));
+        println!(
+            "Dimension:          {}",
+            info.dimension.map_or("none".into(), |d| d.to_string())
+        );
         println!("Documents indexed:  {}", info.total_documents);
         println!("Total chunks:       {}", info.total_chunks);
         if info.documents_without_embeddings > 0 {
@@ -71,8 +75,12 @@ fn cmd_status(args: args::StatusArgs) -> anyhow::Result<()> {
         println!();
         println!("Fact Embeddings:");
         println!("  Total fact embeddings: {}", info.total_fact_embeddings);
-        let total_docs = info.documents_with_fact_embeddings + info.documents_without_fact_embeddings;
-        println!("  Documents with facts:  {} / {}", info.documents_with_fact_embeddings, total_docs);
+        let total_docs =
+            info.documents_with_fact_embeddings + info.documents_without_fact_embeddings;
+        println!(
+            "  Documents with facts:  {} / {}",
+            info.documents_with_fact_embeddings, total_docs
+        );
     }
     Ok(())
 }
@@ -84,13 +92,16 @@ mod tests {
 
     #[test]
     fn test_parse_export_args() {
-        let args = EmbeddingsArgs::try_parse_from(["embeddings", "export", "--output", "out.jsonl"]).unwrap();
+        let args =
+            EmbeddingsArgs::try_parse_from(["embeddings", "export", "--output", "out.jsonl"])
+                .unwrap();
         assert!(matches!(args.command, EmbeddingsCommands::Export(_)));
     }
 
     #[test]
     fn test_parse_import_args() {
-        let args = EmbeddingsArgs::try_parse_from(["embeddings", "import", "--input", "in.jsonl"]).unwrap();
+        let args = EmbeddingsArgs::try_parse_from(["embeddings", "import", "--input", "in.jsonl"])
+            .unwrap();
         assert!(matches!(args.command, EmbeddingsCommands::Import(_)));
     }
 
@@ -102,7 +113,15 @@ mod tests {
 
     #[test]
     fn test_parse_export_with_repo() {
-        let args = EmbeddingsArgs::try_parse_from(["embeddings", "export", "--output", "out.jsonl", "--repo", "myrepo"]).unwrap();
+        let args = EmbeddingsArgs::try_parse_from([
+            "embeddings",
+            "export",
+            "--output",
+            "out.jsonl",
+            "--repo",
+            "myrepo",
+        ])
+        .unwrap();
         if let EmbeddingsCommands::Export(a) = args.command {
             assert_eq!(a.repo, Some("myrepo".into()));
         }
@@ -110,7 +129,14 @@ mod tests {
 
     #[test]
     fn test_parse_import_with_force() {
-        let args = EmbeddingsArgs::try_parse_from(["embeddings", "import", "--input", "in.jsonl", "--force"]).unwrap();
+        let args = EmbeddingsArgs::try_parse_from([
+            "embeddings",
+            "import",
+            "--input",
+            "in.jsonl",
+            "--force",
+        ])
+        .unwrap();
         if let EmbeddingsCommands::Import(a) = args.command {
             assert!(a.force);
         }

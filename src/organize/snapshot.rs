@@ -596,7 +596,11 @@ mod tests {
         let snapshot = create_snapshot(&[], &db, repo_path).expect("create snapshot");
 
         // Simulate a merge appending to the orphan file
-        fs::write(&orphan_path, "# Orphaned Facts\n\n- Old orphan\n\n- New orphan from failed merge\n").unwrap();
+        fs::write(
+            &orphan_path,
+            "# Orphaned Facts\n\n- Old orphan\n\n- New orphan from failed merge\n",
+        )
+        .unwrap();
 
         // Rollback should restore original orphan file
         rollback(&snapshot, &db).expect("rollback");
@@ -643,7 +647,10 @@ mod tests {
         let snapshot = create_snapshot(&[], &db, repo_path).expect("create snapshot");
 
         // Find the orphan backup entry
-        let orphan_backup = snapshot.files.iter().find(|f| f.original_path == "_orphans.md");
+        let orphan_backup = snapshot
+            .files
+            .iter()
+            .find(|f| f.original_path == "_orphans.md");
         assert!(orphan_backup.is_some());
         let orphan_backup = orphan_backup.unwrap();
         assert!(orphan_backup.existed);

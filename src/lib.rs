@@ -46,9 +46,9 @@ pub mod scanner;
 pub mod services;
 pub mod shutdown;
 pub mod watcher;
-pub(crate) mod write_guard;
 #[cfg(feature = "web")]
 pub mod web;
+pub(crate) mod write_guard;
 
 /// Default repository ID used when no explicit ID is provided.
 pub const DEFAULT_REPO_ID: &str = "default";
@@ -105,23 +105,21 @@ pub use answer_processor::{
     dedup_titles, identify_affected_section,
     inbox::{apply_inbox_integration, extract_inbox_blocks},
     interpret_answer, remove_processed_questions, replace_section, stamp_reviewed_by_text,
-    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
-    stamp_sequential_lines, uncheck_deferred_questions, AnswerType,
-    ChangeInstruction, InterpretedAnswer,
+    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text, stamp_sequential_lines,
+    uncheck_deferred_questions, AnswerType, ChangeInstruction, InterpretedAnswer,
 };
-#[deprecated(note = "use factbase::config::Config")]
-pub use config::Config;
 #[deprecated(note = "use factbase::config::prompts::*")]
 pub use config::prompts::{load_file_override, resolve_prompt, PromptsConfig};
 #[deprecated(note = "use factbase::config::workflows::*")]
 pub use config::workflows::{resolve_workflow_text, WorkflowsConfig};
+#[deprecated(note = "use factbase::config::Config")]
+pub use config::Config;
 #[deprecated(note = "use factbase::database::{ContentSearchParams, Database}")]
 pub use database::{ContentSearchParams, Database};
 #[deprecated(note = "use factbase::embedding::*")]
-pub use embedding::{CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding};
-#[cfg(feature = "local-embedding")]
-#[deprecated(note = "use factbase::local_embedding::LocalEmbeddingProvider")]
-pub use local_embedding::LocalEmbeddingProvider;
+pub use embedding::{
+    CachedEmbedding, EmbeddingProvider, OllamaEmbedding, PersistentCachedEmbedding,
+};
 #[deprecated(note = "use factbase::embeddings_io::*")]
 pub use embeddings_io::{
     embeddings_status, export_embeddings, export_embeddings_to_file, import_embeddings,
@@ -132,6 +130,9 @@ pub use embeddings_io::{
 pub use error::{format_user_error, format_warning, repo_not_found, FactbaseError};
 #[deprecated(note = "use factbase::link_detection::*")]
 pub use link_detection::{DetectedLink, LinkDetector, LinkMatchMode};
+#[cfg(feature = "local-embedding")]
+#[deprecated(note = "use factbase::local_embedding::LocalEmbeddingProvider")]
+pub use local_embedding::LocalEmbeddingProvider;
 #[cfg(feature = "mcp")]
 #[deprecated(note = "use factbase::mcp::McpServer")]
 pub use mcp::McpServer;
@@ -160,27 +161,22 @@ pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, sho
 #[deprecated(note = "use factbase::patterns::*")]
 pub use patterns::{
     content_body, convert_inline_reviewed_to_frontmatter, extract_frontmatter_reviewed_date,
-    extract_reviewed_date, is_reference_doc, set_frontmatter_reviewed_date,
-    strip_reviewed_markers, FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER,
-    WIKILINK_REGEX,
+    extract_reviewed_date, is_reference_doc, set_frontmatter_reviewed_date, strip_reviewed_markers,
+    FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER, WIKILINK_REGEX,
 };
 #[deprecated(note = "use factbase::processor::*")]
 pub use processor::{
     append_links_to_content, append_referenced_by_to_content,
-    append_referenced_by_to_content_styled, append_review_questions,
-    calculate_fact_stats,
-    calculate_recency_boost, chunk_document,
-    content_hash, count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
-    is_callout_review, is_citation_specific,
-    merge_duplicate_review_sections, normalize_conflict_desc, normalize_review_section,
-    overlaps_point, overlaps_range,
-    parse_links_block, parse_referenced_by_block, parse_review_queue, prune_stale_questions,
-    extract_wikilink_names,
-    parse_source_definitions, parse_source_references, parse_temporal_tags,
-    strip_answered_questions, unwrap_review_callout, validate_temporal_tags,
-    wrap_review_callout,
-    build_document_header, extract_extra_frontmatter, format_link, format_references_line, merge_path_tags, tags_from_path, update_frontmatter_type, wikilink_path,
-    DocumentProcessor,
+    append_referenced_by_to_content_styled, append_review_questions, build_document_header,
+    calculate_fact_stats, calculate_recency_boost, chunk_document, content_hash,
+    count_facts_with_sources, detect_illogical_sequences, detect_temporal_conflicts,
+    extract_extra_frontmatter, extract_wikilink_names, format_link, format_references_line,
+    is_callout_review, is_citation_specific, merge_duplicate_review_sections, merge_path_tags,
+    normalize_conflict_desc, normalize_review_section, overlaps_point, overlaps_range,
+    parse_links_block, parse_referenced_by_block, parse_review_queue, parse_source_definitions,
+    parse_source_references, parse_temporal_tags, prune_stale_questions, strip_answered_questions,
+    tags_from_path, unwrap_review_callout, update_frontmatter_type, validate_temporal_tags,
+    wikilink_path, wrap_review_callout, DocumentProcessor,
 };
 #[deprecated(note = "use factbase::progress::*")]
 pub use progress::{ProgressReporter, ProgressSender};
@@ -190,16 +186,19 @@ pub use question_generator::check::VocabCandidate;
 pub use question_generator::cross_validate::make_pair_id;
 #[deprecated(note = "use factbase::question_generator::*")]
 pub use question_generator::{
-    collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question, extract_defined_terms, is_glossary_doc, is_glossary_doc_with_types,
-    filter_sequential_conflicts, generate_ambiguous_questions,
-    generate_conflict_questions, generate_corruption_questions,
-    generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
-    generate_precision_questions, generate_required_field_questions,
-    generate_source_quality_questions, generate_weak_source_questions,
-    generate_stale_questions, generate_temporal_questions,
+    collect_defined_terms, collect_defined_terms_with_types, extract_acronym_from_question,
+    extract_defined_terms, filter_sequential_conflicts, generate_ambiguous_questions,
+    generate_conflict_questions, generate_corruption_questions, generate_duplicate_entry_questions,
+    generate_duplicate_questions, generate_missing_questions, generate_precision_questions,
+    generate_required_field_questions, generate_source_quality_questions, generate_stale_questions,
+    generate_temporal_questions, generate_weak_source_questions, is_glossary_doc,
+    is_glossary_doc_with_types,
 };
 #[deprecated(note = "use factbase::scanner::*")]
-pub use scanner::{full_scan, run_fact_embedding_phase, scan_all_repositories, FactEmbeddingInput, FactEmbeddingOutput, ScanContext, ScanOptions, Scanner};
+pub use scanner::{
+    full_scan, run_fact_embedding_phase, scan_all_repositories, FactEmbeddingInput,
+    FactEmbeddingOutput, ScanContext, ScanOptions, Scanner,
+};
 #[deprecated(note = "use factbase::shutdown::init_shutdown_handler")]
 pub use shutdown::init_shutdown_handler;
 #[deprecated(note = "use factbase::watcher::*")]
@@ -236,7 +235,11 @@ mod tests {
     #[test]
     fn test_ensure_gitignore_skips_existing() {
         let tmp = TempDir::new().unwrap();
-        std::fs::write(tmp.path().join(".gitignore"), ".factbase/\n.fastembed_cache/\n").unwrap();
+        std::fs::write(
+            tmp.path().join(".gitignore"),
+            ".factbase/\n.fastembed_cache/\n",
+        )
+        .unwrap();
         let added = ensure_gitignore(tmp.path()).unwrap();
         assert!(added.is_empty());
     }

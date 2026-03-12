@@ -2,7 +2,9 @@
 
 use crate::database::{ContentSearchParams, Database};
 use crate::error::FactbaseError;
-use crate::mcp::tools::{extract_type_repo_filters, get_str_arg_required, get_u64_arg, resolve_repo_filter};
+use crate::mcp::tools::{
+    extract_type_repo_filters, get_str_arg_required, get_u64_arg, resolve_repo_filter,
+};
 use crate::models::ContentSearchResult;
 use crate::ProgressReporter;
 use serde_json::Value;

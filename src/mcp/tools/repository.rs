@@ -76,7 +76,9 @@ pub async fn scan_repository(
     // Link detection uses string matching only (no LLM required).
     // Manual [[id]] links and fuzzy title matches are detected.
     let match_mode = crate::link_detection::LinkMatchMode::from_str_opt(
-        repo.perspective.as_ref().and_then(|p| p.link_match_mode.as_deref()),
+        repo.perspective
+            .as_ref()
+            .and_then(|p| p.link_match_mode.as_deref()),
     );
     let link_detector = LinkDetector::new().with_match_mode(match_mode);
 
@@ -123,7 +125,8 @@ pub async fn scan_repository(
         result.added, result.updated, result.unchanged
     );
 
-    let processed = result.added + result.updated + result.unchanged + result.moved + result.reindexed;
+    let processed =
+        result.added + result.updated + result.unchanged + result.moved + result.reindexed;
 
     // If interrupted by deadline, return progress response with resume token
     if result.interrupted && time_budget.is_some() {
@@ -138,7 +141,11 @@ pub async fn scan_repository(
         let resume_token = crate::mcp::tools::helpers::encode_resume_token(
             &serde_json::json!({"file_offset": resume_offset}),
         );
-        let pct = if total_files > 0 { (processed as f64 / total_files as f64 * 100.0) as u32 } else { 0 };
+        let pct = if total_files > 0 {
+            (processed as f64 / total_files as f64 * 100.0) as u32
+        } else {
+            0
+        };
         let response = serde_json::json!({
             "added": result.added,
             "updated": result.updated,
@@ -220,7 +227,9 @@ pub async fn detect_links(
 
     let config = Config::load(None).unwrap_or_default();
     let match_mode = crate::link_detection::LinkMatchMode::from_str_opt(
-        repo.perspective.as_ref().and_then(|p| p.link_match_mode.as_deref()),
+        repo.perspective
+            .as_ref()
+            .and_then(|p| p.link_match_mode.as_deref()),
     );
     let link_detector = LinkDetector::new().with_match_mode(match_mode);
 
@@ -235,10 +244,7 @@ pub async fn detect_links(
 
     let _guard = WriteGuard::try_acquire()?;
 
-    progress.log(&format!(
-        "Detecting links for repository '{}'",
-        repo.id
-    ));
+    progress.log(&format!("Detecting links for repository '{}'", repo.id));
 
     let output = run_link_detection_phase(LinkPhaseInput {
         db,
@@ -321,9 +327,10 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         }));
     }
 
-    let default_id = abs_path
-        .file_name()
-        .map_or_else(|| crate::DEFAULT_REPO_ID.into(), |s| s.to_string_lossy().to_string());
+    let default_id = abs_path.file_name().map_or_else(
+        || crate::DEFAULT_REPO_ID.into(),
+        |s| s.to_string_lossy().to_string(),
+    );
     let repo_id = id.unwrap_or(&default_id);
     let repo_name = name.unwrap_or(repo_id);
 
@@ -362,16 +369,22 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
                 std::fs::read_dir(dir)
                     .ok()
                     .map(|entries| {
-                        entries.filter_map(|e| e.ok()).map(|e| {
-                            let p = e.path();
-                            if p.is_dir() && p.file_name().is_some_and(|n| !n.to_string_lossy().starts_with('.')) {
-                                count_md(&p)
-                            } else if p.extension().is_some_and(|ext| ext == "md") {
-                                1
-                            } else {
-                                0
-                            }
-                        }).sum()
+                        entries
+                            .filter_map(|e| e.ok())
+                            .map(|e| {
+                                let p = e.path();
+                                if p.is_dir()
+                                    && p.file_name()
+                                        .is_some_and(|n| !n.to_string_lossy().starts_with('.'))
+                                {
+                                    count_md(&p)
+                                } else if p.extension().is_some_and(|ext| ext == "md") {
+                                    1
+                                } else {
+                                    0
+                                }
+                            })
+                            .sum()
                     })
                     .unwrap_or(0)
             }
@@ -425,11 +438,7 @@ mod tests {
         .unwrap();
 
         let (db, _db_dir) = test_db();
-        let result = init_repository(
-            &db,
-            &json!({"path": tmp.path().to_string_lossy()}),
-        )
-        .unwrap();
+        let result = init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
 
         assert!(result.get("id").is_some());
         assert!(result.get("already_exists").is_none());
@@ -463,14 +472,20 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
         let desc = fb["description"].as_str().unwrap();
-        assert!(desc.contains("detect_links"), "factbase description should reference detect_links op");
+        assert!(
+            desc.contains("detect_links"),
+            "factbase description should reference detect_links op"
+        );
     }
 
     #[tokio::test]
     async fn test_detect_links_no_repo() {
         let (db, _db_dir) = test_db();
         let result = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await;
-        assert!(result.is_err(), "detect_links should fail when no repo exists");
+        assert!(
+            result.is_err(),
+            "detect_links should fail when no repo exists"
+        );
     }
 
     #[tokio::test]
@@ -479,7 +494,9 @@ mod tests {
         let (db, _db_dir) = test_db();
         init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
 
-        let result = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await.unwrap();
+        let result = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent)
+            .await
+            .unwrap();
         assert_eq!(result["links_detected"], 0);
         assert_eq!(result["docs_processed"], 0);
     }
@@ -491,8 +508,12 @@ mod tests {
         init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
 
         // Run twice — should produce same result
-        let r1 = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await.unwrap();
-        let r2 = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await.unwrap();
+        let r1 = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent)
+            .await
+            .unwrap();
+        let r2 = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent)
+            .await
+            .unwrap();
         assert_eq!(r1["links_detected"], r2["links_detected"]);
     }
 
@@ -502,9 +523,14 @@ mod tests {
         let tools = crate::mcp::tools::tools_list();
         let tools_arr = tools["tools"].as_array().unwrap();
         let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
-        let ops = fb["inputSchema"]["properties"]["op"]["enum"].as_array().unwrap();
+        let ops = fb["inputSchema"]["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap();
         let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
-        assert!(op_strs.contains(&"detect_links"), "detect_links should be a factbase op");
+        assert!(
+            op_strs.contains(&"detect_links"),
+            "detect_links should be a factbase op"
+        );
     }
 
     #[test]
@@ -516,7 +542,10 @@ mod tests {
         let result = crate::mcp::tools::workflow::workflow(&db, &args);
         let result = result.unwrap();
         let instr = result["instruction"].as_str().unwrap();
-        assert!(instr.contains("detect_links"), "update step 2 should instruct detect_links");
+        assert!(
+            instr.contains("detect_links"),
+            "update step 2 should instruct detect_links"
+        );
         assert_eq!(result["next_tool"], "factbase");
     }
 }

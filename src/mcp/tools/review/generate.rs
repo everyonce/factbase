@@ -10,7 +10,7 @@ use crate::processor::{append_review_questions, content_hash, parse_review_queue
 use crate::question_generator::{
     collect_defined_terms_with_types, filter_sequential_conflicts,
     generate_ambiguous_questions_with_type, generate_conflict_questions,
-    generate_duplicate_questions, generate_duplicate_entry_questions, generate_missing_questions,
+    generate_duplicate_entry_questions, generate_duplicate_questions, generate_missing_questions,
     generate_precision_questions, generate_stale_questions, generate_temporal_questions,
 };
 use serde_json::Value;
@@ -61,7 +61,6 @@ async fn generate_questions_single(
     doc_id: &str,
     dry_run: bool,
 ) -> Result<Value, FactbaseError> {
-
     // Get the document
     let doc = db.require_document(doc_id)?;
 
@@ -98,7 +97,10 @@ async fn generate_questions_single(
 
     // Collect defined terms from glossary/definition/reference documents
     let perspective = load_perspective(db, Some(&doc.repo_id));
-    let glossary_types = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.glossary_types.clone());
+    let glossary_types = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.glossary_types.clone());
     let all_docs = {
         let mut docs = Vec::new();
         for repo in db.list_repositories()? {
@@ -113,7 +115,11 @@ async fn generate_questions_single(
     new_questions.extend(generate_conflict_questions(body));
     new_questions.extend(generate_duplicate_entry_questions(body));
     new_questions.extend(generate_missing_questions(body));
-    new_questions.extend(generate_ambiguous_questions_with_type(body, doc.doc_type.as_deref(), &defined_terms));
+    new_questions.extend(generate_ambiguous_questions_with_type(
+        body,
+        doc.doc_type.as_deref(),
+        &defined_terms,
+    ));
     new_questions.extend(generate_stale_questions(body, 365)); // Default 365 days
     new_questions.extend(generate_precision_questions(body));
 
@@ -295,9 +301,8 @@ fn filter_duplicate_questions(
                 return false;
             }
             if q.question_type == crate::models::QuestionType::Conflict
-                && existing_conflict_normalized.contains(
-                    crate::processor::normalize_conflict_desc(&q.description),
-                )
+                && existing_conflict_normalized
+                    .contains(crate::processor::normalize_conflict_desc(&q.description))
             {
                 return false;
             }
@@ -327,8 +332,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 1,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
             ReviewQuestion {
                 question_type: QuestionType::Missing,
@@ -337,8 +342,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 2,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
         ];
 
@@ -359,8 +364,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 1,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
             ReviewQuestion {
                 question_type: QuestionType::Conflict,
@@ -369,8 +374,8 @@ mod tests {
                 answered: false,
                 answer: None,
                 line_number: 2,
-            confidence: None,
-            confidence_reason: None,
+                confidence: None,
+                confidence_reason: None,
             },
         ];
 
@@ -387,8 +392,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 1,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
 
         let json = format_question_json(&question, None);
@@ -406,8 +411,8 @@ mod tests {
             answered: false,
             answer: None,
             line_number: 1,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
 
         let json = format_question_json(&question, None);

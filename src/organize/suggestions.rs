@@ -79,25 +79,40 @@ pub fn execute_suggestions(
         for s in doc_suggestions {
             match s.suggestion_type.as_str() {
                 "move" => {
-                    match execute_move_suggestion(db, &doc, &repo.path, &s.suggested_value, dry_run) {
+                    match execute_move_suggestion(db, &doc, &repo.path, &s.suggested_value, dry_run)
+                    {
                         Ok(action) => result.moves.push(action),
                         Err(e) => result.errors.push(format!("move {}: {e}", doc_id)),
                     }
                 }
                 "rename" => {
-                    match execute_rename_suggestion(db, &doc, &repo.path, &s.suggested_value, dry_run) {
+                    match execute_rename_suggestion(
+                        db,
+                        &doc,
+                        &repo.path,
+                        &s.suggested_value,
+                        dry_run,
+                    ) {
                         Ok(action) => result.renames.push(action),
                         Err(e) => result.errors.push(format!("rename {}: {e}", doc_id)),
                     }
                 }
                 "title" => {
-                    match execute_title_suggestion(db, &doc, &repo.path, &s.suggested_value, dry_run) {
+                    match execute_title_suggestion(
+                        db,
+                        &doc,
+                        &repo.path,
+                        &s.suggested_value,
+                        dry_run,
+                    ) {
                         Ok(action) => result.title_changes.push(action),
                         Err(e) => result.errors.push(format!("title {}: {e}", doc_id)),
                     }
                 }
                 other => {
-                    result.errors.push(format!("unknown suggestion type '{other}' for {doc_id}"));
+                    result
+                        .errors
+                        .push(format!("unknown suggestion type '{other}' for {doc_id}"));
                 }
             }
             if !dry_run {
@@ -129,7 +144,10 @@ fn execute_move_suggestion(
         let old_abs = repo_path.join(old_path);
         let new_abs = repo_path.join(&new_path);
         if !old_abs.exists() {
-            return Err(FactbaseError::not_found(format!("Source file not found: {}", old_abs.display())));
+            return Err(FactbaseError::not_found(format!(
+                "Source file not found: {}",
+                old_abs.display()
+            )));
         }
         if new_abs.exists() {
             // Auto-merge: destination already exists, merge source into it
@@ -146,7 +164,8 @@ fn execute_move_suggestion(
         let mut updated = doc.clone();
         updated.file_path = new_path.clone();
         updated.doc_type = Some(
-            crate::processor::DocumentProcessor::new().derive_type(Path::new(&new_path), Path::new("")),
+            crate::processor::DocumentProcessor::new()
+                .derive_type(Path::new(&new_path), Path::new("")),
         );
         db.upsert_document(&updated)?;
         count
@@ -181,10 +200,16 @@ fn execute_rename_suggestion(
         let old_abs = repo_path.join(old_path);
         let new_abs = repo_path.join(&new_path);
         if !old_abs.exists() {
-            return Err(FactbaseError::not_found(format!("Source file not found: {}", old_abs.display())));
+            return Err(FactbaseError::not_found(format!(
+                "Source file not found: {}",
+                old_abs.display()
+            )));
         }
         if new_abs.exists() {
-            return Err(FactbaseError::internal(format!("Destination already exists: {}", new_abs.display())));
+            return Err(FactbaseError::internal(format!(
+                "Destination already exists: {}",
+                new_abs.display()
+            )));
         }
         fs::rename(&old_abs, &new_abs)?;
 
@@ -219,7 +244,12 @@ fn execute_title_suggestion(
         count_wikilink_title_references(db, &doc.repo_id, wikilink_target, old_title)
     } else {
         let count = cascade_wikilink_title_change(
-            db, &doc.repo_id, repo_path, wikilink_target, old_title, new_title,
+            db,
+            &doc.repo_id,
+            repo_path,
+            wikilink_target,
+            old_title,
+            new_title,
         )?;
         db.update_document_title(&doc.id, new_title)?;
         count
@@ -247,12 +277,16 @@ fn execute_move_with_merge(
     let old_abs = repo_path.join(old_path);
 
     // Find the target document by file_path
-    let target_doc = db.list_documents(None, Some(&doc.repo_id), None, 100_000)?
+    let target_doc = db
+        .list_documents(None, Some(&doc.repo_id), None, 100_000)?
         .into_iter()
         .find(|d| d.file_path == new_path)
-        .ok_or_else(|| FactbaseError::internal(format!(
-            "Destination file exists but no matching document in DB: {}", new_abs.display()
-        )))?;
+        .ok_or_else(|| {
+            FactbaseError::internal(format!(
+                "Destination file exists but no matching document in DB: {}",
+                new_abs.display()
+            ))
+        })?;
 
     // Read both files
     let target_content = fs::read_to_string(new_abs)?;
@@ -263,7 +297,10 @@ fn execute_move_with_merge(
     if !merged.ends_with('\n') {
         merged.push('\n');
     }
-    merged.push_str(&format!("\n## Merged from {}\n\n{}\n", doc.title, source_body));
+    merged.push_str(&format!(
+        "\n## Merged from {}\n\n{}\n",
+        doc.title, source_body
+    ));
     fs::write(new_abs, &merged)?;
 
     // Redirect links from source to target
@@ -364,14 +401,8 @@ fn cascade_wikilink_title_change(
 fn replace_wikilink_path(content: &str, old_path: &str, new_path: &str) -> String {
     // Replace [[old_path|display]] → [[new_path|display]]
     // and [[old_path]] → [[new_path]]
-    let mut result = content.replace(
-        &format!("[[{old_path}|"),
-        &format!("[[{new_path}|"),
-    );
-    result = result.replace(
-        &format!("[[{old_path}]]"),
-        &format!("[[{new_path}]]"),
-    );
+    let mut result = content.replace(&format!("[[{old_path}|"), &format!("[[{new_path}|"));
+    result = result.replace(&format!("[[{old_path}]]"), &format!("[[{new_path}]]"));
     result
 }
 
@@ -439,12 +470,20 @@ mod tests {
         // Create source file
         let src_dir = tmp.path().join("old");
         fs::create_dir_all(&src_dir).unwrap();
-        fs::write(src_dir.join("entity.md"), "<!-- factbase:src001 -->\n# Entity\n\n- Source fact").unwrap();
+        fs::write(
+            src_dir.join("entity.md"),
+            "<!-- factbase:src001 -->\n# Entity\n\n- Source fact",
+        )
+        .unwrap();
 
         // Create destination file (already exists at target location)
         let dst_dir = tmp.path().join("new");
         fs::create_dir_all(&dst_dir).unwrap();
-        fs::write(dst_dir.join("entity.md"), "<!-- factbase:dst001 -->\n# Entity\n\n- Existing fact").unwrap();
+        fs::write(
+            dst_dir.join("entity.md"),
+            "<!-- factbase:dst001 -->\n# Entity\n\n- Existing fact",
+        )
+        .unwrap();
 
         let mut src = crate::models::Document::test_default();
         src.id = "src001".to_string();
@@ -463,7 +502,8 @@ mod tests {
         db.upsert_document(&dst).unwrap();
 
         // Insert move suggestion that would conflict
-        db.insert_suggestion("src001", "move", "new/", "update").unwrap();
+        db.insert_suggestion("src001", "move", "new/", "update")
+            .unwrap();
 
         // Execute suggestions
         let result = execute_suggestions(&db, Some("test"), false).unwrap();

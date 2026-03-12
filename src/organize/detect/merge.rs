@@ -143,7 +143,9 @@ mod tests {
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
         test_repo_in_db(&db, "test", repo_dir.path());
-        let result = detect_merge_candidates(&db, 0.95, Some("test"), &crate::ProgressReporter::Silent).unwrap();
+        let result =
+            detect_merge_candidates(&db, 0.95, Some("test"), &crate::ProgressReporter::Silent)
+                .unwrap();
         assert!(result.is_empty());
     }
 
@@ -155,9 +157,13 @@ mod tests {
         let repo_dir = TempDir::new().unwrap();
         test_repo_in_db(&db, "test", repo_dir.path());
         // Insert docs but no embeddings — find_similar_documents returns empty
-        db.upsert_document(&test_doc_with_repo("d1", "test", "Doc 1")).unwrap();
-        db.upsert_document(&test_doc_with_repo("d2", "test", "Doc 2")).unwrap();
-        let result = detect_merge_candidates(&db, 0.95, Some("test"), &crate::ProgressReporter::Silent).unwrap();
+        db.upsert_document(&test_doc_with_repo("d1", "test", "Doc 1"))
+            .unwrap();
+        db.upsert_document(&test_doc_with_repo("d2", "test", "Doc 2"))
+            .unwrap();
+        let result =
+            detect_merge_candidates(&db, 0.95, Some("test"), &crate::ProgressReporter::Silent)
+                .unwrap();
         assert!(result.is_empty());
     }
 }

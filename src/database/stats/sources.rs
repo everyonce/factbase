@@ -49,7 +49,11 @@ impl Database {
                 *by_type.entry(def.source_type.clone()).or_insert(0) += 1;
 
                 if let Some(ref date) = def.date {
-                    super::update_date_range(date, &mut oldest_source_date, &mut newest_source_date);
+                    super::update_date_range(
+                        date,
+                        &mut oldest_source_date,
+                        &mut newest_source_date,
+                    );
                 }
             }
         }

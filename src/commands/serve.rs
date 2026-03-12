@@ -1,17 +1,15 @@
-use super::{
-    auto_init_repo, setup_cached_embedding, setup_embedding,
-};
+use super::{auto_init_repo, setup_cached_embedding, setup_embedding};
 use crate::commands::setup::Setup;
 use anyhow::Context;
 use clap::Parser;
-#[cfg(feature = "web")]
-use factbase::web::start_web_server;
 use factbase::config::Config;
 use factbase::mcp::McpServer;
 use factbase::processor::DocumentProcessor;
 use factbase::progress::ProgressReporter;
-use factbase::scanner::{ScanContext, ScanOptions, Scanner, full_scan};
-use factbase::watcher::{FileWatcher, ScanCoordinator, find_repo_for_path};
+use factbase::scanner::{full_scan, ScanContext, ScanOptions, Scanner};
+use factbase::watcher::{find_repo_for_path, FileWatcher, ScanCoordinator};
+#[cfg(feature = "web")]
+use factbase::web::start_web_server;
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tracing::{error, info};

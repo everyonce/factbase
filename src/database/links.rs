@@ -258,11 +258,7 @@ impl Database {
     ///
     /// Unlike `update_links` which replaces all links, this appends new links.
     /// Returns the number of links actually inserted (skips existing).
-    pub fn add_links(
-        &self,
-        source_id: &str,
-        target_ids: &[&str],
-    ) -> Result<usize, FactbaseError> {
+    pub fn add_links(&self, source_id: &str, target_ids: &[&str]) -> Result<usize, FactbaseError> {
         let conn = self.get_conn()?;
         let now = Utc::now().to_rfc3339();
         let mut added = 0;

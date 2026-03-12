@@ -44,20 +44,18 @@ pub struct DetectedLink {
 
 /// Common words (4+ chars) excluded from single-word matching.
 const STOP_WORDS: &[&str] = &[
-    "about", "after", "also", "back", "been", "being", "came", "come", "could", "does",
-    "down", "each", "even", "every", "find", "first", "from", "gave", "goes", "going",
-    "good", "great", "have", "here", "high", "into", "just", "keep", "know", "last",
-    "left", "like", "line", "long", "look", "made", "make", "many", "more", "most",
-    "much", "must", "name", "next", "note", "only", "open", "other", "over", "part",
-    "said", "same", "show", "side", "some", "such", "take", "tell", "than", "that",
-    "them", "then", "they", "this", "time", "took", "turn", "upon", "very", "want",
-    "well", "went", "were", "what", "when", "will", "with", "word", "work", "year",
-    "your", "about", "above", "after", "again", "along", "being", "below", "between",
-    "both", "could", "doing", "during", "every", "found", "given", "going", "group",
-    "having", "house", "large", "later", "never", "often", "order", "other", "place",
-    "point", "right", "shall", "should", "since", "small", "state", "still", "their",
-    "there", "these", "thing", "think", "those", "three", "through", "under", "until",
-    "using", "where", "which", "while", "world", "would",
+    "about", "after", "also", "back", "been", "being", "came", "come", "could", "does", "down",
+    "each", "even", "every", "find", "first", "from", "gave", "goes", "going", "good", "great",
+    "have", "here", "high", "into", "just", "keep", "know", "last", "left", "like", "line", "long",
+    "look", "made", "make", "many", "more", "most", "much", "must", "name", "next", "note", "only",
+    "open", "other", "over", "part", "said", "same", "show", "side", "some", "such", "take",
+    "tell", "than", "that", "them", "then", "they", "this", "time", "took", "turn", "upon", "very",
+    "want", "well", "went", "were", "what", "when", "will", "with", "word", "work", "year", "your",
+    "about", "above", "after", "again", "along", "being", "below", "between", "both", "could",
+    "doing", "during", "every", "found", "given", "going", "group", "having", "house", "large",
+    "later", "never", "often", "order", "other", "place", "point", "right", "shall", "should",
+    "since", "small", "state", "still", "their", "there", "these", "thing", "think", "those",
+    "three", "through", "under", "until", "using", "where", "which", "while", "world", "would",
 ];
 
 /// A match candidate mapping a pattern string to an entity.
@@ -100,9 +98,18 @@ fn strip_diacritics(s: &str) -> String {
             'ð' => out.push('d'),
             'Ø' => out.push('O'),
             'ø' => out.push('o'),
-            'Æ' => { out.push('A'); out.push('E'); }
-            'æ' => { out.push('a'); out.push('e'); }
-            'ß' => { out.push('s'); out.push('s'); }
+            'Æ' => {
+                out.push('A');
+                out.push('E');
+            }
+            'æ' => {
+                out.push('a');
+                out.push('e');
+            }
+            'ß' => {
+                out.push('s');
+                out.push('s');
+            }
             _ => out.push(c),
         }
     }
@@ -218,7 +225,13 @@ fn build_match_candidates(
             // 4. Normalized title (diacritics stripped) — only if different
             let normalized = strip_diacritics(title);
             if normalized != *title {
-                push_candidate(&mut candidates, id, title, &regex::escape(&normalized), true);
+                push_candidate(
+                    &mut candidates,
+                    id,
+                    title,
+                    &regex::escape(&normalized),
+                    true,
+                );
             }
 
             // 5. Prefix-stripped title (e.g., "St. Paul" → "Paul")
@@ -361,9 +374,7 @@ impl LinkDetector {
                 raw
             };
             if let Some(&target_id) = title_to_id.get(&name.to_lowercase()) {
-                if target_id != source_id
-                    && !links.iter().any(|l| l.target_id == target_id)
-                {
+                if target_id != source_id && !links.iter().any(|l| l.target_id == target_id) {
                     links.push(DetectedLink {
                         target_id: target_id.to_string(),
                         target_title: name.to_string(),
@@ -438,9 +449,7 @@ impl LinkDetector {
                     raw
                 };
                 if let Some(&target_id) = title_to_id.get(&name.to_lowercase()) {
-                    if target_id != *id
-                        && !links.iter().any(|l| l.target_id == target_id)
-                    {
+                    if target_id != *id && !links.iter().any(|l| l.target_id == target_id) {
                         links.push(DetectedLink {
                             target_id: target_id.to_string(),
                             target_title: name.to_string(),
@@ -681,18 +690,17 @@ mod tests {
         let entities = vec![("e1".into(), "Delta Air Lines".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
         // Should have full title + unique words + abbreviation
-        assert!(candidates.iter().any(|c| c.regex.is_match("Delta Air Lines")));
+        assert!(candidates
+            .iter()
+            .any(|c| c.regex.is_match("Delta Air Lines")));
     }
 
     #[test]
     fn test_string_match_exact_title() {
         let entities = vec![("e1".into(), "Delta Air Lines".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
-        let (links, matched) = string_match_links(
-            "We flew Delta Air Lines to NYC.",
-            "src",
-            &candidates,
-        );
+        let (links, matched) =
+            string_match_links("We flew Delta Air Lines to NYC.", "src", &candidates);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "e1");
         assert!(matched.contains("e1"));
@@ -702,11 +710,7 @@ mod tests {
     fn test_string_match_case_insensitive() {
         let entities = vec![("e1".into(), "Delta Air Lines".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
-        let (links, _) = string_match_links(
-            "We flew delta air lines to NYC.",
-            "src",
-            &candidates,
-        );
+        let (links, _) = string_match_links("We flew delta air lines to NYC.", "src", &candidates);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "e1");
     }
@@ -715,11 +719,7 @@ mod tests {
     fn test_string_match_unique_word() {
         let entities = vec![("e1".into(), "Delta Air Lines".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
-        let (links, _) = string_match_links(
-            "The Delta subsidiary expanded.",
-            "src",
-            &candidates,
-        );
+        let (links, _) = string_match_links("The Delta subsidiary expanded.", "src", &candidates);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "e1");
     }
@@ -729,11 +729,7 @@ mod tests {
         let entities = vec![("e1".into(), "Delta Air Lines".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
         // "Deltaforce" should NOT match "Delta" as a word
-        let (links, _) = string_match_links(
-            "The Deltaforce team arrived.",
-            "src",
-            &candidates,
-        );
+        let (links, _) = string_match_links("The Deltaforce team arrived.", "src", &candidates);
         assert!(links.is_empty());
     }
 
@@ -746,11 +742,7 @@ mod tests {
         ];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
         // "Mount" alone should not match either entity
-        let (links, _) = string_match_links(
-            "The mount was visible from afar.",
-            "src",
-            &candidates,
-        );
+        let (links, _) = string_match_links("The mount was visible from afar.", "src", &candidates);
         assert!(links.is_empty());
     }
 
@@ -758,11 +750,7 @@ mod tests {
     fn test_string_match_abbreviation() {
         let entities = vec![("e1".into(), "Delta Air Lines".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
-        let (links, _) = string_match_links(
-            "DAL stock rose 5% today.",
-            "src",
-            &candidates,
-        );
+        let (links, _) = string_match_links("DAL stock rose 5% today.", "src", &candidates);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "e1");
     }
@@ -783,11 +771,8 @@ mod tests {
     fn test_string_match_skips_self() {
         let entities = vec![("src".into(), "Self Document".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
-        let (links, _) = string_match_links(
-            "This is the Self Document itself.",
-            "src",
-            &candidates,
-        );
+        let (links, _) =
+            string_match_links("This is the Self Document itself.", "src", &candidates);
         assert!(links.is_empty());
     }
 
@@ -857,11 +842,7 @@ mod tests {
         // "Great" is a stop word — should not match as a single word
         let entities = vec![("e1".into(), "The Great Wall".into())];
         let candidates = build_match_candidates(&entities, LinkMatchMode::Fuzzy);
-        let (links, _) = string_match_links(
-            "It was a great achievement.",
-            "src",
-            &candidates,
-        );
+        let (links, _) = string_match_links("It was a great achievement.", "src", &candidates);
         assert!(links.is_empty());
     }
 
@@ -871,9 +852,7 @@ mod tests {
     fn test_detect_wikilink_by_name() {
         let detector = LinkDetector::new();
         let content = "See [[John Doe]] for details.";
-        let known = vec![
-            ("abc123".to_string(), "John Doe".to_string()),
-        ];
+        let known = vec![("abc123".to_string(), "John Doe".to_string())];
         let links = detector.detect_links(content, "src001", &known);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "abc123");
@@ -884,9 +863,7 @@ mod tests {
     fn test_detect_wikilink_case_insensitive() {
         let detector = LinkDetector::new();
         let content = "See [[john doe]] for details.";
-        let known = vec![
-            ("abc123".to_string(), "John Doe".to_string()),
-        ];
+        let known = vec![("abc123".to_string(), "John Doe".to_string())];
         let links = detector.detect_links(content, "src001", &known);
         assert!(links.iter().any(|l| l.target_id == "abc123"));
     }
@@ -895,9 +872,7 @@ mod tests {
     fn test_detect_wikilink_no_self_link() {
         let detector = LinkDetector::new();
         let content = "See [[John Doe]] for details.";
-        let known = vec![
-            ("abc123".to_string(), "John Doe".to_string()),
-        ];
+        let known = vec![("abc123".to_string(), "John Doe".to_string())];
         // source_id matches the target — should not create self-link
         let links = detector.detect_links(content, "abc123", &known);
         assert!(links.iter().all(|l| l.target_id != "abc123"));
@@ -923,21 +898,25 @@ mod tests {
             ("doc1", "Doc One", "See [[John Doe]] here."),
             ("doc2", "Doc Two", "No wikilinks."),
         ];
-        let known = vec![
-            ("abc123".to_string(), "John Doe".to_string()),
-        ];
+        let known = vec![("abc123".to_string(), "John Doe".to_string())];
         let results = detector.detect_links_batch(&docs, &known);
-        assert!(results.get("doc1").unwrap().iter().any(|l| l.target_id == "abc123"));
-        assert!(results.get("doc2").unwrap().iter().all(|l| l.target_id != "abc123"));
+        assert!(results
+            .get("doc1")
+            .unwrap()
+            .iter()
+            .any(|l| l.target_id == "abc123"));
+        assert!(results
+            .get("doc2")
+            .unwrap()
+            .iter()
+            .all(|l| l.target_id != "abc123"));
     }
 
     #[test]
     fn test_detect_wikilink_path_pipe_format() {
         let detector = LinkDetector::new();
         let content = "See [[people/john-doe|John Doe]] for details.";
-        let known = vec![
-            ("abc123".to_string(), "John Doe".to_string()),
-        ];
+        let known = vec![("abc123".to_string(), "John Doe".to_string())];
         let links = detector.detect_links(content, "src001", &known);
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].target_id, "abc123");
@@ -947,12 +926,8 @@ mod tests {
     #[test]
     fn test_batch_detect_wikilink_path_pipe_format() {
         let detector = LinkDetector::new();
-        let docs = vec![
-            ("doc1", "Doc One", "See [[people/john-doe|John Doe]] here."),
-        ];
-        let known = vec![
-            ("abc123".to_string(), "John Doe".to_string()),
-        ];
+        let docs = vec![("doc1", "Doc One", "See [[people/john-doe|John Doe]] here.")];
+        let known = vec![("abc123".to_string(), "John Doe".to_string())];
         let results = detector.detect_links_batch(&docs, &known);
         let doc1_links = results.get("doc1").unwrap();
         assert_eq!(doc1_links.len(), 1);
@@ -1118,10 +1093,19 @@ mod tests {
     #[test]
     fn test_fuzzy_perspective_config_exact() {
         // Verify LinkMatchMode::from_str_opt works
-        assert_eq!(LinkMatchMode::from_str_opt(Some("exact")), LinkMatchMode::Exact);
-        assert_eq!(LinkMatchMode::from_str_opt(Some("fuzzy")), LinkMatchMode::Fuzzy);
+        assert_eq!(
+            LinkMatchMode::from_str_opt(Some("exact")),
+            LinkMatchMode::Exact
+        );
+        assert_eq!(
+            LinkMatchMode::from_str_opt(Some("fuzzy")),
+            LinkMatchMode::Fuzzy
+        );
         assert_eq!(LinkMatchMode::from_str_opt(None), LinkMatchMode::Fuzzy);
-        assert_eq!(LinkMatchMode::from_str_opt(Some("unknown")), LinkMatchMode::Fuzzy);
+        assert_eq!(
+            LinkMatchMode::from_str_opt(Some("unknown")),
+            LinkMatchMode::Fuzzy
+        );
     }
 
     #[test]
@@ -1147,7 +1131,10 @@ mod tests {
     #[test]
     fn test_strip_title_prefix() {
         assert_eq!(strip_title_prefix("St. Paul"), Some("Paul".to_string()));
-        assert_eq!(strip_title_prefix("Mt. Vesuvius"), Some("Vesuvius".to_string()));
+        assert_eq!(
+            strip_title_prefix("Mt. Vesuvius"),
+            Some("Vesuvius".to_string())
+        );
         assert_eq!(strip_title_prefix("Dr. Smith"), Some("Smith".to_string()));
         // Too short after stripping
         assert_eq!(strip_title_prefix("St. AB"), None);

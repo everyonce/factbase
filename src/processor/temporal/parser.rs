@@ -8,20 +8,20 @@ use std::sync::LazyLock;
 /// Regex to strip `=` prefix from start of range tags: `@t[=XXX..YYY]` → `@t[XXX..YYY]`
 /// The `=` prefix means "exact date" and is only valid on single dates, not ranges.
 static RANGE_START_EQUALS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@t\[=([^\]]+?\.\.[^\]]*)\]")
-        .expect("range start equals regex should compile")
+    Regex::new(r"@t\[=([^\]]+?\.\.[^\]]*)\]").expect("range start equals regex should compile")
 });
 
 /// Regex to strip `=` prefix from end of range tags: `@t[XXX..=YYY]` → `@t[XXX..YYY]`
 static RANGE_END_EQUALS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(@t\[[^\]]*)\.\.=([^\]]*\])")
-        .expect("range end equals regex should compile")
+    Regex::new(r"(@t\[[^\]]*)\.\.=([^\]]*\])").expect("range end equals regex should compile")
 });
 
 /// Regex to find range tags where the end date is missing the year (e.g., @t[2025-Q3..Q4])
 static SHORT_RANGE_END_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"@t\[((?:-\d{1,4}|\d{4}))(-(?:Q[1-4]|\d{2}(?:-\d{2})?))\.\.(Q[1-4]|\d{2}(?:-\d{2})?)\]")
-        .expect("short range end regex should compile")
+    Regex::new(
+        r"@t\[((?:-\d{1,4}|\d{4}))(-(?:Q[1-4]|\d{2}(?:-\d{2})?))\.\.(Q[1-4]|\d{2}(?:-\d{2})?)\]",
+    )
+    .expect("short range end regex should compile")
 });
 
 /// Regex to match @t[...] tags containing BCE notation for normalization.
@@ -56,7 +56,13 @@ pub(crate) fn normalize_temporal_tags(line: &str) -> std::borrow::Cow<'_, str> {
         let tag = caps.get(0).expect("group 0 always exists").as_str();
         BCE_YEAR_REGEX
             .replace_all(tag, |inner: &regex::Captures| {
-                format!("-{}", inner.get(1).expect("capture group 1 required by regex").as_str())
+                format!(
+                    "-{}",
+                    inner
+                        .get(1)
+                        .expect("capture group 1 required by regex")
+                        .as_str()
+                )
             })
             .to_string()
     });

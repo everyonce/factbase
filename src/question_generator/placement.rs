@@ -33,8 +33,7 @@ pub fn check_folder_placement(
         if !stem.is_empty() && stem.eq_ignore_ascii_case(parent) {
             if let Some(parent_path) = path.parent() {
                 let folder_key = parent_path.to_string_lossy().to_string();
-                container_by_folder
-                    .insert(folder_key, (doc.id.clone(), doc.title.clone()));
+                container_by_folder.insert(folder_key, (doc.id.clone(), doc.title.clone()));
             }
         }
     }
@@ -231,17 +230,35 @@ mod tests {
         // Doc under acme that links to 1 acme entity + 2 globex entities
         let misplaced = make_doc("doc001", "Some Doc", "acme/notes/some-doc.md");
 
-        for d in [&c_acme, &c_globex, &person_acme, &person_g1, &person_g2, &misplaced] {
+        for d in [
+            &c_acme,
+            &c_globex,
+            &person_acme,
+            &person_g1,
+            &person_g2,
+            &misplaced,
+        ] {
             db.upsert_document(d).unwrap();
         }
 
-        set_links(&db, &misplaced.id, &[
-            (&person_acme.id, "mentions"),
-            (&person_g1.id, "mentions"),
-            (&person_g2.id, "mentions"),
-        ]);
+        set_links(
+            &db,
+            &misplaced.id,
+            &[
+                (&person_acme.id, "mentions"),
+                (&person_g1.id, "mentions"),
+                (&person_g2.id, "mentions"),
+            ],
+        );
 
-        let docs = vec![c_acme, c_globex, person_acme, person_g1, person_g2, misplaced.clone()];
+        let docs = vec![
+            c_acme,
+            c_globex,
+            person_acme,
+            person_g1,
+            person_g2,
+            misplaced.clone(),
+        ];
         let result = check_folder_placement(&docs, &db).unwrap();
 
         assert!(result.contains_key(&misplaced.id));
@@ -267,13 +284,16 @@ mod tests {
         }
 
         // 1 link to acme entity, 1 to globex entity — tie, no question
-        set_links(&db, &doc.id, &[
-            (&person_a.id, "mentions"),
-            (&person_g.id, "mentions"),
-        ]);
+        set_links(
+            &db,
+            &doc.id,
+            &[(&person_a.id, "mentions"), (&person_g.id, "mentions")],
+        );
 
         let docs = vec![c_acme, c_globex, person_a, person_g, doc.clone()];
-        assert!(!check_folder_placement(&docs, &db).unwrap().contains_key(&doc.id));
+        assert!(!check_folder_placement(&docs, &db)
+            .unwrap()
+            .contains_key(&doc.id));
     }
 
     #[test]
@@ -292,14 +312,20 @@ mod tests {
         }
 
         // 2 links to acme entities, 1 to globex
-        set_links(&db, &doc.id, &[
-            (&pa1.id, "mentions"),
-            (&pa2.id, "mentions"),
-            (&pg1.id, "mentions"),
-        ]);
+        set_links(
+            &db,
+            &doc.id,
+            &[
+                (&pa1.id, "mentions"),
+                (&pa2.id, "mentions"),
+                (&pg1.id, "mentions"),
+            ],
+        );
 
         let docs = vec![c_acme, c_globex, pa1, pa2, pg1, doc.clone()];
-        assert!(!check_folder_placement(&docs, &db).unwrap().contains_key(&doc.id));
+        assert!(!check_folder_placement(&docs, &db)
+            .unwrap()
+            .contains_key(&doc.id));
     }
 
     #[test]
@@ -318,7 +344,9 @@ mod tests {
         set_links(&db, &c_acme.id, &[(&pg1.id, "mentions")]);
 
         let docs = vec![c_acme.clone(), c_globex, pg1];
-        assert!(!check_folder_placement(&docs, &db).unwrap().contains_key(&c_acme.id));
+        assert!(!check_folder_placement(&docs, &db)
+            .unwrap()
+            .contains_key(&c_acme.id));
     }
 
     #[test]
@@ -336,6 +364,8 @@ mod tests {
         set_links(&db, &orphan.id, &[(&pa1.id, "mentions")]);
 
         let docs = vec![c_acme, orphan.clone(), pa1];
-        assert!(!check_folder_placement(&docs, &db).unwrap().contains_key(&orphan.id));
+        assert!(!check_folder_placement(&docs, &db)
+            .unwrap()
+            .contains_key(&orphan.id));
     }
 }

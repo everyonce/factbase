@@ -12,7 +12,10 @@ use serde_json::Value;
 const LINT_CONCURRENCY: usize = 5;
 
 /// Load active (non-deleted) documents for the given repo scope.
-pub(crate) fn load_docs(db: &Database, repo_id: Option<&str>) -> Result<Vec<crate::models::Document>, FactbaseError> {
+pub(crate) fn load_docs(
+    db: &Database,
+    repo_id: Option<&str>,
+) -> Result<Vec<crate::models::Document>, FactbaseError> {
     crate::organize::detect::collect_active_documents(db, repo_id)
 }
 
@@ -52,21 +55,29 @@ pub async fn check_repository(
     if let Some(mode) = get_str_arg(args, "mode") {
         match mode {
             "questions" => {} // This is what we do now — proceed
-            "cross_validate" | "deep_check" => return Ok(serde_json::json!({
-                "error": "The 'cross_validate' mode has been removed. Use the get_fact_pairs tool instead.",
-                "migration": "Replace check_repository(mode='cross_validate') with get_fact_pairs()."
-            })),
-            "discover" => return Ok(serde_json::json!({
-                "error": "The 'discover' mode has been removed. Entity discovery is now agent-driven via the update workflow.",
-                "migration": "Use the update workflow's discover step, or manually scan documents for entity candidates."
-            })),
-            "embeddings" => return Ok(serde_json::json!({
-                "error": "The 'embeddings' mode has been removed. Fact embeddings are generated during scan_repository.",
-                "migration": "Call scan_repository to generate both document and fact embeddings."
-            })),
-            other => return Ok(serde_json::json!({
-                "error": format!("Unknown mode '{}'. check_repository no longer requires a mode parameter — it runs rule-based quality checks directly.", other)
-            })),
+            "cross_validate" | "deep_check" => {
+                return Ok(serde_json::json!({
+                    "error": "The 'cross_validate' mode has been removed. Use the get_fact_pairs tool instead.",
+                    "migration": "Replace check_repository(mode='cross_validate') with get_fact_pairs()."
+                }))
+            }
+            "discover" => {
+                return Ok(serde_json::json!({
+                    "error": "The 'discover' mode has been removed. Entity discovery is now agent-driven via the update workflow.",
+                    "migration": "Use the update workflow's discover step, or manually scan documents for entity candidates."
+                }))
+            }
+            "embeddings" => {
+                return Ok(serde_json::json!({
+                    "error": "The 'embeddings' mode has been removed. Fact embeddings are generated during scan_repository.",
+                    "migration": "Call scan_repository to generate both document and fact embeddings."
+                }))
+            }
+            other => {
+                return Ok(serde_json::json!({
+                    "error": format!("Unknown mode '{}'. check_repository no longer requires a mode parameter — it runs rule-based quality checks directly.", other)
+                }))
+            }
         }
     }
 
@@ -82,7 +93,10 @@ async fn check_questions(
 ) -> Result<Value, FactbaseError> {
     let repo_id = resolve_repo_filter(db, get_str_arg(args, "repo"))?;
     let repo_id = repo_id.as_deref();
-    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let dry_run = args
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     let config_file = crate::Config::load(None);
     let check_concurrency = config_file
@@ -91,9 +105,19 @@ async fn check_questions(
         .unwrap_or(LINT_CONCURRENCY);
 
     let perspective = load_perspective(db, repo_id);
-    let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
-    let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
-    let glossary_types = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.glossary_types.clone());
+    let stale_days = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.stale_days)
+        .unwrap_or(365) as i64;
+    let required_fields = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.required_fields.clone());
+    let glossary_types = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.glossary_types.clone());
 
     let all_docs = load_docs(db, repo_id)?;
 
@@ -114,10 +138,16 @@ async fn check_questions(
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
-    let docs_clean = results.iter().filter(|r| r.new_questions == 0 && r.existing_unanswered == 0).count();
+    let docs_clean = results
+        .iter()
+        .filter(|r| r.new_questions == 0 && r.existing_unanswered == 0)
+        .count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
     let total_pruned: usize = results.iter().map(|r| r.pruned_questions).sum();
-    let total_existing: usize = results.iter().map(|r| r.existing_unanswered + r.existing_answered).sum();
+    let total_existing: usize = results
+        .iter()
+        .map(|r| r.existing_unanswered + r.existing_answered)
+        .sum();
     let total_skipped: usize = results.iter().map(|r| r.skipped_reviewed).sum();
     let total_suppressed: usize = results.iter().map(|r| r.suppressed_by_review).sum();
     let deferred_count = db.count_deferred_questions(repo_id).unwrap_or(0);
@@ -129,12 +159,15 @@ async fn check_questions(
         .map(|(qt, c)| (qt.as_str().to_string(), c))
         .collect();
 
-    let details: Vec<Value> = results.iter()
+    let details: Vec<Value> = results
+        .iter()
         .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)
-        .map(|r| serde_json::json!({
-            "doc_id": r.doc_id, "doc_title": r.doc_title,
-            "new_questions": r.new_questions, "pruned_questions": r.pruned_questions,
-        }))
+        .map(|r| {
+            serde_json::json!({
+                "doc_id": r.doc_id, "doc_title": r.doc_title,
+                "new_questions": r.new_questions, "pruned_questions": r.pruned_questions,
+            })
+        })
         .collect();
 
     // Citation quality stats across all documents
@@ -147,7 +180,9 @@ async fn check_questions(
         let refs = crate::processor::parse_source_references(body);
         let ref_numbers: std::collections::HashSet<u32> = refs.iter().map(|r| r.number).collect();
         for d in &defs {
-            if !ref_numbers.contains(&d.number) { continue; }
+            if !ref_numbers.contains(&d.number) {
+                continue;
+            }
             if crate::question_generator::missing::is_untraceable_source(&d.context) {
                 citations_missing += 1;
             } else if crate::processor::is_citation_specific(&d.context) {
@@ -189,7 +224,10 @@ async fn check_batch(
     ids: &[String],
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let dry_run = args.get("dry_run").and_then(Value::as_bool).unwrap_or(false);
+    let dry_run = args
+        .get("dry_run")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
 
     let config_file = crate::Config::load(None);
     let check_concurrency = config_file
@@ -211,9 +249,19 @@ async fn check_batch(
     // Determine repo for perspective (use first doc's repo)
     let repo_id = docs.first().map(|d| d.repo_id.as_str());
     let perspective = load_perspective(db, repo_id);
-    let stale_days = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.stale_days).unwrap_or(365) as i64;
-    let required_fields = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.required_fields.clone());
-    let glossary_types = perspective.as_ref().and_then(|p| p.review.as_ref()).and_then(|r| r.glossary_types.clone());
+    let stale_days = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.stale_days)
+        .unwrap_or(365) as i64;
+    let required_fields = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.required_fields.clone());
+    let glossary_types = perspective
+        .as_ref()
+        .and_then(|p| p.review.as_ref())
+        .and_then(|r| r.glossary_types.clone());
 
     progress.phase("Checking selected documents");
 
@@ -232,17 +280,26 @@ async fn check_batch(
     let results = &output.results;
 
     let docs_with_questions = results.iter().filter(|r| r.new_questions > 0).count();
-    let docs_clean = results.iter().filter(|r| r.new_questions == 0 && r.existing_unanswered == 0).count();
+    let docs_clean = results
+        .iter()
+        .filter(|r| r.new_questions == 0 && r.existing_unanswered == 0)
+        .count();
     let total_new: usize = results.iter().map(|r| r.new_questions).sum();
     let total_pruned: usize = results.iter().map(|r| r.pruned_questions).sum();
-    let total_existing: usize = results.iter().map(|r| r.existing_unanswered + r.existing_answered).sum();
+    let total_existing: usize = results
+        .iter()
+        .map(|r| r.existing_unanswered + r.existing_answered)
+        .sum();
 
-    let details: Vec<Value> = results.iter()
+    let details: Vec<Value> = results
+        .iter()
         .filter(|r| r.new_questions > 0 || r.pruned_questions > 0)
-        .map(|r| serde_json::json!({
-            "doc_id": r.doc_id, "doc_title": r.doc_title,
-            "new_questions": r.new_questions, "pruned_questions": r.pruned_questions,
-        }))
+        .map(|r| {
+            serde_json::json!({
+                "doc_id": r.doc_id, "doc_title": r.doc_title,
+                "new_questions": r.new_questions, "pruned_questions": r.pruned_questions,
+            })
+        })
         .collect();
 
     let mut result = serde_json::json!({
@@ -333,8 +390,14 @@ mod tests {
             let result = check_repository(&db, &embedding, &args, &progress)
                 .await
                 .unwrap();
-            assert!(result.get("error").is_some(), "deprecated mode '{mode}' should return error");
-            assert!(result.get("migration").is_some(), "deprecated mode '{mode}' should return migration hint");
+            assert!(
+                result.get("error").is_some(),
+                "deprecated mode '{mode}' should return error"
+            );
+            assert!(
+                result.get("migration").is_some(),
+                "deprecated mode '{mode}' should return migration hint"
+            );
         }
     }
 
@@ -361,7 +424,11 @@ mod tests {
         crate::database::tests::test_repo_in_db(&db, "test", repo_path);
 
         let doc_path = repo_path.join("test.md");
-        std::fs::write(&doc_path, "<!-- factbase:db1111 -->\n# Test Doc\n\n- Some fact\n").unwrap();
+        std::fs::write(
+            &doc_path,
+            "<!-- factbase:db1111 -->\n# Test Doc\n\n- Some fact\n",
+        )
+        .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "db1111".to_string();
@@ -378,7 +445,10 @@ mod tests {
         let result = check_repository(&db, &embedding, &args, &progress)
             .await
             .unwrap();
-        assert!(result.get("error").is_none(), "doc_id should work without mode: {result}");
+        assert!(
+            result.get("error").is_none(),
+            "doc_id should work without mode: {result}"
+        );
     }
 
     #[tokio::test]
@@ -409,7 +479,11 @@ mod tests {
         // Create two docs on disk and in DB
         for (id, title) in &[("bat001", "Doc One"), ("bat002", "Doc Two")] {
             let path = repo_path.join(format!("{id}.md"));
-            std::fs::write(&path, format!("<!-- factbase:{id} -->\n# {title}\n\n- A fact\n")).unwrap();
+            std::fs::write(
+                &path,
+                format!("<!-- factbase:{id} -->\n# {title}\n\n- A fact\n"),
+            )
+            .unwrap();
             let mut doc = crate::models::Document::test_default();
             doc.id = id.to_string();
             doc.title = title.to_string();
@@ -421,7 +495,11 @@ mod tests {
 
         // Also create a third doc that should NOT be checked
         let path3 = repo_path.join("bat003.md");
-        std::fs::write(&path3, "<!-- factbase:bat003 -->\n# Doc Three\n\n- Another fact\n").unwrap();
+        std::fs::write(
+            &path3,
+            "<!-- factbase:bat003 -->\n# Doc Three\n\n- Another fact\n",
+        )
+        .unwrap();
         let mut doc3 = crate::models::Document::test_default();
         doc3.id = "bat003".to_string();
         doc3.title = "Doc Three".to_string();

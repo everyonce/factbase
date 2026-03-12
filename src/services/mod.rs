@@ -7,7 +7,9 @@
 pub mod entity;
 pub mod review;
 
-pub use entity::{get_entity, get_perspective, get_document_stats, list_entities, list_repositories};
+pub use entity::{
+    get_document_stats, get_entity, get_perspective, list_entities, list_repositories,
+};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, get_deferred_items, get_review_queue,
     AnswerQuestionParams, BulkAnswerItem as ServiceBulkAnswerItem, ReviewQueueParams,

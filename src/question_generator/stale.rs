@@ -82,8 +82,7 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
 
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
-            || extract_reviewed_date(line)
-                .is_some_and(|d| (today - d).num_days() <= max_age_days)
+            || extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= max_age_days)
         {
             continue;
         }
@@ -331,7 +330,8 @@ mod tests {
         let content = "# Person\n\n- Works at Acme Corp @t[~2026-01] [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
         assert!(generate_stale_questions(content, 365).is_empty());
         // No @t[~] tag — still generates
-        let content2 = "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
+        let content2 =
+            "# Person\n\n- Works at Acme Corp [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";
         assert_eq!(generate_stale_questions(content2, 365).len(), 1);
         // Old @t[~] verification — still generates
         let content3 = "# Person\n\n- Works at Acme Corp @t[~2024-01] [^1]\n\n[^1]: LinkedIn profile, scraped 2023-06-01";

@@ -87,7 +87,9 @@ pub fn build_rewrite_prompt(
 ) -> String {
     let file_override = repo_path
         .and_then(|p| crate::config::prompts::load_file_override(p, "prompts/rewrite-section.txt"));
-    let default = file_override.as_deref().unwrap_or(DEFAULT_REWRITE_SECTION_PROMPT);
+    let default = file_override
+        .as_deref()
+        .unwrap_or(DEFAULT_REWRITE_SECTION_PROMPT);
     crate::config::prompts::resolve_prompt(
         prompts,
         "rewrite_section",
@@ -159,7 +161,8 @@ pub fn apply_source_citations(content: &str, sources: &[(&str, &str)]) -> String
 
     // Find max existing footnote number and build existing def map for dedup
     let mut max_footnote = 0u32;
-    let mut existing_defs: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
+    let mut existing_defs: std::collections::HashMap<String, u32> =
+        std::collections::HashMap::new();
     for line in content.lines() {
         if let Some(cap) = SOURCE_DEF_REGEX.captures(line) {
             if let Ok(num) = cap[1].parse::<u32>() {
@@ -640,8 +643,8 @@ mod tests {
             answered: true,
             answer: None,
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         }
     }
 
@@ -676,25 +679,42 @@ mod tests {
 
         // Empty and all-dismiss
         assert!(format_changes_for_llm(&[]).is_empty());
-        assert!(format_changes_for_llm(&[make_answer(ChangeInstruction::Dismiss), make_answer(ChangeInstruction::Dismiss)]).is_empty());
+        assert!(format_changes_for_llm(&[
+            make_answer(ChangeInstruction::Dismiss),
+            make_answer(ChangeInstruction::Dismiss)
+        ])
+        .is_empty());
     }
 
     #[test]
     fn test_format_changes_for_llm_instruction_types() {
         // Delete
-        let r1 = format_changes_for_llm(&[make_answer(ChangeInstruction::Delete { line_text: "Old fact".to_string() })]);
+        let r1 = format_changes_for_llm(&[make_answer(ChangeInstruction::Delete {
+            line_text: "Old fact".to_string(),
+        })]);
         assert!(r1.contains("Delete line") && r1.contains("Old fact"));
         // Split
-        let r2 = format_changes_for_llm(&[make_answer(ChangeInstruction::Split { line_text: "Combined".to_string(), instruction: "separate".to_string() })]);
+        let r2 = format_changes_for_llm(&[make_answer(ChangeInstruction::Split {
+            line_text: "Combined".to_string(),
+            instruction: "separate".to_string(),
+        })]);
         assert!(r2.contains("Split line") && r2.contains("separate"));
         // AddTemporal
-        let r3 = format_changes_for_llm(&[make_answer(ChangeInstruction::AddTemporal { line_text: "Fact".to_string(), tag: "@t[2023]".to_string() })]);
+        let r3 = format_changes_for_llm(&[make_answer(ChangeInstruction::AddTemporal {
+            line_text: "Fact".to_string(),
+            tag: "@t[2023]".to_string(),
+        })]);
         assert!(r3.contains("add @t[2023] at end"));
         // AddSource
-        let r4 = format_changes_for_llm(&[make_answer(ChangeInstruction::AddSource { line_text: "Fact".to_string(), source_info: "LinkedIn".to_string() })]);
+        let r4 = format_changes_for_llm(&[make_answer(ChangeInstruction::AddSource {
+            line_text: "Fact".to_string(),
+            source_info: "LinkedIn".to_string(),
+        })]);
         assert!(r4.contains("add source reference") && r4.contains("LinkedIn"));
         // Generic
-        let r5 = format_changes_for_llm(&[make_answer(ChangeInstruction::Generic { description: "Custom change".to_string() })]);
+        let r5 = format_changes_for_llm(&[make_answer(ChangeInstruction::Generic {
+            description: "Custom change".to_string(),
+        })]);
         assert!(r5.contains("Custom change"));
     }
 
@@ -728,7 +748,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let prompts_dir = tmp.path().join(".factbase").join("prompts");
         std::fs::create_dir_all(&prompts_dir).unwrap();
-        std::fs::write(prompts_dir.join("rewrite-section.txt"), "Custom: {section} / {changes}").unwrap();
+        std::fs::write(
+            prompts_dir.join("rewrite-section.txt"),
+            "Custom: {section} / {changes}",
+        )
+        .unwrap();
         let prompts = crate::config::PromptsConfig::default();
         let result = build_rewrite_prompt("my section", "my changes", &prompts, Some(tmp.path()));
         assert_eq!(result, "Custom: my section / my changes");
@@ -739,7 +763,10 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let prompts = crate::config::PromptsConfig::default();
         let result = build_rewrite_prompt("content", "changes", &prompts, Some(tmp.path()));
-        assert!(result.contains("ORIGINAL:"), "should use compiled-in default");
+        assert!(
+            result.contains("ORIGINAL:"),
+            "should use compiled-in default"
+        );
     }
 
     // ==================== identify_affected_section tests ====================
@@ -784,10 +811,27 @@ mod tests {
 
     #[test]
     fn test_replace_section() {
-        assert_eq!(replace_section("Line 1\nLine 2\nLine 3\nLine 4", 2, 3, "New Line 2\nNew Line 3"), "Line 1\nNew Line 2\nNew Line 3\nLine 4");
-        assert_eq!(replace_section("Line 1\nLine 2\nLine 3", 1, 1, "New Line 1"), "New Line 1\nLine 2\nLine 3");
-        assert_eq!(replace_section("Line 1\nLine 2\nLine 3", 3, 3, "New Line 3"), "Line 1\nLine 2\nNew Line 3");
-        assert_eq!(replace_section("Line 1\nLine 2", 1, 2, "Completely new"), "Completely new");
+        assert_eq!(
+            replace_section(
+                "Line 1\nLine 2\nLine 3\nLine 4",
+                2,
+                3,
+                "New Line 2\nNew Line 3"
+            ),
+            "Line 1\nNew Line 2\nNew Line 3\nLine 4"
+        );
+        assert_eq!(
+            replace_section("Line 1\nLine 2\nLine 3", 1, 1, "New Line 1"),
+            "New Line 1\nLine 2\nLine 3"
+        );
+        assert_eq!(
+            replace_section("Line 1\nLine 2\nLine 3", 3, 3, "New Line 3"),
+            "Line 1\nLine 2\nNew Line 3"
+        );
+        assert_eq!(
+            replace_section("Line 1\nLine 2", 1, 2, "Completely new"),
+            "Completely new"
+        );
     }
 
     // ==================== remove_processed_questions tests ====================
@@ -942,7 +986,8 @@ Content here
 
     #[test]
     fn test_stamp_reviewed_by_text_matches_fact() {
-        let content = "# Title\n\n- VP of Engineering @t[2020..]\n- Director of Sales @t[2018..2020]";
+        let content =
+            "# Title\n\n- VP of Engineering @t[2020..]\n- Director of Sales @t[2018..2020]";
         let date = chrono::NaiveDate::from_ymd_opt(2026, 2, 15).unwrap();
         let result = stamp_reviewed_by_text(content, &["VP of Engineering"], &date);
         assert!(result.contains("VP of Engineering @t[2020..] <!-- reviewed:2026-02-15 -->"));
@@ -984,8 +1029,17 @@ Content here
         assert!(!r2.contains("> defer"));
 
         // Empty indices / no marker
-        assert_eq!(uncheck_deferred_questions("# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer", &[]), "# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer");
-        assert_eq!(uncheck_deferred_questions("# Doc\n\nNo review queue", &[0]), "# Doc\n\nNo review queue");
+        assert_eq!(
+            uncheck_deferred_questions(
+                "# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer",
+                &[]
+            ),
+            "# Doc\n\n<!-- factbase:review -->\n- [x] Q0\n> answer"
+        );
+        assert_eq!(
+            uncheck_deferred_questions("# Doc\n\nNo review queue", &[0]),
+            "# Doc\n\nNo review queue"
+        );
     }
 
     // ==================== apply_source_citations tests ====================
@@ -1122,8 +1176,16 @@ Content here
         let content = "# Person\n\n- VP at Acme @t[2020..2023]\n- Director at Acme @t[2018..2020]";
         let result = stamp_sequential_lines(content, &[3, 4]);
         assert!(result.contains("<!-- sequential -->"));
-        assert!(result.lines().nth(2).unwrap().contains("<!-- sequential -->"));
-        assert!(result.lines().nth(3).unwrap().contains("<!-- sequential -->"));
+        assert!(result
+            .lines()
+            .nth(2)
+            .unwrap()
+            .contains("<!-- sequential -->"));
+        assert!(result
+            .lines()
+            .nth(3)
+            .unwrap()
+            .contains("<!-- sequential -->"));
         // Asterisk facts also stamped
         let content2 = "# Title\n\n* Fact one @t[2020..2022]\n* Fact two @t[2022..]";
         let result2 = stamp_sequential_lines(content2, &[3]);
@@ -1151,8 +1213,16 @@ Content here
     fn test_stamp_sequential_by_text_basic() {
         let content = "# Person\n\n- VP at Acme @t[2020..2023]\n- Director at Acme @t[2018..2020]";
         let result = stamp_sequential_by_text(content, &["VP at Acme", "Director at Acme"]);
-        assert!(result.lines().nth(2).unwrap().contains("<!-- sequential -->"));
-        assert!(result.lines().nth(3).unwrap().contains("<!-- sequential -->"));
+        assert!(result
+            .lines()
+            .nth(2)
+            .unwrap()
+            .contains("<!-- sequential -->"));
+        assert!(result
+            .lines()
+            .nth(3)
+            .unwrap()
+            .contains("<!-- sequential -->"));
         // Asterisk facts also stamped
         let content2 = "* Fact A @t[2020..2022]\n* Fact B @t[2022..]";
         let result2 = stamp_sequential_by_text(content2, &["Fact A"]);
@@ -1223,16 +1293,26 @@ Content here
 
     #[test]
     fn test_identify_section_excludes_header_and_title() {
-        let content = "<!-- factbase:abc123 -->\n# My Document\n\n- Fact on line 4\n- Fact on line 5";
+        let content =
+            "<!-- factbase:abc123 -->\n# My Document\n\n- Fact on line 4\n- Fact on line 5";
         let questions = vec![make_question(Some(4))];
         let result = identify_affected_section(content, &questions);
         assert!(result.is_some());
         let (start, _end, section) = result.unwrap();
         // Section should NOT include the factbase header or title
-        assert!(!section.contains("<!-- factbase:"), "Section should not contain factbase header");
-        assert!(!section.contains("# My Document"), "Section should not contain title");
+        assert!(
+            !section.contains("<!-- factbase:"),
+            "Section should not contain factbase header"
+        );
+        assert!(
+            !section.contains("# My Document"),
+            "Section should not contain title"
+        );
         assert!(section.contains("Fact on line 4"));
-        assert!(start >= 3, "Start should be after header+title, got {start}");
+        assert!(
+            start >= 3,
+            "Start should be after header+title, got {start}"
+        );
     }
 
     // --- apply_changes_to_section tests ---
@@ -1241,7 +1321,9 @@ Content here
     async fn test_apply_changes_to_section_all_dismissed() {
         let section = "- Fact 1\n- Fact 2";
         let instructions = vec![make_answer(ChangeInstruction::Dismiss)];
-        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        let result = apply_changes_to_section(section, &instructions)
+            .await
+            .unwrap();
         assert_eq!(result, section);
     }
 
@@ -1251,7 +1333,9 @@ Content here
         let instructions = vec![make_answer(ChangeInstruction::Delete {
             line_text: "Fact 2".to_string(),
         })];
-        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        let result = apply_changes_to_section(section, &instructions)
+            .await
+            .unwrap();
         assert!(result.contains("Fact 1"));
         assert!(!result.contains("Fact 2"));
         assert!(result.contains("Fact 3"));
@@ -1265,7 +1349,9 @@ Content here
             instruction: "separate into two".to_string(),
         })];
         // Should succeed (skip the split) instead of erroring
-        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        let result = apply_changes_to_section(section, &instructions)
+            .await
+            .unwrap();
         assert_eq!(result, section);
     }
 
@@ -1276,7 +1362,9 @@ Content here
             description: "some complex change".to_string(),
         })];
         // Should succeed (skip the generic) instead of erroring
-        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        let result = apply_changes_to_section(section, &instructions)
+            .await
+            .unwrap();
         assert_eq!(result, section);
     }
 
@@ -1293,7 +1381,9 @@ Content here
             }),
         ];
         // Should apply the delete and skip the split
-        let result = apply_changes_to_section(section, &instructions).await.unwrap();
+        let result = apply_changes_to_section(section, &instructions)
+            .await
+            .unwrap();
         assert!(!result.contains("Delete me"));
         assert!(result.contains("Split me")); // split skipped, line preserved
         assert!(result.contains("Fact 1"));
@@ -1306,7 +1396,10 @@ Content here
     fn test_remove_processed_questions_callout() {
         let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
         let result = remove_processed_questions(content, &[0]);
-        assert!(result.contains("> [!review]- Review Queue"), "should preserve callout format");
+        assert!(
+            result.contains("> [!review]- Review Queue"),
+            "should preserve callout format"
+        );
         assert!(!result.contains("Q0"), "should remove processed question");
         assert!(result.contains("Q1"), "should keep unprocessed question");
     }
@@ -1315,7 +1408,10 @@ Content here
     fn test_remove_processed_questions_callout_all_removed() {
         let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n";
         let result = remove_processed_questions(content, &[0]);
-        assert!(!result.contains("Review Queue"), "should remove entire section");
+        assert!(
+            !result.contains("Review Queue"),
+            "should remove entire section"
+        );
         assert!(result.contains("Content."));
     }
 
@@ -1323,7 +1419,10 @@ Content here
     fn test_uncheck_deferred_questions_callout() {
         let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > defer\n> - [x] `@q[stale]` Q1\n>   > dismiss\n";
         let result = uncheck_deferred_questions(content, &[0]);
-        assert!(result.contains("> [!review]- Review Queue"), "should preserve callout format");
+        assert!(
+            result.contains("> [!review]- Review Queue"),
+            "should preserve callout format"
+        );
         // Q0 should be unchecked and answer removed
         assert!(result.contains("Q0"));
         assert!(!result.contains("defer"));
@@ -1339,7 +1438,10 @@ Content here
         // Footnotes must appear before the callout review section
         let footnote_pos = result.find("[^1]: Source info").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
-        assert!(footnote_pos < review_pos, "footnotes must be before callout review section");
+        assert!(
+            footnote_pos < review_pos,
+            "footnotes must be before callout review section"
+        );
     }
 
     #[test]

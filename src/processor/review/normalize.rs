@@ -295,6 +295,9 @@ mod tests {
         let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n  > \n- [ ] `@q[temporal]` When did this happen?\n  > believed: around 2020\n";
         let result = normalize_review_section(content);
         assert_eq!(result.matches("When did this happen?").count(), 1);
-        assert!(result.contains("believed: around 2020"), "Should keep the last occurrence with the answer");
+        assert!(
+            result.contains("believed: around 2020"),
+            "Should keep the last occurrence with the answer"
+        );
     }
 }

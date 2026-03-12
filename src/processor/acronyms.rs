@@ -47,11 +47,15 @@ fn dedup_line(line: &str, seen: &mut HashSet<String>, glossary_terms: &HashSet<S
 
     for caps in ACRONYM_EXPANSION_RE.captures_iter(line) {
         // Safe: captures always have group 0 (the full match)
-        let full = caps.get(0).expect("group 0 always exists in regex captures");
+        let full = caps
+            .get(0)
+            .expect("group 0 always exists in regex captures");
         let acronym = &caps[1];
         let key = acronym.to_uppercase();
 
-        let in_glossary = glossary_terms.iter().any(|t| t.eq_ignore_ascii_case(acronym));
+        let in_glossary = glossary_terms
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(acronym));
         let is_duplicate = !seen.insert(key.clone());
 
         if is_duplicate || in_glossary {
@@ -83,8 +87,13 @@ pub fn strip_glossary_reviewed_markers(content: &str, glossary_terms: &HashSet<S
     content
         .lines()
         .map(|line| {
-            if extract_reviewed_date(line).is_some() && line_only_had_glossary_acronym(line, glossary_terms) {
-                REVIEWED_MARKER_REGEX.replace(line, "").trim_end().to_string()
+            if extract_reviewed_date(line).is_some()
+                && line_only_had_glossary_acronym(line, glossary_terms)
+            {
+                REVIEWED_MARKER_REGEX
+                    .replace(line, "")
+                    .trim_end()
+                    .to_string()
             } else {
                 line.to_string()
             }
@@ -96,12 +105,21 @@ pub fn strip_glossary_reviewed_markers(content: &str, glossary_terms: &HashSet<S
 /// Returns true if the line's only detectable ambiguity was an acronym now in the glossary.
 fn line_only_had_glossary_acronym(line: &str, glossary_terms: &HashSet<String>) -> bool {
     let stripped = REVIEWED_MARKER_REGEX.replace(line, "");
-    let text = stripped.trim().trim_start_matches("- ").trim_start_matches("* ");
+    let text = stripped
+        .trim()
+        .trim_start_matches("- ")
+        .trim_start_matches("* ");
     let lower = text.to_lowercase();
 
     // If the line has location or relationship ambiguity, keep the marker
     let location_phrases = ["lives in", "based in", "located in", "resides in"];
-    let relationship_phrases = ["knows ", "connected to ", "associated with ", "works with ", "met "];
+    let relationship_phrases = [
+        "knows ",
+        "connected to ",
+        "associated with ",
+        "works with ",
+        "met ",
+    ];
     if location_phrases.iter().any(|p| lower.contains(p)) {
         return false;
     }
@@ -116,7 +134,9 @@ fn line_only_had_glossary_acronym(line: &str, glossary_terms: &HashSet<String>) 
             t.len() >= 2
                 && t.len() <= 5
                 && t.chars().filter(|c| c.is_alphabetic()).count() >= 2
-                && t.chars().filter(|c| c.is_alphabetic()).all(|c| c.is_uppercase())
+                && t.chars()
+                    .filter(|c| c.is_alphabetic())
+                    .all(|c| c.is_uppercase())
                 && glossary_terms.iter().any(|g| g.eq_ignore_ascii_case(t))
         })
 }
@@ -143,7 +163,8 @@ mod tests {
 
     #[test]
     fn test_duplicate_expansion_stripped() {
-        let input = "- Uses DR (Disaster Recovery) for backup\n- DR (Disaster Recovery) plan active";
+        let input =
+            "- Uses DR (Disaster Recovery) for backup\n- DR (Disaster Recovery) plan active";
         let expected = "- Uses DR (Disaster Recovery) for backup\n- DR plan active";
         assert_eq!(dedup_acronym_expansions(input, &empty_glossary()), expected);
     }
@@ -224,7 +245,8 @@ mod tests {
     #[test]
     fn test_preserves_factbase_header() {
         let input = "<!-- factbase:abc123 -->\n# Title\n\n- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site";
-        let expected = "<!-- factbase:abc123 -->\n# Title\n\n- DR (Disaster Recovery) plan\n- DR site";
+        let expected =
+            "<!-- factbase:abc123 -->\n# Title\n\n- DR (Disaster Recovery) plan\n- DR site";
         assert_eq!(dedup_acronym_expansions(input, &empty_glossary()), expected);
     }
 
@@ -242,7 +264,8 @@ mod tests {
 
     #[test]
     fn test_ampersand_acronym() {
-        let input = "- R&D (Research and Development) budget\n- R&D (Research and Development) team";
+        let input =
+            "- R&D (Research and Development) budget\n- R&D (Research and Development) team";
         let expected = "- R&D (Research and Development) budget\n- R&D team";
         assert_eq!(dedup_acronym_expansions(input, &empty_glossary()), expected);
     }
@@ -271,7 +294,10 @@ mod tests {
         glossary.insert("SA".to_string());
         let input = "# Doc\n\n- Works as SA lead <!-- reviewed:2026-02-21 -->\n- Lives in NYC";
         let result = strip_glossary_reviewed_markers(input, &glossary);
-        assert!(!result.contains("reviewed:"), "Should strip marker for glossary acronym");
+        assert!(
+            !result.contains("reviewed:"),
+            "Should strip marker for glossary acronym"
+        );
         assert!(result.contains("- Works as SA lead"));
         assert!(result.contains("- Lives in NYC"));
     }
@@ -281,7 +307,10 @@ mod tests {
         let glossary = HashSet::new();
         let input = "- Some fact <!-- reviewed:2026-02-21 -->";
         let result = strip_glossary_reviewed_markers(input, &glossary);
-        assert!(result.contains("reviewed:"), "Should keep marker when no glossary terms");
+        assert!(
+            result.contains("reviewed:"),
+            "Should keep marker when no glossary terms"
+        );
     }
 
     #[test]
@@ -291,7 +320,10 @@ mod tests {
         // Line has both a glossary acronym AND a location ambiguity — keep the marker
         let input = "- SA lives in Boston <!-- reviewed:2026-02-21 -->";
         let result = strip_glossary_reviewed_markers(input, &glossary);
-        assert!(result.contains("reviewed:"), "Should keep marker when location ambiguity exists");
+        assert!(
+            result.contains("reviewed:"),
+            "Should keep marker when location ambiguity exists"
+        );
     }
 
     #[test]
@@ -300,7 +332,10 @@ mod tests {
         glossary.insert("SA".to_string());
         let input = "- Knows SA team lead <!-- reviewed:2026-02-21 -->";
         let result = strip_glossary_reviewed_markers(input, &glossary);
-        assert!(result.contains("reviewed:"), "Should keep marker when relationship ambiguity exists");
+        assert!(
+            result.contains("reviewed:"),
+            "Should keep marker when relationship ambiguity exists"
+        );
     }
 
     #[test]

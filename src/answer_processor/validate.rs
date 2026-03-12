@@ -152,7 +152,10 @@ fn check_footnote_definitions(text: &str, errors: &mut Vec<ValidationError>) {
             if trimmed.starts_with("[^") {
                 errors.push(ValidationError {
                     kind: ValidationErrorKind::MalformedFootnote,
-                    detail: format!("Malformed footnote definition: '{}'", truncate_str(trimmed, 80)),
+                    detail: format!(
+                        "Malformed footnote definition: '{}'",
+                        truncate_str(trimmed, 80)
+                    ),
                 });
                 return; // One is enough
             }
@@ -179,16 +182,19 @@ mod tests {
         let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
         let new_content = "# John Doe\n\n- VP at Acme\n";
         let errors = validate_document(original, new_content);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::HeaderLost));
+        assert!(errors
+            .iter()
+            .any(|e| e.kind == ValidationErrorKind::HeaderLost));
     }
 
     #[test]
     fn test_document_title_changed() {
         let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
-        let new_content =
-            "<!-- factbase:abc123 -->\n# REWRITTEN SECTION\n\n- VP at Acme\n";
+        let new_content = "<!-- factbase:abc123 -->\n# REWRITTEN SECTION\n\n- VP at Acme\n";
         let errors = validate_document(original, new_content);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
+        assert!(errors
+            .iter()
+            .any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
     }
 
     #[test]
@@ -196,7 +202,9 @@ mod tests {
         let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
         let new_content = "<!-- factbase:abc123 -->\n\n- VP at Acme\n";
         let errors = validate_document(original, new_content);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
+        assert!(errors
+            .iter()
+            .any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
     }
 
     #[test]
@@ -204,7 +212,9 @@ mod tests {
         let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- Fact 1\n- Fact 2\n- Fact 3\n- Fact 4\n- Fact 5\n- Fact 6\n";
         let new_content = "<!-- factbase:abc123 -->\n# John Doe\n\n- Fact 1\n";
         let errors = validate_document(original, new_content);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss));
+        assert!(errors
+            .iter()
+            .any(|e| e.kind == ValidationErrorKind::ContentLoss));
     }
 
     #[test]
@@ -213,7 +223,9 @@ mod tests {
         let new_content =
             "<!-- factbase:abc123 -->\n# John Doe\n\nOUTPUT:\n- VP at Acme @t[2020..]\n";
         let errors = validate_document(original, new_content);
-        assert!(errors.iter().any(|e| e.kind == ValidationErrorKind::MetaTextDetected));
+        assert!(errors
+            .iter()
+            .any(|e| e.kind == ValidationErrorKind::MetaTextDetected));
     }
 
     #[test]
@@ -230,7 +242,9 @@ mod tests {
         let original = "<!-- factbase:abc123 -->\n\nSome content\n";
         let new_content = "<!-- factbase:abc123 -->\n\nUpdated content\n";
         let errors = validate_document(original, new_content);
-        assert!(!errors.iter().any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
+        assert!(!errors
+            .iter()
+            .any(|e| e.kind == ValidationErrorKind::TitleCorrupted));
     }
 
     #[test]
@@ -256,7 +270,9 @@ mod tests {
             - Resulted in end of Roman Republic\n";
         let errors = validate_document(original, new_content);
         assert!(
-            !errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
+            !errors
+                .iter()
+                .any(|e| e.kind == ValidationErrorKind::ContentLoss),
             "Removing review questions should not trigger content loss: {:?}",
             errors
         );
@@ -273,7 +289,9 @@ mod tests {
         let new_content = "<!-- factbase:abc123 -->\n# Topic\n\n- Fact 1\n";
         let errors = validate_document(original, new_content);
         assert!(
-            errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
+            errors
+                .iter()
+                .any(|e| e.kind == ValidationErrorKind::ContentLoss),
             "Real fact loss should still be detected"
         );
     }
@@ -311,7 +329,9 @@ mod tests {
             - Fact 1\n- Fact 2\n- Fact 3\n";
         let errors = validate_document(original, new_content);
         assert!(
-            !errors.iter().any(|e| e.kind == ValidationErrorKind::ContentLoss),
+            !errors
+                .iter()
+                .any(|e| e.kind == ValidationErrorKind::ContentLoss),
             "Removing callout review questions should not trigger content loss"
         );
     }

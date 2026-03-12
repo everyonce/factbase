@@ -316,6 +316,9 @@ mod tests {
             end_date: Some("2024-06".to_string()),
             is_ongoing: false,
         };
-        assert_eq!(format_temporal_tag(&dates, "@t[2020..]"), "@t[2020..2024-06]");
+        assert_eq!(
+            format_temporal_tag(&dates, "@t[2020..]"),
+            "@t[2020..2024-06]"
+        );
     }
 }

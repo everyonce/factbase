@@ -2,8 +2,7 @@ mod commands;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use commands::{
-    cmd_completions, cmd_db_vacuum, cmd_doctor, cmd_embeddings,
-    cmd_repair, cmd_scan, cmd_status,
+    cmd_completions, cmd_db_vacuum, cmd_doctor, cmd_embeddings, cmd_repair, cmd_scan, cmd_status,
     cmd_version,
 };
 #[cfg(feature = "mcp")]
@@ -181,13 +180,14 @@ async fn async_main() -> anyhow::Result<()> {
         },
         Commands::Repair(args) => cmd_repair(args)?,
         Commands::Completions(args) => cmd_completions(args),
-        Commands::Embeddings(cmd) => cmd_embeddings(commands::embeddings::EmbeddingsArgs { command: cmd })?,
+        Commands::Embeddings(cmd) => {
+            cmd_embeddings(commands::embeddings::EmbeddingsArgs { command: cmd })?
+        }
         Commands::Doctor(args) => cmd_doctor(args).await?,
         Commands::Version(args) => cmd_version(args)?,
     }
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {

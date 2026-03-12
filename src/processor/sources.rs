@@ -201,7 +201,8 @@ mod tests {
         assert_eq!(refs.len(), 2);
 
         // Multiple lines
-        let refs = parse_source_references("- First fact [^1]\n- Second fact [^2]\n- Third fact [^3]");
+        let refs =
+            parse_source_references("- First fact [^1]\n- Second fact [^2]\n- Third fact [^3]");
         assert_eq!(refs.len(), 3);
         assert_eq!(refs[2].line_number, 3);
 
@@ -247,7 +248,9 @@ mod tests {
         assert_eq!(defs[2].number, 3);
 
         // Multiline
-        let defs = parse_source_definitions("[^1]: LinkedIn profile, scraped 2024-01-15\n  Additional context on continuation line");
+        let defs = parse_source_definitions(
+            "[^1]: LinkedIn profile, scraped 2024-01-15\n  Additional context on continuation line",
+        );
         assert!(defs[0].context.contains("Additional context"));
 
         // Empty / no defs
@@ -291,15 +294,30 @@ mod tests {
     #[test]
     fn test_source_def_date_extraction() {
         // Full date
-        assert_eq!(parse_source_definitions("[^1]: Source, 2024-01-15")[0].date, Some("2024-01-15".to_string()));
+        assert_eq!(
+            parse_source_definitions("[^1]: Source, 2024-01-15")[0].date,
+            Some("2024-01-15".to_string())
+        );
         // Year-month
-        assert_eq!(parse_source_definitions("[^1]: Source, 2024-01")[0].date, Some("2024-01".to_string()));
+        assert_eq!(
+            parse_source_definitions("[^1]: Source, 2024-01")[0].date,
+            Some("2024-01".to_string())
+        );
         // Year only
-        assert_eq!(parse_source_definitions("[^1]: Source, 2024")[0].date, Some("2024".to_string()));
+        assert_eq!(
+            parse_source_definitions("[^1]: Source, 2024")[0].date,
+            Some("2024".to_string())
+        );
         // Prefers most specific
-        assert_eq!(parse_source_definitions("[^1]: Source from 2024, scraped 2024-01-15")[0].date, Some("2024-01-15".to_string()));
+        assert_eq!(
+            parse_source_definitions("[^1]: Source from 2024, scraped 2024-01-15")[0].date,
+            Some("2024-01-15".to_string())
+        );
         // No date
-        assert_eq!(parse_source_definitions("[^1]: Unverified claim")[0].date, None);
+        assert_eq!(
+            parse_source_definitions("[^1]: Unverified claim")[0].date,
+            None
+        );
     }
 
     // ==================== Orphan Detection Tests ====================
@@ -366,10 +384,21 @@ mod tests {
 
     #[test]
     fn test_count_facts_with_sources() {
-        assert_eq!(count_facts_with_sources("- Fact one [^1]\n- Fact two [^2]\n- Fact three [^3]"), 3);
-        assert_eq!(count_facts_with_sources("- Sourced fact [^1]\n- Unsourced fact\n- Another sourced [^2]"), 2);
+        assert_eq!(
+            count_facts_with_sources("- Fact one [^1]\n- Fact two [^2]\n- Fact three [^3]"),
+            3
+        );
+        assert_eq!(
+            count_facts_with_sources(
+                "- Sourced fact [^1]\n- Unsourced fact\n- Another sourced [^2]"
+            ),
+            2
+        );
         assert_eq!(count_facts_with_sources("- Fact one\n- Fact two"), 0);
-        assert_eq!(count_facts_with_sources("- Fact with multiple sources [^1][^2]"), 1);
+        assert_eq!(
+            count_facts_with_sources("- Fact with multiple sources [^1][^2]"),
+            1
+        );
         assert_eq!(count_facts_with_sources(""), 0);
     }
 }

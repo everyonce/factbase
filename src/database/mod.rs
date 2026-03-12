@@ -259,9 +259,9 @@ impl Database {
     ///
     /// This is used internally by submodules for database operations.
     pub(crate) fn get_conn(&self) -> Result<DbConn, FactbaseError> {
-        self.pool.get().map_err(|e| {
-            FactbaseError::Database(format!("Failed to get database connection: {e}"))
-        })
+        self.pool
+            .get()
+            .map_err(|e| FactbaseError::Database(format!("Failed to get database connection: {e}")))
     }
 
     /// Execute a closure within a single-connection transaction.
@@ -327,7 +327,11 @@ impl Database {
         }
         let local_db = Database::new(&local_db_path).ok()?;
         let count = local_db.get_fact_embedding_count().unwrap_or(0);
-        if count > 0 { Some(local_db) } else { None }
+        if count > 0 {
+            Some(local_db)
+        } else {
+            None
+        }
     }
 }
 

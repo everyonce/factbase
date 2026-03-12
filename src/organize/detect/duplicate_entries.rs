@@ -545,11 +545,19 @@ mod tests {
         test_repo_in_db(&db, "r1", tmp.path());
 
         // Two separate documents with the same title and type in different folders.
-        let mut doc1 = make_doc("cedb70", "Alice Chen", "# Alice Chen\n\n- CTO at Acme Corp\n");
+        let mut doc1 = make_doc(
+            "cedb70",
+            "Alice Chen",
+            "# Alice Chen\n\n- CTO at Acme Corp\n",
+        );
         doc1.doc_type = Some("person".to_string());
         doc1.file_path = "customers/acme/people/alice-chen.md".to_string();
 
-        let mut doc2 = make_doc("479fee", "Alice Chen", "# Alice Chen\n\n- CTO at Beta Inc\n");
+        let mut doc2 = make_doc(
+            "479fee",
+            "Alice Chen",
+            "# Alice Chen\n\n- CTO at Beta Inc\n",
+        );
         doc2.doc_type = Some("person".to_string());
         doc2.file_path = "customers/beta/people/alice-chen.md".to_string();
 
@@ -596,7 +604,10 @@ mod tests {
                 .unwrap();
 
         let dup = result.iter().find(|d| d.entity_name == "atlas");
-        assert!(dup.is_none(), "Different types should not be flagged as duplicates");
+        assert!(
+            dup.is_none(),
+            "Different types should not be flagged as duplicates"
+        );
     }
 
     #[tokio::test]

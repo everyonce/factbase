@@ -175,9 +175,8 @@ pub fn import_embeddings<R: BufRead>(
     let mut line = String::new();
     reader.read_line(&mut line)?;
 
-    let header: EmbeddingExportHeader = serde_json::from_str(line.trim()).map_err(|e| {
-        FactbaseError::internal(format!("Invalid embedding export header: {e}"))
-    })?;
+    let header: EmbeddingExportHeader = serde_json::from_str(line.trim())
+        .map_err(|e| FactbaseError::internal(format!("Invalid embedding export header: {e}")))?;
 
     if header.format_version > FORMAT_VERSION {
         return Err(FactbaseError::internal(format!(
@@ -211,9 +210,8 @@ pub fn import_embeddings<R: BufRead>(
         }
 
         // Peek at record_type to determine how to parse
-        let value: serde_json::Value = serde_json::from_str(&line).map_err(|e| {
-            FactbaseError::internal(format!("Invalid record: {e}"))
-        })?;
+        let value: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|e| FactbaseError::internal(format!("Invalid record: {e}")))?;
 
         let record_type = value
             .get("record_type")
@@ -222,10 +220,8 @@ pub fn import_embeddings<R: BufRead>(
 
         match record_type {
             "fact" => {
-                let record: FactEmbeddingRecord =
-                    serde_json::from_value(value).map_err(|e| {
-                        FactbaseError::internal(format!("Invalid fact record: {e}"))
-                    })?;
+                let record: FactEmbeddingRecord = serde_json::from_value(value)
+                    .map_err(|e| FactbaseError::internal(format!("Invalid fact record: {e}")))?;
                 if !existing_docs.contains(&record.doc_id) {
                     skipped_facts += 1;
                     continue;
@@ -241,10 +237,9 @@ pub fn import_embeddings<R: BufRead>(
                 imported_facts += 1;
             }
             _ => {
-                let record: EmbeddingRecord =
-                    serde_json::from_value(value).map_err(|e| {
-                        FactbaseError::internal(format!("Invalid embedding record: {e}"))
-                    })?;
+                let record: EmbeddingRecord = serde_json::from_value(value).map_err(|e| {
+                    FactbaseError::internal(format!("Invalid embedding record: {e}"))
+                })?;
                 if !existing_docs.contains(&record.doc_id) {
                     skipped_chunks += 1;
                     continue;
@@ -322,7 +317,8 @@ pub fn embeddings_status(
         documents_without_embeddings: status.without_embeddings.len(),
         total_fact_embeddings,
         documents_with_fact_embeddings,
-        documents_without_fact_embeddings: total_docs_in_db.saturating_sub(documents_with_fact_embeddings),
+        documents_without_fact_embeddings: total_docs_in_db
+            .saturating_sub(documents_with_fact_embeddings),
     })
 }
 
@@ -341,7 +337,8 @@ mod tests {
         let emb1: Vec<f32> = vec![0.1; 1024];
         let emb2: Vec<f32> = vec![0.2; 1024];
         db.upsert_embedding_chunk("doc1", 0, 0, 500, &emb1).unwrap();
-        db.upsert_embedding_chunk("doc1", 1, 500, 1000, &emb1).unwrap();
+        db.upsert_embedding_chunk("doc1", 1, 500, 1000, &emb1)
+            .unwrap();
         db.upsert_embedding("doc2", &emb2).unwrap();
 
         (db, tmp)
@@ -349,9 +346,12 @@ mod tests {
 
     fn add_fact_embeddings(db: &Database) {
         let emb: Vec<f32> = vec![0.3; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact B", "h2", &emb).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact C", "h3", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact B", "h2", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact C", "h3", &emb)
+            .unwrap();
     }
 
     #[test]
@@ -391,7 +391,8 @@ mod tests {
     #[test]
     fn test_embedding_record_defaults_to_chunk() {
         // v1 records without record_type should default to "chunk"
-        let json = r#"{"doc_id":"abc","chunk_index":0,"chunk_start":0,"chunk_end":100,"embedding":[0.1]}"#;
+        let json =
+            r#"{"doc_id":"abc","chunk_index":0,"chunk_start":0,"chunk_end":100,"embedding":[0.1]}"#;
         let parsed: EmbeddingRecord = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.record_type, "chunk");
     }
@@ -445,7 +446,7 @@ mod tests {
         // Verify chunk metadata survived
         let meta = db2.get_chunk_metadata("doc1_0").unwrap().unwrap();
         assert_eq!(meta.0, "doc1");
-        assert_eq!(meta.2, 0);   // chunk_start
+        assert_eq!(meta.2, 0); // chunk_start
         assert_eq!(meta.3, 500); // chunk_end
     }
 
@@ -516,7 +517,10 @@ mod tests {
         let after = embeddings_status(&db2, Some("test-repo"), "test-model").unwrap();
         assert_eq!(before.total_chunks, after.total_chunks);
         assert_eq!(before.total_fact_embeddings, after.total_fact_embeddings);
-        assert_eq!(before.documents_with_fact_embeddings, after.documents_with_fact_embeddings);
+        assert_eq!(
+            before.documents_with_fact_embeddings,
+            after.documents_with_fact_embeddings
+        );
     }
 
     #[test]
@@ -587,7 +591,10 @@ mod tests {
         let mut reader = std::io::BufReader::new(data.as_bytes());
         let result = import_embeddings(&db, &mut reader, false);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported format version"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unsupported format version"));
     }
 
     #[test]
@@ -606,7 +613,10 @@ mod tests {
         let mut reader = std::io::BufReader::new(data.as_bytes());
         let result = import_embeddings(&db, &mut reader, false);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Dimension mismatch"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Dimension mismatch"));
     }
 
     #[test]
@@ -644,9 +654,12 @@ mod tests {
     fn test_embeddings_status_includes_fact_counts() {
         let (db, _tmp) = setup_db_with_embeddings();
         let emb: Vec<f32> = vec![0.1; 1024];
-        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb).unwrap();
-        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact B", "h2", &emb).unwrap();
-        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact C", "h3", &emb).unwrap();
+        db.upsert_fact_embedding("doc1_1", "doc1", 1, "Fact A", "h1", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc1_2", "doc1", 2, "Fact B", "h2", &emb)
+            .unwrap();
+        db.upsert_fact_embedding("doc2_1", "doc2", 1, "Fact C", "h3", &emb)
+            .unwrap();
 
         let info = embeddings_status(&db, Some("test-repo"), "test-model").unwrap();
         assert_eq!(info.total_fact_embeddings, 3);

@@ -8,12 +8,11 @@ use factbase::{
     config::Config,
     database::Database,
     embedding::OllamaEmbedding,
-    LinkDetector,
     mcp::McpServer,
     models::{Document, Perspective, Repository},
     processor::DocumentProcessor,
     scanner::{full_scan, ScanContext, ScanOptions, Scanner},
-    ScanResult,
+    LinkDetector, ScanResult,
 };
 use reqwest::Client;
 use serde_json::{json, Value};

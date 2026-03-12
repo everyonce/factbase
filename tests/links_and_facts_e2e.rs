@@ -13,7 +13,7 @@ mod common;
 use common::TestContext;
 use factbase::{
     error::FactbaseError,
-    mcp::tools::{get_link_suggestions, store_links, get_fact_pairs},
+    mcp::tools::{get_fact_pairs, get_link_suggestions, store_links},
     processor::DocumentProcessor,
     scanner::{full_scan, ScanContext, ScanOptions, Scanner},
     EmbeddingProvider, LinkDetector, ProgressReporter,
@@ -158,7 +158,9 @@ async fn test_link_suggestions_for_underlinked_docs() {
         "min_similarity": 0.01
     });
 
-    let result = get_link_suggestions(&ctx.db, &embedding, &args).await.unwrap();
+    let result = get_link_suggestions(&ctx.db, &embedding, &args)
+        .await
+        .unwrap();
     let suggestions = result["suggestions"].as_array().unwrap();
 
     assert!(
@@ -200,13 +202,17 @@ async fn test_store_links_writes_to_files_and_db() {
     let added = result["added"].as_u64().unwrap();
     let modified = result["documents_modified"].as_u64().unwrap();
     assert!(added >= 1, "Should add at least 1 link, got {}", added);
-    assert!(modified >= 1, "Should modify at least 1 document, got {}", modified);
+    assert!(
+        modified >= 1,
+        "Should modify at least 1 document, got {}",
+        modified
+    );
 
-    // Verify Links: block was added to at least one file
+    // Verify References: block was added to at least one file
     let moon_content = std::fs::read_to_string(ctx.repo_path.join("the-moon.md")).unwrap();
     let titan_content = std::fs::read_to_string(ctx.repo_path.join("titan.md")).unwrap();
-    let has_links = moon_content.contains("Links:") || titan_content.contains("Links:");
-    assert!(has_links, "At least one file should have a Links: block");
+    let has_links = moon_content.contains("References:") || titan_content.contains("References:");
+    assert!(has_links, "At least one file should have a References: block");
 
     // Verify links in DB — check that the target docs are reachable
     let moon_links = ctx.db.get_links_from("de0004").unwrap();

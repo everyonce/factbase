@@ -15,9 +15,10 @@ pub fn embeddings_export(db: &Database, args: &Value) -> Result<Value, FactbaseE
     let model = config.embedding.model;
 
     let mut buf = Vec::new();
-    let (chunk_count, fact_count) = embeddings_io::export_embeddings(db, repo.as_deref(), &model, &mut buf)?;
-    let output = String::from_utf8(buf)
-        .map_err(|e| FactbaseError::internal(format!("UTF-8 error: {e}")))?;
+    let (chunk_count, fact_count) =
+        embeddings_io::export_embeddings(db, repo.as_deref(), &model, &mut buf)?;
+    let output =
+        String::from_utf8(buf).map_err(|e| FactbaseError::internal(format!("UTF-8 error: {e}")))?;
 
     Ok(serde_json::json!({
         "chunk_count": chunk_count,
@@ -65,7 +66,10 @@ pub fn embeddings_status_tool(db: &Database) -> Result<Value, FactbaseError> {
 
     if let Some(obj) = result.as_object_mut() {
         obj.insert("config_model".to_string(), serde_json::json!(config_model));
-        obj.insert("config_dimension".to_string(), serde_json::json!(config_dim));
+        obj.insert(
+            "config_dimension".to_string(),
+            serde_json::json!(config_dim),
+        );
         if let Some(ref stored) = db_model {
             if stored != config_model {
                 obj.insert("db_model".to_string(), serde_json::json!(stored));

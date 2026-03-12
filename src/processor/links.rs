@@ -13,29 +13,24 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 /// Regex matching a References: line (outbound links).
-static REFERENCES_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^References:\s*(.+)$").expect("references line regex")
-});
+static REFERENCES_LINE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^References:\s*(.+)$").expect("references line regex"));
 
 /// Regex matching a Referenced by: line (inbound links).
-static REFERENCED_BY_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^Referenced by:\s*(.+)$").expect("referenced by line regex")
-});
+static REFERENCED_BY_LINE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^Referenced by:\s*(.+)$").expect("referenced by line regex"));
 
 /// Regex matching a legacy Links: line (treated as References:).
-static LINKS_LINE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?m)^Links:\s*(.+)$").expect("links line regex")
-});
+static LINKS_LINE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?m)^Links:\s*(.+)$").expect("links line regex"));
 
 /// Regex extracting individual [[id]] from a line.
-static LINK_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\[([a-f0-9]{6})\]\]").expect("link id regex")
-});
+static LINK_ID_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([a-f0-9]{6})\]\]").expect("link id regex"));
 
 /// Regex extracting [[Name]] wikilinks (non-hex content inside double brackets).
-static WIKILINK_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\[([^\[\]]+)\]\]").expect("wikilink name regex")
-});
+static WIKILINK_NAME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[([^\[\]]+)\]\]").expect("wikilink name regex"));
 
 fn extract_ids(regex: &Regex, content: &str) -> Vec<String> {
     let Some(cap) = regex.captures(content) else {
@@ -270,11 +265,7 @@ pub fn append_referenced_by_to_content_styled(
 /// Takes a lookup function that resolves a hex ID to `(title, file_path)`.
 /// Rewrites both `References:` and `Referenced by:` blocks.
 /// Returns the updated content, or the original if no changes were needed.
-pub fn migrate_links<F>(
-    content: &str,
-    style: crate::models::format::LinkStyle,
-    lookup: F,
-) -> String
+pub fn migrate_links<F>(content: &str, style: crate::models::format::LinkStyle, lookup: F) -> String
 where
     F: Fn(&str) -> Option<(String, String)>,
 {
@@ -321,9 +312,7 @@ where
             .collect();
         let links: Vec<String> = entries
             .iter()
-            .map(|(id, t, fp)| {
-                super::format::format_link(id, t.as_deref(), fp.as_deref(), style)
-            })
+            .map(|(id, t, fp)| super::format::format_link(id, t.as_deref(), fp.as_deref(), style))
             .collect();
         let new_line = format!("Referenced by: {}", links.join(" "));
         result = replace_or_append_line(&result, &REFERENCED_BY_LINE_REGEX, None, &new_line);
@@ -372,7 +361,8 @@ mod tests {
 
     #[test]
     fn test_parse_links_block_with_footnotes() {
-        let content = "# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\nReferences: [[abc123]] [[def456]]";
+        let content =
+            "# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\nReferences: [[abc123]] [[def456]]";
         assert_eq!(parse_links_block(content), vec!["abc123", "def456"]);
     }
 
@@ -398,16 +388,12 @@ mod tests {
     #[test]
     fn test_parse_referenced_by_multiple() {
         let content = "# Title\n\nReferenced by: [[abc123]] [[def456]]";
-        assert_eq!(
-            parse_referenced_by_block(content),
-            vec!["abc123", "def456"]
-        );
+        assert_eq!(parse_referenced_by_block(content), vec!["abc123", "def456"]);
     }
 
     #[test]
     fn test_parse_both_blocks() {
-        let content =
-            "# Title\n\nReferences: [[aaa111]]\nReferenced by: [[bbb222]]";
+        let content = "# Title\n\nReferences: [[aaa111]]\nReferenced by: [[bbb222]]";
         assert_eq!(parse_links_block(content), vec!["aaa111"]);
         assert_eq!(parse_referenced_by_block(content), vec!["bbb222"]);
     }
@@ -564,7 +550,10 @@ mod tests {
     #[test]
     fn test_append_links_styled_wikilink_no_path() {
         let content = "# Title\n\nSome content.";
-        let ids = vec![("abc123", Some("John Doe"), None), ("def456", Some("Acme Corp"), None)];
+        let ids = vec![
+            ("abc123", Some("John Doe"), None),
+            ("def456", Some("Acme Corp"), None),
+        ];
         let result = append_links_to_content_styled(
             content,
             &ids,
@@ -585,7 +574,9 @@ mod tests {
             &ids,
             crate::models::format::LinkStyle::Wikilink,
         );
-        assert!(result.contains("References: [[people/john-doe|John Doe]] [[companies/acme-corp|Acme Corp]]"));
+        assert!(result.contains(
+            "References: [[people/john-doe|John Doe]] [[companies/acme-corp|Acme Corp]]"
+        ));
     }
 
     #[test]
@@ -629,45 +620,50 @@ mod tests {
     #[test]
     fn test_migrate_links_hex_to_wikilink_path() {
         let content = "# Title\n\nSome content.\n\nReferences: [[abc123]] [[def456]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |id| match id {
-                "abc123" => Some(("John Doe".into(), "people/john-doe.md".into())),
-                "def456" => Some(("Acme Corp".into(), "companies/acme-corp.md".into())),
-                _ => None,
-            },
-        );
-        assert!(result.contains("References: [[people/john-doe|John Doe]] [[companies/acme-corp|Acme Corp]]"));
+        let result =
+            migrate_links(
+                content,
+                crate::models::format::LinkStyle::Wikilink,
+                |id| match id {
+                    "abc123" => Some(("John Doe".into(), "people/john-doe.md".into())),
+                    "def456" => Some(("Acme Corp".into(), "companies/acme-corp.md".into())),
+                    _ => None,
+                },
+            );
+        assert!(result.contains(
+            "References: [[people/john-doe|John Doe]] [[companies/acme-corp|Acme Corp]]"
+        ));
         assert!(!result.contains("[[abc123]]"));
     }
 
     #[test]
     fn test_migrate_links_referenced_by() {
         let content = "# Title\n\nReferenced by: [[abc123]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |id| match id {
-                "abc123" => Some(("John Doe".into(), "people/john-doe.md".into())),
-                _ => None,
-            },
-        );
+        let result =
+            migrate_links(
+                content,
+                crate::models::format::LinkStyle::Wikilink,
+                |id| match id {
+                    "abc123" => Some(("John Doe".into(), "people/john-doe.md".into())),
+                    _ => None,
+                },
+            );
         assert!(result.contains("Referenced by: [[people/john-doe|John Doe]]"));
     }
 
     #[test]
     fn test_migrate_links_both_blocks() {
         let content = "# Title\n\nReferences: [[aaa111]]\nReferenced by: [[bbb222]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |id| match id {
-                "aaa111" => Some(("Alpha".into(), "projects/alpha.md".into())),
-                "bbb222" => Some(("Beta".into(), "projects/beta.md".into())),
-                _ => None,
-            },
-        );
+        let result =
+            migrate_links(
+                content,
+                crate::models::format::LinkStyle::Wikilink,
+                |id| match id {
+                    "aaa111" => Some(("Alpha".into(), "projects/alpha.md".into())),
+                    "bbb222" => Some(("Beta".into(), "projects/beta.md".into())),
+                    _ => None,
+                },
+            );
         assert!(result.contains("References: [[projects/alpha|Alpha]]"));
         assert!(result.contains("Referenced by: [[projects/beta|Beta]]"));
     }
@@ -675,11 +671,9 @@ mod tests {
     #[test]
     fn test_migrate_links_unknown_id_preserved() {
         let content = "# Title\n\nReferences: [[abc123]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |_| None,
-        );
+        let result = migrate_links(content, crate::models::format::LinkStyle::Wikilink, |_| {
+            None
+        });
         // Unknown ID falls back to [[id]] (no path/name available)
         assert!(result.contains("[[abc123]]"));
     }
@@ -687,26 +681,25 @@ mod tests {
     #[test]
     fn test_migrate_links_no_change_when_no_blocks() {
         let content = "# Title\n\nJust content, no links.";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |_| None,
-        );
+        let result = migrate_links(content, crate::models::format::LinkStyle::Wikilink, |_| {
+            None
+        });
         assert_eq!(result, content);
     }
 
     #[test]
     fn test_migrate_links_disambiguates_same_name() {
         let content = "# Title\n\nReferences: [[aaa111]] [[bbb222]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |id| match id {
-                "aaa111" => Some(("Joshua".into(), "people/joshua.md".into())),
-                "bbb222" => Some(("Joshua".into(), "books/joshua.md".into())),
-                _ => None,
-            },
-        );
+        let result =
+            migrate_links(
+                content,
+                crate::models::format::LinkStyle::Wikilink,
+                |id| match id {
+                    "aaa111" => Some(("Joshua".into(), "people/joshua.md".into())),
+                    "bbb222" => Some(("Joshua".into(), "books/joshua.md".into())),
+                    _ => None,
+                },
+            );
         assert!(result.contains("[[people/joshua|Joshua]]"));
         assert!(result.contains("[[books/joshua|Joshua]]"));
     }
@@ -714,14 +707,15 @@ mod tests {
     #[test]
     fn test_migrate_links_legacy_format() {
         let content = "# Title\n\nLinks: [[abc123]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Wikilink,
-            |id| match id {
-                "abc123" => Some(("Doc".into(), "notes/doc.md".into())),
-                _ => None,
-            },
-        );
+        let result =
+            migrate_links(
+                content,
+                crate::models::format::LinkStyle::Wikilink,
+                |id| match id {
+                    "abc123" => Some(("Doc".into(), "notes/doc.md".into())),
+                    _ => None,
+                },
+            );
         assert!(result.contains("References: [[notes/doc|Doc]]"));
         assert!(!result.contains("Links:"));
     }
@@ -734,7 +728,10 @@ mod tests {
         let result = append_links_to_content(content, &["abc123"]);
         let refs_pos = result.find("References:").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
-        assert!(refs_pos < review_pos, "References should appear before review section:\n{result}");
+        assert!(
+            refs_pos < review_pos,
+            "References should appear before review section:\n{result}"
+        );
     }
 
     #[test]
@@ -743,7 +740,10 @@ mod tests {
         let result = append_links_to_content(content, &["abc123"]);
         let refs_pos = result.find("References:").unwrap();
         let review_pos = result.find("## Review Queue").unwrap();
-        assert!(refs_pos < review_pos, "References should appear before review section:\n{result}");
+        assert!(
+            refs_pos < review_pos,
+            "References should appear before review section:\n{result}"
+        );
     }
 
     #[test]
@@ -752,7 +752,10 @@ mod tests {
         let result = append_referenced_by_to_content(content, &["abc123"]);
         let refby_pos = result.find("Referenced by:").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
-        assert!(refby_pos < review_pos, "Referenced by should appear before review section:\n{result}");
+        assert!(
+            refby_pos < review_pos,
+            "Referenced by should appear before review section:\n{result}"
+        );
     }
 
     #[test]
@@ -774,7 +777,10 @@ mod tests {
         );
         let refs_pos = result.find("References:").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
-        assert!(refs_pos < review_pos, "Styled references should appear before review section:\n{result}");
+        assert!(
+            refs_pos < review_pos,
+            "Styled references should appear before review section:\n{result}"
+        );
     }
 
     #[test]
@@ -788,7 +794,10 @@ mod tests {
         );
         let refby_pos = result.find("Referenced by:").unwrap();
         let review_pos = result.find("## Review Queue").unwrap();
-        assert!(refby_pos < review_pos, "Styled referenced-by should appear before review section:\n{result}");
+        assert!(
+            refby_pos < review_pos,
+            "Styled referenced-by should appear before review section:\n{result}"
+        );
     }
 
     #[test]
@@ -812,8 +821,14 @@ mod tests {
         let footnote_pos = result.find("[^1]: Source").unwrap();
         let refs_pos = result.find("References:").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
-        assert!(refs_pos > footnote_pos, "References should be after footnotes");
-        assert!(refs_pos < review_pos, "References should be before review section");
+        assert!(
+            refs_pos > footnote_pos,
+            "References should be after footnotes"
+        );
+        assert!(
+            refs_pos < review_pos,
+            "References should be before review section"
+        );
     }
 
     #[test]
@@ -832,14 +847,15 @@ mod tests {
     #[test]
     fn test_migrate_links_to_factbase_style() {
         let content = "# Title\n\nReferences: [[abc123]]";
-        let result = migrate_links(
-            content,
-            crate::models::format::LinkStyle::Factbase,
-            |id| match id {
-                "abc123" => Some(("Doc".into(), "notes/doc.md".into())),
-                _ => None,
-            },
-        );
+        let result =
+            migrate_links(
+                content,
+                crate::models::format::LinkStyle::Factbase,
+                |id| match id {
+                    "abc123" => Some(("Doc".into(), "notes/doc.md".into())),
+                    _ => None,
+                },
+            );
         // Factbase style keeps [[id]] format
         assert!(result.contains("[[abc123]]"));
     }

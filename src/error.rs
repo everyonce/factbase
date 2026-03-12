@@ -143,21 +143,44 @@ mod tests {
         // Each constructor accepts both &str and String; verify variant + message
         let cases: Vec<(FactbaseError, &str)> = vec![
             (FactbaseError::parse("missing field"), "missing field"),
-            (FactbaseError::parse(format!("bad value: {}", 42)), "bad value: 42"),
+            (
+                FactbaseError::parse(format!("bad value: {}", 42)),
+                "bad value: 42",
+            ),
             (FactbaseError::not_found("no such item"), "no such item"),
-            (FactbaseError::internal("something broke"), "something broke"),
+            (
+                FactbaseError::internal("something broke"),
+                "something broke",
+            ),
             (FactbaseError::config("missing value"), "missing value"),
             (FactbaseError::embedding("no response"), "no response"),
         ];
         for (err, expected) in &cases {
-            assert!(err.to_string().contains(expected), "Error '{}' should contain '{}'", err, expected);
+            assert!(
+                err.to_string().contains(expected),
+                "Error '{}' should contain '{}'",
+                err,
+                expected
+            );
         }
         // Verify variant matching
         assert!(matches!(FactbaseError::parse("x"), FactbaseError::Parse(_)));
-        assert!(matches!(FactbaseError::not_found("x"), FactbaseError::NotFound(_)));
-        assert!(matches!(FactbaseError::internal("x"), FactbaseError::Internal(_)));
-        assert!(matches!(FactbaseError::config("x"), FactbaseError::Config(_)));
-        assert!(matches!(FactbaseError::embedding("x"), FactbaseError::Embedding(_)));
+        assert!(matches!(
+            FactbaseError::not_found("x"),
+            FactbaseError::NotFound(_)
+        ));
+        assert!(matches!(
+            FactbaseError::internal("x"),
+            FactbaseError::Internal(_)
+        ));
+        assert!(matches!(
+            FactbaseError::config("x"),
+            FactbaseError::Config(_)
+        ));
+        assert!(matches!(
+            FactbaseError::embedding("x"),
+            FactbaseError::Embedding(_)
+        ));
     }
 
     #[test]

@@ -177,7 +177,11 @@ impl BedrockEmbedding {
         // Clamp input to model's character limit to avoid ValidationException
         let max = self.max_input_chars();
         let clamped = if text.len() > max {
-            tracing::debug!("Clamping embedding input from {} to {} chars", text.len(), max);
+            tracing::debug!(
+                "Clamping embedding input from {} to {} chars",
+                text.len(),
+                max
+            );
             &text[..text.floor_char_boundary(max)]
         } else {
             text

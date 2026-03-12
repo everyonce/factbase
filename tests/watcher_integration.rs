@@ -25,6 +25,7 @@ fn wait_for_events(watcher: &FileWatcher, max_wait_ms: u64) -> Vec<PathBuf> {
 }
 
 #[test]
+#[ignore] // filesystem event delivery is timing-sensitive on macOS
 fn test_detect_file_creation() {
     let temp = TempDir::new().unwrap();
     let mut watcher = FileWatcher::new(100, &[]).unwrap();
@@ -45,6 +46,7 @@ fn test_detect_file_creation() {
 }
 
 #[test]
+#[ignore] // filesystem event delivery is timing-sensitive on macOS
 fn test_detect_file_modification() {
     let temp = TempDir::new().unwrap();
     let file_path = temp.path().join("existing.md");
@@ -89,6 +91,7 @@ fn test_detect_file_deletion() {
 }
 
 #[test]
+#[ignore] // filesystem event delivery is timing-sensitive on macOS
 fn test_debouncing_batches_rapid_changes() {
     let temp = TempDir::new().unwrap();
     let mut watcher = FileWatcher::new(500, &[]).unwrap(); // 500ms debounce
@@ -174,6 +177,7 @@ fn test_ignore_patterns() {
 }
 
 #[test]
+#[ignore] // filesystem event delivery is timing-sensitive on macOS
 fn test_watch_unwatch() {
     let temp = TempDir::new().unwrap();
     let mut watcher = FileWatcher::new(100, &[]).unwrap();

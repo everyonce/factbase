@@ -123,7 +123,9 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
         }
         #[cfg(not(feature = "local-embedding"))]
         {
-            qprintln!("✗ Local embedding: not available (binary built without local-embedding feature)");
+            qprintln!(
+                "✗ Local embedding: not available (binary built without local-embedding feature)"
+            );
             (
                 false,
                 CheckStatus::err("local-embedding feature not enabled"),
@@ -174,12 +176,7 @@ pub async fn cmd_doctor(args: DoctorArgs) -> anyhow::Result<()> {
             let models = fetch_available_models(&client, base_url).await;
             let (embed_ok, embed_status) =
                 check_and_fix_model(&args, &models, &config.embedding.model, "Embedding", quiet);
-            (
-                embed_ok,
-                embed_status,
-                server_ok,
-                CheckStatus::ok(),
-            )
+            (embed_ok, embed_status, server_ok, CheckStatus::ok())
         } else {
             (
                 false,

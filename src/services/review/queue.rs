@@ -30,8 +30,10 @@ pub fn get_review_queue(
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
     let repo_filter = resolve_repo_filter(db, params.repo.as_deref())?;
-    let type_filter: Option<QuestionType> =
-        params.question_type.as_ref().and_then(|t| parse_type_filter(t));
+    let type_filter: Option<QuestionType> = params
+        .question_type
+        .as_ref()
+        .and_then(|t| parse_type_filter(t));
     let status_filter = params.status.as_deref().unwrap_or("unanswered");
     let limit = if params.limit == 0 { 10 } else { params.limit };
     let offset = params.offset;
@@ -47,23 +49,31 @@ pub fn get_review_queue(
     if let Some(ref filter_id) = params.doc_id {
         if !docs.iter().any(|d| d.id == *filter_id) {
             if let Ok(Some(doc)) = db.get_document(filter_id) {
-                if !doc.is_deleted { docs.push(doc); }
+                if !doc.is_deleted {
+                    docs.push(doc);
+                }
             }
         }
     }
 
     let total_docs = docs.len();
-    progress.log(&format!("Processing {total_docs} documents with review queues"));
+    progress.log(&format!(
+        "Processing {total_docs} documents with review queues"
+    ));
 
     let mut matched = 0usize;
     let mut docs_processed = 0usize;
     let page_filled = |qs: &[Value]| qs.len() >= limit;
 
     for doc in &docs {
-        if page_filled(&all_questions) { break; }
+        if page_filled(&all_questions) {
+            break;
+        }
 
         if let Some(ref filter_id) = params.doc_id {
-            if &doc.id != filter_id { continue; }
+            if &doc.id != filter_id {
+                continue;
+            }
         }
 
         docs_processed += 1;
@@ -74,7 +84,9 @@ pub fn get_review_queue(
         if let Some(questions) = parse_review_queue(&doc.content) {
             for (idx, q) in questions.iter().enumerate() {
                 if let Some(ref ft) = type_filter {
-                    if &q.question_type != ft { continue; }
+                    if &q.question_type != ft {
+                        continue;
+                    }
                 }
 
                 let is_deferred = q.is_deferred();
@@ -92,7 +104,9 @@ pub fn get_review_queue(
                     "deferred" => is_deferred,
                     _ => !q.answered && !is_deferred,
                 };
-                if !include { continue; }
+                if !include {
+                    continue;
+                }
 
                 if matched >= offset && all_questions.len() < limit {
                     let mut qjson = format_question_json(q, Some((&doc.id, &doc.title)));
@@ -146,7 +160,9 @@ pub fn get_deferred_items(
         offset: params.offset,
         include_context: params.include_context,
     };
-    if deferred_params.limit == 0 { deferred_params.limit = 10; }
+    if deferred_params.limit == 0 {
+        deferred_params.limit = 10;
+    }
 
     let result = get_review_queue(db, &deferred_params, progress)?;
 
@@ -174,7 +190,10 @@ mod tests {
     fn test_get_review_queue_empty_db() {
         let (db, _tmp) = crate::database::tests::test_db();
         crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
-        let params = ReviewQueueParams { limit: 10, ..Default::default() };
+        let params = ReviewQueueParams {
+            limit: 10,
+            ..Default::default()
+        };
         let result = get_review_queue(&db, &params, &ProgressReporter::Silent).unwrap();
         assert_eq!(result["total"], 0);
     }
@@ -192,7 +211,10 @@ mod tests {
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
-        let params = ReviewQueueParams { limit: 10, ..Default::default() };
+        let params = ReviewQueueParams {
+            limit: 10,
+            ..Default::default()
+        };
         let result = get_deferred_items(&db, &params, &ProgressReporter::Silent).unwrap();
         assert_eq!(result["total_deferred"], 0);
         assert_eq!(result["summary"], "No deferred items.");
@@ -211,7 +233,10 @@ mod tests {
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
-        let params = ReviewQueueParams { limit: 10, ..Default::default() };
+        let params = ReviewQueueParams {
+            limit: 10,
+            ..Default::default()
+        };
         let result = get_deferred_items(&db, &params, &ProgressReporter::Silent).unwrap();
         assert_eq!(result["total_deferred"], 1);
         let items = result["deferred_items"].as_array().unwrap();

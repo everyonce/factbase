@@ -211,10 +211,12 @@ fn correction_to_temporal(
 /// Try to interpret a correction as a "split:" instruction.
 fn try_split(detail: &str, line_text: &str) -> Option<ChangeInstruction> {
     let lower = detail.to_lowercase();
-    lower.starts_with("split:").then(|| ChangeInstruction::Split {
-        line_text: line_text.to_string(),
-        instruction: detail["split:".len()..].trim().to_string(),
-    })
+    lower
+        .starts_with("split:")
+        .then(|| ChangeInstruction::Split {
+            line_text: line_text.to_string(),
+            instruction: detail["split:".len()..].trim().to_string(),
+        })
 }
 
 /// Interpret an answer to determine the change instruction.
@@ -237,10 +239,8 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
     match question.question_type {
         // Conflict: only date corrections are meaningful
         Conflict => match answer_type {
-            AnswerType::Correction { .. } => {
-                correction_to_temporal(answer, &line_text, &old_tag)
-                    .unwrap_or(ChangeInstruction::Dismiss)
-            }
+            AnswerType::Correction { .. } => correction_to_temporal(answer, &line_text, &old_tag)
+                .unwrap_or(ChangeInstruction::Dismiss),
             _ => ChangeInstruction::Dismiss,
         },
 
@@ -252,10 +252,8 @@ pub fn interpret_answer(question: &ReviewQuestion, answer: &str) -> ChangeInstru
             AnswerType::Confirmation | AnswerType::SourceCitation { .. } => {
                 confirmation_to_temporal(answer, line_text, &old_tag)
             }
-            AnswerType::Correction { .. } => {
-                correction_to_temporal(answer, &line_text, &old_tag)
-                    .unwrap_or(ChangeInstruction::Dismiss)
-            }
+            AnswerType::Correction { .. } => correction_to_temporal(answer, &line_text, &old_tag)
+                .unwrap_or(ChangeInstruction::Dismiss),
             _ => ChangeInstruction::Dismiss,
         },
 
@@ -483,12 +481,18 @@ mod tests {
             answered: true,
             answer: Some("dismiss".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
-        assert!(matches!(interpret_answer(&q, "dismiss"), ChangeInstruction::Dismiss));
+        assert!(matches!(
+            interpret_answer(&q, "dismiss"),
+            ChangeInstruction::Dismiss
+        ));
         // "ignore" is an alias for dismiss
-        assert!(matches!(interpret_answer(&q, "IGNORE"), ChangeInstruction::Dismiss));
+        assert!(matches!(
+            interpret_answer(&q, "IGNORE"),
+            ChangeInstruction::Dismiss
+        ));
     }
 
     #[test]
@@ -500,8 +504,8 @@ mod tests {
             answered: true,
             answer: Some("delete".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "delete");
         match result {
@@ -521,8 +525,8 @@ mod tests {
             answered: true,
             answer: Some("split: separate roles".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "split: separate roles");
         match result {
@@ -546,8 +550,8 @@ mod tests {
             answered: true,
             answer: Some("No, left March 2024".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "No, left March 2024");
         match result {
@@ -573,8 +577,8 @@ mod tests {
             answered: true,
             answer: Some("defer".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "defer");
         assert!(matches!(result, ChangeInstruction::Defer));
@@ -589,8 +593,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn profile".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "per LinkedIn profile");
         // Source citations from review answers are dismissed — they should not
@@ -611,8 +615,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-06".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "per LinkedIn 2024-06");
         assert!(
@@ -630,8 +634,8 @@ mod tests {
             answered: true,
             answer: Some("confirmed".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "confirmed");
         match result {
@@ -654,8 +658,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "yes");
         match result {
@@ -713,8 +717,8 @@ mod tests {
             answered: true,
             answer: Some("Still current 2024-02".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "Still current 2024-02");
         match result {
@@ -722,7 +726,10 @@ mod tests {
                 old_tag, new_tag, ..
             } => {
                 assert_eq!(old_tag, "@t[~2024-02]");
-                assert!(new_tag.contains("2024-02"), "new_tag should contain the date from the answer: {new_tag}");
+                assert!(
+                    new_tag.contains("2024-02"),
+                    "new_tag should contain the date from the answer: {new_tag}"
+                );
             }
             ChangeInstruction::AddSource { source_info, .. } => {
                 panic!("Got AddSource (garbage footnote bug!): {source_info}");
@@ -759,7 +766,10 @@ mod tests {
         confidence: None,
         confidence_reason: None,
         };
-        assert!(matches!(interpret_answer(&q, "per LinkedIn 2024-01"), ChangeInstruction::Dismiss));
+        assert!(matches!(
+            interpret_answer(&q, "per LinkedIn 2024-01"),
+            ChangeInstruction::Dismiss
+        ));
     }
 
     #[test]
@@ -772,10 +782,13 @@ mod tests {
             answered: true,
             answer: Some("these are sequential promotions at the same company".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
-        assert!(matches!(interpret_answer(&q, "these are sequential promotions at the same company"), ChangeInstruction::Dismiss));
+        assert!(matches!(
+            interpret_answer(&q, "these are sequential promotions at the same company"),
+            ChangeInstruction::Dismiss
+        ));
     }
 
     #[test]
@@ -788,11 +801,14 @@ mod tests {
             answered: true,
             answer: Some("correct: ended 2021-06".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "correct: ended 2021-06");
-        assert!(!matches!(result, ChangeInstruction::Dismiss), "Date correction should not be dismissed");
+        assert!(
+            !matches!(result, ChangeInstruction::Dismiss),
+            "Date correction should not be dismissed"
+        );
     }
 
     #[test]
@@ -805,8 +821,8 @@ mod tests {
             answered: true,
             answer: Some("still current per LinkedIn scraped 2026-02-10".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "still current per LinkedIn scraped 2026-02-10");
         assert!(
@@ -821,8 +837,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result2 = interpret_answer(&q2, "yes");
         assert!(
@@ -841,14 +857,19 @@ mod tests {
             answered: true,
             answer: Some("confirmed".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "confirmed");
         match result {
-            ChangeInstruction::UpdateTemporal { old_tag, new_tag, .. } => {
+            ChangeInstruction::UpdateTemporal {
+                old_tag, new_tag, ..
+            } => {
                 assert_eq!(old_tag, "@t[~2024-01]");
-                assert!(new_tag.starts_with("@t[~"), "Should update ~date tag: {new_tag}");
+                assert!(
+                    new_tag.starts_with("@t[~"),
+                    "Should update ~date tag: {new_tag}"
+                );
             }
             _ => panic!("Expected UpdateTemporal for ~date tag, got {result:?}"),
         }
@@ -864,10 +885,13 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
-        assert!(matches!(interpret_answer(&q, "yes"), ChangeInstruction::Dismiss));
+        assert!(matches!(
+            interpret_answer(&q, "yes"),
+            ChangeInstruction::Dismiss
+        ));
     }
 
     // --- Missing-source question tests ---
@@ -882,8 +906,8 @@ mod tests {
             answered: true,
             answer: Some("Unable to verify from available sources".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "Unable to verify from available sources"),
@@ -902,8 +926,8 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-06".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "per LinkedIn 2024-06"),
@@ -919,13 +943,18 @@ mod tests {
             line_ref: Some(5),
             description: r#""Primary contact for project" has no source"#.to_string(),
             answered: true,
-            answer: Some("Corroborated by account document which lists them as contact".to_string()),
+            answer: Some(
+                "Corroborated by account document which lists them as contact".to_string(),
+            ),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
-            interpret_answer(&q, "Corroborated by account document which lists them as contact"),
+            interpret_answer(
+                &q,
+                "Corroborated by account document which lists them as contact"
+            ),
             ChangeInstruction::Dismiss
         ));
     }
@@ -939,8 +968,8 @@ mod tests {
             answered: true,
             answer: Some("defer".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "defer"),
@@ -957,8 +986,8 @@ mod tests {
             answered: true,
             answer: Some("delete".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "delete"),
@@ -984,9 +1013,14 @@ mod tests {
         };
         let result = interpret_answer(&q, "Corroborated by account document (0db425) which lists them as technical implementation contact @t[~] sourced from 2026-01-15 transition meeting. Role is current.");
         match result {
-            ChangeInstruction::UpdateTemporal { old_tag, new_tag, .. } => {
+            ChangeInstruction::UpdateTemporal {
+                old_tag, new_tag, ..
+            } => {
                 assert_eq!(old_tag, "@t[~2025-06]");
-                assert!(new_tag.starts_with("@t[~2026"), "Should use date from answer: {new_tag}");
+                assert!(
+                    new_tag.starts_with("@t[~2026"),
+                    "Should use date from answer: {new_tag}"
+                );
             }
             _ => panic!("Expected UpdateTemporal, got {result:?}"),
         }
@@ -1002,14 +1036,19 @@ mod tests {
             answered: true,
             answer: Some("per LinkedIn 2024-06".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "per LinkedIn 2024-06");
         match result {
-            ChangeInstruction::UpdateTemporal { old_tag, new_tag, .. } => {
+            ChangeInstruction::UpdateTemporal {
+                old_tag, new_tag, ..
+            } => {
                 assert_eq!(old_tag, "@t[~2024-01]");
-                assert!(new_tag.contains("2024-06"), "Should use date from answer: {new_tag}");
+                assert!(
+                    new_tag.contains("2024-06"),
+                    "Should use date from answer: {new_tag}"
+                );
             }
             _ => panic!("Expected UpdateTemporal for stale confirmation, got {result:?}"),
         }
@@ -1024,8 +1063,8 @@ mod tests {
             answered: true,
             answer: Some("role appears unchanged based on available info".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "role appears unchanged based on available info"),
@@ -1046,13 +1085,16 @@ mod tests {
             answered: true,
             answer: Some("Beard (1998) findings are still current".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "Beard (1998) findings are still current");
         match result {
             ChangeInstruction::AddTemporal { tag, .. } => {
-                assert!(!tag.contains("1998"), "Should not use publication year: {tag}");
+                assert!(
+                    !tag.contains("1998"),
+                    "Should not use publication year: {tag}"
+                );
                 // Should use today's date
                 let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                 assert!(tag.contains(&today), "Should use today's date: {tag}");
@@ -1071,13 +1113,16 @@ mod tests {
             answered: true,
             answer: Some("Still current per 2024-06 review".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "Still current per 2024-06 review");
         match result {
             ChangeInstruction::UpdateTemporal { new_tag, .. } => {
-                assert!(new_tag.contains("2024-06"), "Should use precise date: {new_tag}");
+                assert!(
+                    new_tag.contains("2024-06"),
+                    "Should use precise date: {new_tag}"
+                );
             }
             _ => panic!("Expected UpdateTemporal, got {result:?}"),
         }
@@ -1093,8 +1138,8 @@ mod tests {
             answered: true,
             answer: Some("yes".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(&q, "yes");
         match result {
@@ -1118,8 +1163,8 @@ mod tests {
             answered: true,
             answer: Some("the 3rd ruler of that name. Standard historical convention.".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         let result = interpret_answer(
             &q,
@@ -1140,8 +1185,8 @@ mod tests {
             answered: true,
             answer: Some("defer".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "defer"),
@@ -1158,8 +1203,8 @@ mod tests {
             answered: true,
             answer: Some("delete".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "delete"),
@@ -1177,8 +1222,8 @@ mod tests {
             answered: true,
             answer: Some("split: separate roles".to_string()),
             line_number: 10,
-        confidence: None,
-        confidence_reason: None,
+            confidence: None,
+            confidence_reason: None,
         };
         assert!(matches!(
             interpret_answer(&q, "split: separate roles"),
@@ -1188,12 +1233,30 @@ mod tests {
 
     #[test]
     fn test_classify_answer_defer_colon_variants() {
-        assert!(matches!(classify_answer("defer: reason"), AnswerType::Deferral));
-        assert!(matches!(classify_answer("Defer: reason"), AnswerType::Deferral));
-        assert!(matches!(classify_answer("DEFER: reason"), AnswerType::Deferral));
-        assert!(matches!(classify_answer("defer:reason"), AnswerType::Deferral));
-        assert!(matches!(classify_answer("deferred: later"), AnswerType::Deferral));
-        assert!(matches!(classify_answer("deferred later"), AnswerType::Deferral));
+        assert!(matches!(
+            classify_answer("defer: reason"),
+            AnswerType::Deferral
+        ));
+        assert!(matches!(
+            classify_answer("Defer: reason"),
+            AnswerType::Deferral
+        ));
+        assert!(matches!(
+            classify_answer("DEFER: reason"),
+            AnswerType::Deferral
+        ));
+        assert!(matches!(
+            classify_answer("defer:reason"),
+            AnswerType::Deferral
+        ));
+        assert!(matches!(
+            classify_answer("deferred: later"),
+            AnswerType::Deferral
+        ));
+        assert!(matches!(
+            classify_answer("deferred later"),
+            AnswerType::Deferral
+        ));
     }
 
     // --- Unicode edge cases ---
@@ -1234,7 +1297,10 @@ mod tests {
     fn test_classify_accented_characters() {
         // Accented text should fall through to correction
         let result = classify_answer("Résumé updated 2024-06");
-        assert!(matches!(result, AnswerType::SourceCitation { .. } | AnswerType::Correction { .. }));
+        assert!(matches!(
+            result,
+            AnswerType::SourceCitation { .. } | AnswerType::Correction { .. }
+        ));
     }
 
     #[test]

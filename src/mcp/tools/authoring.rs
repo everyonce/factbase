@@ -232,16 +232,46 @@ mod tests {
         let guide = get_authoring_guide();
         let linking = &guide["linking"];
         let desc = linking["description"].as_str().unwrap();
-        assert!(desc.contains("TWO ways"), "should explain two detection methods");
-        assert!(desc.contains("string matching"), "should mention string matching");
-        assert!(desc.contains("[[name]]"), "should mention manual syntax with readable names");
-        assert!(linking["warning"].as_str().unwrap().contains("NOT detected"), "should warn about markdown links");
-        assert!(linking["tip"].as_str().unwrap().contains("EXACT entity title"), "should emphasize exact titles");
+        assert!(
+            desc.contains("TWO ways"),
+            "should explain two detection methods"
+        );
+        assert!(
+            desc.contains("string matching"),
+            "should mention string matching"
+        );
+        assert!(
+            desc.contains("[[name]]"),
+            "should mention manual syntax with readable names"
+        );
+        assert!(
+            linking["warning"]
+                .as_str()
+                .unwrap()
+                .contains("NOT detected"),
+            "should warn about markdown links"
+        );
+        assert!(
+            linking["tip"]
+                .as_str()
+                .unwrap()
+                .contains("EXACT entity title"),
+            "should emphasize exact titles"
+        );
         let bad = linking["bad"].as_str().unwrap();
-        assert!(bad.contains("[Betula pendula]("), "bad example should show markdown link");
-        assert!(bad.contains("NOT detected"), "bad example should say not detected");
+        assert!(
+            bad.contains("[Betula pendula]("),
+            "bad example should show markdown link"
+        );
+        assert!(
+            bad.contains("NOT detected"),
+            "bad example should say not detected"
+        );
         let style = linking["style"].as_str().unwrap();
-        assert!(style.contains("filename stem"), "should recommend filename stems");
+        assert!(
+            style.contains("filename stem"),
+            "should recommend filename stems"
+        );
         assert!(style.contains("hex"), "should mention hex IDs to avoid");
     }
 
@@ -260,24 +290,47 @@ mod tests {
         let errors = &guide["temporal_tags"]["common_errors"];
         let errors_str = serde_json::to_string(errors).unwrap();
         // Entity names
-        assert!(errors_str.contains("Wolfgang Amadeus Mozart"), "missing entity name negative example");
+        assert!(
+            errors_str.contains("Wolfgang Amadeus Mozart"),
+            "missing entity name negative example"
+        );
         // Descriptions
-        assert!(errors_str.contains("counterpoint"), "missing description negative example");
+        assert!(
+            errors_str.contains("counterpoint"),
+            "missing description negative example"
+        );
         // Statuses
-        assert!(errors_str.contains("Active Production Status"), "missing status negative example");
+        assert!(
+            errors_str.contains("Active Production Status"),
+            "missing status negative example"
+        );
         // Statistics
-        assert!(errors_str.contains("Total Produced"), "missing statistic negative example");
+        assert!(
+            errors_str.contains("Total Produced"),
+            "missing statistic negative example"
+        );
         // Vague time words
-        assert!(errors_str.contains("seasonal"), "missing vague time word negative example");
+        assert!(
+            errors_str.contains("seasonal"),
+            "missing vague time word negative example"
+        );
         // Equals in ranges
-        assert!(errors_str.contains("@t[=2020..=2024]"), "missing equals-in-range negative example");
+        assert!(
+            errors_str.contains("@t[=2020..=2024]"),
+            "missing equals-in-range negative example"
+        );
     }
 
     #[test]
     fn test_authoring_guide_equals_range_rule() {
         let guide = get_authoring_guide();
-        let rule = guide["temporal_tags"]["common_errors"]["rule"].as_str().unwrap();
-        assert!(rule.contains("ONLY for single dates"), "rule should explain = is for single dates only");
+        let rule = guide["temporal_tags"]["common_errors"]["rule"]
+            .as_str()
+            .unwrap();
+        assert!(
+            rule.contains("ONLY for single dates"),
+            "rule should explain = is for single dates only"
+        );
     }
 
     #[test]
@@ -304,7 +357,11 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let factbase_dir = tmp.path().join(".factbase");
         std::fs::create_dir_all(&factbase_dir).unwrap();
-        std::fs::write(factbase_dir.join("authoring-guide.md"), "# Custom Guide\n\nCustom content.").unwrap();
+        std::fs::write(
+            factbase_dir.join("authoring-guide.md"),
+            "# Custom Guide\n\nCustom content.",
+        )
+        .unwrap();
         let result = get_authoring_guide_for_repo(Some(tmp.path()));
         // Should return the file content as a string
         assert!(result.is_string());

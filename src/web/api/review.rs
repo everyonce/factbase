@@ -2,7 +2,7 @@
 //!
 //! Wraps existing MCP review tools for the web UI.
 
-use crate::services::{self, ReviewQueueParams, AnswerQuestionParams, ServiceBulkAnswerItem};
+use crate::services::{self, AnswerQuestionParams, ReviewQueueParams, ServiceBulkAnswerItem};
 use crate::ProgressReporter;
 use axum::{
     extract::{Path, Query, State},

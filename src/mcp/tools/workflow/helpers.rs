@@ -9,13 +9,16 @@ use crate::models::{Document, Perspective, QuestionType};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
-use super::instructions::DEFAULT_BOOTSTRAP_PROMPT;
-use super::super::helpers::{build_quality_stats, detect_weak_identification, resolve_doc_path};
 use super::super::get_str_arg;
+use super::super::helpers::{build_quality_stats, detect_weak_identification, resolve_doc_path};
+use super::instructions::DEFAULT_BOOTSTRAP_PROMPT;
+use crate::config::workflows::{resolve_workflow_text, WorkflowsConfig};
 
 /// Resolve the filesystem path for a repository (first repo if none specified).
-pub(super) fn resolve_repo_path(db: &Database, repo_id: Option<&str>) -> Option<std::path::PathBuf> {
+pub(super) fn resolve_repo_path(
+    db: &Database,
+    repo_id: Option<&str>,
+) -> Option<std::path::PathBuf> {
     let repos = db.list_repositories().ok()?;
     let repo = if let Some(id) = repo_id {
         repos.into_iter().find(|r| r.id == id)
@@ -29,12 +32,20 @@ pub(super) fn resolve_repo_path(db: &Database, repo_id: Option<&str>) -> Option<
 
 /// Build the sub-agent fanout hint. For large queues (>200) the language is
 /// directive ("DO IT NOW"); for smaller queues it remains a strong suggestion.
-pub(super) fn subagent_fanout_hint(total_questions: usize, type_dist: &[(String, usize)]) -> String {
+pub(super) fn subagent_fanout_hint(
+    total_questions: usize,
+    type_dist: &[(String, usize)],
+) -> String {
     let workers: String = type_dist
         .iter()
         .filter(|(_, c)| *c > 0)
         .enumerate()
-        .map(|(i, (qt, _))| format!("- Worker {}: workflow(workflow='resolve', step=2, question_type='{qt}')", i + 1))
+        .map(|(i, (qt, _))| {
+            format!(
+                "- Worker {}: workflow(workflow='resolve', step=2, question_type='{qt}')",
+                i + 1
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
 
@@ -59,17 +70,31 @@ Each worker processes its type independently."
 pub(super) fn rebrand_step(mut val: Value, old_name: &str, new_name: &str) -> Value {
     if let Some(obj) = val.as_object_mut() {
         obj.insert("workflow".into(), Value::String(new_name.into()));
-        if let Some(wd) = obj.get("when_done").and_then(|v| v.as_str()).map(String::from) {
-            obj.insert("when_done".into(), Value::String(wd.replace(
-                &format!("workflow='{old_name}'"),
-                &format!("workflow='{new_name}'"),
-            )));
+        if let Some(wd) = obj
+            .get("when_done")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+        {
+            obj.insert(
+                "when_done".into(),
+                Value::String(wd.replace(
+                    &format!("workflow='{old_name}'"),
+                    &format!("workflow='{new_name}'"),
+                )),
+            );
         }
-        if let Some(instr) = obj.get("instruction").and_then(|v| v.as_str()).map(String::from) {
-            obj.insert("instruction".into(), Value::String(instr.replace(
-                &format!("workflow='{old_name}'"),
-                &format!("workflow='{new_name}'"),
-            )));
+        if let Some(instr) = obj
+            .get("instruction")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+        {
+            obj.insert(
+                "instruction".into(),
+                Value::String(instr.replace(
+                    &format!("workflow='{old_name}'"),
+                    &format!("workflow='{new_name}'"),
+                )),
+            );
         }
     }
     val
@@ -130,7 +155,12 @@ pub(super) fn required_fields_hint(p: &Option<Perspective>) -> String {
 }
 
 /// Resolve a workflow instruction with config override support.
-pub(super) fn resolve(wf: &WorkflowsConfig, key: &str, default: &str, vars: &[(&str, &str)]) -> String {
+pub(super) fn resolve(
+    wf: &WorkflowsConfig,
+    key: &str,
+    default: &str,
+    vars: &[(&str, &str)],
+) -> String {
     resolve_workflow_text(wf, key, default, vars)
 }
 
@@ -193,7 +223,10 @@ pub(super) fn detect_full_rebuild(db: &Database) -> Option<(String, usize)> {
     // Check empty embeddings with existing documents
     if let Ok(chunk_count) = db.count_embedding_chunks() {
         if chunk_count == 0 {
-            return Some(("no embeddings exist yet (first-time generation)".into(), doc_count));
+            return Some((
+                "no embeddings exist yet (first-time generation)".into(),
+                doc_count,
+            ));
         }
     }
 
@@ -209,8 +242,10 @@ pub(super) const PATTERN_MIN_COUNT: usize = 4;
 pub(super) fn normalize_question_text(desc: &str) -> String {
     use regex::Regex;
     use std::sync::LazyLock;
-    static RE_FOOTNOTE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[\^(\d+)\]").expect("footnote regex"));
-    static RE_QUOTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""[^"]+""#).expect("quoted text regex"));
+    static RE_FOOTNOTE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\[\^(\d+)\]").expect("footnote regex"));
+    static RE_QUOTED: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#""[^"]+""#).expect("quoted text regex"));
     static RE_DATE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\b\d{4}(?:-\d{2}(?:-\d{2})?)?\b").expect("date regex"));
     static RE_TEMPORAL: LazyLock<Regex> =
@@ -274,11 +309,7 @@ pub(super) fn detect_question_patterns(all_questions: &[Value], batch: &[Value])
         .collect();
 
     // Sort by count descending for readability
-    patterns.sort_by(|a, b| {
-        b["count_total"]
-            .as_u64()
-            .cmp(&a["count_total"].as_u64())
-    });
+    patterns.sort_by(|a, b| b["count_total"].as_u64().cmp(&a["count_total"].as_u64()));
     patterns
 }
 
@@ -322,10 +353,8 @@ pub(super) fn type_evidence_guidance(qt: &QuestionType) -> &'static str {
 pub(super) fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
     // Build repo_id → repo_path map
     let repos = db.list_repositories().unwrap_or_default();
-    let repo_paths: HashMap<String, std::path::PathBuf> = repos
-        .into_iter()
-        .map(|r| (r.id.clone(), r.path))
-        .collect();
+    let repo_paths: HashMap<String, std::path::PathBuf> =
+        repos.into_iter().map(|r| (r.id.clone(), r.path)).collect();
 
     // Load ALL documents (not just has_review_queue=TRUE)
     let mut all_docs = Vec::new();
@@ -339,7 +368,9 @@ pub(super) fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
     all_docs
         .into_iter()
         .filter_map(|mut doc| {
-            let abs_path = repo_paths.get(&doc.repo_id).map(|rp| rp.join(&doc.file_path));
+            let abs_path = repo_paths
+                .get(&doc.repo_id)
+                .map(|rp| rp.join(&doc.file_path));
             if let Some(disk) = abs_path.and_then(|p| std::fs::read_to_string(p).ok()) {
                 doc.content = disk;
             }
@@ -369,12 +400,18 @@ pub(super) fn recommended_resolve_order(dist: &[(QuestionType, usize)]) -> Vec<S
         a.1.cmp(&b.1)
             .then_with(|| question_type_priority(&a.0).cmp(&question_type_priority(&b.0)))
     });
-    with_questions.iter().map(|(qt, _)| qt.to_string()).collect()
+    with_questions
+        .iter()
+        .map(|(qt, _)| qt.to_string())
+        .collect()
 }
 
-
 /// Auto-dismiss a single question by marking it answered in the document.
-pub(super) fn auto_dismiss_question(db: &Database, doc_id: &str, question_index: usize) -> Result<(), FactbaseError> {
+pub(super) fn auto_dismiss_question(
+    db: &Database,
+    doc_id: &str,
+    question_index: usize,
+) -> Result<(), FactbaseError> {
     let doc = db.require_document(doc_id)?;
     let marker = "<!-- factbase:review -->";
     let Some(marker_pos) = doc.content.find(marker) else {
@@ -385,7 +422,12 @@ pub(super) fn auto_dismiss_question(db: &Database, doc_id: &str, question_index:
 
     // Mark the question as answered with a glossary note
     let answer = "Defined in glossary — auto-resolved";
-    let Some(modified) = super::super::review::modify_question_in_queue(queue_content, question_index, answer, false) else {
+    let Some(modified) = super::super::review::modify_question_in_queue(
+        queue_content,
+        question_index,
+        answer,
+        false,
+    ) else {
         return Ok(());
     };
     let new_content = format!("{before}{marker}{modified}");
@@ -396,7 +438,10 @@ pub(super) fn auto_dismiss_question(db: &Database, doc_id: &str, question_index:
     // since the database is already updated
     if let Ok(file_path) = resolve_doc_path(db, &doc) {
         if let Err(e) = std::fs::write(&file_path, &new_content) {
-            tracing::warn!("Failed to write auto-resolved question to disk for {}: {e}", doc_id);
+            tracing::warn!(
+                "Failed to write auto-resolved question to disk for {}: {e}",
+                doc_id
+            );
         }
     }
     Ok(())
@@ -423,7 +468,11 @@ pub(super) fn build_continuation_guidance(
             .sum();
         if filtered_remaining == 0 {
             // Find next type with remaining questions
-            let active_filter_str = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+            let active_filter_str = type_filter
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
             let mut others: Vec<_> = type_distribution
                 .iter()
                 .filter(|(qt, c)| **c > 0 && !type_filter.contains(qt))
@@ -443,7 +492,10 @@ pub(super) fn build_continuation_guidance(
         .filter(|(qt, _)| **qt != QuestionType::WeakSource)
         .map(|(_, c)| c)
         .sum();
-    let weak_count = type_distribution.get(&QuestionType::WeakSource).copied().unwrap_or(0);
+    let weak_count = type_distribution
+        .get(&QuestionType::WeakSource)
+        .copied()
+        .unwrap_or(0);
     if non_weak == 0 && weak_count > 0 {
         parts.push(format!(
             "Only weak-source remains ({weak_count}). These follow repetitive patterns — maintain a consistent answer format to maximize throughput."
@@ -456,7 +508,11 @@ pub(super) fn build_continuation_guidance(
         let filter_hint = if type_filter.is_empty() {
             String::new()
         } else {
-            let f = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+            let f = type_filter
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
             format!(" with question_type={f}")
         };
         parts.push(format!(
@@ -466,7 +522,11 @@ pub(super) fn build_continuation_guidance(
         let filter_hint = if type_filter.is_empty() {
             String::new()
         } else {
-            let f = type_filter.iter().map(|t| t.to_string()).collect::<Vec<_>>().join(",");
+            let f = type_filter
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
             format!(" with question_type={f}")
         };
         parts.push(format!(
@@ -535,9 +595,7 @@ pub(super) fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&
         .filter(|doc| !crate::patterns::is_reference_doc(&doc.content))
         .map(|doc| {
             let empty = (Vec::new(), Vec::new());
-            let (outgoing, incoming) = links_map
-                .get(&doc.id)
-                .unwrap_or(&empty);
+            let (outgoing, incoming) = links_map.get(&doc.id).unwrap_or(&empty);
             let mut stats = build_quality_stats(&doc.content, outgoing.len(), incoming.len());
             let obj = stats.as_object_mut().unwrap();
             obj.insert("id".into(), Value::String(doc.id.clone()));
@@ -550,8 +608,7 @@ pub(super) fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&
                 .filter_map(|l| l.context.as_deref())
                 .filter(|c| !c.is_empty())
                 .collect();
-            if let Some(suggested) =
-                detect_weak_identification(&doc.title, &doc.content, &contexts)
+            if let Some(suggested) = detect_weak_identification(&doc.title, &doc.content, &contexts)
             {
                 obj.insert("weak_identification".into(), Value::String(suggested));
                 let score = obj["attention_score"].as_u64().unwrap_or(0);
@@ -606,7 +663,10 @@ mod tests {
     fn test_normalize_replaces_footnotes() {
         let input = r#"Source [^3] is weak — consider replacing with a specific reference"#;
         let result = normalize_question_text(input);
-        assert!(result.contains("[^_]"), "Footnote should be normalized: {result}");
+        assert!(
+            result.contains("[^_]"),
+            "Footnote should be normalized: {result}"
+        );
         assert!(!result.contains("[^3]"));
     }
 
@@ -614,7 +674,10 @@ mod tests {
     fn test_normalize_replaces_quoted_text() {
         let input = r#""VP at BigCo" has no temporal tag"#;
         let result = normalize_question_text(input);
-        assert!(result.contains("\"_\""), "Quoted text should be normalized: {result}");
+        assert!(
+            result.contains("\"_\""),
+            "Quoted text should be normalized: {result}"
+        );
         assert!(!result.contains("VP at BigCo"));
     }
 
@@ -622,7 +685,10 @@ mod tests {
     fn test_normalize_replaces_dates() {
         let input = "Last verified 2024-06-15, stale since 2023-01";
         let result = normalize_question_text(input);
-        assert!(!result.contains("2024"), "Dates should be normalized: {result}");
+        assert!(
+            !result.contains("2024"),
+            "Dates should be normalized: {result}"
+        );
         assert!(result.contains("_DATE_"));
     }
 
@@ -630,7 +696,10 @@ mod tests {
     fn test_normalize_replaces_temporal_tags() {
         let input = "Fact @t[2020..2023] overlaps with @t[2022..]";
         let result = normalize_question_text(input);
-        assert!(result.contains("@t[_]"), "Temporal tags should be normalized: {result}");
+        assert!(
+            result.contains("@t[_]"),
+            "Temporal tags should be normalized: {result}"
+        );
         assert!(!result.contains("2020..2023"));
     }
 
@@ -638,7 +707,10 @@ mod tests {
     fn test_normalize_replaces_line_refs() {
         let input = "Some issue (line 42)";
         let result = normalize_question_text(input);
-        assert!(result.contains("(line _)"), "Line refs should be normalized: {result}");
+        assert!(
+            result.contains("(line _)"),
+            "Line refs should be normalized: {result}"
+        );
         assert!(!result.contains("42"));
     }
 
@@ -652,10 +724,15 @@ mod tests {
     #[test]
     fn test_detect_patterns_below_threshold() {
         let questions: Vec<Value> = (0..3)
-            .map(|i| json!({"type": "temporal", "description": format!("\"Fact {i}\" has no date")}))
+            .map(
+                |i| json!({"type": "temporal", "description": format!("\"Fact {i}\" has no date")}),
+            )
             .collect();
         let patterns = detect_question_patterns(&questions, &questions);
-        assert!(patterns.is_empty(), "3 questions should be below threshold of {PATTERN_MIN_COUNT}");
+        assert!(
+            patterns.is_empty(),
+            "3 questions should be below threshold of {PATTERN_MIN_COUNT}"
+        );
     }
 
     #[test]
@@ -664,7 +741,10 @@ mod tests {
             .map(|i| json!({"type": "temporal", "description": format!("\"Fact {i}\" has no temporal tag")}))
             .collect();
         let patterns = detect_question_patterns(&questions, &questions);
-        assert!(!patterns.is_empty(), "5 similar questions should form a pattern");
+        assert!(
+            !patterns.is_empty(),
+            "5 similar questions should form a pattern"
+        );
         assert_eq!(patterns[0]["count_total"].as_u64().unwrap(), 5);
     }
 
@@ -678,9 +758,18 @@ mod tests {
 
     #[test]
     fn test_priority_ordering() {
-        assert!(question_type_priority(&QuestionType::Temporal) < question_type_priority(&QuestionType::WeakSource));
-        assert!(question_type_priority(&QuestionType::Missing) < question_type_priority(&QuestionType::Duplicate));
-        assert!(question_type_priority(&QuestionType::Stale) < question_type_priority(&QuestionType::Corruption));
+        assert!(
+            question_type_priority(&QuestionType::Temporal)
+                < question_type_priority(&QuestionType::WeakSource)
+        );
+        assert!(
+            question_type_priority(&QuestionType::Missing)
+                < question_type_priority(&QuestionType::Duplicate)
+        );
+        assert!(
+            question_type_priority(&QuestionType::Stale)
+                < question_type_priority(&QuestionType::Corruption)
+        );
     }
 
     // --- type_evidence_guidance ---
@@ -688,12 +777,21 @@ mod tests {
     #[test]
     fn test_evidence_guidance_returns_nonempty() {
         for qt in [
-            QuestionType::Stale, QuestionType::Temporal, QuestionType::Ambiguous,
-            QuestionType::Conflict, QuestionType::Precision, QuestionType::Missing,
-            QuestionType::Duplicate, QuestionType::Corruption, QuestionType::WeakSource,
+            QuestionType::Stale,
+            QuestionType::Temporal,
+            QuestionType::Ambiguous,
+            QuestionType::Conflict,
+            QuestionType::Precision,
+            QuestionType::Missing,
+            QuestionType::Duplicate,
+            QuestionType::Corruption,
+            QuestionType::WeakSource,
         ] {
             let guidance = type_evidence_guidance(&qt);
-            assert!(!guidance.is_empty(), "Guidance for {qt:?} should not be empty");
+            assert!(
+                !guidance.is_empty(),
+                "Guidance for {qt:?} should not be empty"
+            );
         }
     }
 
@@ -704,7 +802,10 @@ mod tests {
         let val = json!({"workflow": "old", "step": 1, "when_done": "call workflow='old' step=2"});
         let result = rebrand_step(val, "old", "new");
         assert_eq!(result["workflow"], "new");
-        assert!(result["when_done"].as_str().unwrap().contains("workflow='new'"));
+        assert!(result["when_done"]
+            .as_str()
+            .unwrap()
+            .contains("workflow='new'"));
     }
 
     #[test]
@@ -774,7 +875,10 @@ mod tests {
     #[test]
     fn test_required_fields_hint_with_fields() {
         let mut fields = HashMap::new();
-        fields.insert("person".to_string(), vec!["name".to_string(), "role".to_string()]);
+        fields.insert(
+            "person".to_string(),
+            vec!["name".to_string(), "role".to_string()],
+        );
         let p = Perspective {
             review: Some(crate::models::ReviewPerspective {
                 stale_days: None,
@@ -872,10 +976,7 @@ mod tests {
 
     #[test]
     fn test_recommended_order_skips_zero() {
-        let dist = vec![
-            (QuestionType::Stale, 0),
-            (QuestionType::Temporal, 5),
-        ];
+        let dist = vec![(QuestionType::Stale, 0), (QuestionType::Temporal, 5)];
         let order = recommended_resolve_order(&dist);
         assert_eq!(order.len(), 1);
         assert_eq!(order[0], "temporal");
@@ -906,7 +1007,10 @@ mod tests {
         let result = build_continuation_guidance(100, 200, 20, &dist, &[]);
         assert!(result.is_some());
         let text = result.unwrap();
-        assert!(text.contains("CONTEXT MANAGEMENT"), "Should include context hint: {text}");
+        assert!(
+            text.contains("CONTEXT MANAGEMENT"),
+            "Should include context hint: {text}"
+        );
     }
 
     #[test]

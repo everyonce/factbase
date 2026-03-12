@@ -40,7 +40,10 @@ impl Database {
         )?;
         let result = stmt
             .query_row([scope_key], |row| {
-                Ok((row.get::<_, i64>(0)? as usize, row.get::<_, i64>(1)? as usize))
+                Ok((
+                    row.get::<_, i64>(0)? as usize,
+                    row.get::<_, i64>(1)? as usize,
+                ))
             })
             .optional()?;
         Ok(result)
@@ -142,11 +145,7 @@ impl Database {
     }
 
     /// Extend the lease on a held lock (refresh locked_at).
-    pub fn extend_cv_lease(
-        &self,
-        scope_key: &str,
-        token: &str,
-    ) -> Result<bool, FactbaseError> {
+    pub fn extend_cv_lease(&self, scope_key: &str, token: &str) -> Result<bool, FactbaseError> {
         let conn = self.get_conn()?;
         let updated = conn.execute(
             "UPDATE cross_validation_state SET locked_at = datetime('now'), updated_at = datetime('now')
@@ -157,11 +156,7 @@ impl Database {
     }
 
     /// Release the lock (clear lock fields and delete state).
-    pub fn release_cv_lock(
-        &self,
-        scope_key: &str,
-        token: &str,
-    ) -> Result<bool, FactbaseError> {
+    pub fn release_cv_lock(&self, scope_key: &str, token: &str) -> Result<bool, FactbaseError> {
         let conn = self.get_conn()?;
         let deleted = conn.execute(
             "DELETE FROM cross_validation_state WHERE scope_key = ?1 AND locked_by = ?2",
@@ -251,7 +246,11 @@ mod tests {
         // Token 2 is blocked
         let r = db.try_acquire_cv_lock("repo-a", "token-2", 600).unwrap();
         match r {
-            CvLockResult::AlreadyLocked { locked_by, pair_offset, fact_count } => {
+            CvLockResult::AlreadyLocked {
+                locked_by,
+                pair_offset,
+                fact_count,
+            } => {
                 assert_eq!(locked_by, "token-1");
                 assert_eq!(pair_offset, 42);
                 assert_eq!(fact_count, 100);
