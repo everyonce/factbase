@@ -15,7 +15,7 @@ const MANAGED_FIELDS: &[&str] = &["factbase_id", "type"];
 /// (top-level category folder) since it's too broad to be useful as a tag.
 ///
 /// Examples:
-/// - `customers/xsolis/people/zach-evans.md` → `["xsolis", "people"]`
+/// - `customers/acme/people/alice-chen.md` → `["acme", "people"]`
 /// - `services/amazon-aurora.md` → `["services"]`
 /// - `doc.md` → `[]`
 pub fn tags_from_path(relative_path: &std::path::Path) -> Vec<String> {
@@ -495,8 +495,8 @@ mod tests {
     #[test]
     fn test_tags_from_path_deep() {
         use std::path::Path;
-        let tags = tags_from_path(Path::new("customers/xsolis/people/zach-evans.md"));
-        assert_eq!(tags, vec!["xsolis", "people"]);
+        let tags = tags_from_path(Path::new("customers/acme/people/alice-chen.md"));
+        assert_eq!(tags, vec!["acme", "people"]);
     }
 
     #[test]
@@ -525,22 +525,22 @@ mod tests {
     #[test]
     fn test_merge_path_tags_no_existing() {
         let mut extra: Vec<String> = vec![];
-        merge_path_tags(&mut extra, &["xsolis".into(), "people".into()]);
-        assert_eq!(extra, vec!["tags: [xsolis, people]"]);
+        merge_path_tags(&mut extra, &["acme".into(), "people".into()]);
+        assert_eq!(extra, vec!["tags: [acme, people]"]);
     }
 
     #[test]
     fn test_merge_path_tags_preserves_user_tags() {
         let mut extra = vec!["tags: [important]".to_string()];
-        merge_path_tags(&mut extra, &["xsolis".into(), "people".into()]);
-        assert_eq!(extra, vec!["tags: [xsolis, people, important]"]);
+        merge_path_tags(&mut extra, &["acme".into(), "people".into()]);
+        assert_eq!(extra, vec!["tags: [acme, people, important]"]);
     }
 
     #[test]
     fn test_merge_path_tags_no_duplicates() {
         let mut extra = vec!["tags: [people, vip]".to_string()];
-        merge_path_tags(&mut extra, &["xsolis".into(), "people".into()]);
-        assert_eq!(extra, vec!["tags: [xsolis, people, vip]"]);
+        merge_path_tags(&mut extra, &["acme".into(), "people".into()]);
+        assert_eq!(extra, vec!["tags: [acme, people, vip]"]);
     }
 
     #[test]

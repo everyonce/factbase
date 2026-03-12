@@ -1440,16 +1440,16 @@ mod tests {
 
         let args = serde_json::json!({
             "repo": "r1",
-            "path": "customers/xsolis/people/zach-evans.md",
-            "title": "Zach Evans",
+            "path": "customers/acme/people/alice-chen.md",
+            "title": "Alice Chen",
             "content": "- Some fact"
         });
         create_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(
-            repo_dir.path().join("customers/xsolis/people/zach-evans.md")
+            repo_dir.path().join("customers/acme/people/alice-chen.md")
         ).unwrap();
-        assert!(on_disk.contains("tags: [xsolis, people]"), "path tags present: {on_disk}");
+        assert!(on_disk.contains("tags: [acme, people]"), "path tags present: {on_disk}");
     }
 
     #[test]
@@ -1517,16 +1517,16 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         // Existing doc with user-added tag "vip"
-        let original = "---\nfactbase_id: abc123\ntype: people\ntags: [vip]\n---\n# Zach Evans\n\n- Old fact";
-        let file = repo_dir.path().join("customers/xsolis/people/zach-evans.md");
+        let original = "---\nfactbase_id: abc123\ntype: people\ntags: [vip]\n---\n# Alice Chen\n\n- Old fact";
+        let file = repo_dir.path().join("customers/acme/people/alice-chen.md");
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, original).unwrap();
 
         let doc = crate::models::Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
-            file_path: "customers/xsolis/people/zach-evans.md".into(),
-            title: "Zach Evans".into(),
+            file_path: "customers/acme/people/alice-chen.md".into(),
+            title: "Alice Chen".into(),
             content: original.into(),
             file_hash: "h1".into(),
             ..Document::test_default()
@@ -1537,8 +1537,8 @@ mod tests {
         update_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(&file).unwrap();
-        // Path tags [xsolis, people] merged with user tag [vip]
-        assert!(on_disk.contains("tags: [xsolis, people, vip]"), "merged tags: {on_disk}");
+        // Path tags [acme, people] merged with user tag [vip]
+        assert!(on_disk.contains("tags: [acme, people, vip]"), "merged tags: {on_disk}");
     }
 
     #[test]

@@ -545,13 +545,13 @@ mod tests {
         test_repo_in_db(&db, "r1", tmp.path());
 
         // Two separate documents with the same title and type in different folders.
-        let mut doc1 = make_doc("cedb70", "Zach Evans", "# Zach Evans\n\n- CTO at XSOLIS\n");
+        let mut doc1 = make_doc("cedb70", "Alice Chen", "# Alice Chen\n\n- CTO at Acme Corp\n");
         doc1.doc_type = Some("person".to_string());
-        doc1.file_path = "customers/xsolis/people/zach-evans.md".to_string();
+        doc1.file_path = "customers/acme/people/alice-chen.md".to_string();
 
-        let mut doc2 = make_doc("479fee", "Zach Evans", "# Zach Evans\n\n- CTO at Powered Health\n");
+        let mut doc2 = make_doc("479fee", "Alice Chen", "# Alice Chen\n\n- CTO at Beta Inc\n");
         doc2.doc_type = Some("person".to_string());
-        doc2.file_path = "customers/trend/people/zach-evans.md".to_string();
+        doc2.file_path = "customers/beta/people/alice-chen.md".to_string();
 
         db.upsert_document(&doc1).unwrap();
         db.upsert_document(&doc2).unwrap();
@@ -562,7 +562,7 @@ mod tests {
                 .await
                 .unwrap();
 
-        let dup = result.iter().find(|d| d.entity_name == "zach evans");
+        let dup = result.iter().find(|d| d.entity_name == "alice chen");
         assert!(dup.is_some(), "Should detect document-level duplicate");
         let entries = &dup.unwrap().entries;
         assert_eq!(entries.len(), 2);
@@ -570,8 +570,8 @@ mod tests {
         assert!(ids.contains("cedb70"));
         assert!(ids.contains("479fee"));
         // facts contain file paths for document-level duplicates
-        assert!(entries.iter().any(|e| e.facts[0].contains("xsolis")));
-        assert!(entries.iter().any(|e| e.facts[0].contains("trend")));
+        assert!(entries.iter().any(|e| e.facts[0].contains("acme")));
+        assert!(entries.iter().any(|e| e.facts[0].contains("beta")));
     }
 
     #[tokio::test]
