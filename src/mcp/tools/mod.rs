@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 // Re-export tool implementations
-pub use authoring::get_authoring_guide;
+pub use authoring::{get_authoring_guide, get_authoring_guide_for_repo};
 pub use document::{bulk_create_documents, create_document, delete_document, update_document};
 pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_tool};
 pub use entity::{get_entity, get_perspective, list_entities};
@@ -175,7 +175,23 @@ async fn dispatch_tool<E: EmbeddingProvider>(
         "detect_links" => detect_links(db, args, reporter).await,
         "organize_analyze" => organize_analyze(db, embedding, args, reporter).await,
         "organize" => organize(db, embedding, args, reporter).await,
-        "get_authoring_guide" => Ok(get_authoring_guide()),
+        "get_authoring_guide" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || {
+                let repo_id = get_str_arg(&a, "repo");
+                let repo_path = db.list_repositories().ok()
+                    .and_then(|repos| {
+                        if let Some(id) = repo_id {
+                            repos.into_iter().find(|r| r.id == id)
+                        } else {
+                            repos.into_iter().next()
+                        }
+                    })
+                    .map(|r| r.path);
+                Ok(get_authoring_guide_for_repo(repo_path.as_deref()))
+            }).await
+        }
         "embeddings_export" => { let db = db.clone(); let a = args.clone(); run_blocking(move || embeddings_export(&db, &a)).await }
         "embeddings_import" => { let db = db.clone(); let a = args.clone(); run_blocking(move || embeddings_import(&db, &a)).await }
         "embeddings_status" => { let db = db.clone(); run_blocking(move || embeddings_status_tool(&db)).await }

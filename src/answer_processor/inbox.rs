@@ -112,11 +112,15 @@ pub fn build_inbox_prompt(
     document_content: &str,
     inbox_content: &str,
     prompts: &crate::config::PromptsConfig,
+    repo_path: Option<&std::path::Path>,
 ) -> String {
+    let file_override = repo_path
+        .and_then(|p| crate::config::prompts::load_file_override(p, "prompts/inbox-merge.txt"));
+    let default = file_override.as_deref().unwrap_or(DEFAULT_INBOX_MERGE_PROMPT);
     crate::config::prompts::resolve_prompt(
         prompts,
         "inbox_merge",
-        DEFAULT_INBOX_MERGE_PROMPT,
+        default,
         &[
             ("document_content", document_content),
             ("inbox_content", inbox_content),
@@ -221,10 +225,29 @@ mod tests {
     #[test]
     fn test_build_inbox_prompt_contains_content() {
         let prompts = crate::config::PromptsConfig::default();
-        let prompt = build_inbox_prompt("# Doc\n\n- Fact one", "CEO is now Jane", &prompts);
+        let prompt = build_inbox_prompt("# Doc\n\n- Fact one", "CEO is now Jane", &prompts, None);
         assert!(prompt.contains("# Doc"));
         assert!(prompt.contains("CEO is now Jane"));
         assert!(prompt.contains("DOCUMENT:"));
         assert!(prompt.contains("INBOX:"));
+    }
+
+    #[test]
+    fn test_build_inbox_prompt_file_override() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts_dir = tmp.path().join(".factbase").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("inbox-merge.txt"), "Merge: {document_content} + {inbox_content}").unwrap();
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_inbox_prompt("doc content", "inbox content", &prompts, Some(tmp.path()));
+        assert_eq!(result, "Merge: doc content + inbox content");
+    }
+
+    #[test]
+    fn test_build_inbox_prompt_no_override_uses_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_inbox_prompt("doc", "inbox", &prompts, Some(tmp.path()));
+        assert!(result.contains("DOCUMENT:"), "should use compiled-in default");
     }
 }

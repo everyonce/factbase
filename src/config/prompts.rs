@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 use tracing::warn;
 
 /// Configurable LLM prompt templates.
@@ -77,6 +78,22 @@ pub(crate) fn extract_placeholders(template: &str) -> Vec<String> {
         }
     }
     result
+}
+
+/// Load a text file override from `.factbase/<relative_path>` under `repo_path`.
+/// Returns `None` if the file doesn't exist; logs a warning and returns `None` on read error.
+pub fn load_file_override(repo_path: &Path, relative_path: &str) -> Option<String> {
+    let path = repo_path.join(".factbase").join(relative_path);
+    if !path.exists() {
+        return None;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Some(content),
+        Err(e) => {
+            warn!("Failed to read override file {}: {}", path.display(), e);
+            None
+        }
+    }
 }
 
 /// Resolve a prompt: use config override if present, otherwise use default.
@@ -231,5 +248,34 @@ prompts:
             &[("domain", "test")],
         );
         assert_eq!(result, "Custom: test");
+    }
+
+    // ==================== load_file_override tests ====================
+
+    #[test]
+    fn test_load_file_override_returns_none_when_missing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let result = load_file_override(tmp.path(), "prompts/bootstrap.txt");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_load_file_override_returns_content_when_present() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts_dir = tmp.path().join(".factbase").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("bootstrap.txt"), "Custom bootstrap prompt").unwrap();
+        let result = load_file_override(tmp.path(), "prompts/bootstrap.txt");
+        assert_eq!(result.as_deref(), Some("Custom bootstrap prompt"));
+    }
+
+    #[test]
+    fn test_load_file_override_top_level_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let factbase_dir = tmp.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        std::fs::write(factbase_dir.join("obsidian.css"), "/* custom css */").unwrap();
+        let result = load_file_override(tmp.path(), "obsidian.css");
+        assert_eq!(result.as_deref(), Some("/* custom css */"));
     }
 }

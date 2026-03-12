@@ -83,11 +83,15 @@ pub fn build_rewrite_prompt(
     section: &str,
     changes: &str,
     prompts: &crate::config::PromptsConfig,
+    repo_path: Option<&std::path::Path>,
 ) -> String {
+    let file_override = repo_path
+        .and_then(|p| crate::config::prompts::load_file_override(p, "prompts/rewrite-section.txt"));
+    let default = file_override.as_deref().unwrap_or(DEFAULT_REWRITE_SECTION_PROMPT);
     crate::config::prompts::resolve_prompt(
         prompts,
         "rewrite_section",
-        DEFAULT_REWRITE_SECTION_PROMPT,
+        default,
         &[("section", section), ("changes", changes)],
     )
 }
@@ -701,7 +705,7 @@ mod tests {
         let section = "## Career\n- Job 1\n- Job 2";
         let changes = "1. Add @t[2020] to Job 1";
         let prompts = crate::config::PromptsConfig::default();
-        let result = build_rewrite_prompt(section, changes, &prompts);
+        let result = build_rewrite_prompt(section, changes, &prompts, None);
 
         assert!(result.contains("ORIGINAL:"));
         assert!(result.contains("## Career"));
@@ -713,10 +717,29 @@ mod tests {
     #[test]
     fn test_build_rewrite_prompt_contains_rules() {
         let prompts = crate::config::PromptsConfig::default();
-        let result = build_rewrite_prompt("content", "changes", &prompts);
+        let result = build_rewrite_prompt("content", "changes", &prompts, None);
         assert!(result.contains("Apply ALL changes"));
         assert!(result.contains("@t[2022]"));
         assert!(result.contains("@t[2022-03]"));
+    }
+
+    #[test]
+    fn test_build_rewrite_prompt_file_override() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts_dir = tmp.path().join(".factbase").join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(prompts_dir.join("rewrite-section.txt"), "Custom: {section} / {changes}").unwrap();
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_rewrite_prompt("my section", "my changes", &prompts, Some(tmp.path()));
+        assert_eq!(result, "Custom: my section / my changes");
+    }
+
+    #[test]
+    fn test_build_rewrite_prompt_no_override_uses_default() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let prompts = crate::config::PromptsConfig::default();
+        let result = build_rewrite_prompt("content", "changes", &prompts, Some(tmp.path()));
+        assert!(result.contains("ORIGINAL:"), "should use compiled-in default");
     }
 
     // ==================== identify_affected_section tests ====================

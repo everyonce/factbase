@@ -3,6 +3,19 @@ use serde_json::Value;
 /// Returns the authoring guide as a JSON value.
 /// This is the content returned by the `get_authoring_guide` MCP tool.
 /// All examples must be domain-diverse per the domain-agnostic design constraint.
+///
+/// If `.factbase/authoring-guide.md` exists under `repo_path`, its content is
+/// returned as a plain string value instead of the compiled-in JSON guide.
+pub fn get_authoring_guide_for_repo(repo_path: Option<&std::path::Path>) -> Value {
+    if let Some(path) = repo_path {
+        if let Some(content) = crate::load_file_override(path, "authoring-guide.md") {
+            return Value::String(content);
+        }
+    }
+    get_authoring_guide()
+}
+
+/// Returns the compiled-in authoring guide as a JSON value.
 pub fn get_authoring_guide() -> Value {
     serde_json::json!({
         "format": "markdown (.md files)",
@@ -275,5 +288,33 @@ mod tests {
         assert!(obs["rename_workflow"].as_str().unwrap().contains("scan"));
         assert!(obs["compatibility"].is_array());
         assert!(obs["tip"].is_string());
+    }
+
+    #[test]
+    fn test_get_authoring_guide_for_repo_no_override() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let result = get_authoring_guide_for_repo(Some(tmp.path()));
+        // Should return the compiled-in JSON guide (an object, not a string)
+        assert!(result.is_object());
+        assert!(result["temporal_tags"]["syntax"].is_object());
+    }
+
+    #[test]
+    fn test_get_authoring_guide_for_repo_with_override() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let factbase_dir = tmp.path().join(".factbase");
+        std::fs::create_dir_all(&factbase_dir).unwrap();
+        std::fs::write(factbase_dir.join("authoring-guide.md"), "# Custom Guide\n\nCustom content.").unwrap();
+        let result = get_authoring_guide_for_repo(Some(tmp.path()));
+        // Should return the file content as a string
+        assert!(result.is_string());
+        assert!(result.as_str().unwrap().contains("Custom Guide"));
+    }
+
+    #[test]
+    fn test_get_authoring_guide_for_repo_none_path() {
+        let result = get_authoring_guide_for_repo(None);
+        // No repo path → compiled-in guide
+        assert!(result.is_object());
     }
 }
