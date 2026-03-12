@@ -5,7 +5,7 @@ Get a searchable knowledge base running in under 2 minutes.
 ## 1. Install
 
 ```bash
-git clone https://gitea.home.everyonce.com/daniel/factbase.git
+git clone https://github.com/everyonce/factbase.git
 cd factbase
 cargo install --path .
 ```

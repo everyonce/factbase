@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_specific_file_path_no_question() {
-        let content = doc_with_source("/Users/daniel/work/notes/architecture.md");
+        let content = doc_with_source("/home/user/kb/notes/architecture.md");
         let qs = generate_weak_source_questions(&content);
         assert!(qs.is_empty());
     }

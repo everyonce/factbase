@@ -36,7 +36,7 @@ pub enum LogFormat {
     about = "Filesystem-based knowledge management — one KB per directory",
     after_long_help = "\
 Quick start: factbase scan && factbase mcp
-Full guide:  https://gitea.home.everyonce.com/daniel/factbase/src/branch/main/docs/quickstart.md
+Full guide:  https://github.com/everyonce/factbase/blob/main/docs/quickstart.md
 
 Hidden commands: db, completions, version (use 'factbase <cmd> --help')",
     version,

@@ -90,7 +90,7 @@ mod tests {
 
     #[test]
     fn test_file_path_is_specific() {
-        assert!(is_citation_specific("/Users/daniel/work/factbase-docs/customers/acme/architecture.md"));
+        assert!(is_citation_specific("/home/user/kb/customers/acme/architecture.md"));
     }
 
     #[test]

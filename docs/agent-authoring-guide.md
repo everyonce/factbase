@@ -57,8 +57,8 @@ More content...
    ```
    Entity folder convention: if the filename matches the parent folder, the type comes from the grandparent:
    ```
-   /companies/xsolis/xsolis.md       → type: "company" (entity doc)
-   /companies/xsolis/people/jane.md  → type: "person"  (normal)
+   /companies/acme-corp/acme-corp.md       → type: "company" (entity doc)
+   /companies/acme-corp/people/jane.md  → type: "person"  (normal)
    ```
 
 4. **Embedding Generation**: Content is vectorized for semantic search
@@ -465,7 +465,7 @@ Archive folders work at any level:
 ```
 archive/old-notes.md                     ← archived
 people/archive/former-employee.md        ← archived
-companies/xsolis/archive/old-project.md  ← archived
+companies/acme-corp/archive/old-project.md  ← archived
 ```
 
 Archived documents:
