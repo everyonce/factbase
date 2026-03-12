@@ -23,53 +23,14 @@ Add factbase to your agent's MCP config:
 
 Then talk to your agent. Six workflows cover the full lifecycle:
 
-### Create — build a new knowledge base
-
-> Build me a knowledge base about Pacific Northwest mushrooms
-
-```
-workflow(create, domain="Pacific Northwest mycology")
-```
-
-### Add — grow it with new research
-
-> Research chanterelle harvesting seasons and add to the KB
-
-```
-workflow(add, topic="chanterelle harvesting seasons")
-```
-
-### Maintain — keep it healthy
-
-> Run maintenance on the mushroom KB
-
-```
-workflow(maintain)
-```
-
-### Refresh — update stale information
-
-> Check for any new species classifications this year
-
-```
-workflow(refresh)
-```
-
-### Correct — fix something wrong
-
-> The Colosseum was completed in 80 AD, not 82 AD
-
-```
-workflow(correct, correction="Colosseum completed in 80 AD, not 82 AD")
-```
-
-### Transition — handle a change over time
-
-> The genus Agaricus was reclassified under the new taxonomy as of 2025
-
-```
-workflow(transition, change="Agaricus reclassified under new taxonomy", effective_date="2025-01-01")
-```
+| What you say | What happens |
+|---|---|
+| "Build me a knowledge base about Pacific Northwest mushrooms" | `create` — designs structure, creates docs, scans |
+| "Research chanterelle harvesting seasons and add it" | `add` — researches topic, creates entities, links |
+| "Run maintenance on the KB" | `maintain` — scan, quality check, resolve questions |
+| "Check for new species classifications this year" | `refresh` — searches live sources, updates stale facts |
+| "Amanita muscaria is toxic but rarely fatal, not deadly" | `correct` — finds and fixes the false claim everywhere |
+| "The genus Agaricus was reclassified under the new taxonomy as of 2025" | `transition` — asks how to rename, applies it with history |
 
 That's it. Your agent handles scanning, indexing, and search automatically. Everything below is optional depth.
 
