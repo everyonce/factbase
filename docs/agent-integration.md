@@ -72,7 +72,7 @@ Factbase's workflow tools pick up natural requests automatically:
 | "Search factbase for info on Project Alpha" | Semantic search across all documents |
 | "Fix the factbase review queue" | Resolve workflow: finds stale/conflicting/missing data, researches fixes, applies answers |
 | "Improve the person documents in factbase" | Enrich workflow: scans for gaps, researches missing info, updates documents |
-| "Lint factbase" or "check factbase for quality issues" | Runs check_repository to generate review questions across all documents |
+| "Lint factbase" or "check factbase for quality issues" | Runs quality checks across all documents |
 
 ## Repository Perspective
 
@@ -96,25 +96,30 @@ This flows into workflow instructions automatically — the agent knows your org
 Factbase improves iteratively:
 
 1. **Ingest** — agent adds documents from your data sources
-2. **Lint** — tell your agent "lint factbase" or "check factbase for quality issues" — it runs `check_repository` to generate review questions across all documents
+2. **Check** — tell your agent "check factbase for quality issues" — it generates review questions
 3. **Resolve** — tell your agent "fix the factbase review queue" — it researches and resolves each question
 4. **Repeat** — each cycle produces fewer questions until documents stabilize
 
 ## MCP Tools
 
-The agent has access to 25 tools. You don't need to know them — the workflows handle tool selection. For reference:
+The agent has access to 3 tools. You don't need to know them — the workflows handle tool selection. For reference:
 
-| Category | Tools |
-|----------|-------|
-| Indexing | `scan_repository`, `init_repository` |
-| Search | `search_knowledge`, `search_content` |
-| Read | `get_entity`, `list_entities`, `list_repositories`, `get_perspective` |
-| Write | `create_document`, `update_document`, `delete_document`, `bulk_create_documents` |
-| Quality | `get_review_queue`, `answer_questions`, `check_repository`, `get_deferred_items`, `get_fact_pairs` |
-| Workflows | `workflow` |
-| Organize | `organize_analyze`, `organize` |
-| Embeddings | `embeddings_export`, `embeddings_import`, `embeddings_status` |
-| Reference | `get_authoring_guide` |
+| Tool | Description |
+|------|-------------|
+| `search` | Semantic or content search with filters (doc_type, temporal, boost_recent) |
+| `workflow` | Guided multi-step workflows: create, add, maintain, refresh, correct, transition |
+| `factbase` | Unified operations tool with `op` parameter for all other operations |
+
+The `factbase` tool supports these operations via `op`:
+
+| Category | Operations |
+|----------|-----------|
+| Documents | `get_entity`, `list`, `perspective`, `create`, `update`, `delete`, `bulk_create` |
+| Quality | `scan`, `check`, `detect_links` |
+| Review | `review_queue`, `answer`, `deferred` |
+| Organize | `organize` (action=analyze\|merge\|split\|move\|retype\|delete\|execute_suggestions) |
+| Links | `links` (action=suggest\|store), `fact_pairs` |
+| Meta | `authoring_guide`, `embeddings` (action=export\|import\|status) |
 
 ## Tips
 

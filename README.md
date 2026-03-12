@@ -2,7 +2,6 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2117_passing-brightgreen.svg)]()
 
 Filesystem-based knowledge management with semantic search for AI agents.
 
@@ -45,7 +44,6 @@ That's it. Everything below is optional depth.
 - **Cross-document validation** - Fact-level embeddings detect conflicts across documents
 - **Live updates** - File watcher keeps index in sync
 - **MCP server** - AI agents can search and explore your knowledge base
-- **Multi-repository** - Manage multiple knowledge bases from one instance
 
 Optional power features (plain markdown works without these):
 - **Temporal tags** - Track when facts were valid with `@t[...]` annotations
@@ -92,7 +90,7 @@ cargo install --path .
 | `bedrock` | Amazon Bedrock inference backend | +7 MB |
 | `local-embedding` | Local CPU embeddings via fastembed (BGE-small-en-v1.5) | +8 MB |
 | `progress` | Progress bars during scan | +0.1 MB |
-| `compression` | zstd compression for export/import and database storage | +0.6 MB |
+| `compression` | zstd compression for database storage | +0.6 MB |
 | `mcp` | MCP server for AI agent integration | +1 MB |
 | `web` | Web UI for human-in-the-loop review | +1 MB |
 | (no features) | CLI-only with Ollama backend | 6.7 MB |
@@ -109,10 +107,11 @@ cargo install --path . --no-default-features --features mcp
 
 ```bash
 cd ~/notes                        # your markdown files
-factbase init .                   # initialize
-factbase scan                     # index everything
-factbase search "project status"  # semantic search
+factbase scan                     # index everything (auto-initializes)
+factbase status                   # see what's indexed
 ```
+
+Search and all other operations are available via MCP — tell your agent "search factbase for project status".
 
 **→ [Full quickstart guide](docs/quickstart.md)** — from zero to searching in 2 minutes, including Bedrock setup and MCP integration.
 
@@ -124,23 +123,15 @@ See [docs/cli-reference.md](docs/cli-reference.md) for the full command referenc
 
 | Command | Description |
 |---------|-------------|
-| `factbase init <path>` | Initialize a new repository |
-| `factbase scan` | Index documents (document + fact embeddings, link detection) |
-| `factbase search <query>` | Semantic search across documents |
-| `factbase grep <pattern>` | Exact text search (like grep) |
-| `factbase serve` | Start MCP server + file watcher |
+| `factbase scan` | Index documents (embeddings, link detection) |
 | `factbase status` | Show repository statistics |
-| `factbase stats` | Quick aggregate statistics |
-| `factbase doctor` | Check inference backend connectivity |
-| `factbase check` | Check knowledge base quality |
-| `factbase review --apply` | Process answered review questions |
-| `factbase review --status` | Show review queue summary |
-| `factbase export <repo> <out>` | Export documents (markdown, JSON, compressed) |
-| `factbase import <repo> <in>` | Import documents |
-| `factbase organize analyze` | Detect merge/split/misplaced candidates |
-| `factbase repo list` | List registered repositories |
-| `factbase db vacuum` | Optimize database |
-| `factbase completions <shell>` | Generate shell completions |
+| `factbase doctor` | Check embedding provider connectivity |
+| `factbase repair` | Auto-fix document corruption |
+| `factbase embeddings` | Manage vector embeddings (export, import, status) |
+| `factbase serve` | Start MCP server + file watcher |
+| `factbase mcp` | Run MCP stdio transport (for agent integration) |
+
+Most operations (search, check, review, organize, CRUD) are available via MCP tools rather than CLI commands.
 
 ## Configuration
 
@@ -176,36 +167,24 @@ See [examples/config.yaml](examples/config.yaml) for all options including watch
 
 ## MCP Integration
 
-Factbase exposes 26 MCP tools:
+Factbase exposes 3 MCP tools:
 
 | Tool | Description |
 |------|-------------|
-| `search_knowledge` | Semantic search with optional type/repo/temporal filters |
-| `search_content` | Exact text search (like grep) |
-| `get_entity` | Get document by ID with incoming/outgoing links |
-| `list_entities` | List documents with optional type/repo filters |
-| `list_repositories` | List all registered repositories |
-| `get_perspective` | Get repository context from perspective.yaml |
-| `create_document` | Create a new document in a repository |
-| `update_document` | Update an existing document's title or content |
-| `delete_document` | Delete a document by ID |
-| `bulk_create_documents` | Create multiple documents atomically (max 100) |
-| `scan_repository` | Index (or re-index) all documents — run after adding/editing files |
-| `init_repository` | Initialize a new factbase repository at a directory path |
-| `get_review_queue` | Get pending review questions |
-| `answer_questions` | Answer or defer one or more review questions |
-| `check_repository` | Run quality checks on a repository |
-| `get_deferred_items` | Get deferred review items needing human attention |
-| `workflow` | Run a guided workflow (update, resolve, ingest, enrich, improve) |
-| `organize_analyze` | Detect reorganization opportunities (merge, split, misplaced, duplicates) |
-| `organize` | Execute reorganization actions (merge, split, move, retype, apply) |
-| `get_authoring_guide` | Get document formatting rules and templates |
-| `embeddings_export` | Export embeddings for backup or transfer |
-| `embeddings_import` | Import embeddings from a previous export |
-| `embeddings_status` | Check embedding coverage and statistics |
-| `get_link_suggestions` | Find documents with few links and suggest similar unlinked candidates |
-| `store_links` | Write `[[id]]` references into document files' Links: blocks |
-| `get_fact_pairs` | Get embedding-similar fact pairs for cross-document validation |
+| `search` | Semantic or content search with filters (doc_type, temporal, boost_recent) |
+| `workflow` | Guided multi-step workflows (create, add, maintain, refresh, correct, transition) |
+| `factbase` | Unified operations: CRUD, scan, check, review, organize, links, embeddings |
+
+The `factbase` tool uses an `op` parameter to select operations:
+
+| Category | Operations |
+|----------|-----------|
+| Documents | `get_entity`, `list`, `perspective`, `create`, `update`, `delete`, `bulk_create` |
+| Quality | `scan`, `check`, `detect_links` |
+| Review | `review_queue`, `answer`, `deferred` |
+| Organize | `organize` (action=analyze\|merge\|split\|move\|retype\|delete\|execute_suggestions) |
+| Links | `links` (action=suggest\|store), `fact_pairs` |
+| Meta | `authoring_guide`, `embeddings` (action=export\|import\|status) |
 
 ## Document Format
 

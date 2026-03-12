@@ -63,7 +63,7 @@ More content...
 
 4. **Embedding Generation**: Content is vectorized for semantic search
 
-5. **Link Detection**: LLM scans for mentions of other entities
+5. **Link Detection**: String matching detects entity mentions across all documents
 
 ---
 
@@ -472,7 +472,7 @@ Archived documents:
 - ✅ Scanned and indexed (appear in search results)
 - ✅ Part of the link graph (references to/from them work)
 - ✅ Visible in `list_entities`
-- ❌ Skipped by `factbase check` and `check_repository` (no review questions generated)
+- ❌ Skipped by quality checks (no review questions generated)
 - ❌ Not included in cross-document validation
 
 ### Reference Entities
@@ -493,8 +493,8 @@ Reference documents:
 - ✅ Scanned, indexed, and embedded (appear in search results)
 - ✅ Fully participate in link detection (their titles are matched across all docs)
 - ✅ Count as existing entities (entity discovery won't re-suggest them)
-- ✅ Visible in `list_entities`, `get_entity`, `search_knowledge`
-- ❌ Skipped by `factbase check` and `check_repository` (no review questions)
+- ✅ Visible in `list`, `get_entity`, `search`
+- ❌ Skipped by quality checks (no review questions)
 - ❌ Excluded from enrich and resolve workflows
 
 ---
@@ -577,14 +577,14 @@ After creating documents, Factbase will:
 
 1. **Scan**: `factbase scan` indexes new/changed files
 2. **Embed**: Generate semantic vectors for search and fact-level embeddings for cross-document validation
-3. **Link**: Detect entity mentions across all documents
-4. **Validate**: `factbase check` checks for quality issues
+3. **Link**: Detect entity mentions across all documents via string matching
+4. **Validate**: Quality checks via MCP identify issues
 
 The document becomes searchable immediately after scanning and will be linked to other documents that mention its title or ID.
 
 ## Inbox Blocks
 
-Stage corrections or new information for LLM-assisted integration:
+Stage corrections or new information for agent-assisted integration:
 
 ```markdown
 <!-- factbase:inbox -->
@@ -593,4 +593,4 @@ Stage corrections or new information for LLM-assisted integration:
 <!-- /factbase:inbox -->
 ```
 
-When `factbase review --apply` runs, the LLM integrates inbox content into the document body (adding temporal tags, sources, etc.) and removes the inbox block. Use `--dry-run` to preview.
+The agent integrates inbox content into the document body via the `update_document` MCP operation, adding temporal tags and sources as appropriate. The inbox block is removed after successful integration.

@@ -2,181 +2,146 @@
 
 ## Overview
 
-Factbase can analyze fact documents for inconsistencies, missing data, and ambiguities, then generate questions for human review. This creates a feedback loop where the system identifies issues and users provide clarifications that get applied back to the documents.
+Factbase analyzes fact documents for inconsistencies, missing data, and ambiguities, then generates questions for human or agent review. This creates a feedback loop where the system identifies issues and users provide clarifications that get applied back to the documents.
 
-## Commands
+## How It Works
 
-### `factbase check [--repo <repo>]`
+The review system operates through MCP tools. An AI agent (or human via the web UI) drives the process:
 
-Analyzes documents and appends a Review Queue section with generated questions.
+1. **Generate questions** — `factbase(op='check')` analyzes documents and appends a Review Queue section
+2. **Answer questions** — Agent or human provides answers via `factbase(op='answer')` or by editing markdown files
+3. **Apply answers** — Agent rewrites documents via `factbase(op='update')` based on answers
+4. **Repeat** — Each cycle produces fewer questions until documents stabilize
 
-**Behavior:**
-- Scans documents for issues (see Detection Rules below)
-- Appends `<!-- factbase:review -->` section if questions generated
-- Preserves existing unanswered questions
-- Skips documents with no issues detected
+## Review Queue Format
 
-**Flags:**
-- `--repo <repo>` - Limit to specific repository
-- `--stale-days <n>` - Flag `@t[~...]` facts older than N days (default: 365)
-- `--dry-run` - Show questions without modifying files
+Questions are appended to documents in a structured Review Queue section:
 
-### `factbase review --apply [--repo <repo>]`
+```markdown
+---
+<!-- factbase:review -->
+## Review Queue
 
-Processes answered questions and updates documents.
+- [ ] `@q[temporal]` Line 5: "VP Engineering at BigCo" has no end date - is this role still current?
+  > 
 
-**Behavior:**
-- Finds questions marked `[x]` with non-empty blockquotes
-- Collects ALL answered questions for a document
-- Uses LLM to interpret answers together and rewrite affected sections
-- Batch processing produces more consistent results than line-by-line patches
-- Removes applied questions from Review Queue
-- Removes Review Queue section if empty after processing
+- [ ] `@q[conflict]` Lines 4-5: CTO ended 2022, VP started 2022 - same month? Overlap?
+  > 
 
-**Flags:**
-- `--repo <repo>` - Limit to specific repository
-- `--dry-run` - Show proposed changes without applying
-
-### `factbase review --status [--repo <repo>]`
-
-Shows summary of pending questions across documents.
-
-**Output:**
+- [x] `@q[ambiguous]` "Based in Austin" - is this home or work location?
+  > Home address, works remote
 ```
-Review Status
-=============
-Documents with questions: 12
-Total questions: 34
-  - temporal: 15
-  - conflict: 8
-  - missing: 6
-  - ambiguous: 3
-  - stale: 2
 
-Answered (ready to apply): 7
-```
+The `<!-- factbase:review -->` comment marks the section for programmatic detection.
+
+## Question Types
+
+| Tag | Meaning |
+|-----|---------|
+| `@q[temporal]` | Missing or unclear time information |
+| `@q[conflict]` | Contradictory facts detected |
+| `@q[missing]` | Missing source or expected data |
+| `@q[ambiguous]` | Unclear meaning, needs clarification |
+| `@q[stale]` | Data may be outdated (based on `@t[~...]` age) |
+| `@q[duplicate]` | Possible duplicate of another entity |
+| `@q[corruption]` | Data corruption (malformed temporal tags, non-date content in `@t[...]`) |
+| `@q[precision]` | Imprecise language that could change truth value (vague qualifiers) |
+| `@q[weak-source]` | Source citation lacks traceability |
 
 ## Detection Rules
 
 ### `@q[temporal]` - Missing Time Information
-
-Triggers:
 - Fact has no `@t[...]` tag
 - Role/position without end date and `@t[...]` is >1 year old
 - Date range with missing start or end where context suggests it's known
 
 ### `@q[conflict]` - Contradictory Facts
-
-Triggers:
-- Overlapping date ranges for mutually exclusive facts (e.g., two full-time jobs)
-- Same fact with different values (e.g., two different graduation years)
+- Overlapping date ranges for mutually exclusive facts
+- Same fact with different values
 - Timeline gaps that seem implausible
-- Cross-document: `check --deep-check` uses pre-computed fact-level embeddings to find semantically similar facts across documents and classifies pairs as contradicting, superseding, or consistent
+- Cross-document: fact-level embeddings detect semantically similar facts across documents
 
 ### `@q[missing]` - Missing Data
-
-Triggers:
 - Fact without source reference `[^N]`
 - Footnote reference without definition
-- Source definition lacking traceability (e.g., just "Slack message" or "Outlook" with no channel, date, URL, or subject)
+- Source definition lacking traceability
 - Expected fields missing (configurable per document type in perspective.yaml)
 
 ### `@q[ambiguous]` - Unclear Meaning
-
-Triggers:
 - Location without context (home vs. work vs. birth)
-- Relationship without direction (advisor to whom?)
-- Undefined acronyms or abbreviations (e.g., "TAM" without expansion)
-- Folder placement anomaly: `check --deep-check` flags documents whose outgoing links point predominantly to a different container than their own (link majority rule)
+- Relationship without direction
+- Undefined acronyms or abbreviations
 
 ### `@q[stale]` - Potentially Outdated
-
-Triggers:
 - `@t[~...]` date older than threshold (default: 365 days)
 - `@t[YYYY..]` ongoing facts older than threshold
-- Source scraped date significantly older than fact date
 
 ### `@q[duplicate]` - Possible Duplicates
-
-Triggers:
 - High similarity score with another document (>95%)
 - Same name/title with different IDs
-- Cross-document: same entity mentioned with conflicting details
 
 ### `@q[corruption]` - Data Corruption
-
-Triggers:
-- Temporal tag contains non-date content (entity names, descriptions, statistics)
+- Temporal tag contains non-date content
 - Malformed temporal tag syntax
 
 ### `@q[precision]` - Imprecise Language
+- Vague qualifiers whose interpretation could change truth value
+- Ambiguous quantities, vague time references, ambiguous scope
 
-Triggers:
-- Vague qualifiers whose interpretation could change truth value ("heavy", "significant", "crucial")
-- Ambiguous quantities ("approximately", "several", "many", "few")
-- Vague time references ("shortly", "soon", "recently")
-- Ambiguous scope ("overall", "generally", "largely", "mostly")
+## Answering Questions
 
-Not flagged:
-- Specific numbers, named dates, proper nouns, well-defined terms
-- Facts with recent reviewed markers (within 180 days)
+### Via Markdown Editing
 
-## Answer Processing
+Check the checkbox `[x]` and add your answer in the blockquote:
 
-When `review --apply` processes answered questions, it classifies each answer and handles it accordingly:
+```markdown
+- [x] `@q[temporal]` Line 5: "VP Engineering at BigCo" - when was this true?
+  > Started March 2022, left December 2024
+```
 
-### Deterministic Processing (no LLM needed)
-- **Source citations** (e.g., "LinkedIn profile, 2024-01-15") → adds footnote to the fact
-- **Confirmations** (e.g., "still accurate", "confirmed") → updates `@t[~date]` to today, preserving the `~` prefix
-- **Deletions** (e.g., "delete") → removes the fact line
-- **Dismissals** (e.g., "dismiss", "ignore") → removes the question, no content changes
+### Via MCP
 
-### LLM-Assisted Processing
-- **Corrections** (e.g., "Actually left in March 2024") → LLM rewrites the affected section
-- **Complex changes** → LLM interprets the answer in context and rewrites
-
-### Reviewed Markers
-
-After processing, affected fact lines receive a `<!-- reviewed:YYYY-MM-DD -->` marker. Lint skips recently-reviewed facts (within 180 days) to prevent regenerating the same questions.
+Use `factbase(op='answer')` to submit answers programmatically.
 
 ### Special Answers
 
 - `dismiss` or `ignore` - Remove question without changes
 - `defer: <note>` - Keep question in queue with your note for future reviewers
-- `delete` - Remove the fact entirely
-- `split: ...` - Split fact into multiple lines (LLM interprets)
+- `delete` - Remove the referenced fact entirely
+- `split: <instruction>` - Split fact into multiple lines
 
-### Question Lifecycle
+## Answer Processing
+
+The agent processes answered questions by:
+
+1. Reading the answered questions from the review queue
+2. Interpreting answers to determine changes needed
+3. Rewriting the document via `factbase(op='update')` with appropriate temporal tags and sources
+4. Removing applied questions from the Review Queue
+
+### Deterministic Processing
+- **Confirmations** (e.g., "still accurate") → updates `@t[~date]` to today
+- **Deletions** (e.g., "delete") → removes the fact line
+- **Dismissals** (e.g., "dismiss") → removes the question, no content changes
+
+### Agent-Driven Processing
+- **Corrections** (e.g., "Actually left in March 2024") → agent rewrites the affected section
+- **Complex changes** → agent interprets the answer in context and rewrites
+
+### Reviewed Markers
+
+After processing, affected fact lines receive a `<!-- reviewed:YYYY-MM-DD -->` marker. Quality checks skip recently-reviewed facts (within 180 days) to prevent regenerating the same questions.
+
+## Question Lifecycle
 
 ```
 [Generated]  → [ ] Unanswered, empty blockquote
-[Answered]   → [x] Checked, blockquote filled → apply processes it
+[Answered]   → [x] Checked, blockquote filled → agent processes it
 [Applied]    → Removed from queue, fact updated, reviewed marker added
 [Dismissed]  → [x] "dismiss" → removed from queue, reviewed marker added
 [Deferred]   → [x] "defer: note" → unchecked, note preserved for future
 [Pruned]     → Removed automatically by check when trigger condition no longer exists
 ```
-
-Review Queue is always at the end of the document, after footnotes:
-
-```markdown
-<!-- factbase:a1b2c3 -->
-# Document Title
-
-Content...
-
----
-[^1]: Source
-
----
-<!-- factbase:review -->
-## Review Queue
-
-- [ ] `@q[type]` Description
-  > 
-```
-
-The `<!-- factbase:review -->` comment marks the section for programmatic detection.
 
 ## Configuration
 
@@ -195,36 +160,3 @@ review:
   ignore_patterns:
     - "*.draft.md"
 ```
-
-In `config.yaml` (global):
-
-```yaml
-# LLM used for answer processing and cross-validation
-# Defaults to the llm.model setting
-llm:
-  provider: bedrock
-  model: us.anthropic.claude-haiku-4-5-20251001-v1:0
-```
-
-## Implementation Notes
-
-### LLM Prompts
-
-Question generation prompt should:
-- Receive full document content
-- Receive list of all entity titles (for duplicate detection)
-- Return structured JSON of questions with line numbers
-
-Answer application prompt should:
-- Receive original line, question, and answer
-- Return replacement line(s) with proper `@t[...]` and `[^N]` formatting
-- Handle multi-line responses for `split:` answers
-
-### Database Schema
-
-No schema changes required. Review Queue lives in the markdown files only.
-
-### Concurrency
-
-- `check` can run in parallel across documents
-- `review --apply` should process one document at a time to avoid conflicts
