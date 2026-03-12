@@ -5775,4 +5775,52 @@ mod tests {
             "nomenclature options should use generic placeholders"
         );
     }
+
+    #[test]
+    fn test_workflow_tool_description_includes_override_language() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf_tool["description"].as_str().unwrap();
+        assert!(
+            desc.contains("explicitly names a workflow"),
+            "workflow description should tell agent to respect explicit user choice"
+        );
+        assert!(
+            desc.contains("ALWAYS use that workflow"),
+            "workflow description should use ALWAYS language"
+        );
+        assert!(
+            desc.contains("do NOT override"),
+            "workflow description should forbid overriding user choice"
+        );
+    }
+
+    #[test]
+    fn test_correct_workflow_description_includes_was_never_true() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
+        let workflow_param_desc = wf_tool["inputSchema"]["properties"]["workflow"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            workflow_param_desc.contains("ALWAYS WRONG") || workflow_param_desc.contains("never true"),
+            "correct description should clarify it applies to facts that were never true"
+        );
+    }
+
+    #[test]
+    fn test_transition_workflow_description_includes_was_true_until() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
+        let workflow_param_desc = wf_tool["inputSchema"]["properties"]["workflow"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            workflow_param_desc.contains("WAS TRUE") || workflow_param_desc.contains("was true until"),
+            "transition description should clarify it applies to facts that were true until a date"
+        );
+    }
 }
