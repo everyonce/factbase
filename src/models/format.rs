@@ -128,6 +128,61 @@ pub fn write_obsidian_css_snippet(repo_path: &std::path::Path) -> std::io::Resul
     std::fs::write(snippets_dir.join("factbase.css"), OBSIDIAN_CSS_SNIPPET)
 }
 
+/// Write `.obsidian/app.json` with `enabledCssSnippets: ["factbase"]` so the
+/// snippet is pre-enabled when Obsidian opens the vault on a fresh clone.
+/// Only writes the `enabledCssSnippets` key — safe to commit.  Idempotent.
+pub fn write_obsidian_app_json(repo_path: &std::path::Path) -> std::io::Result<()> {
+    let obsidian_dir = repo_path.join(".obsidian");
+    std::fs::create_dir_all(&obsidian_dir)?;
+    std::fs::write(
+        obsidian_dir.join("app.json"),
+        r#"{"enabledCssSnippets":["factbase"]}"#,
+    )
+}
+
+/// Obsidian-specific gitignore entries: track snippets while ignoring the rest
+/// of `.obsidian/`.
+const OBSIDIAN_GITIGNORE_ENTRIES: &[&str] = &[
+    ".obsidian/",
+    "!.obsidian/snippets/",
+    "!.obsidian/snippets/factbase.css",
+    "!.obsidian/app.json",
+];
+
+/// Ensure `.gitignore` contains the Obsidian-specific entries that allow
+/// `.obsidian/snippets/factbase.css` and `.obsidian/app.json` to be tracked
+/// while keeping the rest of `.obsidian/` gitignored.
+/// Returns the list of entries that were added (empty if all already present).
+pub fn ensure_obsidian_gitignore(repo_root: &std::path::Path) -> std::io::Result<Vec<&'static str>> {
+    let path = repo_root.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let lines: std::collections::HashSet<&str> = existing.lines().map(|l| l.trim()).collect();
+    let missing: Vec<&str> = OBSIDIAN_GITIGNORE_ENTRIES
+        .iter()
+        .copied()
+        .filter(|e| !lines.contains(e))
+        .collect();
+    if missing.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut append = String::new();
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        append.push('\n');
+    }
+    for entry in &missing {
+        append.push_str(entry);
+        append.push('\n');
+    }
+    if existing.is_empty() {
+        std::fs::write(&path, append)?;
+    } else {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path)?;
+        f.write_all(append.as_bytes())?;
+    }
+    Ok(missing)
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -263,5 +318,68 @@ mod tests {
         write_obsidian_css_snippet(tmp.path()).unwrap(); // second call should not error
         let css_path = tmp.path().join(".obsidian").join("snippets").join("factbase.css");
         assert!(css_path.exists());
+    }
+
+    #[test]
+    fn test_write_obsidian_app_json_creates_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_obsidian_app_json(tmp.path()).unwrap();
+        let app_path = tmp.path().join(".obsidian").join("app.json");
+        assert!(app_path.exists());
+        let content = std::fs::read_to_string(&app_path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        let snippets = v["enabledCssSnippets"].as_array().unwrap();
+        assert_eq!(snippets.len(), 1);
+        assert_eq!(snippets[0], "factbase");
+    }
+
+    #[test]
+    fn test_write_obsidian_app_json_idempotent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_obsidian_app_json(tmp.path()).unwrap();
+        write_obsidian_app_json(tmp.path()).unwrap();
+        let app_path = tmp.path().join(".obsidian").join("app.json");
+        assert!(app_path.exists());
+    }
+
+    #[test]
+    fn test_ensure_obsidian_gitignore_creates_entries() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let added = ensure_obsidian_gitignore(tmp.path()).unwrap();
+        assert_eq!(added.len(), OBSIDIAN_GITIGNORE_ENTRIES.len());
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".obsidian/"));
+        assert!(content.contains("!.obsidian/snippets/"));
+        assert!(content.contains("!.obsidian/snippets/factbase.css"));
+        assert!(content.contains("!.obsidian/app.json"));
+    }
+
+    #[test]
+    fn test_ensure_obsidian_gitignore_idempotent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        ensure_obsidian_gitignore(tmp.path()).unwrap();
+        let added = ensure_obsidian_gitignore(tmp.path()).unwrap();
+        assert!(added.is_empty(), "second call should add nothing");
+    }
+
+    #[test]
+    fn test_ensure_obsidian_gitignore_appends_to_existing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "*.log\n").unwrap();
+        let added = ensure_obsidian_gitignore(tmp.path()).unwrap();
+        assert_eq!(added.len(), OBSIDIAN_GITIGNORE_ENTRIES.len());
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.starts_with("*.log\n"));
+        assert!(content.contains(".obsidian/"));
+    }
+
+    #[test]
+    fn test_ensure_obsidian_gitignore_partial_existing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Pre-populate with just the first entry
+        std::fs::write(tmp.path().join(".gitignore"), ".obsidian/\n").unwrap();
+        let added = ensure_obsidian_gitignore(tmp.path()).unwrap();
+        // Should add the 3 missing entries
+        assert_eq!(added.len(), OBSIDIAN_GITIGNORE_ENTRIES.len() - 1);
     }
 }
