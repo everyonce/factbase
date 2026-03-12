@@ -9,6 +9,89 @@ use crate::models::format::{IdPlacement, LinkStyle, ResolvedFormat};
 /// `build_document_header` and must not be duplicated from extra fields.
 const MANAGED_FIELDS: &[&str] = &["factbase_id", "type"];
 
+/// Derive tags from a relative file path using directory components.
+///
+/// Rule: use all directory components; if there are multiple, skip the first
+/// (top-level category folder) since it's too broad to be useful as a tag.
+///
+/// Examples:
+/// - `customers/xsolis/people/zach-evans.md` → `["xsolis", "people"]`
+/// - `services/amazon-aurora.md` → `["services"]`
+/// - `doc.md` → `[]`
+pub fn tags_from_path(relative_path: &std::path::Path) -> Vec<String> {
+    let dirs: Vec<String> = relative_path
+        .parent()
+        .map(|p| {
+            p.components()
+                .filter_map(|c| match c {
+                    std::path::Component::Normal(s) => s.to_str().map(|s| s.to_string()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if dirs.len() > 1 {
+        dirs[1..].to_vec()
+    } else {
+        dirs
+    }
+}
+
+/// Parse a YAML `tags:` line into a list of tag strings.
+///
+/// Handles flow style `tags: [a, b]` and scalar `tags: a`.
+fn parse_tags_line(line: &str) -> Vec<String> {
+    let value = match line.splitn(2, ':').nth(1) {
+        Some(v) => v.trim(),
+        None => return Vec::new(),
+    };
+    if value.starts_with('[') && value.ends_with(']') {
+        let inner = &value[1..value.len() - 1];
+        inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    } else if !value.is_empty() {
+        vec![value.to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+/// Merge path-derived tags into extra frontmatter fields.
+///
+/// Path tags come first; existing user-added tags are appended if not already
+/// present (preserving user tags while ensuring path tags are always included).
+/// Does nothing when `path_tags` is empty.
+pub fn merge_path_tags(extra: &mut Vec<String>, path_tags: &[String]) {
+    if path_tags.is_empty() {
+        return;
+    }
+
+    let existing: Vec<String> = extra
+        .iter()
+        .find(|l| l.trim_start().starts_with("tags:"))
+        .map(|l| parse_tags_line(l))
+        .unwrap_or_default();
+
+    let mut merged = path_tags.to_vec();
+    for tag in &existing {
+        if !merged.contains(tag) {
+            merged.push(tag.clone());
+        }
+    }
+
+    let tags_line = format!("tags: [{}]", merged.join(", "));
+
+    if let Some(pos) = extra.iter().position(|l| l.trim_start().starts_with("tags:")) {
+        extra[pos] = tags_line;
+    } else {
+        extra.push(tags_line);
+    }
+}
+
 /// Extract extra (non-managed) YAML frontmatter fields from document content.
 ///
 /// Returns raw YAML lines (e.g. `"reviewed: 2026-02-21"`) for all fields that
@@ -362,5 +445,73 @@ mod tests {
         let h = build_document_header("abc123", "Test", None, &fmt, &extra);
         assert_eq!(h, "<!-- factbase:abc123 -->\n# Test\n\n");
         assert!(!h.contains("reviewed"));
+    }
+
+    // --- tags_from_path tests ---
+
+    #[test]
+    fn test_tags_from_path_deep() {
+        use std::path::Path;
+        let tags = tags_from_path(Path::new("customers/xsolis/people/zach-evans.md"));
+        assert_eq!(tags, vec!["xsolis", "people"]);
+    }
+
+    #[test]
+    fn test_tags_from_path_single_dir() {
+        use std::path::Path;
+        let tags = tags_from_path(Path::new("services/amazon-aurora.md"));
+        assert_eq!(tags, vec!["services"]);
+    }
+
+    #[test]
+    fn test_tags_from_path_root_file() {
+        use std::path::Path;
+        let tags = tags_from_path(Path::new("doc.md"));
+        assert!(tags.is_empty());
+    }
+
+    #[test]
+    fn test_tags_from_path_two_dirs() {
+        use std::path::Path;
+        let tags = tags_from_path(Path::new("a/b/file.md"));
+        assert_eq!(tags, vec!["b"]);
+    }
+
+    // --- merge_path_tags tests ---
+
+    #[test]
+    fn test_merge_path_tags_no_existing() {
+        let mut extra: Vec<String> = vec![];
+        merge_path_tags(&mut extra, &["xsolis".into(), "people".into()]);
+        assert_eq!(extra, vec!["tags: [xsolis, people]"]);
+    }
+
+    #[test]
+    fn test_merge_path_tags_preserves_user_tags() {
+        let mut extra = vec!["tags: [important]".to_string()];
+        merge_path_tags(&mut extra, &["xsolis".into(), "people".into()]);
+        assert_eq!(extra, vec!["tags: [xsolis, people, important]"]);
+    }
+
+    #[test]
+    fn test_merge_path_tags_no_duplicates() {
+        let mut extra = vec!["tags: [people, vip]".to_string()];
+        merge_path_tags(&mut extra, &["xsolis".into(), "people".into()]);
+        assert_eq!(extra, vec!["tags: [xsolis, people, vip]"]);
+    }
+
+    #[test]
+    fn test_merge_path_tags_empty_path_tags_noop() {
+        let mut extra = vec!["tags: [important]".to_string()];
+        merge_path_tags(&mut extra, &[]);
+        assert_eq!(extra, vec!["tags: [important]"]);
+    }
+
+    #[test]
+    fn test_merge_path_tags_preserves_other_fields() {
+        let mut extra = vec!["reviewed: 2026-01-01".to_string()];
+        merge_path_tags(&mut extra, &["services".into()]);
+        assert!(extra.contains(&"reviewed: 2026-01-01".to_string()));
+        assert!(extra.contains(&"tags: [services]".to_string()));
     }
 }

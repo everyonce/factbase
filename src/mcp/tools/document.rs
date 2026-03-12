@@ -205,12 +205,18 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     let resolved_format = resolve_repo_format(&repo);
     let doc_type = crate::processor::DocumentProcessor::new()
         .derive_type(&repo.path.join(&path), &repo.path);
+    let mut extra: Vec<String> = Vec::new();
+    if resolved_format.frontmatter {
+        let rel_path = std::path::Path::new(&path);
+        let path_tags = crate::processor::tags_from_path(rel_path);
+        crate::processor::merge_path_tags(&mut extra, &path_tags);
+    }
     let header = crate::processor::build_document_header(
         &id,
         &title,
         Some(&doc_type),
         &resolved_format,
-        &[],
+        &extra,
     );
     let doc_content = format!("{header}{content_deduped}");
 
@@ -350,6 +356,11 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
             if new_content.is_some() {
                 let new_extra = crate::processor::extract_extra_frontmatter(content);
                 merge_frontmatter_fields(&mut extra, &new_extra);
+            }
+            if resolved_format.frontmatter {
+                let rel_path = file_path.strip_prefix(&repo.path).unwrap_or(&file_path);
+                let path_tags = crate::processor::tags_from_path(rel_path);
+                crate::processor::merge_path_tags(&mut extra, &path_tags);
             }
             let header = crate::processor::build_document_header(
                 &id,
@@ -567,12 +578,18 @@ pub fn bulk_create_documents(
             crate::processor::dedup_acronym_expansions(content_trimmed, &glossary);
         let file_path: PathBuf = repo.path.join(validated.path);
         let doc_type = processor.derive_type(&file_path, &repo.path);
+        let mut extra: Vec<String> = Vec::new();
+        if resolved_format.frontmatter {
+            let rel_path = std::path::Path::new(validated.path);
+            let path_tags = crate::processor::tags_from_path(rel_path);
+            crate::processor::merge_path_tags(&mut extra, &path_tags);
+        }
         let header = crate::processor::build_document_header(
             &id,
             validated.title,
             Some(&doc_type),
             &resolved_format,
-            &[],
+            &extra,
         );
         let doc_content = format!("{header}{content_deduped}");
 
@@ -1397,6 +1414,165 @@ mod tests {
     }
 
     #[test]
+    fn test_create_document_obsidian_adds_path_tags() {
+        use crate::database::tests::test_db;
+        use crate::models::{FormatConfig, Perspective, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    preset: Some("obsidian".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "customers/xsolis/people/zach-evans.md",
+            "title": "Zach Evans",
+            "content": "- Some fact"
+        });
+        create_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(
+            repo_dir.path().join("customers/xsolis/people/zach-evans.md")
+        ).unwrap();
+        assert!(on_disk.contains("tags: [xsolis, people]"), "path tags present: {on_disk}");
+    }
+
+    #[test]
+    fn test_create_document_obsidian_single_dir_tag() {
+        use crate::database::tests::test_db;
+        use crate::models::{FormatConfig, Perspective, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    preset: Some("obsidian".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "services/amazon-aurora.md",
+            "title": "Amazon Aurora",
+            "content": "- Some fact"
+        });
+        create_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(
+            repo_dir.path().join("services/amazon-aurora.md")
+        ).unwrap();
+        assert!(on_disk.contains("tags: [services]"), "single dir tag: {on_disk}");
+    }
+
+    #[test]
+    fn test_update_document_obsidian_merges_path_tags_preserves_user_tags() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, FormatConfig, Perspective, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: Some(Perspective {
+                format: Some(FormatConfig {
+                    preset: Some("obsidian".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // Existing doc with user-added tag "vip"
+        let original = "---\nfactbase_id: abc123\ntype: people\ntags: [vip]\n---\n# Zach Evans\n\n- Old fact";
+        let file = repo_dir.path().join("customers/xsolis/people/zach-evans.md");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, original).unwrap();
+
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "customers/xsolis/people/zach-evans.md".into(),
+            title: "Zach Evans".into(),
+            content: original.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({"id": "abc123", "content": "- New fact"});
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        // Path tags [xsolis, people] merged with user tag [vip]
+        assert!(on_disk.contains("tags: [xsolis, people, vip]"), "merged tags: {on_disk}");
+    }
+
+    #[test]
+    fn test_create_document_no_tags_when_no_frontmatter() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None, // default format, no frontmatter
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "services/aurora.md",
+            "title": "Aurora",
+            "content": "- fact"
+        });
+        create_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(repo_dir.path().join("services/aurora.md")).unwrap();
+        assert!(!on_disk.contains("tags:"), "no tags in default format: {on_disk}");
+    }
+
+    #[test]
     fn test_create_document_default_format() {
         use crate::database::tests::test_db;
         use crate::models::Repository;
@@ -1478,7 +1654,8 @@ mod tests {
 
         let on_disk = fs::read_to_string(&file).unwrap();
         assert!(on_disk.contains("reviewed: 2026-02-21"), "reviewed field preserved: {on_disk}");
-        assert!(on_disk.contains("tags: important"), "tags field preserved: {on_disk}");
+        // Path tag "people" merged with user tag "important"
+        assert!(on_disk.contains("tags: [people, important]"), "tags merged: {on_disk}");
         assert!(on_disk.contains("factbase_id: abc123"), "factbase_id preserved: {on_disk}");
         assert!(on_disk.contains("type: people"), "type preserved: {on_disk}");
         assert!(on_disk.contains("- New fact"), "new content present: {on_disk}");

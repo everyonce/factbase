@@ -113,6 +113,60 @@ def convert_review_to_callout(content):
 
 REVIEWED_RE = re.compile(r'<!-- reviewed:(\d{4}-\d{2}-\d{2})\b.*?-->')
 
+def tags_from_path(relative_path):
+    """Derive tags from a relative file path.
+    
+    Uses all directory components; if multiple, skips the first (top-level
+    category folder).  Mirrors the Rust tags_from_path() logic.
+    
+    Examples:
+      customers/xsolis/people/zach-evans.md -> ['xsolis', 'people']
+      services/amazon-aurora.md             -> ['services']
+      doc.md                                -> []
+    """
+    parts = relative_path.replace('\\', '/').split('/')
+    dirs = parts[:-1]  # exclude filename
+    if len(dirs) > 1:
+        return dirs[1:]
+    return dirs
+
+def merge_path_tags_into_frontmatter(content, path_tags):
+    """Merge path-derived tags into existing YAML frontmatter.
+    
+    Path tags come first; existing user tags are appended if not already present.
+    Assumes content starts with '---\\n'.
+    """
+    fm_end = content.find('\n---\n', 4)
+    if fm_end < 0:
+        return content
+    
+    fm_text = content[4:fm_end]
+    
+    # Parse existing tags
+    existing_tags = []
+    tags_match = re.search(r'^tags:\s*(.+)$', fm_text, re.MULTILINE)
+    if tags_match:
+        raw = tags_match.group(1).strip()
+        if raw.startswith('[') and raw.endswith(']'):
+            existing_tags = [t.strip() for t in raw[1:-1].split(',') if t.strip()]
+        elif raw:
+            existing_tags = [raw]
+    
+    # Merge: path tags first, then user tags not already present
+    merged = list(path_tags)
+    for tag in existing_tags:
+        if tag not in merged:
+            merged.append(tag)
+    
+    tags_line = f"tags: [{', '.join(merged)}]"
+    
+    if tags_match:
+        fm_text = re.sub(r'^tags:.*$', tags_line, fm_text, flags=re.MULTILINE)
+    else:
+        fm_text = fm_text.rstrip('\n') + f'\n{tags_line}'
+    
+    return f"---\n{fm_text}\n---\n{content[fm_end+5:]}"
+
 def convert_reviewed_to_frontmatter(content):
     """Strip inline <!-- reviewed:YYYY-MM-DD --> markers and store latest date in frontmatter."""
     dates = REVIEWED_RE.findall(content)
@@ -143,7 +197,7 @@ def convert_reviewed_to_frontmatter(content):
     # No frontmatter — create one
     return f"---\nreviewed: {latest}\n---\n{content}"
 
-def convert_file(filepath, id_map, dry_run=False):
+def convert_file(filepath, id_map, kb_path, dry_run=False):
     """Convert a single markdown file to Obsidian format."""
     with open(filepath, 'r') as f:
         content = f.read()
@@ -198,6 +252,12 @@ def convert_file(filepath, id_map, dry_run=False):
     # 5. Convert inline reviewed markers to frontmatter
     content = convert_reviewed_to_frontmatter(content)
     
+    # 6. Add path-derived tags to frontmatter (merge with existing)
+    rel_path = os.path.relpath(filepath, kb_path)
+    path_tags = tags_from_path(rel_path)
+    if path_tags and content.startswith('---\n'):
+        content = merge_path_tags_into_frontmatter(content, path_tags)
+    
     if content == original:
         return False
     
@@ -250,7 +310,7 @@ def migrate_kb(kb_path, dry_run=False):
             if not f.endswith('.md'):
                 continue
             filepath = os.path.join(root, f)
-            if convert_file(filepath, id_map, dry_run):
+            if convert_file(filepath, id_map, kb_path, dry_run):
                 converted += 1
             else:
                 skipped += 1
