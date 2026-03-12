@@ -98,6 +98,14 @@ pub(super) fn stale_days(p: &Option<Perspective>) -> i64 {
         .map_or(365, |d| d as i64)
 }
 
+/// Returns true if the perspective is configured with the Obsidian preset.
+pub(super) fn is_obsidian_format(p: &Option<Perspective>) -> bool {
+    p.as_ref()
+        .and_then(|p| p.format.as_ref())
+        .and_then(|f| f.preset.as_deref())
+        == Some("obsidian")
+}
+
 pub(super) fn required_fields_hint(p: &Option<Perspective>) -> String {
     let Some(fields) = p
         .as_ref()

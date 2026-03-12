@@ -227,6 +227,33 @@ Your content here...
 
 See [docs/fact-document-format.md](docs/fact-document-format.md) for the complete specification including temporal tags, source attribution, and review questions.
 
+## Obsidian
+
+Factbase works alongside [Obsidian](https://obsidian.md) — use Obsidian for reading, writing, and graph exploration while your agent handles indexing and search.
+
+Enable Obsidian-compatible output in `perspective.yaml`:
+
+```yaml
+format:
+  preset: obsidian
+```
+
+This switches to wikilinks (`[[Entity Name]]`), YAML frontmatter, and a collapsed callout for the review queue.
+
+**Two-tool workflow:**
+
+1. Edit or rename files in Obsidian as usual — Obsidian auto-updates its own wikilinks
+2. Run `factbase(op=scan)` (or `factbase scan`) to sync the database with any path changes
+3. Ask your agent to search, check quality, or add new content
+
+**What works out of the box:**
+- Graph view — factbase writes `[[wikilinks]]` that Obsidian renders as graph edges
+- Tags — auto-generated from folder structure (`species/` → `#species`)
+- Review queue — appears as a collapsed callout, expandable in Obsidian
+- Editing — any content added in Obsidian is picked up on the next scan
+
+**One friction point:** if you rename a file in Obsidian, the factbase database holds the old path until you run a scan. The document's ID is stable across renames, so no data is lost — just run `factbase(op=scan)` to resync.
+
 ## Troubleshooting
 
 **Bedrock Access Denied** — Enable model access in the [Bedrock console](https://console.aws.amazon.com/bedrock/home#/modelaccess), or check IAM permissions for `bedrock:InvokeModel`.
