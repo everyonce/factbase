@@ -3,13 +3,11 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Filesystem-based knowledge management with semantic search for AI agents.
+A knowledge base that lives in your filesystem. Markdown in, semantic search out. Managed by your AI agent via MCP.
 
-Factbase indexes markdown files and provides semantic search via MCP (Model Context Protocol). The filesystem is the source of truth—edit files with any tool, and factbase keeps the index updated.
+## Quick Start
 
-## Using Factbase with Your Agent
-
-**1. Point your agent at a directory** of markdown files:
+Add factbase to your agent's MCP config:
 
 ```json
 {
@@ -17,25 +15,65 @@ Factbase indexes markdown files and provides semantic search via MCP (Model Cont
     "factbase": {
       "command": "npx",
       "args": ["-y", "@everyonce/factbase", "mcp"],
-      "cwd": "/home/you/my-notes"
+      "cwd": "/path/to/your/knowledge"
     }
   }
 }
 ```
 
-The factbase auto-initializes on first launch. Then tell your agent:
+Then talk to your agent. Six workflows cover the full lifecycle:
 
-> "Scan the factbase"
+### Create — build a new knowledge base
 
-**2. Search it:**
+> Build me a knowledge base about Pacific Northwest mushrooms
 
-> "What do we know about Project Atlas?"
+```
+workflow(create, domain="Pacific Northwest mycology")
+```
 
-**3. After editing files or adding new ones:**
+### Add — grow it with new research
 
-> "Rescan the factbase"
+> Research chanterelle harvesting seasons and add to the KB
 
-That's it. Everything below is optional depth.
+```
+workflow(add, topic="chanterelle harvesting seasons")
+```
+
+### Maintain — keep it healthy
+
+> Run maintenance on the mushroom KB
+
+```
+workflow(maintain)
+```
+
+### Refresh — update stale information
+
+> Check for any new species classifications this year
+
+```
+workflow(refresh)
+```
+
+### Correct — fix something wrong
+
+> The Colosseum was completed in 80 AD, not 82 AD
+
+```
+workflow(correct, correction="Colosseum completed in 80 AD, not 82 AD")
+```
+
+### Transition — handle a change over time
+
+> The genus Agaricus was reclassified under the new taxonomy as of 2025
+
+```
+workflow(transition, change="Agaricus reclassified under new taxonomy", effective_date="2025-01-01")
+```
+
+That's it. Your agent handles scanning, indexing, and search automatically. Everything below is optional depth.
+
+---
 
 ## Features
 
@@ -103,20 +141,6 @@ cargo install --path . --no-default-features
 cargo install --path . --no-default-features --features mcp
 ```
 
-## Quick Start
-
-```bash
-cd ~/notes                        # your markdown files
-factbase scan                     # index everything (auto-initializes)
-factbase status                   # see what's indexed
-```
-
-Search and all other operations are available via MCP — tell your agent "search factbase for project status".
-
-**→ [Full quickstart guide](docs/quickstart.md)** — from zero to searching in 2 minutes, including Bedrock setup and MCP integration.
-
-**→ [Agent integration guide](docs/agent-integration.md)** — add factbase to your agent's MCP config and say "research Jane Smith for factbase" to start.
-
 ## CLI Commands
 
 See [docs/cli-reference.md](docs/cli-reference.md) for the full command reference with all flags and examples.
@@ -178,7 +202,7 @@ Factbase exposes 3 MCP tools:
 The `factbase` tool uses an `op` parameter to select operations:
 
 | Category | Operations |
-|----------|-----------|
+|----------|-----------:|
 | Documents | `get_entity`, `list`, `perspective`, `create`, `update`, `delete`, `bulk_create` |
 | Quality | `scan`, `check`, `detect_links` |
 | Review | `review_queue`, `answer`, `deferred` |
