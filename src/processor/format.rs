@@ -196,6 +196,49 @@ pub fn wikilink_path(file_path: &str) -> &str {
     file_path.strip_suffix(".md").unwrap_or(file_path)
 }
 
+/// Update (or insert) the `type:` field in YAML frontmatter.
+///
+/// If the content has a frontmatter block, the `type:` field is updated or
+/// added.  If there is no frontmatter, the content is returned unchanged.
+pub fn update_frontmatter_type(content: &str, doc_type: &str) -> String {
+    if !content.starts_with("---\n") {
+        return content.to_string();
+    }
+    let fm_end = match content.find("\n---\n") {
+        Some(pos) => pos,
+        None => return content.to_string(),
+    };
+
+    let fm_text = &content[4..fm_end]; // skip leading "---\n"
+    let after = &content[fm_end + 5..]; // skip "\n---\n"
+
+    let type_line = format!("type: {doc_type}");
+    let new_fm = if fm_text.lines().any(|l| l.trim_start().starts_with("type:")) {
+        fm_text
+            .lines()
+            .map(|l| {
+                if l.trim_start().starts_with("type:") {
+                    type_line.as_str()
+                } else {
+                    l
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        let mut lines: Vec<&str> = fm_text.lines().collect();
+        let insert_pos = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with("factbase_id:"))
+            .map(|i| i + 1)
+            .unwrap_or(lines.len());
+        lines.insert(insert_pos, &type_line);
+        lines.join("\n")
+    };
+
+    format!("---\n{new_fm}\n---\n{after}")
+}
+
 /// Format a link reference according to link style.
 ///
 /// - `Factbase`: `[[hex_id]]`
@@ -513,5 +556,42 @@ mod tests {
         merge_path_tags(&mut extra, &["services".into()]);
         assert!(extra.contains(&"reviewed: 2026-01-01".to_string()));
         assert!(extra.contains(&"tags: [services]".to_string()));
+    }
+
+    // --- update_frontmatter_type tests ---
+
+    #[test]
+    fn test_update_frontmatter_type_updates_existing() {
+        let content = "---\nfactbase_id: abc123\ntype: old_type\n---\n# Title\n";
+        let result = update_frontmatter_type(content, "person");
+        assert!(result.contains("type: person\n"));
+        assert!(!result.contains("type: old_type"));
+    }
+
+    #[test]
+    fn test_update_frontmatter_type_inserts_after_factbase_id() {
+        let content = "---\nfactbase_id: abc123\nreviewed: 2026-01-01\n---\n# Title\n";
+        let result = update_frontmatter_type(content, "person");
+        assert!(result.contains("type: person\n"));
+        // type should appear after factbase_id
+        let id_pos = result.find("factbase_id:").unwrap();
+        let type_pos = result.find("type:").unwrap();
+        assert!(type_pos > id_pos);
+    }
+
+    #[test]
+    fn test_update_frontmatter_type_no_frontmatter_unchanged() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n";
+        let result = update_frontmatter_type(content, "person");
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_update_frontmatter_type_preserves_other_fields() {
+        let content = "---\nfactbase_id: abc123\nreviewed: 2026-03-10\ntags: [people]\n---\n# Title\n";
+        let result = update_frontmatter_type(content, "person");
+        assert!(result.contains("reviewed: 2026-03-10\n"));
+        assert!(result.contains("tags: [people]\n"));
+        assert!(result.contains("type: person\n"));
     }
 }

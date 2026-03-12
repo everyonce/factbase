@@ -179,7 +179,7 @@ pub use processor::{
     parse_source_definitions, parse_source_references, parse_temporal_tags,
     strip_answered_questions, unwrap_review_callout, validate_temporal_tags,
     wrap_review_callout,
-    build_document_header, extract_extra_frontmatter, format_link, format_references_line, merge_path_tags, tags_from_path, wikilink_path,
+    build_document_header, extract_extra_frontmatter, format_link, format_references_line, merge_path_tags, tags_from_path, update_frontmatter_type, wikilink_path,
     DocumentProcessor,
 };
 #[deprecated(note = "use factbase::progress::*")]
