@@ -118,6 +118,12 @@ pub const OBSIDIAN_CSS_SNIPPET: &str = r#"/* Factbase custom styles — auto-gen
     border-radius: 4px;
     padding: 1px 5px;
 }
+
+/* Hide filename slug — the # heading is the entity name */
+.inline-title { display: none; }
+
+/* Hide properties panel in reading view — factbase_id etc are internal */
+.metadata-container.mod-visible { display: none; }
 "#;
 
 /// Write `.obsidian/snippets/factbase.css` under `repo_path` if the repo uses
@@ -309,6 +315,17 @@ mod tests {
         assert!(content.contains("[data-callout=\"review\"]"));
         assert!(content.contains("245, 158, 11")); // amber
         assert!(content.contains("lucide-clipboard-check"));
+    }
+
+    #[test]
+    fn test_obsidian_css_snippet_hides_inline_title() {
+        assert!(OBSIDIAN_CSS_SNIPPET.contains(".inline-title"));
+        assert!(OBSIDIAN_CSS_SNIPPET.contains("display: none"));
+    }
+
+    #[test]
+    fn test_obsidian_css_snippet_hides_metadata_container() {
+        assert!(OBSIDIAN_CSS_SNIPPET.contains(".metadata-container.mod-visible"));
     }
 
     #[test]
