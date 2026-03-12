@@ -62,3 +62,54 @@ pub fn answer_questions(
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_answer_questions_missing_doc_id() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"question_index": 0, "answer": "yes"});
+        let result = answer_questions(&db, &args, &ProgressReporter::Silent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_answer_questions_missing_answer() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"doc_id": "abc", "question_index": 0});
+        let result = answer_questions(&db, &args, &ProgressReporter::Silent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_answer_questions_bulk_missing_answers_array() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"answers": "not_an_array"});
+        let result = answer_questions(&db, &args, &ProgressReporter::Silent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_answer_questions_bulk_missing_fields() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"answers": [{"doc_id": "abc"}]});
+        let result = answer_questions(&db, &args, &ProgressReporter::Silent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_answer_questions_bulk_empty_array() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"answers": []});
+        let result = answer_questions(&db, &args, &ProgressReporter::Silent);
+        // Empty array should succeed (no-op)
+        assert!(result.is_ok());
+    }
+}

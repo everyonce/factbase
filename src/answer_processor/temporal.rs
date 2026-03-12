@@ -248,4 +248,74 @@ mod tests {
         assert!(!dates.is_ongoing);
         assert_eq!(dates.end_date, Some("2024-03".to_string()));
     }
+
+    #[test]
+    fn test_extract_dates_empty_answer() {
+        let result = extract_dates_from_answer("");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_dates_no_dates() {
+        let result = extract_dates_from_answer("I don't know");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_extract_dates_year_only_from_started() {
+        let dates = extract_dates_from_answer("Started in 2020").unwrap();
+        assert_eq!(dates.start_date, Some("2020".to_string()));
+    }
+
+    #[test]
+    fn test_extract_dates_still_keyword() {
+        let dates = extract_dates_from_answer("Still active since 2020").unwrap();
+        assert!(dates.is_ongoing);
+    }
+
+    #[test]
+    fn test_extract_dates_current_keyword() {
+        let dates = extract_dates_from_answer("Current as of January 2025").unwrap();
+        assert!(dates.is_ongoing);
+    }
+
+    #[test]
+    fn test_format_new_temporal_tag_point_in_time() {
+        let dates = DateInfo {
+            start_date: Some("2024-06".to_string()),
+            end_date: None,
+            is_ongoing: false,
+        };
+        assert_eq!(format_new_temporal_tag(&dates), "@t[=2024-06]");
+    }
+
+    #[test]
+    fn test_format_new_temporal_tag_ongoing_from_start() {
+        let dates = DateInfo {
+            start_date: Some("2024".to_string()),
+            end_date: None,
+            is_ongoing: true,
+        };
+        assert_eq!(format_new_temporal_tag(&dates), "@t[2024..]");
+    }
+
+    #[test]
+    fn test_format_new_temporal_tag_closed_range() {
+        let dates = DateInfo {
+            start_date: Some("2020".to_string()),
+            end_date: Some("2023".to_string()),
+            is_ongoing: false,
+        };
+        assert_eq!(format_new_temporal_tag(&dates), "@t[2020..2023]");
+    }
+
+    #[test]
+    fn test_format_temporal_tag_closes_open_range() {
+        let dates = DateInfo {
+            start_date: None,
+            end_date: Some("2024-06".to_string()),
+            is_ongoing: false,
+        };
+        assert_eq!(format_temporal_tag(&dates, "@t[2020..]"), "@t[2020..2024-06]");
+    }
 }

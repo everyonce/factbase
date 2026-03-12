@@ -151,4 +151,63 @@ mod tests {
         assert_eq!(json["answered"], true);
         assert_eq!(json["answer"], "LinkedIn profile");
     }
+
+    #[test]
+    fn test_get_review_queue_parses_args() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"limit": 5});
+        let result = get_review_queue(&db, &args, &crate::ProgressReporter::Silent);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_get_deferred_items_parses_args() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({});
+        let result = get_deferred_items(&db, &args, &crate::ProgressReporter::Silent);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_answer_question_missing_doc_id() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"question_index": 0, "answer": "yes"});
+        let result = answer_question(&db, &args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_bulk_answer_over_limit() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let answers: Vec<serde_json::Value> = (0..51)
+            .map(|i| serde_json::json!({"doc_id": "abc", "question_index": i, "answer": "yes"}))
+            .collect();
+        let args = serde_json::json!({"answers": answers});
+        let result = bulk_answer_questions(&db, &args, &crate::ProgressReporter::Silent);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("50"));
+    }
+
+    #[test]
+    fn test_bulk_answer_missing_answers_array() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({});
+        let result = bulk_answer_questions(&db, &args, &crate::ProgressReporter::Silent);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_answer_questions_dispatches_to_service() {
+        use crate::database::tests::test_db;
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"doc_id": "abc", "question_index": 0, "answer": "yes"});
+        // Will fail because doc doesn't exist, but it should dispatch correctly
+        let result = answer_questions(&db, &args, &crate::ProgressReporter::Silent);
+        assert!(result.is_err()); // doc not found
+    }
 }

@@ -73,3 +73,89 @@ pub fn clean_canonicalize(path: &Path) -> PathBuf {
     }
     canonical
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_write_and_read_file() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.md");
+        write_file(&path, "hello world").unwrap();
+        let content = read_file(&path).unwrap();
+        assert_eq!(content, "hello world");
+    }
+
+    #[test]
+    fn test_write_file_atomic_no_temp_left() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("test.md");
+        write_file(&path, "content").unwrap();
+        let temp_path = path.with_extension("md.tmp");
+        assert!(!temp_path.exists(), "temp file should be cleaned up");
+    }
+
+    #[test]
+    fn test_read_file_not_found() {
+        let result = read_file(Path::new("/nonexistent/path.md"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_remove_file_success() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("to_remove.md");
+        fs::write(&path, "content").unwrap();
+        remove_file(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_remove_file_not_found() {
+        let result = remove_file(Path::new("/nonexistent/file.md"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_copy_file_success() {
+        let tmp = TempDir::new().unwrap();
+        let src = tmp.path().join("src.md");
+        let dst = tmp.path().join("dst.md");
+        fs::write(&src, "original").unwrap();
+        copy_file(&src, &dst).unwrap();
+        assert_eq!(fs::read_to_string(&dst).unwrap(), "original");
+    }
+
+    #[test]
+    fn test_create_dir_nested() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("a").join("b").join("c");
+        create_dir(&path).unwrap();
+        assert!(path.is_dir());
+    }
+
+    #[test]
+    fn test_remove_dir_success() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("to_remove");
+        fs::create_dir(&path).unwrap();
+        fs::write(path.join("file.txt"), "content").unwrap();
+        remove_dir(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn test_clean_canonicalize_existing_path() {
+        let tmp = TempDir::new().unwrap();
+        let result = clean_canonicalize(tmp.path());
+        assert!(result.is_absolute());
+    }
+
+    #[test]
+    fn test_clean_canonicalize_nonexistent_path() {
+        let result = clean_canonicalize(Path::new("/nonexistent/path"));
+        assert_eq!(result, PathBuf::from("/nonexistent/path"));
+    }
+}
