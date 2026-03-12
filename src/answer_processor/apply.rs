@@ -1281,16 +1281,16 @@ Content here
 
     #[test]
     fn test_remove_processed_questions_callout() {
-        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
+        let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
         let result = remove_processed_questions(content, &[0]);
-        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format");
+        assert!(result.contains("> [!review]- Review Queue"), "should preserve callout format");
         assert!(!result.contains("Q0"), "should remove processed question");
         assert!(result.contains("Q1"), "should keep unprocessed question");
     }
 
     #[test]
     fn test_remove_processed_questions_callout_all_removed() {
-        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n";
+        let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n";
         let result = remove_processed_questions(content, &[0]);
         assert!(!result.contains("Review Queue"), "should remove entire section");
         assert!(result.contains("Content."));
@@ -1298,9 +1298,9 @@ Content here
 
     #[test]
     fn test_uncheck_deferred_questions_callout() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > defer\n> - [x] `@q[stale]` Q1\n>   > dismiss\n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > defer\n> - [x] `@q[stale]` Q1\n>   > dismiss\n";
         let result = uncheck_deferred_questions(content, &[0]);
-        assert!(result.contains("> [!info]- Review Queue"), "should preserve callout format");
+        assert!(result.contains("> [!review]- Review Queue"), "should preserve callout format");
         // Q0 should be unchecked and answer removed
         assert!(result.contains("Q0"));
         assert!(!result.contains("defer"));
@@ -1310,21 +1310,21 @@ Content here
 
     #[test]
     fn test_apply_source_citations_callout() {
-        let content = "# Doc\n\n- Fact one\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[missing]` Q\n>   > \n";
+        let content = "# Doc\n\n- Fact one\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[missing]` Q\n>   > \n";
         let result = apply_source_citations(content, &[("Fact one", "Source info")]);
         assert!(result.contains("[^1]: Source info"));
         // Footnotes must appear before the callout review section
         let footnote_pos = result.find("[^1]: Source info").unwrap();
-        let review_pos = result.find("> [!info]- Review Queue").unwrap();
+        let review_pos = result.find("> [!review]- Review Queue").unwrap();
         assert!(footnote_pos < review_pos, "footnotes must be before callout review section");
     }
 
     #[test]
     fn test_remove_processed_questions_callout_roundtrip() {
         // Start with callout → remove one question → verify still callout
-        let content = "# Doc\n\nContent.\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
+        let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
         let result = remove_processed_questions(content, &[0]);
-        assert!(result.contains("> [!info]- Review Queue"));
+        assert!(result.contains("> [!review]- Review Queue"));
         assert!(result.contains("> <!-- factbase:review -->"));
     }
 }

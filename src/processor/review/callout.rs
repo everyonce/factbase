@@ -1,9 +1,9 @@
 //! Callout format conversion for review sections.
 //!
 //! Handles detection and conversion between plain `## Review Queue` format
-//! and Obsidian `> [!info]- Review Queue` callout format.
+//! and Obsidian `> [!review]- Review Queue` callout format.
 
-use crate::patterns::{REVIEW_CALLOUT_HEADER, REVIEW_QUEUE_MARKER};
+use crate::patterns::{REVIEW_CALLOUT_HEADER, REVIEW_CALLOUT_HEADER_LEGACY, REVIEW_QUEUE_MARKER};
 
 /// Detect whether the review section uses Obsidian callout format.
 ///
@@ -21,9 +21,11 @@ pub fn unwrap_review_callout(content: &str) -> (String, bool) {
         return (content.to_string(), false);
     }
 
-    // Find the callout header line
+    // Find the callout header line (accept both current and legacy header)
     let mut lines: Vec<&str> = content.lines().collect();
-    let callout_start = lines.iter().position(|l| l.trim() == REVIEW_CALLOUT_HEADER);
+    let callout_start = lines
+        .iter()
+        .position(|l| l.trim() == REVIEW_CALLOUT_HEADER || l.trim() == REVIEW_CALLOUT_HEADER_LEGACY);
     let Some(start_idx) = callout_start else {
         // Has `> <!-- factbase:review -->` but no callout header — strip `> ` from marker line onward
         let marker_line = lines.iter().position(|l| l.trim() == format!("> {REVIEW_QUEUE_MARKER}"));
@@ -73,7 +75,7 @@ pub fn unwrap_review_callout(content: &str) -> (String, bool) {
 /// Convert plain review section to Obsidian callout format.
 ///
 /// Finds the review section (separator + heading + marker + questions) and
-/// wraps it in a collapsed `> [!info]- Review Queue` callout.
+/// wraps it in a collapsed `> [!review]- Review Queue` callout.
 pub fn wrap_review_callout(content: &str) -> String {
     if !content.contains(REVIEW_QUEUE_MARKER) {
         return content.to_string();
@@ -145,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_is_callout_review_callout() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         assert!(is_callout_review(content));
     }
 
@@ -159,20 +161,20 @@ mod tests {
 
     #[test]
     fn test_unwrap_callout_strips_prefix() {
-        let content = "# Doc\n\nSome fact\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let content = "# Doc\n\nSome fact\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         let (result, was_callout) = unwrap_review_callout(content);
         assert!(was_callout);
         assert!(result.contains("## Review Queue"));
         assert!(result.contains("<!-- factbase:review -->"));
         assert!(result.contains("- [ ] `@q[temporal]` When?"));
-        assert!(!result.contains("> [!info]- Review Queue"));
+        assert!(!result.contains("> [!review]- Review Queue"));
     }
 
     #[test]
     fn test_wrap_callout_plain_to_callout() {
         let content = "# Doc\n\nSome fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
         let result = wrap_review_callout(content);
-        assert!(result.contains("> [!info]- Review Queue"));
+        assert!(result.contains("> [!review]- Review Queue"));
         assert!(result.contains("> <!-- factbase:review -->"));
         assert!(result.contains("> - [ ] `@q[temporal]` When?"));
         assert!(!result.contains("---\n\n## Review Queue"));
@@ -180,14 +182,14 @@ mod tests {
 
     #[test]
     fn test_wrap_callout_already_callout_noop() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         let result = wrap_review_callout(content);
         assert_eq!(result, content);
     }
 
     #[test]
     fn test_parse_review_queue_callout_format() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When was this true?\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When was this true?\n>   > \n";
         let questions = parse_review_queue(content).unwrap();
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question_type, QuestionType::Temporal);
@@ -196,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_parse_review_queue_callout_with_answer() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` When was this true?\n> > believed: Still accurate as of 2024\n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` When was this true?\n> > believed: Still accurate as of 2024\n";
         let questions = parse_review_queue(content).unwrap();
         assert_eq!(questions.len(), 1);
         assert!(questions[0].answered);
@@ -217,7 +219,7 @@ mod tests {
             confidence_reason: None,
         }];
         let result = append_review_questions(content, &questions, true);
-        assert!(result.contains("> [!info]- Review Queue"), "Should have callout header, got:\n{result}");
+        assert!(result.contains("> [!review]- Review Queue"), "Should have callout header, got:\n{result}");
         assert!(result.contains("> <!-- factbase:review -->"), "Should have callout marker");
         assert!(result.contains("> - [ ] `@q[temporal]`"), "Should have callout-prefixed question");
         assert!(!result.contains("---\n"), "Should not have --- separator");
@@ -225,7 +227,7 @@ mod tests {
 
     #[test]
     fn test_append_review_questions_preserves_existing_callout() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` existing question\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` existing question\n>   > \n";
         let questions = vec![ReviewQuestion {
             question_type: QuestionType::Missing,
             line_ref: None,
@@ -238,26 +240,26 @@ mod tests {
         }];
         // Even with use_callout=false, existing callout format is preserved
         let result = append_review_questions(content, &questions, false);
-        assert!(result.contains("> [!info]- Review Queue"), "Should preserve callout format");
+        assert!(result.contains("> [!review]- Review Queue"), "Should preserve callout format");
         assert!(result.contains("existing question"), "Should keep existing question");
         assert!(result.contains("new question"), "Should add new question");
     }
 
     #[test]
     fn test_strip_answered_callout_preserves_format() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` first question\n> > believed: yes\n> - [ ] `@q[missing]` second question\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` first question\n> > believed: yes\n> - [ ] `@q[missing]` second question\n>   > \n";
         let (result, count) = strip_answered_questions(content);
         assert_eq!(count, 1);
-        assert!(result.contains("> [!info]- Review Queue"), "Should preserve callout format");
+        assert!(result.contains("> [!review]- Review Queue"), "Should preserve callout format");
         assert!(!result.contains("first question"), "Should strip answered");
         assert!(result.contains("second question"), "Should keep unanswered");
     }
 
     #[test]
     fn test_normalize_callout_preserves_format() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` question\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` question\n>   > \n";
         let result = normalize_review_section(content);
-        assert!(result.contains("> [!info]- Review Queue"), "Should preserve callout format");
+        assert!(result.contains("> [!review]- Review Queue"), "Should preserve callout format");
     }
 
     #[test]
@@ -265,7 +267,7 @@ mod tests {
         let content = "# Doc\n\nSome fact\n";
         let (result, changed) = ensure_review_section(content, true);
         assert!(changed);
-        assert!(result.contains("> [!info]- Review Queue"), "Should create callout section");
+        assert!(result.contains("> [!review]- Review Queue"), "Should create callout section");
         assert!(result.contains("> <!-- factbase:review -->"), "Should have callout marker");
     }
 
@@ -280,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_unwrap_wrap() {
-        let callout = "# Doc\n\nSome fact\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let callout = "# Doc\n\nSome fact\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
         let (unwrapped, was_callout) = unwrap_review_callout(callout);
         assert!(was_callout);
         let rewrapped = wrap_review_callout(&unwrapped);
@@ -294,12 +296,24 @@ mod tests {
 
     #[test]
     fn test_prune_stale_callout_preserves_format() {
-        let content = "# Doc\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` valid question\n>   > \n> - [ ] `@q[missing]` stale question\n>   > \n";
+        let content = "# Doc\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` valid question\n>   > \n> - [ ] `@q[missing]` stale question\n>   > \n";
         let mut valid = HashSet::new();
         valid.insert("valid question".to_string());
         let result = prune_stale_questions(content, &valid, false);
-        assert!(result.contains("> [!info]- Review Queue"), "Should preserve callout");
+        assert!(result.contains("> [!review]- Review Queue"), "Should preserve callout");
         assert!(result.contains("valid question"), "Should keep valid");
         assert!(!result.contains("stale question"), "Should prune stale");
+    }
+
+    #[test]
+    fn test_legacy_callout_header_accepted_on_read() {
+        // Documents written with the old [!info] header should still be readable
+        let legacy = "# Doc\n\nSome fact\n\n> [!info]- Review Queue\n> <!-- factbase:review -->\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let (unwrapped, was_callout) = unwrap_review_callout(legacy);
+        assert!(was_callout, "Legacy [!info] header should be detected as callout");
+        assert!(!unwrapped.contains("> [!info]"), "Should strip callout prefix");
+        // Re-wrapping should use the new header
+        let rewrapped = wrap_review_callout(&unwrapped);
+        assert!(rewrapped.contains("> [!review]- Review Queue"), "Re-wrap should use new header");
     }
 }

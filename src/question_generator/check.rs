@@ -1279,7 +1279,7 @@ mod tests {
         assert!(output.results.iter().any(|r| r.new_questions > 0));
 
         let on_disk = std::fs::read_to_string(&md_path).unwrap();
-        assert!(on_disk.contains("> [!info]- Review Queue"),
+        assert!(on_disk.contains("> [!review]- Review Queue"),
             "Obsidian preset should produce callout format, got:\n{on_disk}");
     }
 
@@ -1331,7 +1331,7 @@ mod tests {
         let on_disk = std::fs::read_to_string(&md_path).unwrap();
         assert!(on_disk.contains("## Review Queue"),
             "No obsidian config should produce plain format, got:\n{on_disk}");
-        assert!(!on_disk.contains("> [!info]- Review Queue"),
+        assert!(!on_disk.contains("> [!review]- Review Queue"),
             "Should NOT have callout format without obsidian config");
     }
 }

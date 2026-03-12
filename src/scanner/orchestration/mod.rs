@@ -161,6 +161,19 @@ pub async fn full_scan(
     };
     let repo = &repo;
 
+    // Generate Obsidian CSS snippet if the repo uses the obsidian preset
+    if repo
+        .perspective
+        .as_ref()
+        .and_then(|p| p.format.as_ref())
+        .map(|f| f.preset.as_deref() == Some("obsidian"))
+        .unwrap_or(false)
+    {
+        if let Err(e) = crate::models::write_obsidian_css_snippet(&repo.path) {
+            tracing::warn!("Failed to write Obsidian CSS snippet: {e}");
+        }
+    }
+
     let scan_start = Instant::now();
     let file_discovery_start = Instant::now();
 
