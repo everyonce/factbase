@@ -380,6 +380,20 @@ pub(crate) fn resolve_doc_path(
     crate::services::review::helpers::resolve_doc_path(db, doc)
 }
 
+/// Load glossary-defined terms, optionally scoped to a repository.
+pub(crate) fn load_glossary_terms(db: &Database, repo_id: Option<&str>) -> HashSet<String> {
+    let types = ["definition", "glossary", "reference"];
+    let mut terms = HashSet::new();
+    for t in &types {
+        if let Ok(docs) = db.list_documents(Some(t), repo_id, None, 100) {
+            for doc in &docs {
+                terms.extend(crate::extract_defined_terms(&doc.content));
+            }
+        }
+    }
+    terms
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

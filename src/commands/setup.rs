@@ -66,15 +66,13 @@ impl Setup {
         let dir = std::env::current_dir()?;
         let factbase_dir = dir.join(".factbase");
 
-        if !factbase_dir.exists() {
-            if self.require_repo || self.check_exists {
-                anyhow::bail!(
-                    "No .factbase/ directory found in {}.\n\
-                     Use the MCP 'create' workflow to set up a new knowledge base,\n\
-                     or run `factbase scan` from a directory containing markdown files.",
-                    dir.display()
-                );
-            }
+        if !factbase_dir.exists() && (self.require_repo || self.check_exists) {
+            anyhow::bail!(
+                "No .factbase/ directory found in {}.\n\
+                 Use the MCP 'create' workflow to set up a new knowledge base,\n\
+                 or run `factbase scan` from a directory containing markdown files.",
+                dir.display()
+            );
         }
 
         let db_path = factbase_dir.join("factbase.db");

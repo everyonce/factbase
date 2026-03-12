@@ -200,24 +200,7 @@ async fn generate_questions_all(
     let deadline = crate::mcp::tools::helpers::make_deadline(time_budget);
 
     // Get all active documents
-    let all_docs: Vec<_> = match repo_id {
-        Some(rid) => db
-            .get_documents_for_repo(rid)?
-            .into_values()
-            .filter(|d| !d.is_deleted)
-            .collect(),
-        None => {
-            let mut all = Vec::new();
-            for repo in db.list_repositories()? {
-                all.extend(
-                    db.get_documents_for_repo(&repo.id)?
-                        .into_values()
-                        .filter(|d| !d.is_deleted),
-                );
-            }
-            all
-        }
-    };
+    let all_docs = super::check::load_docs(db, repo_id)?;
 
     // Resume: skip already-processed docs
     let doc_offset = get_str_arg(args, "resume")

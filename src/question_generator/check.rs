@@ -23,6 +23,10 @@ use tracing::{info, warn};
 /// Days within which a reviewed marker suppresses question generation.
 const REVIEWED_SKIP_DAYS: i64 = 180;
 
+/// Result of checking a single document: (doc, questions, pruned_content, pruned_count,
+/// existing_unanswered, existing_answered, skipped_reviewed, suppressed_by_review)
+type CheckResult<'a> = (&'a &'a Document, Vec<ReviewQuestion>, String, usize, usize, usize, usize, usize);
+
 /// Run all rule-based question generators on a document body.
 ///
 /// `full` controls whether to include generators that don't interact with
@@ -320,7 +324,7 @@ pub async fn check_all_documents(
 
                     // Count fact lines with recent reviewed markers
                     let today = Utc::now().date_naive();
-                    let fm_recent = extract_frontmatter_reviewed_date(&content)
+                    let fm_recent = extract_frontmatter_reviewed_date(content)
                         .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
                     let skipped_reviewed = content
                         .lines()
@@ -478,16 +482,7 @@ pub async fn extract_vocabulary(
 fn run_placement_check(
     docs: &[Document],
     db: &Database,
-    all_results: &mut Vec<(
-        &&Document,
-        Vec<ReviewQuestion>,
-        String,
-        usize,
-        usize,
-        usize,
-        usize,
-        usize,
-    )>,
+    all_results: &mut Vec<CheckResult<'_>>,
 ) {
     match super::placement::check_folder_placement(docs, db) {
         Ok(placement_qs) => {

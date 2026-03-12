@@ -342,7 +342,7 @@ pub fn migrate_repo_links(db: &Database, args: &Value) -> Result<Value, Factbase
         .map(|(id, doc)| (id.clone(), (doc.title.clone(), doc.file_path.clone())))
         .collect();
 
-    for (_id, doc) in &docs {
+    for doc in docs.values() {
         if doc.is_deleted {
             continue;
         }
