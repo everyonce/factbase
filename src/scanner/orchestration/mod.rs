@@ -172,6 +172,12 @@ pub async fn full_scan(
         if let Err(e) = crate::models::write_obsidian_css_snippet(&repo.path) {
             tracing::warn!("Failed to write Obsidian CSS snippet: {e}");
         }
+        if let Err(e) = crate::models::write_obsidian_app_json(&repo.path) {
+            tracing::warn!("Failed to write Obsidian app.json: {e}");
+        }
+        if let Err(e) = crate::models::ensure_obsidian_gitignore(&repo.path) {
+            tracing::warn!("Failed to update .gitignore for Obsidian: {e}");
+        }
     }
 
     let scan_start = Instant::now();

@@ -179,13 +179,33 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "next_tool": "factbase", "suggested_op": "scan",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
         }),
-        6 => serde_json::json!({
-            "workflow": "setup",
-            "step": 6, "total_steps": total,
-            "title": "Step 6 of 6: Complete",
-            "instruction": resolve(wf, "setup.complete", DEFAULT_SETUP_COMPLETE_INSTRUCTION, &[]),
-            "complete": true
-        }),
+        6 => {
+            let path = get_str_arg(args, "path").unwrap_or("the target directory");
+            let is_obsidian = crate::models::load_perspective_from_file(std::path::Path::new(path))
+                .and_then(|p| p.format)
+                .map(|f| f.preset.as_deref() == Some("obsidian"))
+                .unwrap_or(false);
+            let mut resp = serde_json::json!({
+                "workflow": "setup",
+                "step": 6, "total_steps": total,
+                "title": "Step 6 of 6: Complete",
+                "instruction": resolve(wf, "setup.complete", DEFAULT_SETUP_COMPLETE_INSTRUCTION, &[]),
+                "complete": true
+            });
+            if is_obsidian {
+                resp["obsidian_git_setup"] = serde_json::json!({
+                    "note": "Obsidian preset detected. The scan wrote .obsidian/snippets/factbase.css, .obsidian/app.json, and updated .gitignore to track them.",
+                    "action": "Commit these files so git pull on any Obsidian machine gets the CSS and pre-enabled snippet state.",
+                    "files_to_commit": [
+                        ".obsidian/snippets/factbase.css",
+                        ".obsidian/app.json",
+                        ".gitignore"
+                    ],
+                    "suggested_commit_message": "chore: add Obsidian CSS snippet and pre-enable state"
+                });
+            }
+            resp
+        }
         _ => serde_json::json!({
             "workflow": "setup",
             "complete": true,
@@ -2132,6 +2152,39 @@ mod tests {
         assert!(instruction.contains("ingest"));
         assert!(instruction.contains("enrich"));
         assert!(instruction.contains("update"));
+        // No obsidian_git_setup when no path/perspective
+        assert!(step.get("obsidian_git_setup").is_none());
+    }
+
+    #[test]
+    fn test_setup_step6_obsidian_git_setup_note() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: Test\nformat:\n  preset: obsidian\n",
+        ).unwrap();
+        let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
+        assert!(step["complete"].as_bool().unwrap());
+        let git_setup = &step["obsidian_git_setup"];
+        assert!(git_setup.is_object(), "obsidian_git_setup should be present for obsidian preset");
+        let files = git_setup["files_to_commit"].as_array().unwrap();
+        let file_strs: Vec<&str> = files.iter().filter_map(|v| v.as_str()).collect();
+        assert!(file_strs.contains(&".obsidian/snippets/factbase.css"));
+        assert!(file_strs.contains(&".obsidian/app.json"));
+        assert!(file_strs.contains(&".gitignore"));
+    }
+
+    #[test]
+    fn test_setup_step6_no_obsidian_git_setup_for_non_obsidian() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: Test\n",
+        ).unwrap();
+        let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
+        assert!(step.get("obsidian_git_setup").is_none());
     }
 
     #[test]
