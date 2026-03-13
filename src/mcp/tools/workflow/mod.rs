@@ -5805,7 +5805,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(
-            workflow_param_desc.contains("ALWAYS WRONG") || workflow_param_desc.contains("never true"),
+            workflow_param_desc.contains("ALWAYS WRONG")
+                || workflow_param_desc.contains("never true"),
             "correct description should clarify it applies to facts that were never true"
         );
     }
@@ -5819,7 +5820,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(
-            workflow_param_desc.contains("WAS TRUE") || workflow_param_desc.contains("was true until"),
+            workflow_param_desc.contains("WAS TRUE")
+                || workflow_param_desc.contains("was true until"),
             "transition description should clarify it applies to facts that were true until a date"
         );
     }
