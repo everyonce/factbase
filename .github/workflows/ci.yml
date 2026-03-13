@@ -40,4 +40,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --lib
       - run: cargo test --bin factbase
-      - run: cargo test --tests
+      # Integration tests require a live Ollama instance — skipped in CI
+      # Run locally with: cargo test --tests
