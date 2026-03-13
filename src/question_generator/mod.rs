@@ -78,11 +78,20 @@ pub use temporal::generate_temporal_questions;
 ///
 /// Filters to list-item lines matching `FACT_LINE_REGEX`, extracts fact text,
 /// and skips lines with empty fact text. Line numbers are 1-indexed.
+///
+/// Lines inside the YAML frontmatter block (between `---` delimiters at the
+/// start of the document, optionally preceded by a `<!-- factbase:... -->`
+/// comment) are skipped — frontmatter fields are document metadata, not facts.
 pub(crate) fn iter_fact_lines(content: &str) -> impl Iterator<Item = (usize, &str, String)> {
     // Stop before the review queue section — its content is not document facts
     let end = crate::patterns::body_end_offset(content);
     let body = &content[..end];
-    body.lines().enumerate().filter_map(|(line_idx, line)| {
+    // Skip YAML frontmatter lines (metadata, not facts)
+    let fm_lines = crate::patterns::frontmatter_line_count(body);
+    body.lines().enumerate().filter_map(move |(line_idx, line)| {
+        if line_idx < fm_lines {
+            return None;
+        }
         if !FACT_LINE_REGEX.is_match(line) {
             return None;
         }
@@ -293,5 +302,32 @@ mod tests {
         let results: Vec<_> = iter_fact_lines(content).collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].2, "Real fact");
+    }
+
+    #[test]
+    fn test_iter_fact_lines_skips_frontmatter_with_comment_header() {
+        // Block-style tags inside frontmatter must not generate questions
+        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Amazon Aurora\n\n- Real fact\n";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "Real fact");
+    }
+
+    #[test]
+    fn test_iter_fact_lines_skips_frontmatter_without_comment_header() {
+        let content = "---\nfactbase_id: abc123\ntype: services\ntags:\n  - services\n---\n# Title\n\n- Real fact\n";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "Real fact");
+    }
+
+    #[test]
+    fn test_iter_fact_lines_line_numbers_correct_with_frontmatter() {
+        // Line numbers must account for frontmatter lines
+        let content = "---\ntype: services\n---\n# Title\n\n- Fact one\n- Fact two\n";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, 6); // line 6 in the full document
+        assert_eq!(results[1].0, 7);
     }
 }

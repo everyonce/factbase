@@ -296,6 +296,54 @@ pub fn content_body(content: &str) -> &str {
     &content[..body_end_offset(content)]
 }
 
+/// Count the number of lines occupied by the YAML frontmatter block at the
+/// start of `content`.
+///
+/// Returns 0 when there is no frontmatter.  The count includes the opening
+/// `---`, all field lines, and the closing `---`, as well as any optional
+/// `<!-- factbase:... -->` comment header that precedes the block.
+///
+/// Used by `iter_fact_lines` to skip frontmatter lines so that YAML metadata
+/// fields (e.g. `type: services`, block-style `tags:` lists) are never treated
+/// as document facts.
+pub(crate) fn frontmatter_line_count(content: &str) -> usize {
+    let mut lines = content.lines();
+    let mut count = 0usize;
+
+    let first = match lines.next() {
+        Some(l) => l,
+        None => return 0,
+    };
+    count += 1;
+
+    // Skip optional HTML comment header (<!-- factbase:... -->)
+    let fm_start = if ID_REGEX.is_match(first) {
+        match lines.next() {
+            Some(l) => {
+                count += 1;
+                l
+            }
+            None => return 0,
+        }
+    } else {
+        first
+    };
+
+    if fm_start.trim() != "---" {
+        return 0;
+    }
+
+    // Count lines until the closing ---
+    for line in lines {
+        count += 1;
+        if line.trim() == "---" {
+            return count;
+        }
+    }
+
+    0 // No closing --- found — not valid frontmatter
+}
+
 /// Extract the review queue section from `content`, including any preceding
 /// `---` separator. Returns `None` if no review queue marker is present.
 pub(crate) fn extract_review_queue_section(content: &str) -> Option<&str> {
@@ -707,6 +755,38 @@ mod tests {
         assert!(FACT_LINE_REGEX.is_match("1) fact"));
         assert!(FACT_LINE_REGEX.is_match("  - indented"));
         assert!(!FACT_LINE_REGEX.is_match("not a list"));
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_no_frontmatter() {
+        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact\n";
+        assert_eq!(frontmatter_line_count(content), 0);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_with_comment_header() {
+        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags: [services]\n---\n# Title\n\n- Fact\n";
+        // Lines: comment(1) + ---(2) + type(3) + tags(4) + ---(5) = 5
+        assert_eq!(frontmatter_line_count(content), 5);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_without_comment_header() {
+        let content = "---\nfactbase_id: abc123\ntype: services\n---\n# Title\n\n- Fact\n";
+        // Lines: ---(1) + factbase_id(2) + type(3) + ---(4) = 4
+        assert_eq!(frontmatter_line_count(content), 4);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_empty() {
+        assert_eq!(frontmatter_line_count(""), 0);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_no_closing_delimiter() {
+        // Unclosed frontmatter — not valid, return 0
+        let content = "---\ntype: services\n# Title\n";
+        assert_eq!(frontmatter_line_count(content), 0);
     }
 
     #[test]
