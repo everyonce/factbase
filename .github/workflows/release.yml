@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            binary: factbase
+            artifact: factbase-linux-x64
+          - os: macos-14
+            target: darwin-arm64
+            binary: factbase
+            artifact: factbase-darwin-arm64
+          - os: macos-13
+            target: darwin-x64
+            binary: factbase
+            artifact: factbase-darwin-x64
+          - os: windows-latest
+            target: win32-x64
+            binary: factbase.exe
+            artifact: factbase-win32-x64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: target/release/${{ matrix.binary }}
+
+  publish:
+    name: Publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Stage binaries into npm packages
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+
+          cp artifacts/factbase-linux-x64/factbase   npm/factbase-linux-x64/bin/factbase
+          cp artifacts/factbase-darwin-arm64/factbase npm/factbase-darwin-arm64/bin/factbase
+          cp artifacts/factbase-darwin-x64/factbase   npm/factbase-darwin-x64/bin/factbase
+          cp artifacts/factbase-win32-x64/factbase.exe npm/factbase-win32-x64/bin/factbase.exe
+
+          chmod +x npm/factbase-linux-x64/bin/factbase
+          chmod +x npm/factbase-darwin-arm64/bin/factbase
+          chmod +x npm/factbase-darwin-x64/bin/factbase
+
+          for pkg in factbase-linux-x64 factbase-darwin-arm64 factbase-darwin-x64 factbase-win32-x64 factbase; do
+            jq --arg v "$VERSION" '.version = $v | if .optionalDependencies then .optionalDependencies |= with_entries(.value = $v) else . end' \
+              npm/$pkg/package.json > npm/$pkg/package.json.tmp
+            mv npm/$pkg/package.json.tmp npm/$pkg/package.json
+          done
+
+      - name: Publish platform packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          for pkg in factbase-linux-x64 factbase-darwin-arm64 factbase-darwin-x64 factbase-win32-x64; do
+            npm publish npm/$pkg --access public
+          done
+
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish npm/factbase --access public
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/factbase-linux-x64/factbase
+            artifacts/factbase-darwin-arm64/factbase
+            artifacts/factbase-darwin-x64/factbase
+            artifacts/factbase-win32-x64/factbase.exe
+          generate_release_notes: true
