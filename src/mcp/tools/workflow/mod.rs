@@ -164,7 +164,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "create", "description": "Build a knowledge base from scratch. Provide domain='mycology' (or any domain) to get tailored structure suggestions, then guided setup: init, perspective, first documents, scan, verify. Accepts: domain, entity_types, path."},
                 {"name": "add", "description": "Grow the knowledge base. With topic='X': research and create new entities. With doc_id='X': improve that specific document. With neither: scan for gaps and enrich existing docs."},
                 {"name": "maintain", "description": "Internal quality maintenance: scan, detect links, check quality, link suggestions, organize analysis, resolve all questions, cleanup scan, report. Answers from existing knowledge only — no external research. With doc_id: maintain just that document."},
-                {"name": "refresh", "description": "Research-enabled maintenance: scan, check, then actively research entities using available tools (web search, etc.) to find latest info, update facts, add temporal tags, resolve questions, cleanup, report. Designed for automation (e.g. weekly cron). Optional filters: doc_type, doc_id, staleness threshold."},
+                {"name": "refresh", "description": "Research-enabled update: scan, check, then actively research entities using available tools (web search, etc.) to find latest info, update facts, add temporal tags, resolve questions, cleanup, report. USE THIS when the user asks about recent updates, new developments, latest news, or whether anything has changed. Trigger phrases: 'check for updates', 'look for recent', 'what\\'s new', 'has anything changed', 'recent news/developments/discoveries'. Example: 'Has anything changed with [topic]?' → refresh, topic='[topic]'. IMPORTANT: refresh=UPDATE existing docs with new info; add=CREATE new docs. Optional filters: doc_type, doc_id, staleness threshold."},
                 {"name": "correct", "description": "Propagate a fact correction across the entire KB. Provide correction='what is wrong and what is true' and optional source='who said it, when'. Finds all documents containing the false claim and fixes them with an audit trail."},
                 {"name": "transition", "description": "Handle temporal entity changes — renames, mergers, acquisitions, role changes. Unlike correct (which fixes false claims), transition handles things that WERE true and CHANGED. Asks how to reference the entity going forward before making changes. Provide change='what changed' and optional effective_date, source."},
                 {"name": "resolve", "description": "(Advanced) Answer existing review queue questions, apply changes, cleanup. Use maintain instead for full maintenance. Optionally pass question_type to filter by type."},
@@ -5144,6 +5144,66 @@ mod tests {
         assert_eq!(step["workflow"], "refresh");
         assert_eq!(step["complete"], true);
         assert!(step.get("remaining_questions").is_some());
+    }
+
+    // --- Legacy alias tests ---
+
+    #[test]
+    fn test_refresh_routing_schema_mentions_trigger_phrases() {
+        // The workflow schema description should guide models to use refresh for "recent updates" queries
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf_tool["description"].as_str().unwrap();
+        assert!(desc.contains("refresh"), "schema desc should mention refresh routing");
+        assert!(
+            desc.contains("recent") || desc.contains("what's new") || desc.contains("check for updates"),
+            "schema desc should include refresh trigger phrases"
+        );
+        assert!(
+            desc.contains("add=") || desc.contains("add vs refresh") || desc.contains("add=research"),
+            "schema desc should distinguish add from refresh"
+        );
+    }
+
+    #[test]
+    fn test_refresh_workflow_param_description_has_trigger_phrases() {
+        let tools = crate::mcp::tools::schema::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
+        let workflow_param_desc = wf_tool["inputSchema"]["properties"]["workflow"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            workflow_param_desc.contains("refresh"),
+            "workflow param should describe refresh"
+        );
+        assert!(
+            workflow_param_desc.contains("recent") || workflow_param_desc.contains("what's new"),
+            "workflow param should include refresh trigger phrases"
+        );
+        assert!(
+            workflow_param_desc.contains("UPDATE") || workflow_param_desc.contains("update"),
+            "workflow param should distinguish refresh (update) from add (create)"
+        );
+    }
+
+    #[test]
+    fn test_refresh_list_description_has_trigger_phrases() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "list"});
+        let result = workflow(&db, &args).unwrap();
+        let workflows = result["workflows"].as_array().unwrap();
+        let refresh = workflows.iter().find(|w| w["name"] == "refresh").unwrap();
+        let desc = refresh["description"].as_str().unwrap();
+        assert!(
+            desc.contains("recent") || desc.contains("what's new") || desc.contains("check for updates"),
+            "refresh list description should include trigger phrases"
+        );
+        assert!(
+            desc.contains("UPDATE") || desc.contains("update"),
+            "refresh list description should distinguish from add"
+        );
     }
 
     // --- Legacy alias tests ---
