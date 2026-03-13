@@ -132,7 +132,7 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g., \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own analysis.";
+    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own semantic analysis.\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct (e.g. 48U was always FortyAU; Hebrews never written by Paul)\n  YES → it was true until a specific point → use transition (e.g. XSOLIS renamed to PRIMA-X; Agaricus reclassified)\n⚠️ For multi-step operations, always use workflow() as the entry point — not individual factbase() ops.";
     let desc =
         load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -171,7 +171,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn factbase_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)";
+    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)\n⚠️ For multi-step operations (maintain, add, correct, refresh), use workflow() — not individual ops. Use factbase() directly only for: simple lookups, single targeted updates, or when a workflow tells you to.";
     let desc =
         load_schema_override("factbase", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -494,7 +494,44 @@ mod tests {
         assert!(desc.contains("maintain"));
     }
 
-    // --- Schema description overrides ---
+    #[test]
+    fn test_workflow_schema_has_decision_rule() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(
+            desc.contains("was the old information ever actually true"),
+            "workflow description should include correct vs transition decision rule"
+        );
+        assert!(desc.contains("NO"), "should have NO branch");
+        assert!(desc.contains("YES"), "should have YES branch");
+    }
+
+    #[test]
+    fn test_workflow_schema_has_user_override() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(
+            desc.contains("ALWAYS use that workflow"),
+            "workflow description should tell agent to respect explicit user workflow choice"
+        );
+    }
+
+    #[test]
+    fn test_factbase_schema_has_workflow_first_guidance() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        assert!(
+            desc.contains("workflow()"),
+            "factbase description should direct agents to use workflow() for multi-step operations"
+        );
+    }
+
 
     #[test]
     fn test_schema_override_no_repo_path() {
