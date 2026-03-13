@@ -398,6 +398,30 @@ For facts the knowledge base owner knows firsthand — things not available from
 ### Definitions (`definitions/` folder)
 Glossaries for acronyms, jargon, and domain-specific terms. Organize by domain: `definitions/business-terms.md`, `definitions/technical-terms.md`. When check flags an undefined acronym, add it here.
 
+## Obsidian Interop
+
+If you use Obsidian as your editor, enable the Obsidian preset in `perspective.yaml`:
+
+```yaml
+format:
+  preset: obsidian
+```
+
+This changes how factbase writes documents:
+
+- **Links** become `[[folder/filename|Title]]` wikilinks instead of `[[hex_id]]` references. Obsidian renders these as graph edges.
+- **Frontmatter** is added with `factbase_id`, `type`, and `tags` fields. The `type` field is the document type derived from the parent folder. The `tags` field is derived from the folder path.
+- **Review queue** is wrapped in a `> [!review]-` callout block, which Obsidian renders as a collapsed callout.
+- **Reviewed dates** are stored in the `reviewed:` frontmatter field instead of inline HTML comments.
+
+After enabling the preset, run `factbase scan`. Factbase writes `.obsidian/snippets/factbase.css` and `.obsidian/app.json` to the repository root. The CSS snippet styles the review callout and hides internal frontmatter fields from Obsidian's properties panel.
+
+**Editing in Obsidian:** Edit files normally. Changes are picked up on the next scan. Don't modify the `factbase_id` frontmatter field — it's the document's stable identity.
+
+**Renaming in Obsidian:** Obsidian updates its own wikilinks when you rename a file. Run `factbase scan` afterward to sync the database with the new path. The document ID is stable, so no data is lost.
+
+**Dataview:** The `type`, `tags`, and `reviewed` frontmatter fields are queryable with the Dataview plugin. See [docs/obsidian.md](obsidian.md) for example queries.
+
 ## Verification
 
 After creating documents:
