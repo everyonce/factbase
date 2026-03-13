@@ -108,24 +108,91 @@ impl FormatConfig {
 /// CSS content for the Obsidian snippet file.
 pub const OBSIDIAN_CSS_SNIPPET: &str = r#"/* Factbase custom styles — auto-generated, do not edit */
 
-/* Review Queue callout: amber colour + clipboard-check icon */
+/* ── Review Queue callout ─────────────────────────────────────────── */
 .callout[data-callout="review"] {
     --callout-color: 245, 158, 11;
     --callout-icon: lucide-clipboard-check;
 }
-
-/* Temporal tag (@t[...]) pill styling for inline code */
-.markdown-rendered code,
-.cm-s-obsidian .cm-inline-code {
-    border-radius: 4px;
-    padding: 1px 5px;
+/* Indent each review question with a left accent bar */
+.callout[data-callout="review"] .callout-content li {
+    border-left: 2px solid rgba(245, 158, 11, 0.45);
+    padding-left: 8px;
+    margin-bottom: 4px;
 }
 
+/* ── Temporal tag pills (@t[...] rendered as inline code) ─────────── */
+/* Amber pill — visually distinct from prose, suggests time/date data  */
+.markdown-rendered code,
+.cm-s-obsidian .cm-inline-code {
+    background-color: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.30);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 0.85em;
+}
+
+/* ── Source footnotes ─────────────────────────────────────────────── */
+/* [^n] superscript reference — indigo pill */
+.footnote-ref a {
+    background-color: rgba(99, 102, 241, 0.12);
+    border: 1px solid rgba(99, 102, 241, 0.28);
+    border-radius: 3px;
+    padding: 0 3px;
+    font-size: 0.75em;
+    text-decoration: none;
+    color: var(--link-color);
+}
+.footnote-ref a:hover {
+    background-color: rgba(99, 102, 241, 0.25);
+}
+/* Footnote definitions block at bottom of document */
+.footnotes {
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 2em;
+    padding-top: 0.5em;
+    font-size: 0.85em;
+    color: var(--text-muted);
+}
+
+/* ── Entity type badge (frontmatter 'type' property) ─────────────── */
+/* Show type as a green badge; hide internal-only fields */
+.metadata-property[data-property-key="factbase_id"],
+.metadata-property[data-property-key="reviewed"] {
+    display: none;
+}
+.metadata-property[data-property-key="type"] .metadata-property-value {
+    background-color: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    border-radius: 12px;
+    padding: 1px 10px;
+    font-size: 0.8em;
+    font-weight: 600;
+    color: rgb(16, 185, 129);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: inline-block;
+}
+
+/* ── Wikilink / cross-reference styling ──────────────────────────── */
+/* Dashed underline distinguishes [[links]] from plain text */
+.internal-link {
+    text-decoration: none;
+    border-bottom: 1px dashed var(--link-color);
+    padding-bottom: 1px;
+}
+.internal-link:hover {
+    border-bottom-style: solid;
+}
+/* Unresolved (broken) links — muted to signal missing target */
+.internal-link.is-unresolved {
+    color: var(--text-muted);
+    border-bottom-color: var(--text-muted);
+    opacity: 0.7;
+}
+
+/* ── Hide internal fields ─────────────────────────────────────────── */
 /* Hide filename slug — the # heading is the entity name */
 .inline-title { display: none; }
-
-/* Hide properties panel in reading view — factbase_id etc are internal */
-.metadata-container.mod-visible { display: none; }
 "#;
 
 /// Write `.obsidian/snippets/factbase.css` under `repo_path` if the repo uses
@@ -326,6 +393,9 @@ mod tests {
         assert!(content.contains("[data-callout=\"review\"]"));
         assert!(content.contains("245, 158, 11")); // amber
         assert!(content.contains("lucide-clipboard-check"));
+        assert!(content.contains(".footnote-ref")); // source footnotes
+        assert!(content.contains(".internal-link")); // wikilinks
+        assert!(content.contains("data-property-key=\"type\"")); // type badge
     }
 
     #[test]
@@ -352,8 +422,9 @@ mod tests {
     }
 
     #[test]
-    fn test_obsidian_css_snippet_hides_metadata_container() {
-        assert!(OBSIDIAN_CSS_SNIPPET.contains(".metadata-container.mod-visible"));
+    fn test_obsidian_css_snippet_hides_internal_properties() {
+        assert!(OBSIDIAN_CSS_SNIPPET.contains("factbase_id"));
+        assert!(OBSIDIAN_CSS_SNIPPET.contains("display: none"));
     }
 
     #[test]
