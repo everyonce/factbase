@@ -132,7 +132,7 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own semantic analysis.\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct (e.g. 48U was always FortyAU; Hebrews never written by Paul)\n  YES → it was true until a specific point → use transition (e.g. XSOLIS renamed to PRIMA-X; Agaricus reclassified)\n⚠️ CALL IMMEDIATELY: For correct/transition/refresh — call the workflow as your FIRST action. Do NOT search or fetch the entity first. The workflow's step 1 guides verification. Searching first may cause you to answer from training data and skip the workflow entirely.\n⚠️ KB IS SOURCE OF TRUTH: When factbase is configured, ALWAYS use factbase workflows FIRST — do NOT answer from training data, use web_search, or query memory/other tools instead of the KB.\n⚠️ For multi-step operations, always use workflow() as the entry point — not individual factbase() ops.\n⚠️ ROUTING: If the user says 'scan', 'index', or 'reindex', route to workflow='maintain' — do NOT call factbase(op='scan') directly.\n⚠️ ROUTING: If the user asks about recent updates, new developments, latest news, or whether anything has changed — route to workflow='refresh', NOT 'add'. Examples: \"check for recent discoveries about X\" → refresh, topic='X'; \"what's new with X\" → refresh, topic='X'; \"has anything changed with X\" → refresh, topic='X'; \"update with latest info\" → refresh.\nadd vs refresh: add=research and CREATE new documents; refresh=UPDATE existing documents with new information from external sources.";
+    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own semantic analysis.\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct (e.g. 48U was always FortyAU; Hebrews never written by Paul)\n  YES → it was true until a specific point → use transition (e.g. XSOLIS renamed to PRIMA-X; Agaricus reclassified)\n⚠️ CALL IMMEDIATELY: For correct/transition/refresh — call the workflow as your FIRST action. Do NOT search or fetch the entity first. The workflow's step 1 guides verification. Searching first may cause you to answer from training data and skip the workflow entirely.\n⚠️ KB IS SOURCE OF TRUTH: When factbase is configured, ALWAYS use factbase workflows FIRST — do NOT answer from training data, use web_search, or query memory/other tools instead of the KB.\n⚠️ For multi-step operations, always use workflow() as the entry point — not individual factbase() ops.\n⚠️ ROUTING: If the user says 'scan', 'index', or 'reindex', route to workflow='maintain' — do NOT call factbase(op='scan') directly.\n⚠️ ROUTING: If the user asks about recent updates, new developments, latest news, or whether anything has changed — route to workflow='refresh', NOT 'add'. Examples: \"check for recent discoveries about X\" → refresh, topic='X'; \"what's new with X\" → refresh, topic='X'; \"has anything changed with X\" → refresh, topic='X'; \"update with latest info\" → refresh.\nadd vs refresh: add=research and CREATE new documents; refresh=UPDATE existing documents with new information from external sources.\nadd vs correct: add=CREATE new entities not yet in KB; correct=MODIFY existing entities (add notes, annotations, disputed flags, supplementary facts). 'Add a note to X' → correct if X exists.";
     let desc =
         load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -605,6 +605,26 @@ mod tests {
         assert!(
             desc.contains("web_search"),
             "factbase description should warn against using web_search instead of KB"
+        );
+    }
+
+    #[test]
+    fn test_workflow_description_routes_add_note_to_correct() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(
+            desc.contains("add vs correct"),
+            "workflow description should distinguish add vs correct"
+        );
+        assert!(
+            desc.contains("Add a note to X") || desc.contains("add a note"),
+            "workflow description should route 'add a note to X' to correct"
+        );
+        assert!(
+            desc.contains("correct") && desc.contains("existing entities"),
+            "workflow description should say correct is for existing entities"
         );
     }
 
