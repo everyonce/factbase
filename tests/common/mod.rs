@@ -1,7 +1,6 @@
 //! Shared test utilities for integration tests.
 
 pub mod fixtures;
-pub mod ollama_helpers;
 
 use chrono::Utc;
 use factbase::{
