@@ -131,6 +131,39 @@ pub(super) fn is_obsidian_format(p: &Option<Perspective>) -> bool {
         == Some("obsidian")
 }
 
+/// Write Obsidian CSS/app.json/gitignore files for `path` if the repo uses the
+/// obsidian preset.  Returns the `obsidian_git_setup` JSON block to include in
+/// the workflow response, or `None` if the preset is not obsidian.
+pub(super) fn apply_obsidian_files(path: &str) -> Option<Value> {
+    let repo_path = std::path::Path::new(path);
+    let is_obsidian = crate::models::load_perspective_from_file(repo_path)
+        .and_then(|p| p.format)
+        .map(|f| f.preset.as_deref() == Some("obsidian"))
+        .unwrap_or(false);
+    if !is_obsidian {
+        return None;
+    }
+    if let Err(e) = crate::models::write_obsidian_css_snippet(repo_path) {
+        tracing::warn!("Failed to write Obsidian CSS snippet: {e}");
+    }
+    if let Err(e) = crate::models::write_obsidian_app_json(repo_path) {
+        tracing::warn!("Failed to write Obsidian app.json: {e}");
+    }
+    if let Err(e) = crate::models::ensure_obsidian_gitignore(repo_path) {
+        tracing::warn!("Failed to update .gitignore for Obsidian: {e}");
+    }
+    Some(serde_json::json!({
+        "note": "Obsidian preset detected. Wrote .obsidian/snippets/factbase.css, .obsidian/app.json, and updated .gitignore to track them.",
+        "action": "Commit these files so git pull on any Obsidian machine gets the CSS and pre-enabled snippet state.",
+        "files_to_commit": [
+            ".obsidian/snippets/factbase.css",
+            ".obsidian/app.json",
+            ".gitignore"
+        ],
+        "suggested_commit_message": "chore: add Obsidian CSS snippet and pre-enable state"
+    }))
+}
+
 pub(super) fn required_fields_hint(p: &Option<Perspective>) -> String {
     let Some(fields) = p
         .as_ref()

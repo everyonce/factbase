@@ -263,10 +263,6 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
         }),
         6 => {
             let path = get_str_arg(args, "path").unwrap_or("the target directory");
-            let is_obsidian = crate::models::load_perspective_from_file(std::path::Path::new(path))
-                .and_then(|p| p.format)
-                .map(|f| f.preset.as_deref() == Some("obsidian"))
-                .unwrap_or(false);
             let mut resp = serde_json::json!({
                 "workflow": "setup",
                 "step": 6, "total_steps": total,
@@ -274,17 +270,8 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 "instruction": resolve(wf, "setup.complete", DEFAULT_SETUP_COMPLETE_INSTRUCTION, &[]),
                 "complete": true
             });
-            if is_obsidian {
-                resp["obsidian_git_setup"] = serde_json::json!({
-                    "note": "Obsidian preset detected. The scan wrote .obsidian/snippets/factbase.css, .obsidian/app.json, and updated .gitignore to track them.",
-                    "action": "Commit these files so git pull on any Obsidian machine gets the CSS and pre-enabled snippet state.",
-                    "files_to_commit": [
-                        ".obsidian/snippets/factbase.css",
-                        ".obsidian/app.json",
-                        ".gitignore"
-                    ],
-                    "suggested_commit_message": "chore: add Obsidian CSS snippet and pre-enable state"
-                });
+            if let Some(obsidian) = apply_obsidian_files(path) {
+                resp["obsidian_git_setup"] = obsidian;
             }
             resp
         }
@@ -435,12 +422,17 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 v
             }
             _ => {
-                serde_json::json!({
+                let path = get_str_arg(args, "path").unwrap_or("the target directory");
+                let mut resp = serde_json::json!({
                     "workflow": "create", "step": total, "total_steps": total,
                     "title": format!("Step {total} of {total}: Complete"),
                     "instruction": resolve(wf, "create.complete", DEFAULT_CREATE_COMPLETE_INSTRUCTION, &[]),
                     "complete": true
-                })
+                });
+                if let Some(obsidian) = apply_obsidian_files(path) {
+                    resp["obsidian_git_setup"] = obsidian;
+                }
+                resp
             }
         }
     }
@@ -2503,6 +2495,95 @@ mod tests {
         assert!(file_strs.contains(&".obsidian/snippets/factbase.css"));
         assert!(file_strs.contains(&".obsidian/app.json"));
         assert!(file_strs.contains(&".gitignore"));
+        // Verify files were actually written
+        assert!(
+            tmp.path().join(".obsidian/snippets/factbase.css").exists(),
+            "CSS file should be written"
+        );
+        assert!(
+            tmp.path().join(".obsidian/app.json").exists(),
+            "app.json should be written"
+        );
+    }
+
+    #[test]
+    fn test_create_step6_obsidian_writes_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: Test\nformat:\n  preset: obsidian\n",
+        )
+        .unwrap();
+        // No domain → step 6 is the final step
+        let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
+        assert!(step["complete"].as_bool().unwrap());
+        assert!(
+            step["obsidian_git_setup"].is_object(),
+            "obsidian_git_setup should be present"
+        );
+        assert!(
+            tmp.path().join(".obsidian/snippets/factbase.css").exists(),
+            "CSS snippet should be written"
+        );
+        assert!(
+            tmp.path().join(".obsidian/app.json").exists(),
+            "app.json should be written"
+        );
+        let gitignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(
+            gitignore.contains(".obsidian/snippets/"),
+            ".gitignore should track snippets dir"
+        );
+    }
+
+    #[test]
+    fn test_create_final_step_no_domain_obsidian_writes_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: Test\nformat:\n  preset: obsidian\n",
+        )
+        .unwrap();
+        // create_step without domain: step 6 falls to _ => branch
+        let step = create_step(6, &serde_json::json!({"path": path}), &wf());
+        assert_eq!(step["workflow"], "create");
+        assert!(step["complete"].as_bool().unwrap());
+        assert!(
+            step["obsidian_git_setup"].is_object(),
+            "obsidian_git_setup should be present for create final step"
+        );
+        assert!(
+            tmp.path().join(".obsidian/snippets/factbase.css").exists(),
+            "CSS snippet should be written by create final step"
+        );
+        assert!(
+            tmp.path().join(".obsidian/app.json").exists(),
+            "app.json should be written by create final step"
+        );
+        let gitignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(
+            gitignore.contains(".obsidian/snippets/"),
+            ".gitignore should be updated by create final step"
+        );
+    }
+
+    #[test]
+    fn test_create_final_step_no_obsidian_no_files() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(tmp.path().join("perspective.yaml"), "focus: Test\n").unwrap();
+        let step = create_step(6, &serde_json::json!({"path": path}), &wf());
+        assert!(step["complete"].as_bool().unwrap());
+        assert!(
+            step.get("obsidian_git_setup").is_none(),
+            "no obsidian_git_setup for non-obsidian preset"
+        );
+        assert!(
+            !tmp.path().join(".obsidian").exists(),
+            ".obsidian dir should not be created"
+        );
     }
 
     #[test]
