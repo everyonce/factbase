@@ -199,21 +199,24 @@ format:
   preset: obsidian
 ```
 
-This switches to wikilinks (`[[Entity Name]]`), YAML frontmatter, and a collapsed callout for the review queue.
+This switches to `[[folder/filename|Title]]` wikilinks, YAML frontmatter with `type` and `tags`, and a collapsed callout for the review queue. On the next scan, factbase writes `.obsidian/snippets/factbase.css` (styles the review callout, hides internal frontmatter fields) and `.obsidian/app.json` (pre-enables the snippet).
 
 **Two-tool workflow:**
 
 1. Edit or rename files in Obsidian as usual — Obsidian auto-updates its own wikilinks
-2. Run `factbase(op=scan)` (or `factbase scan`) to sync the database with any path changes
+2. Run `factbase scan` (or `factbase(op='scan')`) to sync the database with any path changes
 3. Ask your agent to search, check quality, or add new content
 
-**What works out of the box:**
-- Graph view — factbase writes `[[wikilinks]]` that Obsidian renders as graph edges
-- Tags — auto-generated from folder structure (`species/` → `#species`)
-- Review queue — appears as a collapsed callout, expandable in Obsidian
+**What works:**
+- Graph view — factbase writes wikilinks that Obsidian renders as graph edges
+- Tags — auto-generated from folder path (`customers/acme/people/alice.md` → `#acme #people`)
+- Dataview — `type:`, `tags:`, and `reviewed:` frontmatter fields are queryable
+- Review queue — appears as a collapsed `> [!review]` callout, expandable in Obsidian
 - Editing — any content added in Obsidian is picked up on the next scan
 
-**One friction point:** if you rename a file in Obsidian, the factbase database holds the old path until you run a scan. The document's ID is stable across renames, so no data is lost — just run `factbase(op=scan)` to resync.
+**One friction point:** if you rename a file in Obsidian, the factbase database holds the old path until you run a scan. The document's ID is stable across renames (`factbase_id:` in frontmatter), so no data is lost.
+
+See [docs/obsidian.md](docs/obsidian.md) for the full guide including CSS customization, Dataview query examples, and git setup.
 
 ## Troubleshooting
 
