@@ -132,7 +132,7 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own semantic analysis.\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct (e.g. 48U was always FortyAU; Hebrews never written by Paul)\n  YES → it was true until a specific point → use transition (e.g. XSOLIS renamed to PRIMA-X; Agaricus reclassified)\n⚠️ CALL IMMEDIATELY: For correct/transition/refresh — call the workflow as your FIRST action. Do NOT search or fetch the entity first. The workflow's step 1 guides verification. Searching first may cause you to answer from training data and skip the workflow entirely.\n⚠️ For multi-step operations, always use workflow() as the entry point — not individual factbase() ops.\n⚠️ ROUTING: If the user says 'scan', 'index', or 'reindex', route to workflow='maintain' — do NOT call factbase(op='scan') directly.\n⚠️ ROUTING: If the user asks about recent updates, new developments, latest news, or whether anything has changed — route to workflow='refresh', NOT 'add'. Examples: \"check for recent discoveries about X\" → refresh, topic='X'; \"what's new with X\" → refresh, topic='X'; \"has anything changed with X\" → refresh, topic='X'; \"update with latest info\" → refresh.\nadd vs refresh: add=research and CREATE new documents; refresh=UPDATE existing documents with new information from external sources.";
+    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify:\ncreate, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\n⚠️ If IO/body errors from answer_questions, split into smaller batches.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override based on your own semantic analysis.\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct (e.g. 48U was always FortyAU; Hebrews never written by Paul)\n  YES → it was true until a specific point → use transition (e.g. XSOLIS renamed to PRIMA-X; Agaricus reclassified)\n⚠️ CALL IMMEDIATELY: For correct/transition/refresh — call the workflow as your FIRST action. Do NOT search or fetch the entity first. The workflow's step 1 guides verification. Searching first may cause you to answer from training data and skip the workflow entirely.\n⚠️ KB IS SOURCE OF TRUTH: When factbase is configured, ALWAYS use factbase workflows FIRST — do NOT answer from training data, use web_search, or query memory/other tools instead of the KB.\n⚠️ For multi-step operations, always use workflow() as the entry point — not individual factbase() ops.\n⚠️ ROUTING: If the user says 'scan', 'index', or 'reindex', route to workflow='maintain' — do NOT call factbase(op='scan') directly.\n⚠️ ROUTING: If the user asks about recent updates, new developments, latest news, or whether anything has changed — route to workflow='refresh', NOT 'add'. Examples: \"check for recent discoveries about X\" → refresh, topic='X'; \"what's new with X\" → refresh, topic='X'; \"has anything changed with X\" → refresh, topic='X'; \"update with latest info\" → refresh.\nadd vs refresh: add=research and CREATE new documents; refresh=UPDATE existing documents with new information from external sources.";
     let desc =
         load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -171,7 +171,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn factbase_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?) — re-index documents (for full maintenance use workflow(maintain) instead), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)\n⚠️ For multi-step operations (maintain, add, correct, refresh), use workflow() — not individual ops. Use factbase() directly only for: simple lookups, single targeted updates, or when a workflow tells you to.";
+    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?) — re-index documents (for full maintenance use workflow(maintain) instead), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status)\n⚠️ For multi-step operations (maintain, add, correct, refresh), use workflow() — not individual ops. Use factbase() directly only for: simple lookups, single targeted updates, or when a workflow tells you to.\n⚠️ KB IS SOURCE OF TRUTH: When factbase is configured, ALWAYS query the KB first — do NOT answer from training data, use web_search, or query memory/other tools instead of the KB.";
     let desc =
         load_schema_override("factbase", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -565,6 +565,46 @@ mod tests {
         assert!(
             desc.contains("index") || desc.contains("reindex"),
             "workflow description should route 'index'/'reindex' to maintain"
+        );
+    }
+
+    #[test]
+    fn test_workflow_schema_has_kb_priority_guidance() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(
+            desc.contains("KB IS SOURCE OF TRUTH") || desc.contains("source of truth"),
+            "workflow description should assert KB is source of truth"
+        );
+        assert!(
+            desc.contains("training data"),
+            "workflow description should warn against answering from training data"
+        );
+        assert!(
+            desc.contains("web_search"),
+            "workflow description should warn against using web_search instead of KB"
+        );
+    }
+
+    #[test]
+    fn test_factbase_schema_has_kb_priority_guidance() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let fb = tools.iter().find(|t| t["name"] == "factbase").unwrap();
+        let desc = fb["description"].as_str().unwrap();
+        assert!(
+            desc.contains("KB IS SOURCE OF TRUTH") || desc.contains("source of truth"),
+            "factbase description should assert KB is source of truth"
+        );
+        assert!(
+            desc.contains("training data"),
+            "factbase description should warn against answering from training data"
+        );
+        assert!(
+            desc.contains("web_search"),
+            "factbase description should warn against using web_search instead of KB"
         );
     }
 
