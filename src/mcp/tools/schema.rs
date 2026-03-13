@@ -729,4 +729,142 @@ mod tests {
             "factbase should keep default"
         );
     }
+
+    // ── Routing Benchmark Suite (v12) ────────────────────────────────────────
+    //
+    // Standard test set: 10 prompts (P1–P10) + 5 clarification prompts (P11–P15).
+    // These define the expected routing decisions for regression testing.
+    //
+    // Harness instruction (must be included when running live benchmarks):
+    //   "If you need to ask a clarifying question, output 'ASK: <question>' and
+    //    stop. Otherwise call the appropriate tool."
+    //
+    // Results baseline (v12): all 3 models (Opus, Sonnet, Haiku) scored 15/15.
+    // See docs/workflow-routing-final-v12.md for full results.
+
+    /// Routing benchmark prompt definitions with expected outcomes.
+    /// Each entry: (prompt, expected_routing, category)
+    #[cfg(test)]
+    pub fn routing_benchmark_prompts() -> Vec<(&'static str, &'static str, &'static str)> {
+        vec![
+            // Standard 10 (P1–P10) — from v6 suite, all models 10/10
+            (
+                "I think there are some mistakes in how we've recorded the early church",
+                "maintain",
+                "standard",
+            ),
+            (
+                "The apostle Paul didn't write Ephesians — modern scholars attribute it to a student of Paul",
+                "correct",
+                "standard",
+            ),
+            (
+                "Refresh the KB with the latest Dead Sea Scrolls scholarship",
+                "refresh",
+                "standard",
+            ),
+            (
+                "We need to update our records — the Gospel of Mark was actually written AFTER Luke, not before",
+                "correct",
+                "standard",
+            ),
+            (
+                "Can you help me understand what the KB says about baptism?",
+                "search",
+                "standard",
+            ),
+            (
+                "I want to reorganize the KB so that all epistles are grouped together",
+                "organize",
+                "standard",
+            ),
+            (
+                "The KB needs updating — there's been a lot of new work on the historical Paul recently",
+                "refresh",
+                "standard",
+            ),
+            (
+                "I think we should correct the record on the Synoptic Problem — our KB has it wrong",
+                "correct",
+                "standard",
+            ),
+            (
+                "Can you check whether our Dead Sea Scrolls content is accurate and complete?",
+                "maintain",
+                "standard",
+            ),
+            (
+                "The Gospel of John was written by John the Apostle — but I've seen this disputed. What does our KB say?",
+                "search",
+                "standard",
+            ),
+            // Clarification 5 (P11–P15) — from v11 suite, Sonnet 5/5
+            // These prompts have no clear referent; correct response is ASK.
+            ("Fix John", "ASK", "clarification"),
+            ("Update it", "ASK", "clarification"),
+            ("That needs to be corrected", "ASK", "clarification"),
+            ("Fix the entry", "ASK", "clarification"),
+            // P15: ASK is preferred; workflow(maintain) is also defensible.
+            ("The dates are wrong", "ASK", "clarification"),
+        ]
+    }
+
+    #[test]
+    fn test_routing_benchmark_has_15_prompts() {
+        let prompts = routing_benchmark_prompts();
+        assert_eq!(prompts.len(), 15, "benchmark suite must have 15 prompts");
+    }
+
+    #[test]
+    fn test_routing_benchmark_has_10_standard_and_5_clarification() {
+        let prompts = routing_benchmark_prompts();
+        let standard: Vec<_> = prompts.iter().filter(|p| p.2 == "standard").collect();
+        let clarification: Vec<_> = prompts.iter().filter(|p| p.2 == "clarification").collect();
+        assert_eq!(standard.len(), 10, "must have 10 standard prompts");
+        assert_eq!(clarification.len(), 5, "must have 5 clarification prompts");
+    }
+
+    #[test]
+    fn test_routing_benchmark_clarification_prompts_expect_ask() {
+        let prompts = routing_benchmark_prompts();
+        for (prompt, expected, category) in &prompts {
+            if *category == "clarification" {
+                assert_eq!(
+                    *expected, "ASK",
+                    "clarification prompt '{prompt}' must expect ASK"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_routing_benchmark_standard_prompts_cover_all_workflows() {
+        let prompts = routing_benchmark_prompts();
+        let standard_routes: Vec<&str> = prompts
+            .iter()
+            .filter(|p| p.2 == "standard")
+            .map(|p| p.1)
+            .collect();
+        // All major routing targets must appear in the standard suite
+        for target in &["maintain", "correct", "refresh", "search", "organize"] {
+            assert!(
+                standard_routes.contains(target),
+                "standard suite must include a '{target}' routing case"
+            );
+        }
+    }
+
+    #[test]
+    fn test_routing_benchmark_harness_instruction_in_workflow_schema() {
+        // The workflow tool description must contain the clarification instruction
+        // that the harness injects: agents should output ASK for ambiguous prompts.
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let desc = wf["description"].as_str().unwrap();
+        assert!(
+            desc.contains("clarifying question") || desc.contains("CLARIFICATION"),
+            "workflow schema must include clarification instruction for ambiguous prompts"
+        );
+    }
 }
