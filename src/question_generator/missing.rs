@@ -335,4 +335,39 @@ mod tests {
             "Recent reviewed marker should suppress at least as many questions as old marker"
         );
     }
+
+    #[test]
+    fn test_frontmatter_block_tags_not_missing_questions() {
+        // Block-style YAML array items inside frontmatter must not generate questions
+        let content = "---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Title\n\n- Real fact\n";
+        let questions = generate_missing_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("Real fact"));
+    }
+
+    #[test]
+    fn test_frontmatter_inline_tags_not_missing_questions() {
+        // Inline YAML array (tags: [x, y]) doesn't match FACT_LINE_REGEX, so no question
+        let content = "---\ntags: [services, aws]\n---\n# Title\n\n- Real fact\n";
+        let questions = generate_missing_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("Real fact"));
+    }
+
+    #[test]
+    fn test_body_type_colon_still_generates_missing() {
+        // "type:" in body text (not frontmatter) should still generate questions
+        let content = "# Title\n\n- type: services\n";
+        let questions = generate_missing_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("type: services"));
+    }
+
+    #[test]
+    fn test_content_after_frontmatter_checked_normally_missing() {
+        let content = "---\ntype: services\n---\n# Title\n\n- Fact after frontmatter\n";
+        let questions = generate_missing_questions(content);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("Fact after frontmatter"));
+    }
 }
