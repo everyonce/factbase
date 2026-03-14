@@ -5,6 +5,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
+/// A user-defined citation pattern for tier-1 validation (from perspective.yaml).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CitationPattern {
+    /// Pattern name (e.g., "catalog_number")
+    pub name: String,
+    /// Regex pattern string (e.g., "[A-Z]{1,3}[- ]?\\d+")
+    pub pattern: String,
+    /// Optional human-readable description
+    pub description: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReviewPerspective {
     /// Override global stale_days threshold for this repository
@@ -38,6 +49,9 @@ pub struct Perspective {
     /// Link detection mode: "exact" (original) or "fuzzy" (default, enhanced matching)
     #[serde(default)]
     pub link_match_mode: Option<String>,
+    /// Domain-specific citation patterns for tier-1 validation.
+    #[serde(default)]
+    pub citation_patterns: Option<Vec<CitationPattern>>,
 }
 
 /// Default perspective.yaml template created by init commands.
@@ -75,7 +89,17 @@ pub const PERSPECTIVE_TEMPLATE: &str = "\
 #   required_fields:\n\
 #     species: [classification, habitat, edibility]\n\
 #     civilization: [period, region, key_figures]\n\
-#     person: [current_role, location]\n";
+#     person: [current_role, location]\n\
+\n\
+# Domain-specific citation patterns (tier-1 validation)\n\
+# Citations matching any pattern pass without a weak-source question.\n\
+# citation_patterns:\n\
+#   - name: catalog_number\n\
+#     pattern: '[A-Z]{1,3}[- ]?\\d+'\n\
+#     description: Record label catalog numbers (e.g., CL 1355, SD 1361)\n\
+#   - name: verse_reference\n\
+#     pattern: '\\w+ \\d+:\\d+'\n\
+#     description: Scripture verse references (e.g., Genesis 1:1)\n";
 
 /// Load and parse `perspective.yaml` from a repository root directory.
 ///
@@ -118,6 +142,7 @@ pub fn load_perspective_from_file(repo_root: &Path) -> Option<Perspective> {
                 || p.review.is_some()
                 || p.format.is_some()
                 || p.link_match_mode.is_some()
+                || p.citation_patterns.is_some()
             {
                 Some(p)
             } else {
@@ -358,5 +383,32 @@ mod tests {
         .unwrap();
         let p = load_perspective_from_file(tmp.path()).unwrap();
         assert_eq!(p.link_match_mode.as_deref(), Some("fuzzy"));
+    }
+
+    #[test]
+    fn test_load_perspective_with_citation_patterns() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "citation_patterns:\n  - name: catalog_number\n    pattern: \"[A-Z]{1,3}[- ]?\\\\d+\"\n    description: Record label catalog numbers\n",
+        )
+        .unwrap();
+        let p = load_perspective_from_file(tmp.path()).unwrap();
+        let patterns = p.citation_patterns.unwrap();
+        assert_eq!(patterns.len(), 1);
+        assert_eq!(patterns[0].name, "catalog_number");
+        assert_eq!(patterns[0].description.as_deref(), Some("Record label catalog numbers"));
+    }
+
+    #[test]
+    fn test_load_perspective_citation_patterns_is_meaningful_field() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "citation_patterns:\n  - name: test\n    pattern: \"\\\\d+\"\n",
+        )
+        .unwrap();
+        // citation_patterns alone should make the perspective non-None
+        assert!(load_perspective_from_file(tmp.path()).is_some());
     }
 }

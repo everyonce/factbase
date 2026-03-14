@@ -9,6 +9,7 @@
 
 use regex::Regex;
 use std::sync::LazyLock;
+use tracing::warn;
 
 // --- Regexes ---
 
@@ -319,6 +320,32 @@ pub fn citation_failure_reason(ct: &CitationType) -> &'static str {
 pub fn is_citation_specific(text: &str) -> bool {
     let ct = detect_citation_type(text);
     validate_citation(&ct, text)
+}
+
+/// Compile user-defined citation patterns from perspective.yaml.
+/// Invalid regex patterns are logged as warnings and skipped.
+pub fn compile_citation_patterns(patterns: &[crate::models::CitationPattern]) -> Vec<Regex> {
+    patterns
+        .iter()
+        .filter_map(|p| match Regex::new(&p.pattern) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warn!("Invalid citation_pattern '{}': {}", p.name, e);
+                None
+            }
+        })
+        .collect()
+}
+
+/// Returns true if the citation passes tier-1 validation, including user-defined patterns.
+///
+/// Checks universal patterns first; if those fail, checks each extra pattern.
+/// A match against any extra pattern is a tier-1 PASS.
+pub fn is_citation_specific_with_patterns(text: &str, extra: &[Regex]) -> bool {
+    if is_citation_specific(text) {
+        return true;
+    }
+    extra.iter().any(|r| r.is_match(text))
 }
 
 #[cfg(test)]
@@ -978,5 +1005,61 @@ mod tests {
             detect_citation_type("Richard Cook, Blue Note Records: The Biography, Justin Charles & Co., 2003"),
             CitationType::Book
         );
+    }
+
+    // --- compile_citation_patterns + is_citation_specific_with_patterns ---
+
+    #[test]
+    fn test_perspective_pattern_passes_tier1() {
+        // "internal memo" fails universal tier-1 but matches a custom pattern → tier-1 pass
+        let patterns = vec![crate::models::CitationPattern {
+            name: "internal_memo".into(),
+            pattern: r"internal memo".into(),
+            description: None,
+        }];
+        let compiled = compile_citation_patterns(&patterns);
+        assert!(is_citation_specific_with_patterns("internal memo", &compiled));
+    }
+
+    #[test]
+    fn test_no_perspective_patterns_falls_through_to_universal() {
+        // Empty extra patterns — still passes via universal URL check
+        assert!(is_citation_specific_with_patterns("https://example.com", &[]));
+    }
+
+    #[test]
+    fn test_vague_citation_no_patterns_fails() {
+        assert!(!is_citation_specific_with_patterns("AWS documentation", &[]));
+    }
+
+    #[test]
+    fn test_vague_citation_with_matching_pattern_passes() {
+        let patterns = vec![crate::models::CitationPattern {
+            name: "verse_ref".into(),
+            pattern: r"\w+ \d+:\d+".into(),
+            description: None,
+        }];
+        let compiled = compile_citation_patterns(&patterns);
+        // "Quran 2:255" matches the verse_ref pattern
+        assert!(is_citation_specific_with_patterns("Quran 2:255", &compiled));
+    }
+
+    #[test]
+    fn test_invalid_regex_in_perspective_is_skipped() {
+        let patterns = vec![crate::models::CitationPattern {
+            name: "bad_pattern".into(),
+            pattern: "[invalid(".into(),
+            description: None,
+        }];
+        // Should not panic — invalid patterns are skipped
+        let compiled = compile_citation_patterns(&patterns);
+        assert!(compiled.is_empty());
+    }
+
+    #[test]
+    fn test_empty_citation_patterns_works() {
+        // No extra patterns — behaves like is_citation_specific
+        assert!(!is_citation_specific_with_patterns("AWS documentation", &[]));
+        assert!(is_citation_specific_with_patterns("https://example.com", &[]));
     }
 }

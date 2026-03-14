@@ -80,8 +80,8 @@ pub use review::{
 
 // Re-export citation quality scoring
 pub use citations::{
-    citation_failure_reason, detect_citation_type, is_citation_specific, validate_citation,
-    CitationType,
+    citation_failure_reason, compile_citation_patterns, detect_citation_type, is_citation_specific,
+    is_citation_specific_with_patterns, validate_citation, CitationType,
 };
 
 // Re-export chunking types and functions

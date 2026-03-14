@@ -1757,6 +1757,7 @@ mod tests {
             }),
             format: None,
             link_match_mode: None,
+            citation_patterns: None,
         })
     }
 

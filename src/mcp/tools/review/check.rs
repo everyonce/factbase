@@ -118,6 +118,11 @@ async fn check_questions(
         .as_ref()
         .and_then(|p| p.review.as_ref())
         .and_then(|r| r.glossary_types.clone());
+    let citation_patterns = perspective
+        .as_ref()
+        .and_then(|p| p.citation_patterns.as_deref())
+        .map(|ps| crate::processor::compile_citation_patterns(ps))
+        .unwrap_or_default();
 
     let all_docs = load_docs(db, repo_id)?;
 
@@ -132,6 +137,7 @@ async fn check_questions(
         acquire_write_guard: true,
         repo_id: repo_id.map(String::from),
         glossary_types,
+        citation_patterns,
     };
 
     let output = check_all_documents(&all_docs, db, embedding, &config, progress).await?;
@@ -262,6 +268,11 @@ async fn check_batch(
         .as_ref()
         .and_then(|p| p.review.as_ref())
         .and_then(|r| r.glossary_types.clone());
+    let citation_patterns = perspective
+        .as_ref()
+        .and_then(|p| p.citation_patterns.as_deref())
+        .map(|ps| crate::processor::compile_citation_patterns(ps))
+        .unwrap_or_default();
 
     progress.phase("Checking selected documents");
 
@@ -274,6 +285,7 @@ async fn check_batch(
         acquire_write_guard: true,
         repo_id: repo_id.map(String::from),
         glossary_types,
+        citation_patterns,
     };
 
     let output = check_all_documents(&docs, db, embedding, &config, progress).await?;

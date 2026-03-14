@@ -20,6 +20,7 @@ use crate::question_generator::{
     generate_weak_source_questions,
 };
 use chrono::Utc;
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tracing::{info, warn};
@@ -52,6 +53,7 @@ pub fn run_generators(
     defined_terms: &HashSet<String>,
     stale_days: i64,
     full: bool,
+    citation_patterns: &[Regex],
 ) -> Vec<ReviewQuestion> {
     let mut questions = generate_temporal_questions(body, doc_type);
     questions.extend(generate_conflict_questions(body));
@@ -61,7 +63,7 @@ pub fn run_generators(
     questions.extend(generate_missing_questions(body));
     if full {
         questions.extend(generate_source_quality_questions(body));
-        questions.extend(generate_weak_source_questions(body));
+        questions.extend(generate_weak_source_questions(body, citation_patterns));
     }
     questions.extend(generate_ambiguous_questions_with_type(
         body,
@@ -93,6 +95,9 @@ pub struct CheckConfig {
     pub repo_id: Option<String>,
     /// Document types to treat as glossary/definitions (from perspective.yaml).
     pub glossary_types: Option<Vec<String>>,
+    /// Compiled domain-specific citation patterns from perspective.yaml.
+    /// Citations matching any pattern pass tier-1 without a weak-source question.
+    pub citation_patterns: Vec<Regex>,
 }
 
 /// Result of linting a single document.
@@ -225,6 +230,7 @@ pub async fn check_all_documents(
     // flag acronyms that are already defined in the repo.
     let defined_terms = collect_defined_terms_with_types(docs, config.glossary_types.as_deref());
     let defined_terms_ref = &defined_terms;
+    let citation_patterns_ref = &config.citation_patterns;
 
     let mut all_results = Vec::new();
     let mut deadline_hit = false;
@@ -264,7 +270,7 @@ pub async fn check_all_documents(
                     // treat review entries as document facts.
                     let body = crate::patterns::content_body(content);
 
-                    let mut questions = run_generators(body, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, true);
+                    let mut questions = run_generators(body, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, true, citation_patterns_ref);
 
                     // Check for duplicate titles
                     if let Some(dupes) = title_map_ref.get(&doc.title.to_lowercase()) {
@@ -358,7 +364,7 @@ pub async fn check_all_documents(
                     // Count questions suppressed by reviewed markers.
                     // Strip reviewed markers from body and re-generate to measure the delta.
                     let stripped = crate::patterns::strip_reviewed_markers(body);
-                    let mut unrestricted = run_generators(&stripped, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, false);
+                    let mut unrestricted = run_generators(&stripped, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, false, citation_patterns_ref);
                     filter_sequential_conflicts(&stripped, &mut unrestricted);
                     let suppressed_by_review = unrestricted.len().saturating_sub(questions.len());
 
@@ -588,6 +594,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -618,6 +625,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -649,6 +657,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -676,6 +685,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -715,6 +725,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -742,6 +753,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -782,6 +794,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -809,6 +822,7 @@ mod tests {
             acquire_write_guard: true,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
@@ -833,6 +847,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         }
     }
 
@@ -880,6 +895,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, &config, &progress)
@@ -1000,6 +1016,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
@@ -1041,6 +1058,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -1098,6 +1116,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
 
@@ -1187,6 +1206,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
 
@@ -1248,6 +1268,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
 
@@ -1300,6 +1321,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
 
@@ -1364,6 +1386,7 @@ mod tests {
                     reviewed_in_frontmatter: None,
                 }),
                 link_match_mode: None,
+                citation_patterns: None,
             }),
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
@@ -1389,6 +1412,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
@@ -1445,6 +1469,7 @@ mod tests {
             acquire_write_guard: false,
             repo_id: None,
             glossary_types: None,
+            citation_patterns: vec![],
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
