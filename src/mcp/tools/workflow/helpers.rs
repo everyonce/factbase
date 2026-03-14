@@ -673,7 +673,7 @@ pub(super) fn parse_skip_steps(args: &Value) -> Vec<String> {
 }
 
 /// Map logical step names to their step numbers for the improve workflow.
-pub(super) const IMPROVE_STEPS: &[&str] = &["cleanup", "resolve", "enrich", "check"];
+pub(super) const IMPROVE_STEPS: &[&str] = &["cleanup", "resolve", "enrich", "scan", "check"];
 
 /// Compute the effective step sequence, skipping any steps in `skip`.
 pub(super) fn effective_steps(skip: &[String]) -> Vec<(usize, &'static str)> {
@@ -978,18 +978,20 @@ mod tests {
     #[test]
     fn test_effective_steps_no_skip() {
         let steps = effective_steps(&[]);
-        assert_eq!(steps.len(), 4);
+        assert_eq!(steps.len(), 5);
         assert_eq!(steps[0], (1, "cleanup"));
-        assert_eq!(steps[3], (4, "check"));
+        assert_eq!(steps[3], (4, "scan"));
+        assert_eq!(steps[4], (5, "check"));
     }
 
     #[test]
     fn test_effective_steps_skip_some() {
         let skip = vec!["resolve".to_string(), "check".to_string()];
         let steps = effective_steps(&skip);
-        assert_eq!(steps.len(), 2);
+        assert_eq!(steps.len(), 3);
         assert_eq!(steps[0].1, "cleanup");
         assert_eq!(steps[1].1, "enrich");
+        assert_eq!(steps[2].1, "scan");
     }
 
     // --- recommended_resolve_order ---
