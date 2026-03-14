@@ -169,6 +169,7 @@ pub fn filter_sequential_conflicts(content: &str, questions: &mut Vec<ReviewQues
             if is_boundary_month_sequential(s1, e1, s2, e2)
                 || is_shared_entity_sequential(&f1.text, &f2.text, s1, s2)
                 || is_same_date_sequential(f1, f2)
+                || is_parallel_properties(f1, f2)
             {
                 sequential_lines.insert(f1.line_number);
                 sequential_lines.insert(f2.line_number);
@@ -387,6 +388,13 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
     // describing different events in a timeline.  Two things can happen in the
     // same year without contradicting each other.
     if is_same_date_sequential(fact1, fact2) {
+        return None;
+    }
+
+    // Suppress when facts share the exact same temporal range but describe
+    // different concurrent properties (low word overlap).  Multiple independent
+    // attributes of the same entity can share a temporal tag without conflicting.
+    if is_parallel_properties(fact1, fact2) {
         return None;
     }
 
@@ -861,6 +869,50 @@ fn extract_proper_names(text: &str) -> Vec<String> {
         names.push(current.join(" "));
     }
     names
+}
+
+/// Returns true when two facts share the exact same temporal range and have
+/// low content-word overlap, indicating they describe different concurrent
+/// properties of the same entity rather than conflicting claims.
+///
+/// Heuristic: same start + end + ongoing flag, AND Jaccard similarity of
+/// content words < 0.3.  This catches cases like three characteristics of
+/// an entity all tagged @t[1958..] — they're parallel properties, not conflicts.
+fn is_parallel_properties(fact1: &FactWithRange, fact2: &FactWithRange) -> bool {
+    let (Some(s1), Some(s2)) = (fact1.start_date.as_deref(), fact2.start_date.as_deref()) else {
+        return false;
+    };
+    if normalize_date_for_comparison(s1) != normalize_date_for_comparison(s2) {
+        return false;
+    }
+    if fact1.is_ongoing != fact2.is_ongoing {
+        return false;
+    }
+    if !fact1.is_ongoing {
+        let e1 = fact1.end_date.as_deref().unwrap_or(s1);
+        let e2 = fact2.end_date.as_deref().unwrap_or(s2);
+        if normalize_date_for_comparison(e1) != normalize_date_for_comparison(e2) {
+            return false;
+        }
+    }
+    content_word_jaccard(&fact1.text, &fact2.text) < 0.3
+}
+
+/// Compute Jaccard similarity of word sets (words ≥ 2 chars, lowercased).
+fn content_word_jaccard(text1: &str, text2: &str) -> f32 {
+    let words = |t: &str| -> std::collections::HashSet<String> {
+        t.split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() >= 2)
+            .map(|w| w.to_lowercase())
+            .collect()
+    };
+    let w1 = words(text1);
+    let w2 = words(text2);
+    let union = w1.union(&w2).count();
+    if union == 0 {
+        return 1.0;
+    }
+    w1.intersection(&w2).count() as f32 / union as f32
 }
 
 #[cfg(test)]
@@ -1697,6 +1749,99 @@ mod tests {
                 "Cross-check: threw stone".to_string(),
             ),
             ReviewQuestion::new(QuestionType::Stale, Some(4), "Stale fact".to_string()),
+        ];
+        filter_sequential_conflicts(content, &mut questions);
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].question_type, QuestionType::Stale);
+    }
+
+    // --- parallel properties suppression tests ---
+
+    #[test]
+    fn test_parallel_properties_same_ongoing_tag_suppressed() {
+        // Three independent characteristics of an entity with the same @t[1958..] tag
+        let content = "# Modal Jazz\n\n\
+            - Uses scales instead of chord changes @t[1958..]\n\
+            - Emphasizes melodic improvisation @t[1958..]\n\
+            - Pioneered by Miles Davis @t[1958..]";
+        let questions = generate_conflict_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Parallel properties with same ongoing tag should not conflict, got: {:?}",
+            questions.iter().map(|q| &q.description).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parallel_properties_same_closed_range_suppressed() {
+        // Independent properties sharing the same closed range
+        let content = "# Pinatubo Eruption\n\n\
+            - Ash cloud reached 35km altitude @t[1991..1991]\n\
+            - Caused global temperature drop of 0.5C @t[1991..1991]\n\
+            - Displaced 200000 people @t[1991..1991]";
+        let questions = generate_conflict_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Parallel properties with same closed range should not conflict"
+        );
+    }
+
+    #[test]
+    fn test_contradictory_same_tag_still_conflicts() {
+        // Two facts with same @t tag but high word overlap (same subject+predicate) → conflict
+        let content = "# Entity\n\n\
+            - Population of Springfield reached 5000 @t[=2020]\n\
+            - Population of Springfield was 3000 @t[=2020]";
+        assert_eq!(
+            generate_conflict_questions(content).len(),
+            1,
+            "Contradictory facts with same tag should still conflict"
+        );
+    }
+
+    #[test]
+    fn test_two_ongoing_same_start_high_overlap_still_conflicts() {
+        // "Role A" and "Role B" share "Role" → Jaccard = 1.0 → still conflicts
+        let content = "# Entity\n\n## Roles\n- Role A @t[2023..]\n- Role B @t[2023..]";
+        assert_eq!(generate_conflict_questions(content).len(), 1);
+    }
+
+    #[test]
+    fn test_content_word_jaccard() {
+        // Jazz-like: low overlap
+        assert!(
+            content_word_jaccard(
+                "Uses scales instead of chord changes",
+                "Emphasizes melodic improvisation"
+            ) < 0.3
+        );
+        // Same text: Jaccard = 1.0
+        assert_eq!(content_word_jaccard("Role A", "Role A"), 1.0);
+        // Role A / Role B: "role" shared, union = {"role", "a", "b"} but "a","b" < 2 chars
+        // → words1 = {"role"}, words2 = {"role"}, Jaccard = 1.0
+        assert_eq!(content_word_jaccard("Role A", "Role B"), 1.0);
+        // Population contradiction: high overlap
+        assert!(
+            content_word_jaccard(
+                "Population of Springfield reached 5000",
+                "Population of Springfield was 3000"
+            ) >= 0.3
+        );
+    }
+
+    #[test]
+    fn test_filter_sequential_catches_parallel_properties() {
+        // filter_sequential_conflicts should suppress parallel-property cross-validation conflicts
+        let content = "# Modal Jazz\n\n\
+            - Uses scales instead of chord changes @t[1958..]\n\
+            - Emphasizes melodic improvisation @t[1958..]";
+        let mut questions = vec![
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(3),
+                "Cross-check: parallel overlap".to_string(),
+            ),
+            ReviewQuestion::new(QuestionType::Stale, Some(3), "Stale fact".to_string()),
         ];
         filter_sequential_conflicts(content, &mut questions);
         assert_eq!(questions.len(), 1);
