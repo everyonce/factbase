@@ -112,6 +112,8 @@ mod fact_embeddings;
 mod links;
 mod query_cache;
 mod repositories;
+mod review_questions;
+pub use review_questions::ReviewQueueDbParams;
 mod schema;
 mod search;
 mod stats;

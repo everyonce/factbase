@@ -113,6 +113,18 @@ pub fn answer_question(
     fs::write(&file_path, &new_content)?;
     let new_hash = content_hash(&new_content);
     db.update_document_content(&params.doc_id, &new_content, &new_hash)?;
+    // Sync review question status to DB
+    let db_status = if defer {
+        if answer_text.starts_with("believed: ") { "believed" } else { "deferred" }
+    } else {
+        "verified"
+    };
+    let _ = db.update_review_question_status(
+        &params.doc_id,
+        params.question_index,
+        db_status,
+        Some(&answer_text),
+    );
 
     let type_str = question.question_type.as_str();
     if defer {
@@ -294,6 +306,13 @@ pub fn bulk_answer_questions(
         }
         Ok(())
     })?;
+
+    // Phase 4: Sync review question statuses to DB
+    for (doc_id, _, content) in &pending_writes {
+        if let Some(questions) = crate::processor::parse_review_queue(content) {
+            let _ = db.sync_review_questions(doc_id, &questions);
+        }
+    }
 
     // Count remaining
     let mut remaining_unanswered = 0usize;

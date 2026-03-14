@@ -15,6 +15,7 @@ pub fn parse_type_filter(type_str: &str) -> Option<QuestionType> {
         "duplicate" => Some(QuestionType::Duplicate),
         "corruption" => Some(QuestionType::Corruption),
         "precision" => Some(QuestionType::Precision),
+        "weak-source" | "weaksource" => Some(QuestionType::WeakSource),
         _ => None,
     }
 }
