@@ -151,9 +151,13 @@ fn check_orphaned_footnote_defs(content: &str, questions: &mut Vec<ReviewQuestio
 fn check_duplicate_fact_lines(content: &str, questions: &mut Vec<ReviewQuestion>) {
     let end = body_end_offset(content);
     let body = &content[..end];
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
 
     let mut seen: HashMap<String, usize> = HashMap::new();
     for (line_idx, line) in body.lines().enumerate() {
+        if line_idx < fm_lines {
+            continue;
+        }
         if !FACT_LINE_REGEX.is_match(line) {
             continue;
         }
@@ -201,8 +205,12 @@ fn check_citation_year_as_temporal(
 
     let end = body_end_offset(content);
     let body = &content[..end];
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
 
     for (line_idx, line) in body.lines().enumerate() {
+        if line_idx < fm_lines {
+            continue;
+        }
         if !TEMPORAL_TAG_CONTENT_REGEX.is_match(line) {
             continue;
         }

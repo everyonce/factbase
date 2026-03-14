@@ -41,13 +41,19 @@ pub(crate) fn extract_all_facts(content: &str) -> Vec<FactLine> {
     let fm_reviewed = extract_frontmatter_reviewed_date(content)
         .filter(|d| (today - *d).num_days() <= REVIEWED_SKIP_DAYS);
 
-    // Stop before the review queue section
+    // Stop before the review queue section; skip YAML frontmatter lines
     let end = crate::patterns::body_end_offset(content);
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
 
     for (line_idx, line) in content[..end].lines().enumerate() {
         // Track section headings
         if line.starts_with("## ") {
             current_section = Some(line.trim_start_matches('#').trim().to_string());
+            continue;
+        }
+
+        // Skip YAML frontmatter (metadata, not facts)
+        if line_idx < fm_lines {
             continue;
         }
 

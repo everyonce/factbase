@@ -224,11 +224,17 @@ fn collect_facts_with_ranges(content: &str, skip_reviewed: bool) -> Vec<FactWith
     // Check frontmatter for document-level reviewed date (obsidian format)
     let fm_reviewed = skip_reviewed && extract_frontmatter_reviewed_date(content).is_some();
 
-    // Stop before the review queue section
+    // Stop before the review queue section; skip YAML frontmatter lines
     let end = crate::patterns::body_end_offset(content);
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
 
     for (line_idx, line) in content[..end].lines().enumerate() {
         let line_number = line_idx + 1;
+
+        // Skip YAML frontmatter (metadata, not facts)
+        if line_idx < fm_lines {
+            continue;
+        }
 
         // Track section headings
         if line.starts_with("## ") {

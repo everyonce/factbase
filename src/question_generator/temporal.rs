@@ -546,4 +546,38 @@ mod tests {
             "regular doc types should not get low confidence"
         );
     }
+
+    #[test]
+    fn test_frontmatter_block_tags_not_temporal_questions() {
+        // Block-style YAML array items inside frontmatter must not generate questions
+        let content = "---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Title\n\n- Real fact\n";
+        let questions = generate_temporal_questions(content, None);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("Real fact"));
+    }
+
+    #[test]
+    fn test_frontmatter_with_comment_header_not_temporal_questions() {
+        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags:\n  - services\n---\n# Title\n\n- Real fact\n";
+        let questions = generate_temporal_questions(content, None);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("Real fact"));
+    }
+
+    #[test]
+    fn test_body_type_colon_still_generates_temporal() {
+        // "type:" in body text (not frontmatter) should still generate questions
+        let content = "# Title\n\n- type: services\n";
+        let questions = generate_temporal_questions(content, None);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("type: services"));
+    }
+
+    #[test]
+    fn test_content_after_frontmatter_checked_normally() {
+        let content = "---\ntype: services\n---\n# Title\n\n- Fact after frontmatter\n";
+        let questions = generate_temporal_questions(content, None);
+        assert_eq!(questions.len(), 1);
+        assert!(questions[0].description.contains("Fact after frontmatter"));
+    }
 }
