@@ -534,7 +534,7 @@ fn maintain_step(
     wf: &WorkflowsConfig,
 ) -> Value {
     let ctx = perspective_context(perspective);
-    let total = 7;
+    let total = 8;
     match step {
         1 => {
             let mut resp = serde_json::json!({
@@ -573,41 +573,81 @@ fn maintain_step(
             "next_tool": "factbase", "suggested_op": "check",
             "when_done": "Call workflow with workflow='maintain', step=4"
         }),
-        4 => serde_json::json!({
-            "workflow": "maintain",
-            "step": 4, "total_steps": total,
-            "instruction": resolve(wf, "maintain.links", DEFAULT_MAINTAIN_LINKS_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "links",
-            "when_done": "Call workflow with workflow='maintain', step=5"
-        }),
+        4 => {
+            // Tier-2 batch citation review: collect all weak citations and present to agent
+            let all_docs = crate::organize::detect::collect_active_documents(db, None)
+                .unwrap_or_default();
+            let mut weak_citations: Vec<crate::question_generator::WeakCitation> = Vec::new();
+            for doc in &all_docs {
+                let mut doc_citations = crate::question_generator::collect_weak_citations(
+                    &doc.content, &doc.id, &doc.title,
+                );
+                weak_citations.append(&mut doc_citations);
+            }
+            if weak_citations.is_empty() {
+                return serde_json::json!({
+                    "workflow": "maintain",
+                    "step": 4, "total_steps": total,
+                    "instruction": "No weak citations found — all citations pass tier-1 structural validation. Skip to link suggestions.",
+                    "citations_to_review": 0,
+                    "when_done": "Call workflow with workflow='maintain', step=5"
+                });
+            }
+            let batch_text = crate::question_generator::format_citation_batch(&weak_citations);
+            let citations_json: Vec<serde_json::Value> = weak_citations.iter().map(|c| serde_json::json!({
+                "doc_id": c.doc_id,
+                "doc_title": c.doc_title,
+                "footnote_number": c.footnote_number,
+                "citation_text": c.citation_text,
+                "failure_reason": c.failure_reason,
+                "line_number": c.line_number,
+            })).collect();
+            serde_json::json!({
+                "workflow": "maintain",
+                "step": 4, "total_steps": total,
+                "instruction": resolve(wf, "maintain.citation_review", DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION, &[]),
+                "citations_to_review": weak_citations.len(),
+                "citations": citations_json,
+                "batch_prompt": batch_text,
+                "next_tool": "factbase", "suggested_op": "get_entity",
+                "when_done": "After reviewing and fixing citations, call workflow with workflow='maintain', step=5"
+            })
+        }
         5 => serde_json::json!({
             "workflow": "maintain",
             "step": 5, "total_steps": total,
-            "instruction": resolve(wf, "maintain.organize", DEFAULT_MAINTAIN_ORGANIZE_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "organize",
+            "instruction": resolve(wf, "maintain.links", DEFAULT_MAINTAIN_LINKS_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "links",
             "when_done": "Call workflow with workflow='maintain', step=6"
         }),
-        6 => {
+        6 => serde_json::json!({
+            "workflow": "maintain",
+            "step": 6, "total_steps": total,
+            "instruction": resolve(wf, "maintain.organize", DEFAULT_MAINTAIN_ORGANIZE_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "organize",
+            "when_done": "Call workflow with workflow='maintain', step=7"
+        }),
+        7 => {
             let type_dist = compute_type_distribution(db);
             let total_unanswered: usize = type_dist.iter().map(|(_, c)| c).sum();
             if total_unanswered == 0 {
                 return serde_json::json!({
                     "workflow": "maintain",
-                    "step": 6, "total_steps": total,
+                    "step": 7, "total_steps": total,
                     "instruction": "No review questions found — the knowledge base is clean. Skip to the final report.",
                     "total_unanswered": 0,
-                    "when_done": "Call workflow with workflow='maintain', step=7"
+                    "when_done": "Call workflow with workflow='maintain', step=8"
                 });
             }
             serde_json::json!({
                 "workflow": "maintain",
-                "step": 6, "total_steps": total,
+                "step": 7, "total_steps": total,
                 "instruction": resolve(wf, "maintain.resolve", DEFAULT_MAINTAIN_RESOLVE_INSTRUCTION, &[("ctx", &ctx)]),
                 "next_tool": "workflow",
                 "suggested_args": {"workflow": "resolve", "step": 1},
                 "total_unanswered": total_unanswered,
                 "deferred_count": deferred,
-                "when_done": "After resolve workflow completes, call workflow with workflow='maintain', step=7"
+                "when_done": "After resolve workflow completes, call workflow with workflow='maintain', step=8"
             })
         }
         _ => {
@@ -616,7 +656,7 @@ fn maintain_step(
             let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
             let mut resp = serde_json::json!({
                 "workflow": "maintain",
-                "step": 7, "total_steps": total,
+                "step": 8, "total_steps": total,
                 "instruction": resolve(wf, "maintain.report", DEFAULT_MAINTAIN_REPORT_INSTRUCTION, &[]),
                 "remaining_questions": remaining,
                 "deferred_questions": new_deferred,
@@ -5021,7 +5061,7 @@ mod tests {
         let step = maintain_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 1);
-        assert_eq!(step["total_steps"], 7);
+        assert_eq!(step["total_steps"], 8);
         assert_eq!(step["next_tool"], "factbase");
     }
 
@@ -5065,9 +5105,10 @@ mod tests {
     #[test]
     fn test_maintain_step4_links() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Step 4 is now citation_review — step 5 is links
+        let step = maintain_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
-        assert_eq!(step["step"], 4);
+        assert_eq!(step["step"], 5);
         assert_eq!(step["next_tool"], "factbase");
         assert_eq!(step["suggested_op"], "links");
     }
@@ -5075,9 +5116,10 @@ mod tests {
     #[test]
     fn test_maintain_step5_organize() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Step 5 is links, step 6 is organize
+        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
-        assert_eq!(step["step"], 5);
+        assert_eq!(step["step"], 6);
         assert_eq!(step["suggested_op"], "organize");
     }
 
@@ -5085,9 +5127,10 @@ mod tests {
     fn test_maintain_step6_resolve_delegates() {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "mnt001", &["temporal", "stale"]);
-        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Step 6 is organize, step 7 is resolve
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
-        assert_eq!(step["step"], 6);
+        assert_eq!(step["step"], 7);
         assert_eq!(step["next_tool"], "workflow");
         assert_eq!(step["suggested_args"]["workflow"], "resolve");
         assert_eq!(step["total_unanswered"], 2);
@@ -5105,7 +5148,8 @@ mod tests {
     #[test]
     fn test_maintain_step6_skips_when_no_questions() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Step 7 is resolve (skips when no questions)
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["total_unanswered"], 0);
         assert!(step["instruction"].as_str().unwrap().contains("clean"));
     }
@@ -5113,7 +5157,8 @@ mod tests {
     #[test]
     fn test_maintain_step7_report() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Step 8 is the report (final step)
+        let step = maintain_step(8, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["complete"], true);
         assert!(step.get("remaining_questions").is_some());
@@ -5130,8 +5175,9 @@ mod tests {
             }),
             ..Default::default()
         });
+        // Step 8 is the final report step
         let step = maintain_step(
-            7,
+            8,
             &serde_json::json!({}),
             &obsidian_perspective,
             0,
@@ -5146,9 +5192,45 @@ mod tests {
     }
 
     #[test]
+    fn test_maintain_step4_citation_review_no_weak_citations() {
+        let (db, _tmp) = test_db();
+        // No docs with weak citations → skip message
+        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "maintain");
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["citations_to_review"], 0);
+        assert!(step["instruction"].as_str().unwrap().contains("No weak citations"));
+        assert!(step["when_done"].as_str().unwrap().contains("step=5"));
+    }
+
+    #[test]
+    fn test_maintain_step4_citation_review_with_weak_citations() {
+        let (db, _tmp) = test_db();
+        // Insert a doc with a weak citation (tool name without URL)
+        let content = "<!-- factbase:cit001 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10\n";
+        insert_test_doc(&db, "cit001", content);
+        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "maintain");
+        assert_eq!(step["step"], 4);
+        // Should have citations to review
+        assert!(step["citations_to_review"].as_u64().unwrap() >= 1);
+        assert!(step["citations"].is_array());
+        assert!(step["batch_prompt"].as_str().unwrap().contains("FIXED"));
+        assert!(step["when_done"].as_str().unwrap().contains("step=5"));
+    }
+
+    #[test]
+    fn test_maintain_citation_review_instruction_has_key_content() {
+        assert!(DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION.contains("FIXED"));
+        assert!(DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION.contains("DEFER"));
+        assert!(DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION.contains("URL"));
+    }
+
+    #[test]
     fn test_maintain_step7_no_tip_without_obsidian_format() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Step 8 is the final report step
+        let step = maintain_step(8, &serde_json::json!({}), &None, 0, &db, &wf());
         assert!(step.get("tip").is_none(), "no tip without obsidian format");
     }
 
@@ -5209,7 +5291,7 @@ mod tests {
         assert_eq!(step3["suggested_op"], "check");
 
         // No other maintain step should suggest check
-        for s in [1, 2, 4, 5, 6, 7] {
+        for s in [1, 2, 4, 5, 6, 7, 8] {
             let step = maintain_step(s, &serde_json::json!({}), &None, 0, &db, &wf());
             let suggested = step
                 .get("suggested_op")

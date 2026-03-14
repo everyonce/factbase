@@ -61,7 +61,9 @@ pub use ambiguous::{
     extract_defined_terms, generate_ambiguous_questions, generate_ambiguous_questions_with_type,
     is_glossary_doc, is_glossary_doc_with_types,
 };
-pub use citation::generate_weak_source_questions;
+pub use citation::{
+    collect_weak_citations, format_citation_batch, generate_weak_source_questions, WeakCitation,
+};
 pub use conflict::{
     classify_conflict_pattern, filter_sequential_conflicts, generate_conflict_questions,
     generate_duplicate_entry_questions, ConflictPattern,

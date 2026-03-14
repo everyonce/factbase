@@ -79,7 +79,10 @@ pub use review::{
 };
 
 // Re-export citation quality scoring
-pub use citations::is_citation_specific;
+pub use citations::{
+    citation_failure_reason, detect_citation_type, is_citation_specific, validate_citation,
+    CitationType,
+};
 
 // Re-export chunking types and functions
 pub use chunks::{chunk_document, DocumentChunk};
