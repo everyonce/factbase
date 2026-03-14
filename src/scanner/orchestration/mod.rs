@@ -499,6 +499,12 @@ pub async fn full_scan(
                         is_deleted: false,
                     };
                     db.upsert_document(&document)?;
+                    // Sync review questions to DB
+                    if document.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
+                        if let Some(questions) = crate::processor::parse_review_queue(&document.content) {
+                            let _ = db.sync_review_questions(&document.id, &questions);
+                        }
+                    }
                 }
                 total_db_write_ms += db_start.elapsed().as_millis() as u64;
             } else {

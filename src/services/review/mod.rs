@@ -18,12 +18,30 @@ use crate::error::FactbaseError;
 use crate::ProgressReporter;
 use serde_json::Value;
 
-/// Unified answer dispatch: routes to single or bulk based on params.
+/// Unified answer dispatch: routes to single, bulk, or bulk-dismiss based on params.
 pub fn answer_questions(
     db: &Database,
     args: &Value,
     progress: &ProgressReporter,
 ) -> Result<Value, FactbaseError> {
+    // Bulk dismiss path: status='dismiss' with optional filters
+    if args.get("status").and_then(|v| v.as_str()) == Some("dismiss") {
+        let doc_id_filter = args.get("doc_id").and_then(|v| v.as_str());
+        let type_filter = args.get("question_type").and_then(|v| v.as_str());
+        let desc_filter = args.get("description_filter").and_then(|v| v.as_str());
+        let rows = db.bulk_update_review_question_status(
+            doc_id_filter,
+            type_filter,
+            desc_filter,
+            "dismissed",
+        )?;
+        return Ok(serde_json::json!({
+            "success": true,
+            "dismissed": rows,
+            "message": format!("Dismissed {rows} review question(s).")
+        }));
+    }
+
     if args.get("answers").is_some() {
         // Bulk path: parse from Value (MCP compat)
         let answers_arr = args

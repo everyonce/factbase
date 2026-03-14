@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 15;
+pub(super) const SCHEMA_VERSION: i32 = 16;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -163,6 +163,28 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
             FOREIGN KEY (doc_id) REFERENCES documents(id)
         );
         CREATE INDEX IF NOT EXISTS idx_org_suggestions_doc ON organization_suggestions(doc_id);",
+    ),
+    // Version 16: Review questions table for fast indexed access
+    (
+        16,
+        "Add review_questions table",
+        "CREATE TABLE IF NOT EXISTS review_questions (
+            id INTEGER PRIMARY KEY,
+            doc_id TEXT NOT NULL,
+            question_index INTEGER NOT NULL,
+            question_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            line_ref INTEGER,
+            answer TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (doc_id) REFERENCES documents(id),
+            UNIQUE(doc_id, question_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rq_doc ON review_questions(doc_id);
+        CREATE INDEX IF NOT EXISTS idx_rq_status ON review_questions(status);
+        CREATE INDEX IF NOT EXISTS idx_rq_type ON review_questions(question_type);",
     ),
 ];
 
@@ -349,6 +371,27 @@ impl Database {
             );",
         )?;
 
+        // Review questions table for fast indexed access
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS review_questions (
+                id INTEGER PRIMARY KEY,
+                doc_id TEXT NOT NULL,
+                question_index INTEGER NOT NULL,
+                question_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                line_ref INTEGER,
+                answer TEXT,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (doc_id) REFERENCES documents(id),
+                UNIQUE(doc_id, question_index)
+            );
+            CREATE INDEX IF NOT EXISTS idx_rq_doc ON review_questions(doc_id);
+            CREATE INDEX IF NOT EXISTS idx_rq_status ON review_questions(status);
+            CREATE INDEX IF NOT EXISTS idx_rq_type ON review_questions(question_type);",
+        )?;
+
         // Run any pending migrations
         Self::run_migrations(&conn)?;
 
@@ -403,6 +446,9 @@ impl Database {
                 if *version == 12 {
                     Self::add_cv_lock_columns(conn)?;
                 }
+                if *version == 16 {
+                    Self::backfill_review_questions(conn)?;
+                }
 
                 Self::set_schema_version(conn, *version)?;
                 tracing::info!("Migration {} complete", version);
@@ -453,6 +499,60 @@ impl Database {
                 "ALTER TABLE cross_validation_state ADD COLUMN locked_by TEXT;
                  ALTER TABLE cross_validation_state ADD COLUMN locked_at TEXT;",
             )?;
+        }
+        Ok(())
+    }
+
+    /// Backfill review_questions table from existing documents (migration 16)
+    fn backfill_review_questions(conn: &DbConn) -> Result<(), FactbaseError> {
+        use crate::patterns::REVIEW_QUEUE_MARKER;
+        use crate::processor::parse_review_queue;
+
+        let mut stmt =
+            conn.prepare("SELECT id, content FROM documents WHERE is_deleted = FALSE")?;
+        let mut rows = stmt.query([])?;
+        let mut count = 0usize;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        while let Some(row) = rows.next()? {
+            let doc_id: String = row.get(0)?;
+            let stored: String = row.get(1)?;
+            let content = super::decode_content_lossy(stored);
+            if !content.contains(REVIEW_QUEUE_MARKER) {
+                continue;
+            }
+            if let Some(questions) = parse_review_queue(&content) {
+                for (idx, q) in questions.iter().enumerate() {
+                    let status = if q.answered {
+                        "verified"
+                    } else if q.is_believed() {
+                        "believed"
+                    } else if q.is_deferred() {
+                        "deferred"
+                    } else {
+                        "open"
+                    };
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO review_questions \
+                         (doc_id, question_index, question_type, description, line_ref, answer, status, created_at, updated_at) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                        rusqlite::params![
+                            doc_id,
+                            idx as i64,
+                            q.question_type.as_str(),
+                            q.description,
+                            q.line_ref.map(|l| l as i64),
+                            q.answer,
+                            status,
+                            now
+                        ],
+                    );
+                    count += 1;
+                }
+            }
+        }
+        if count > 0 {
+            tracing::info!("Backfilled review_questions table with {} rows", count);
         }
         Ok(())
     }
