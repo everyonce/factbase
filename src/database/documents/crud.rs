@@ -326,6 +326,48 @@ impl Database {
         }
         Ok(())
     }
+
+    /// Purge all soft-deleted documents for a repository, removing them and their
+    /// associated embeddings, links, fact metadata, and review questions.
+    ///
+    /// Call this after marking documents deleted during a scan to keep the DB lean.
+    pub fn purge_deleted_documents(&self, repo_id: &str) -> Result<usize, FactbaseError> {
+        let conn = self.get_conn()?;
+        // Collect IDs to purge
+        let ids: Vec<String> = conn
+            .prepare("SELECT id FROM documents WHERE repo_id = ?1 AND is_deleted = TRUE")?
+            .query_map([repo_id], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        for id in &ids {
+            conn.execute(
+                "DELETE FROM document_embeddings WHERE id LIKE ?1 || '%'",
+                [id],
+            )?;
+            conn.execute("DELETE FROM embedding_chunks WHERE document_id = ?1", [id])?;
+            conn.execute(
+                "DELETE FROM document_links WHERE source_id = ?1 OR target_id = ?1",
+                [id],
+            )?;
+            conn.execute("DELETE FROM review_questions WHERE doc_id = ?1", [id])?;
+            // fact_metadata / fact_embeddings
+            let fact_ids: Vec<String> = conn
+                .prepare("SELECT id FROM fact_metadata WHERE document_id = ?1")?
+                .query_map([id], |r| r.get(0))?
+                .filter_map(Result::ok)
+                .collect();
+            for fid in &fact_ids {
+                let _ = conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [fid]);
+            }
+            conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [id])?;
+            conn.execute("DELETE FROM documents WHERE id = ?1", [id])?;
+        }
+        self.invalidate_stats_cache(repo_id);
+        Ok(ids.len())
+    }
 }
 
 #[cfg(test)]
@@ -518,5 +560,41 @@ mod tests {
         // Hard delete should not fail with FK constraint
         db.hard_delete_document("abc123")
             .expect("hard delete should clean up fact_metadata");
+    }
+
+    #[test]
+    fn test_purge_deleted_documents() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("Failed to create repo");
+
+        let doc1 = test_doc_with_repo("abc123", "repo1", "Active");
+        let doc2 = test_doc_with_repo("def456", "repo1", "Deleted");
+        db.upsert_document(&doc1).expect("Failed to upsert");
+        db.upsert_document(&doc2).expect("Failed to upsert");
+        db.mark_deleted("def456").expect("Failed to mark deleted");
+
+        let purged = db.purge_deleted_documents("repo1").expect("Failed to purge");
+        assert_eq!(purged, 1);
+
+        // Active doc still present
+        assert!(db.get_document("abc123").unwrap().is_some());
+        // Deleted doc gone
+        assert!(db.get_document("def456").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_purge_deleted_documents_idempotent() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("Failed to create repo");
+
+        let doc = test_doc_with_repo("abc123", "repo1", "Active");
+        db.upsert_document(&doc).expect("Failed to upsert");
+
+        // No deleted docs — purge returns 0
+        let purged = db.purge_deleted_documents("repo1").expect("Failed to purge");
+        assert_eq!(purged, 0);
+        assert!(db.get_document("abc123").unwrap().is_some());
     }
 }
