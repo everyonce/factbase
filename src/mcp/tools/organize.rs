@@ -1303,7 +1303,7 @@ mod tests {
         // Test via the workflow function output (step 6 = organize step)
         let (db, _tmp) = crate::database::tests::test_db();
         crate::database::tests::test_repo_in_db(&db, "test", _tmp.path());
-        let args = serde_json::json!({"workflow": "maintain", "step": 6});
+        let args = serde_json::json!({"workflow": "maintain", "step": 5});
         let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
         let instruction = result["instruction"].as_str().unwrap();
         assert!(
