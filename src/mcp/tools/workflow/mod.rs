@@ -1807,11 +1807,31 @@ mod tests {
             intro.contains("UNVERIFIED"),
             "must mention UNVERIFIED fallback"
         );
+        assert!(
+            intro.contains("MAKE THE CITATION MORE SPECIFIC"),
+            "must instruct agent to improve citation, not defend it"
+        );
+        assert!(
+            intro.contains("NEVER answer"),
+            "must explicitly forbid 'citation is sufficient' answers"
+        );
     }
 
     #[test]
-    fn test_type_evidence_weak_source_mentions_unverified() {
+    fn test_type_evidence_weak_source_constructs_url() {
         let guidance = type_evidence_guidance(&QuestionType::WeakSource);
+        assert!(
+            guidance.contains("MAKE THE CITATION MORE SPECIFIC"),
+            "weak-source guidance must instruct agent to improve citation"
+        );
+        assert!(
+            guidance.contains("phonetool.amazon.com"),
+            "must give Phonetool URL pattern as example"
+        );
+        assert!(
+            guidance.contains("Slack #channel-name"),
+            "must give Slack channel pattern as example"
+        );
         assert!(
             guidance.contains("UNVERIFIED"),
             "weak-source guidance must mention UNVERIFIED fallback"
@@ -1819,6 +1839,27 @@ mod tests {
         assert!(
             guidance.contains("Do not invent"),
             "must warn against inventing citations"
+        );
+        assert!(
+            guidance.contains("NEVER answer"),
+            "must explicitly forbid 'citation is sufficient' answers"
+        );
+    }
+
+    #[test]
+    fn test_variant_type_evidence_intro_has_weak_source() {
+        let intro = VARIANT_TYPE_EVIDENCE_INTRO;
+        assert!(
+            intro.contains("WEAK-SOURCE"),
+            "variant intro must have WEAK-SOURCE guidance"
+        );
+        assert!(
+            intro.contains("MAKE THE CITATION MORE SPECIFIC"),
+            "variant must instruct agent to improve citation"
+        );
+        assert!(
+            intro.contains("phonetool.amazon.com"),
+            "variant must give Phonetool URL pattern as example"
         );
     }
 
