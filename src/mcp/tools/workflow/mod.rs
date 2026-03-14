@@ -1132,7 +1132,7 @@ fn enrich_step(
     let doc_type = get_str_arg(args, "doc_type").unwrap_or("all types");
     let ctx = perspective_context(perspective);
     let fields = required_fields_hint(perspective);
-    let total = 4;
+    let total = 5;
     match step {
         1 => {
             let type_filter = if doc_type != "all types" {
@@ -1167,6 +1167,13 @@ fn enrich_step(
         4 => serde_json::json!({
             "workflow": "enrich",
             "step": 4, "total_steps": total,
+            "instruction": resolve(wf, "enrich.scan", DEFAULT_ENRICH_SCAN_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "scan",
+            "when_done": "Call workflow with workflow='enrich', step=5"
+        }),
+        5 => serde_json::json!({
+            "workflow": "enrich",
+            "step": 5, "total_steps": total,
             "instruction": resolve(wf, "enrich.verify", DEFAULT_ENRICH_VERIFY_INSTRUCTION, &[]),
             "next_tool": "factbase", "suggested_op": "check",
             "suggested_args": {"dry_run": true},
@@ -1267,6 +1274,16 @@ fn improve_step(
             "instruction": resolve(wf, "improve.enrich", DEFAULT_IMPROVE_ENRICH_INSTRUCTION, &[("doc_hint", &doc_hint), ("fields", &fields), ("ctx", &ctx)]),
             "next_tool": "factbase", "suggested_op": "get_entity",
             "suggested_args": {"id": doc_arg},
+            "when_done": next_step_hint
+        }),
+        "scan" => serde_json::json!({
+            "workflow": "improve",
+            "step": step, "total_steps": total,
+            "step_name": "scan",
+            "doc_id": doc_arg,
+            "skipped_steps": skipped,
+            "instruction": resolve(wf, "improve.scan", DEFAULT_IMPROVE_SCAN_INSTRUCTION, &[("doc_hint", &doc_hint)]),
+            "next_tool": "factbase", "suggested_op": "scan",
             "when_done": next_step_hint
         }),
         "check" => {
@@ -2141,7 +2158,7 @@ mod tests {
         let step = improve_step(1, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["workflow"], "improve");
         assert_eq!(step["step"], 1);
-        assert_eq!(step["total_steps"], 4);
+        assert_eq!(step["total_steps"], 5);
         assert_eq!(step["step_name"], "cleanup");
         assert_eq!(step["doc_id"], "abc123");
         assert!(step["instruction"].as_str().unwrap().contains("abc123"));
@@ -2166,9 +2183,19 @@ mod tests {
     }
 
     #[test]
-    fn test_improve_step4_check() {
+    fn test_improve_step4_scan() {
         let (db, _tmp) = test_db();
         let step = improve_step(4, Some("abc123"), &None, &[], &db, &wf());
+        assert_eq!(step["step_name"], "scan");
+        assert_eq!(step["next_tool"], "factbase");
+        assert_eq!(step["suggested_op"], "scan");
+        assert!(step["instruction"].as_str().unwrap().contains("factbase(op='scan')"));
+    }
+
+    #[test]
+    fn test_improve_step5_check() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(5, Some("abc123"), &None, &[], &db, &wf());
         assert_eq!(step["step_name"], "check");
         assert_eq!(step["next_tool"], "factbase");
         assert!(step["complete"].as_bool().unwrap());
@@ -2177,7 +2204,7 @@ mod tests {
     #[test]
     fn test_improve_past_last_step() {
         let (db, _tmp) = test_db();
-        let step = improve_step(5, Some("abc123"), &None, &[], &db, &wf());
+        let step = improve_step(6, Some("abc123"), &None, &[], &db, &wf());
         assert!(step["complete"].as_bool().unwrap());
     }
 
@@ -2197,7 +2224,7 @@ mod tests {
         let (db, _tmp) = test_db();
         let step = improve_step(1, Some("abc123"), &None, &skip, &db, &wf());
         assert_eq!(step["step_name"], "resolve");
-        assert_eq!(step["total_steps"], 3);
+        assert_eq!(step["total_steps"], 4);
     }
 
     #[test]
@@ -2206,10 +2233,12 @@ mod tests {
         let (db, _tmp) = test_db();
         let step1 = improve_step(1, Some("abc123"), &None, &skip, &db, &wf());
         assert_eq!(step1["step_name"], "resolve");
-        assert_eq!(step1["total_steps"], 2);
+        assert_eq!(step1["total_steps"], 3);
         let step2 = improve_step(2, Some("abc123"), &None, &skip, &db, &wf());
-        assert_eq!(step2["step_name"], "check");
-        assert!(step2["complete"].as_bool().unwrap());
+        assert_eq!(step2["step_name"], "scan");
+        let step3 = improve_step(3, Some("abc123"), &None, &skip, &db, &wf());
+        assert_eq!(step3["step_name"], "check");
+        assert!(step3["complete"].as_bool().unwrap());
     }
 
     #[test]
@@ -2396,6 +2425,40 @@ mod tests {
             instruction.contains("Preserve ALL existing content"),
             "should warn about preserving content"
         );
+    }
+
+    #[test]
+    fn test_enrich_step4_scan() {
+        let (db, _tmp) = test_db();
+        let step = enrich_step(4, &serde_json::json!({}), &None, &db, None, &wf());
+        assert_eq!(step["workflow"], "enrich");
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["total_steps"], 5);
+        assert_eq!(step["next_tool"], "factbase");
+        assert_eq!(step["suggested_op"], "scan");
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("factbase(op='scan')"), "enrich step 4 must call scan");
+        assert!(step.get("complete").is_none() || !step["complete"].as_bool().unwrap_or(false),
+            "scan step should not be the final step");
+    }
+
+    #[test]
+    fn test_enrich_step5_verify_is_complete() {
+        let (db, _tmp) = test_db();
+        let step = enrich_step(5, &serde_json::json!({}), &None, &db, None, &wf());
+        assert_eq!(step["step"], 5);
+        assert_eq!(step["total_steps"], 5);
+        assert!(step["complete"].as_bool().unwrap(), "step 5 should be complete");
+    }
+
+    #[test]
+    fn test_improve_scan_step_calls_scan() {
+        let (db, _tmp) = test_db();
+        let step = improve_step(4, Some("abc123"), &None, &[], &db, &wf());
+        assert_eq!(step["step_name"], "scan");
+        assert_eq!(step["suggested_op"], "scan");
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("factbase(op='scan')"), "improve scan step must call scan");
     }
 
     // --- setup workflow tests ---
