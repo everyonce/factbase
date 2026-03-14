@@ -41,10 +41,24 @@ pub(super) fn normalize_review_section_inner(content: &str) -> String {
     let section_start = find_review_section_start(before_marker);
     let (body, section_header) = before_marker.split_at(section_start);
     let clean_body = strip_orphaned_markers(body);
+    // Ensure body ends with a newline so the separator is never smashed onto
+    // the last body line (e.g. `[^5]: citation text---`).
+    let clean_body = if clean_body.ends_with('\n') {
+        clean_body
+    } else {
+        clean_body + "\n"
+    };
 
     // (a) Remove duplicate ## Review Queue headers from section_header
     // Keep only the last one (closest to marker)
     let clean_header = dedup_review_headers(section_header);
+    // Ensure a blank line precedes the --- separator so it is never joined to
+    // the last body line when the original content lacked the blank line.
+    let clean_header = if clean_header.starts_with('\n') {
+        clean_header
+    } else {
+        "\n".to_string() + &clean_header
+    };
 
     // (c) Strip empty blockquote lines not part of an answer in the queue content
     let clean_queue = strip_orphaned_blockquotes(after_marker);
@@ -222,6 +236,55 @@ fn dedup_review_questions(queue_content: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_footnote_not_smashed_onto_separator() {
+        // Regression: footnote line must be separated from --- by a blank line.
+        // Previously `strip_orphaned_markers` dropped the trailing newline from
+        // the body, causing `[^5]: citation text---` when section_header had no
+        // leading blank line.
+        let content = "# Doc\n\n- Fact [^1]\n\n---\n[^1]: citation text\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` when?\n  > \n";
+        let result = normalize_review_section(content);
+        // The footnote line must not be immediately followed by ---
+        assert!(
+            !result.contains("citation text---"),
+            "footnote smashed onto separator:\n{result}"
+        );
+        // --- must appear on its own line
+        for line in result.lines() {
+            if line.trim() == "---" {
+                // good
+            } else {
+                assert!(
+                    !line.contains("---"),
+                    "--- embedded in non-separator line: {line:?}\nfull:\n{result}"
+                );
+            }
+        }
+        // Content and review section must still be present
+        assert!(result.contains("[^1]: citation text"));
+        assert!(result.contains("## Review Queue"));
+        assert!(result.contains("when?"));
+    }
+
+    #[test]
+    fn test_normalize_footnote_blank_line_before_separator() {
+        // When the body ends with a footnote, there must be a blank line before ---.
+        let content = "# Doc\n\n- Fact [^1]\n\n---\n[^1]: citation, 2026-03-14\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` source?\n  > \n";
+        let result = normalize_review_section(content);
+        // Find the footnote line and check the next non-empty line is ---
+        let lines: Vec<&str> = result.lines().collect();
+        let fn_idx = lines
+            .iter()
+            .position(|l| l.starts_with("[^1]:"))
+            .expect("footnote line missing");
+        // There must be a blank line between footnote and ---
+        assert!(
+            fn_idx + 1 < lines.len() && lines[fn_idx + 1].is_empty(),
+            "expected blank line after footnote, got: {:?}\nfull:\n{result}",
+            lines.get(fn_idx + 1)
+        );
+    }
 
     #[test]
     fn test_normalize_merges_duplicate_headers() {
