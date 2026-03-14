@@ -84,7 +84,7 @@ static EMAIL_REGEX: LazyLock<Regex> =
 
 /// Meeting/call/conversation keywords
 static CONVERSATION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:meeting|call|conversation|discussion|interview|one-on-one|standup|sync)\b")
+    Regex::new(r"(?i)\b(?:meeting|call|conversation|communication|discussion|interview|one-on-one|standup|sync)\b")
         .expect("conversation regex")
 });
 
@@ -772,5 +772,98 @@ mod tests {
     #[test]
     fn test_meeting_notes_still_fails() {
         assert!(!is_citation_specific("Meeting notes"));
+    }
+
+    // --- Citation edge cases (dead URLs, paywalls, fabricated, self-referential) ---
+
+    // 1. Dead URL — tier 1 passes (can't check liveness), tier 2 would flag as WEAK
+    #[test]
+    fn test_dead_url_passes_tier1() {
+        assert_eq!(
+            detect_citation_type("https://example.com/deleted-page-404"),
+            CitationType::Url
+        );
+        assert!(is_citation_specific("https://example.com/deleted-page-404"));
+    }
+
+    // 2. Wayback Machine URL — tier 1 passes (valid URL)
+    #[test]
+    fn test_wayback_url_passes_tier1() {
+        let url = "https://web.archive.org/web/2020/https://example.com/old-page";
+        assert_eq!(detect_citation_type(url), CitationType::Url);
+        assert!(is_citation_specific(url));
+    }
+
+    // 3. Paywalled Nature article — tier 1 passes (URL is specific and navigable)
+    #[test]
+    fn test_paywalled_nature_passes_tier1() {
+        let url = "https://www.nature.com/articles/s41586-024-12345-6";
+        assert_eq!(detect_citation_type(url), CitationType::Url);
+        assert!(is_citation_specific(url));
+    }
+
+    // 4. Paywalled JSTOR — tier 1 passes
+    #[test]
+    fn test_paywalled_jstor_passes_tier1() {
+        let url = "https://www.jstor.org/stable/12345";
+        assert_eq!(detect_citation_type(url), CitationType::Url);
+        assert!(is_citation_specific(url));
+    }
+
+    // 5. Possibly fabricated USGS URL — tier 1 passes (can't verify existence)
+    #[test]
+    fn test_possibly_fabricated_url_passes_tier1() {
+        let url = "https://www.usgs.gov/volcanoes/mount-fuji-fact-sheet";
+        assert_eq!(detect_citation_type(url), CitationType::Url);
+        assert!(is_citation_specific(url));
+    }
+
+    // 6. Fabricated journal with page ref — tier 1 passes (Book type + page ref)
+    //    Gap: tier 1 cannot detect fabricated journal names; tier 2 must catch this.
+    #[test]
+    fn test_fabricated_journal_passes_tier1_as_book() {
+        let citation =
+            r#"Smith, J. (2024) "Volcanic Activity Patterns", Journal of Made-Up Science, vol.1, p.1-10"#;
+        assert_eq!(detect_citation_type(citation), CitationType::Book);
+        assert!(is_citation_specific(citation));
+    }
+
+    // 7. Internal KB cross-reference — tier 1 fails (Unknown type, no navigable ref)
+    #[test]
+    fn test_internal_kb_ref_fails_tier1() {
+        let citation = "See [[other-doc-in-kb]]";
+        assert_eq!(detect_citation_type(citation), CitationType::Unknown);
+        assert!(!is_citation_specific(citation));
+    }
+
+    // 8. Self-referential KB citation — tier 1 fails (Unknown type)
+    #[test]
+    fn test_self_referential_kb_fails_tier1() {
+        let citation = "factbase-docs customer analysis, 2026";
+        assert_eq!(detect_citation_type(citation), CitationType::Unknown);
+        assert!(!is_citation_specific(citation));
+    }
+
+    // 9. Personal communication — tier 1 now passes after adding "communication" to
+    //    CONVERSATION_REGEX; has_date (2025-11-20) + has_participants ("with ") → valid
+    #[test]
+    fn test_personal_communication_passes_tier1() {
+        let citation = "Personal communication with Dr. Chen, 2025-11-20";
+        assert_eq!(detect_citation_type(citation), CitationType::Conversation);
+        assert!(is_citation_specific(citation));
+    }
+
+    // 9b. Personal communication without date — still fails
+    #[test]
+    fn test_personal_communication_no_date_fails_tier1() {
+        assert!(!is_citation_specific("Personal communication with Dr. Chen"));
+    }
+
+    // 10. Confluence without URL — tier 1 fails (NavigableTool requires URL)
+    #[test]
+    fn test_confluence_without_url_fails_tier1() {
+        let citation = "Company internal Confluence page, last updated 2025-09";
+        assert_eq!(detect_citation_type(citation), CitationType::NavigableTool);
+        assert!(!is_citation_specific(citation));
     }
 }
