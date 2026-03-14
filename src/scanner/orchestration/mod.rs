@@ -571,10 +571,10 @@ pub async fn full_scan(
     );
 
     // Mark deleted documents
-    for (id, doc) in &known {
-        if !seen.contains(id) && !doc.is_deleted {
+    for (id, _doc) in &known {
+        if !seen.contains(id) {
             if ctx.opts.verbose || ctx.opts.dry_run {
-                println!("  DELETE {}", doc.file_path);
+                println!("  DELETE {}", _doc.file_path);
             }
             if !ctx.opts.dry_run {
                 db.mark_deleted(id)?;
@@ -585,6 +585,9 @@ pub async fn full_scan(
     }
 
     if !ctx.opts.dry_run {
+        // Purge soft-deleted documents so the DB stays lean.
+        // This removes rows that were marked deleted in this scan (or prior scans).
+        let _ = db.purge_deleted_documents(&repo.id);
         // Invalidate cross-check hashes for documents that link TO changed documents.
         // When a document's content changes, any document referencing it may now have
         // stale cross-validation results and needs re-checking.
@@ -614,24 +617,35 @@ pub async fn full_scan(
         return Ok(result);
     }
 
-    // Full review question sync: populate DB for all unchanged documents.
-    // Triggered automatically when the table is substantially empty vs document count
+    // Full review question sync: populate DB for all documents with review sections.
+    // Triggered automatically when the DB is substantially under-populated vs files
     // (migration case), or explicitly via reindex_reviews flag.
     if !ctx.opts.dry_run {
         let needs_full_review_sync = ctx.opts.reindex_reviews || {
-            let (answered, unanswered, deferred) =
-                db.count_review_questions_by_status(Some(&repo.id))?;
-            let total_rq = answered + unanswered + deferred;
-            let total_docs = known.len() as u64;
-            total_docs > 0 && total_rq < total_docs / 2
+            // Count active docs in known that have a review section
+            let docs_with_reviews = known
+                .values()
+                .filter(|d| d.content.contains(crate::patterns::REVIEW_QUEUE_MARKER))
+                .count() as u64;
+            if docs_with_reviews == 0 {
+                false
+            } else {
+                // Count distinct doc_ids already synced in review_questions
+                let conn = db.get_conn()?;
+                let synced_docs: u64 = conn.query_row(
+                    "SELECT COUNT(DISTINCT doc_id) FROM review_questions rq \
+                     JOIN documents d ON rq.doc_id = d.id \
+                     WHERE d.repo_id = ?1 AND d.is_deleted = FALSE",
+                    [&repo.id],
+                    |row| row.get(0),
+                )?;
+                synced_docs < (docs_with_reviews * 4 / 5) // < 80%
+            }
         };
         if needs_full_review_sync {
             let mut synced_docs = 0usize;
             let mut synced_questions = 0usize;
             for (id, doc) in &known {
-                if changed_ids.contains(id) || doc.is_deleted {
-                    continue; // already synced during this scan, or deleted
-                }
                 if doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
                     if let Some(questions) =
                         crate::processor::parse_review_queue(&doc.content)
@@ -1735,5 +1749,72 @@ mod tests {
 
         let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
         assert!(unanswered > 0, "auto-migration should populate review questions");
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_purges_deleted_docs() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        // First scan: doc added
+        full_scan(&repo, &db, &ctx).await.unwrap();
+        let docs = db.get_documents_for_repo("test").unwrap();
+        assert_eq!(docs.len(), 1);
+
+        // Delete the file and rescan
+        std::fs::remove_file(&path).unwrap();
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Purge should have removed the deleted doc row entirely
+        let docs_after = db.get_documents_for_repo("test").unwrap();
+        assert_eq!(docs_after.len(), 0, "deleted doc should be purged from DB");
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_review_sync_covers_all_docs_with_review_sections() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        // Write 3 docs with review sections
+        for i in 0..3 {
+            let content = format!(
+                "<!-- factbase:rr{i:04} -->\n# Doc {i}\n\nFact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n"
+            );
+            std::fs::write(tmp.path().join(format!("doc{i}.md")), content).unwrap();
+        }
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        // First scan: all docs indexed
+        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Clear review_questions for 2 of 3 docs to simulate partial sync (< 80%)
+        {
+            let conn = db.get_conn().unwrap();
+            conn.execute("DELETE FROM review_questions WHERE doc_id = 'rr0000'", []).unwrap();
+            conn.execute("DELETE FROM review_questions WHERE doc_id = 'rr0001'", []).unwrap();
+        }
+
+        // Second scan: should detect < 80% synced and re-sync all
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert_eq!(unanswered, 3, "all 3 docs should have review questions synced");
     }
 }

@@ -9,9 +9,7 @@ use super::super::Database;
 use super::DOCUMENT_COLUMNS;
 
 impl Database {
-    /// Retrieves all documents for a repository as a map keyed by document ID.
-    ///
-    /// Includes both active and deleted documents (for scan reconciliation).
+    /// Retrieves all active (non-deleted) documents for a repository as a map keyed by document ID.
     ///
     /// # Errors
     /// Returns `FactbaseError::Database` on SQL errors.
@@ -21,7 +19,7 @@ impl Database {
     ) -> Result<HashMap<String, Document>, FactbaseError> {
         let conn = self.get_conn()?;
         let mut stmt = conn.prepare_cached(&format!(
-            "SELECT {DOCUMENT_COLUMNS} FROM documents WHERE repo_id = ?1"
+            "SELECT {DOCUMENT_COLUMNS} FROM documents WHERE repo_id = ?1 AND is_deleted = FALSE"
         ))?;
         let mut docs = HashMap::new();
         let mut rows = stmt.query([repo_id])?;
@@ -214,5 +212,24 @@ mod tests {
             .expect("Failed to list");
         assert_eq!(docs.len(), 1);
         assert_eq!(docs[0].title, "Alpha Doc");
+    }
+
+    #[test]
+    fn test_get_documents_for_repo_excludes_deleted() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("Failed to create repo");
+
+        let doc1 = test_doc_with_repo("abc123", "repo1", "Active Doc");
+        let doc2 = test_doc_with_repo("def456", "repo1", "Deleted Doc");
+
+        db.upsert_document(&doc1).expect("Failed to upsert");
+        db.upsert_document(&doc2).expect("Failed to upsert");
+        db.mark_deleted("def456").expect("Failed to mark deleted");
+
+        let docs = db.get_documents_for_repo("repo1").expect("Failed to get");
+        assert_eq!(docs.len(), 1, "deleted doc should be excluded");
+        assert!(docs.contains_key("abc123"));
+        assert!(!docs.contains_key("def456"));
     }
 }
