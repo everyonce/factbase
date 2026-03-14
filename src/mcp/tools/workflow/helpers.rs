@@ -373,7 +373,7 @@ pub(super) fn type_evidence_guidance(qt: &QuestionType) -> &'static str {
         QuestionType::Missing => "Find a source citation for this unsourced fact. Search for the specific claim and cite a URL.",
         QuestionType::Duplicate => "Identify the canonical entry by reading both documents. Cite which one should be kept.",
         QuestionType::Corruption => "Read the document to identify the corruption. Describe what needs to be fixed.",
-        QuestionType::WeakSource => "Find the specific source using your available tools. Update the footnote with a specific, independently verifiable reference: URL, document path, page number, ISBN, RFC, channel/thread ID, etc. If you cannot find the source, change the footnote to '[^N]: UNVERIFIED — original claim: <original text>'. Do not invent specific-looking citations.",
+        QuestionType::WeakSource => "Your job is to MAKE THE CITATION MORE SPECIFIC, not to explain why it's already sufficient. If the source is a known tool with a predictable URL pattern, construct the full URL (e.g., 'Phonetool lookup' → 'Phonetool (https://phonetool.amazon.com/users/{alias}), YYYY-MM-DD'; 'Slack channel' → 'Slack #channel-name, @author, YYYY-MM-DD'). If you can find the actual source via search tools, cite the specific result. NEVER answer 'citation is sufficient' or 'no public URL available'. If you truly cannot improve it, change to '[^N]: UNVERIFIED — original claim: <original text>'. Do not invent specific-looking citations.",
     }
 }
 
