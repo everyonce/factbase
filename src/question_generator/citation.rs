@@ -105,10 +105,14 @@ pub fn format_citation_triage_batch(citations: &[WeakCitation]) -> String {
         return String::new();
     }
     let mut out = String::from(
-        "Evaluate these citations. For each, respond with:\n\
-         - VALID — citation is specific enough to verify independently\n\
-         - INVALID — citation is too vague to fix without research\n\
-         - WEAK — partial info present; include a suggestion for what to look up\n\n",
+        "Evaluate these citations. For each, ask: could someone with access to this KB's domain \
+         find the exact source using only the information provided? Consider:\n\
+         - Source authority (is this a primary/authoritative source for the claim?)\n\
+         - Accessibility (can the URL be reached? Is it behind a paywall?)\n\
+         - Specificity (does it point to a specific page, not just a homepage?)\n\
+         - Duplicates (is this the same source as another footnote?)\n\
+         - Fabrication risk (does this source actually exist?)\n\
+         Respond: VALID|INVALID|WEAK — reason — suggestion with specific replacement if applicable\n\n",
     );
     for (i, c) in citations.iter().enumerate() {
         out.push_str(&format!(
