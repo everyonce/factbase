@@ -6264,4 +6264,102 @@ mod tests {
             "transition description should clarify it applies to facts that were true until a date"
         );
     }
+
+    // --- citation_patterns in workflow instructions ---
+
+    #[test]
+    fn test_bootstrap_prompt_suggests_citation_patterns_for_jazz() {
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt("jazz music", None, &prompts, None);
+        assert!(
+            prompt.contains("citation_patterns"),
+            "bootstrap prompt should mention citation_patterns"
+        );
+        assert!(
+            prompt.contains("catalog_number"),
+            "bootstrap prompt should give catalog_number as a jazz example"
+        );
+        assert!(
+            prompt.contains("CL 1355") || prompt.contains("SD 1361"),
+            "bootstrap prompt should show jazz catalog number examples"
+        );
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_suggests_citation_patterns_for_bible() {
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt("biblical studies", None, &prompts, None);
+        assert!(
+            prompt.contains("citation_patterns"),
+            "bootstrap prompt should mention citation_patterns"
+        );
+        assert!(
+            prompt.contains("verse_reference"),
+            "bootstrap prompt should give verse_reference as a bible example"
+        );
+        assert!(
+            prompt.contains("Genesis 1:1") || prompt.contains("John 3:16"),
+            "bootstrap prompt should show verse reference examples"
+        );
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_omit_guidance_for_web_only_domains() {
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt("mushroom foraging", None, &prompts, None);
+        assert!(
+            prompt.contains("omit citation_patterns") || prompt.contains("omit"),
+            "bootstrap prompt should tell agent to omit citation_patterns when not needed"
+        );
+    }
+
+    #[test]
+    fn test_bootstrap_prompt_includes_good_vs_bad_pattern_guidance() {
+        let prompts = crate::config::PromptsConfig::default();
+        let prompt = build_bootstrap_prompt("legal research", None, &prompts, None);
+        assert!(
+            prompt.contains("too broad") || prompt.contains("Bad citation_patterns"),
+            "bootstrap prompt should warn about overly broad patterns"
+        );
+    }
+
+    #[test]
+    fn test_setup_perspective_instruction_mentions_citation_patterns() {
+        assert!(
+            DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION.contains("citation_patterns"),
+            "perspective instruction should mention citation_patterns"
+        );
+    }
+
+    #[test]
+    fn test_maintain_report_suggests_citation_pattern_for_false_positives() {
+        assert!(
+            DEFAULT_MAINTAIN_REPORT_INSTRUCTION.contains("citation_pattern"),
+            "maintain report should suggest adding citation_pattern for false positives"
+        );
+        assert!(
+            DEFAULT_MAINTAIN_REPORT_INSTRUCTION.contains("weak-source"),
+            "maintain report should mention weak-source questions as the trigger"
+        );
+        assert!(
+            DEFAULT_MAINTAIN_REPORT_INSTRUCTION.contains("perspective.yaml"),
+            "maintain report should tell agent to add pattern to perspective.yaml"
+        );
+    }
+
+    #[test]
+    fn test_resolve_answer_intro_suggests_citation_pattern_for_valid_formats() {
+        assert!(
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION.contains("citation_pattern"),
+            "resolve intro should suggest adding citation_pattern for valid domain formats"
+        );
+        assert!(
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION.contains("Suggest citation_pattern"),
+            "resolve intro should show the exact suggestion format"
+        );
+        assert!(
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION.contains("name=X, pattern=Y"),
+            "resolve intro should show the pattern format"
+        );
+    }
 }
