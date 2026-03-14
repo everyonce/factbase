@@ -90,7 +90,7 @@ static CONVERSATION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Book/publication keywords
 static BOOK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)\b(?:book|guide|manual|handbook|textbook|edition|published|press|publisher|journal|proceedings|conference|workshop|symposium|volume|vol\.|pp?\.|chapter|ch\.)\b"#)
+    Regex::new(r#"(?i)\b(?:book|guide|manual|handbook|textbook|edition|published|press|publisher|journal|proceedings|conference|workshop|symposium|volume|vol\.|pp?\.|chapter|ch\.|liner\s+notes|biography|memoir|anthology|catalog(?:ue)?|discography)\b"#)
         .expect("book regex")
 });
 
@@ -219,10 +219,12 @@ pub fn validate_citation(ct: &CitationType, text: &str) -> bool {
         // Navigable tool: REQUIRE a URL or domain-style URL
         CitationType::NavigableTool => URL_REGEX.is_match(text) || DOMAIN_URL_REGEX.is_match(text),
 
-        // Book: require page/chapter/section reference OR complete bibliographic ref (publisher+year)
+        // Book: require page/chapter/section reference OR complete bibliographic ref (publisher+year) OR catalog number
         CitationType::Book => {
             PAGE_SECTION_REGEX.is_match(text)
+                || CATALOG_NUMBER_REGEX.is_match(text)
                 || (PUBLISHER_REGEX.is_match(text) && YEAR_REGEX.is_match(text))
+                || (text.matches(',').count() >= 3 && YEAR_REGEX.is_match(text))
         }
 
         // Slack/Teams: require channel (#name) + date
@@ -281,6 +283,11 @@ pub fn validate_citation(ct: &CitationType, text: &str) -> bool {
             }
             // Catalog/record number (e.g. "CL 1355", "A-77", "SD 1361")
             if CATALOG_NUMBER_REGEX.is_match(text) {
+                return true;
+            }
+            // Multi-part bibliographic reference: author, title, publisher, year
+            // 3+ commas (4+ parts) with a year suggests a complete citation
+            if text.matches(',').count() >= 3 && YEAR_REGEX.is_match(text) {
                 return true;
             }
             false
@@ -911,5 +918,65 @@ mod tests {
         let citation = "Company internal Confluence page, last updated 2025-09";
         assert_eq!(detect_citation_type(citation), CitationType::NavigableTool);
         assert!(!is_citation_specific(citation));
+    }
+
+    // --- Liner notes and catalog number tests (#607) ---
+
+    #[test]
+    fn test_liner_notes_detected_as_book() {
+        assert_eq!(
+            detect_citation_type("Bill Evans, liner notes, Kind of Blue, Columbia CL 1355, 1959"),
+            CitationType::Book
+        );
+    }
+
+    #[test]
+    fn test_liner_notes_with_catalog_number_passes() {
+        assert!(is_citation_specific(
+            "Bill Evans, liner notes, Kind of Blue, Columbia CL 1355, 1959"
+        ));
+    }
+
+    #[test]
+    fn test_liner_notes_with_multiple_catalog_numbers_passes() {
+        assert!(is_citation_specific(
+            "Bill Evans, liner notes, Kind of Blue, Columbia Records, CL 1355 / CS 8163, 1959"
+        ));
+    }
+
+    #[test]
+    fn test_book_with_catalog_number_passes() {
+        let ct = CitationType::Book;
+        assert!(validate_citation(&ct, "Some Album, Label Records, SD 1361, 1962"));
+    }
+
+    #[test]
+    fn test_book_publisher_year_without_press_keyword_passes() {
+        // author, title, publisher (no "press" keyword), year — 3 commas → passes
+        assert!(is_citation_specific(
+            "Richard Cook, Blue Note Records: The Biography, Justin Charles & Co., 2003"
+        ));
+    }
+
+    #[test]
+    fn test_book_author_title_publisher_year_passes() {
+        // Simplified: author, title, publisher, year
+        assert!(is_citation_specific(
+            "Richard Cook, Blue Note Records, Justin Charles, 2003"
+        ));
+    }
+
+    #[test]
+    fn test_book_title_year_only_still_fails() {
+        // Only 1 comma — not enough parts to be a complete bibliographic ref
+        assert!(!is_citation_specific("Peterson Field Guide to Mushrooms, 2019"));
+    }
+
+    #[test]
+    fn test_biography_detected_as_book() {
+        assert_eq!(
+            detect_citation_type("Richard Cook, Blue Note Records: The Biography, Justin Charles & Co., 2003"),
+            CitationType::Book
+        );
     }
 }
