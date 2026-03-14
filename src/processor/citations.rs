@@ -94,6 +94,15 @@ static BOOK_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("book regex")
 });
 
+/// Publisher keywords (subset of BOOK_REGEX) — used to detect complete bibliographic references
+static PUBLISHER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(?:press|publisher|published|publishing)\b").expect("publisher regex")
+});
+
+/// Bare 4-digit year (1900–2099) — used to detect publication year in bibliographic references
+static YEAR_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(?:19|20)\d{2}\b").expect("year regex"));
+
 /// Standard body keywords (RFC, ISO, IEEE, NIST, ANSI, etc.)
 static STANDARD_BODY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)\b(?:RFC|ISO|IEEE|NIST|ANSI|IETF|W3C|OWASP|PCI|HIPAA|GDPR|SOC|FedRAMP)\b")
@@ -210,8 +219,11 @@ pub fn validate_citation(ct: &CitationType, text: &str) -> bool {
         // Navigable tool: REQUIRE a URL or domain-style URL
         CitationType::NavigableTool => URL_REGEX.is_match(text) || DOMAIN_URL_REGEX.is_match(text),
 
-        // Book: require page/chapter/section/verse reference
-        CitationType::Book => PAGE_SECTION_REGEX.is_match(text),
+        // Book: require page/chapter/section reference OR complete bibliographic ref (publisher+year)
+        CitationType::Book => {
+            PAGE_SECTION_REGEX.is_match(text)
+                || (PUBLISHER_REGEX.is_match(text) && YEAR_REGEX.is_match(text))
+        }
 
         // Slack/Teams: require channel (#name) + date
         CitationType::SlackOrTeams => {
@@ -281,7 +293,7 @@ pub fn citation_failure_reason(ct: &CitationType) -> &'static str {
     match ct {
         CitationType::Url | CitationType::FilePath => "already valid",
         CitationType::NavigableTool => "tool name present but no URL — add the direct URL",
-        CitationType::Book => "book/publication present but no page/chapter/section reference",
+        CitationType::Book => "book/publication present but no page/chapter/section reference or publisher+year",
         CitationType::SlackOrTeams => "Slack/Teams source missing channel (#name) or date",
         CitationType::Email => "email source missing sender or date",
         CitationType::SystemOrDb => "system/DB source missing record ID (e.g. PROJ-678)",
@@ -450,6 +462,24 @@ mod tests {
     }
 
     #[test]
+    fn test_book_with_publisher_and_year_passes() {
+        let ct = CitationType::Book;
+        assert!(validate_citation(
+            &ct,
+            "Smith, John. The Art of Computer Programming. Addison-Wesley Press, 2011"
+        ));
+    }
+
+    #[test]
+    fn test_book_with_publisher_keyword_and_year_passes() {
+        let ct = CitationType::Book;
+        assert!(validate_citation(
+            &ct,
+            "Knuth, Donald. Sorting and Searching. Publisher: MIT Press, 2019"
+        ));
+    }
+
+    #[test]
     fn test_book_without_page_fails() {
         let ct = CitationType::Book;
         assert!(!validate_citation(
@@ -458,6 +488,15 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn test_book_with_year_but_no_publisher_fails() {
+        // Year alone is not enough — need publisher+year
+        let ct = CitationType::Book;
+        assert!(!validate_citation(
+            &ct,
+            "Peterson Field Guide to Mushrooms, 2019"
+        ));
+    }
     #[test]
     fn test_slack_with_channel_and_date_passes() {
         let ct = CitationType::SlackOrTeams;
@@ -546,6 +585,13 @@ mod tests {
     fn test_book_with_page_is_specific() {
         assert!(is_citation_specific(
             "Peterson Field Guide to Mushrooms of North America, p.247"
+        ));
+    }
+
+    #[test]
+    fn test_book_with_publisher_and_year_is_specific() {
+        assert!(is_citation_specific(
+            "Smith, John. The Art of Computer Programming. Addison-Wesley Press, 2011"
         ));
     }
 
