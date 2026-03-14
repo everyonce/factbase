@@ -32,7 +32,8 @@ pub use format::{
 };
 pub use question::{QuestionType, ReviewQuestion};
 pub use repository::{
-    load_perspective_from_file, Perspective, Repository, ReviewPerspective, PERSPECTIVE_TEMPLATE,
+    load_perspective_from_file, CitationPattern, Perspective, Repository, ReviewPerspective,
+    PERSPECTIVE_TEMPLATE,
 };
 pub use scan::{DuplicatePair, FileTimingInfo, ScanResult, ScanStats, TemporalScanStats};
 pub use search::{

@@ -11,10 +11,11 @@
 use crate::models::ReviewQuestion;
 use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date};
 use crate::processor::{
-    citation_failure_reason, detect_citation_type, parse_source_definitions,
-    parse_source_references, validate_citation,
+    citation_failure_reason, detect_citation_type, is_citation_specific_with_patterns,
+    parse_source_definitions, parse_source_references,
 };
 use chrono::Utc;
+use regex::Regex;
 
 /// Default number of days a reviewed marker suppresses question regeneration.
 const REVIEWED_SKIP_DAYS: i64 = 180;
@@ -34,10 +35,10 @@ pub struct WeakCitation {
 /// Generate weak-source review questions by running tier-1 structural validation
 /// on every referenced footnote definition.
 ///
-/// For each citation that fails `validate_citation()`, emits a `@q[weak-source]`
-/// question with the failure reason. Citations that pass are silently skipped.
+/// For each citation that fails `validate_citation()` and no `extra_patterns` match,
+/// emits a `@q[weak-source]` question with the failure reason.
 /// Suppressed by a recent `reviewed:` marker (same 180-day window as other generators).
-pub fn generate_weak_source_questions(content: &str) -> Vec<ReviewQuestion> {
+pub fn generate_weak_source_questions(content: &str, extra_patterns: &[Regex]) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
     let fm_skip = extract_frontmatter_reviewed_date(content)
         .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
@@ -62,10 +63,7 @@ pub fn generate_weak_source_questions(content: &str) -> Vec<ReviewQuestion> {
             }
             true
         })
-        .filter(|d| {
-            let ct = detect_citation_type(&d.context);
-            !validate_citation(&ct, &d.context)
-        })
+        .filter(|d| !is_citation_specific_with_patterns(&d.context, extra_patterns))
         .map(|d| {
             let ct = detect_citation_type(&d.context);
             let reason = citation_failure_reason(&ct);
@@ -86,7 +84,12 @@ pub fn generate_weak_source_questions(content: &str) -> Vec<ReviewQuestion> {
 /// Returns structured `WeakCitation` entries for tier-2 batch LLM review.
 /// Skips citations that are untraceable (handled by `@q[missing]`) and
 /// citations suppressed by a recent reviewed marker.
-pub fn collect_weak_citations(content: &str, doc_id: &str, doc_title: &str) -> Vec<WeakCitation> {
+pub fn collect_weak_citations(
+    content: &str,
+    doc_id: &str,
+    doc_title: &str,
+    extra_patterns: &[Regex],
+) -> Vec<WeakCitation> {
     let today = Utc::now().date_naive();
     let fm_skip = extract_frontmatter_reviewed_date(content)
         .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
@@ -116,8 +119,7 @@ pub fn collect_weak_citations(content: &str, doc_id: &str, doc_title: &str) -> V
             // Only collect tier-1 failures (not already-passing citations)
             // Note: we collect ALL failing citations including very vague ones —
             // the agent can DEFER those in tier-2 review.
-            let ct = detect_citation_type(&d.context);
-            !validate_citation(&ct, &d.context)
+            !is_citation_specific_with_patterns(&d.context, extra_patterns)
         })
         .map(|d| {
             let ct = detect_citation_type(&d.context);
@@ -224,7 +226,7 @@ mod tests {
     fn test_generate_weak_source_questions_bad_citation() {
         // Vague citation → generates a question
         let content = doc_with_source("AWS documentation, accessed 2026-03-07");
-        let qs = generate_weak_source_questions(&content);
+        let qs = generate_weak_source_questions(&content, &[]);
         assert!(!qs.is_empty(), "vague citation should generate a weak-source question");
         assert_eq!(qs[0].question_type, crate::models::QuestionType::WeakSource);
     }
@@ -233,28 +235,28 @@ mod tests {
     fn test_generate_weak_source_questions_url_citation() {
         // URL citation passes tier 1 → no question
         let content = doc_with_source("https://docs.aws.amazon.com/page.html");
-        assert!(generate_weak_source_questions(&content).is_empty());
+        assert!(generate_weak_source_questions(&content, &[]).is_empty());
     }
 
     #[test]
     fn test_generate_weak_source_questions_book_with_page() {
         // Book + page passes tier 1 → no question
         let content = doc_with_source("Peterson Field Guide, p.247");
-        assert!(generate_weak_source_questions(&content).is_empty());
+        assert!(generate_weak_source_questions(&content, &[]).is_empty());
     }
 
     #[test]
     fn test_generate_weak_source_questions_book_with_publisher_year() {
         // Book + publisher + year passes tier 1 → no question
         let content = doc_with_source("Smith, John. The Art of Programming. MIT Press, 2019");
-        assert!(generate_weak_source_questions(&content).is_empty());
+        assert!(generate_weak_source_questions(&content, &[]).is_empty());
     }
 
     #[test]
     fn test_generate_weak_source_questions_phonetool_no_url() {
         // Tool without URL → generates a question
         let content = doc_with_source("Phonetool lookup, 2026-02-10");
-        let qs = generate_weak_source_questions(&content);
+        let qs = generate_weak_source_questions(&content, &[]);
         assert!(!qs.is_empty());
         assert!(qs[0].description.contains("[^1]"));
         assert!(qs[0].description.contains("Phonetool lookup"));
@@ -264,7 +266,7 @@ mod tests {
     fn test_generate_weak_source_questions_unreferenced_not_generated() {
         // Unreferenced footnote → no question
         let content = "<!-- factbase:abc123 -->\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
-        assert!(generate_weak_source_questions(content).is_empty());
+        assert!(generate_weak_source_questions(content, &[]).is_empty());
     }
 
     // --- collect_weak_citations ---
@@ -272,21 +274,21 @@ mod tests {
     #[test]
     fn test_url_citation_not_collected() {
         let content = doc_with_source("https://docs.aws.amazon.com/page.html, accessed 2026-03-07");
-        let weak = collect_weak_citations(&content, "abc123", "Test");
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
         assert!(weak.is_empty(), "URL citation should pass tier 1");
     }
 
     #[test]
     fn test_book_with_page_not_collected() {
         let content = doc_with_source("Peterson Field Guide, p.247");
-        let weak = collect_weak_citations(&content, "abc123", "Test");
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
         assert!(weak.is_empty(), "Book+page should pass tier 1");
     }
 
     #[test]
     fn test_book_without_page_collected() {
         let content = doc_with_source("Peterson Field Guide to Mushrooms");
-        let weak = collect_weak_citations(&content, "abc123", "Test");
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
         assert_eq!(weak.len(), 1);
         assert_eq!(weak[0].footnote_number, 1);
         assert!(weak[0].failure_reason.contains("page") || weak[0].failure_reason.contains("publisher"));
@@ -295,7 +297,7 @@ mod tests {
     #[test]
     fn test_phonetool_without_url_collected() {
         let content = doc_with_source("Phonetool lookup, 2026-02-10");
-        let weak = collect_weak_citations(&content, "abc123", "Test");
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
         assert_eq!(weak.len(), 1);
         assert!(weak[0].failure_reason.contains("URL"));
     }
@@ -303,7 +305,7 @@ mod tests {
     #[test]
     fn test_meeting_notes_alone_collected() {
         let content = doc_with_source("Meeting notes");
-        let weak = collect_weak_citations(&content, "abc123", "Test");
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
         assert_eq!(weak.len(), 1);
     }
 
@@ -312,7 +314,7 @@ mod tests {
         // "Slack" alone is very vague but still collected for tier-2 review
         // The agent can DEFER it if it can't be improved
         let content = doc_with_source("Slack");
-        let weak = collect_weak_citations(&content, "abc123", "Test");
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
         // "Slack" is SlackOrTeams type, fails validation (no channel/date) → collected
         assert_eq!(weak.len(), 1, "Vague sources are collected for tier-2 review");
     }
@@ -320,14 +322,14 @@ mod tests {
     #[test]
     fn test_unreferenced_source_not_collected() {
         let content = "<!-- factbase:abc123 -->\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
-        let weak = collect_weak_citations(content, "abc123", "Test");
+        let weak = collect_weak_citations(content, "abc123", "Test", &[]);
         assert!(weak.is_empty(), "Unreferenced sources should not be collected");
     }
 
     #[test]
     fn test_collect_includes_doc_context() {
         let content = doc_with_source("Phonetool lookup, 2026-02-10");
-        let weak = collect_weak_citations(&content, "doc001", "My Entity");
+        let weak = collect_weak_citations(&content, "doc001", "My Entity", &[]);
         assert_eq!(weak.len(), 1);
         assert_eq!(weak[0].doc_id, "doc001");
         assert_eq!(weak[0].doc_title, "My Entity");
@@ -345,7 +347,7 @@ mod tests {
             [^1]: https://example.com\n\
             [^2]: Company internal wiki, 2026-01-15\n\
             [^3]: RFC 7231\n";
-        let weak = collect_weak_citations(content, "abc123", "Test");
+        let weak = collect_weak_citations(content, "abc123", "Test", &[]);
         assert_eq!(weak.len(), 1);
         assert_eq!(weak[0].footnote_number, 2);
     }
@@ -456,5 +458,33 @@ mod tests {
         // The QuestionType::WeakSource variant must still exist for parsing old docs
         let qt = QuestionType::WeakSource;
         assert_eq!(qt.to_string(), "weak-source");
+    }
+
+    #[test]
+    fn test_generate_weak_source_with_perspective_pattern_suppresses_question() {
+        // "internal memo" fails universal tier-1 but matches a custom perspective pattern → no question
+        let content = doc_with_source("internal memo");
+        let patterns = vec![crate::models::CitationPattern {
+            name: "internal_memo".into(),
+            pattern: r"internal memo".into(),
+            description: None,
+        }];
+        let compiled = crate::processor::compile_citation_patterns(&patterns);
+        let qs = generate_weak_source_questions(&content, &compiled);
+        assert!(qs.is_empty(), "perspective pattern should suppress weak-source question");
+    }
+
+    #[test]
+    fn test_generate_weak_source_without_matching_pattern_still_generates_question() {
+        // A citation that fails universal tier-1 and doesn't match any perspective pattern → question
+        let content = doc_with_source("AWS documentation");
+        let patterns = vec![crate::models::CitationPattern {
+            name: "verse_ref".into(),
+            pattern: r"\w+ \d+:\d+".into(),
+            description: None,
+        }];
+        let compiled = crate::processor::compile_citation_patterns(&patterns);
+        let qs = generate_weak_source_questions(&content, &compiled);
+        assert!(!qs.is_empty(), "non-matching pattern should not suppress question");
     }
 }
