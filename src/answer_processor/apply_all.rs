@@ -11,8 +11,8 @@ use crate::progress::ProgressReporter;
 use crate::{
     apply_changes_to_section, apply_confirmations, apply_source_citations, dedup_titles,
     identify_affected_section, interpret_answer, remove_processed_questions, replace_section,
-    stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
-    stamp_sequential_lines, uncheck_deferred_questions, InterpretedAnswer,
+    stamp_citation_accepted, stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers,
+    stamp_sequential_by_text, stamp_sequential_lines, uncheck_deferred_questions, InterpretedAnswer,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -501,6 +501,17 @@ async fn apply_one_document(
         .collect();
     let dismissed_text_refs: Vec<&str> = dismissed_texts.iter().map(|s| s.as_str()).collect();
     new_content = stamp_reviewed_by_text(&new_content, &dismissed_text_refs, &today);
+
+    // --- Phase 2b: Stamp accepted citation marker on dismissed WeakSource footnotes ---
+    let weak_source_dismissed_lines: Vec<usize> = interpreted
+        .iter()
+        .filter(|ia| {
+            matches!(ia.instruction, crate::ChangeInstruction::Dismiss)
+                && ia.question.question_type == QuestionType::WeakSource
+        })
+        .filter_map(|ia| ia.question.line_ref)
+        .collect();
+    new_content = stamp_citation_accepted(&new_content, &weak_source_dismissed_lines);
 
     // --- Phase 3: Remove/uncheck processed questions ---
     let deferred_indices: Vec<usize> = answered

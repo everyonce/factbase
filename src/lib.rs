@@ -104,9 +104,10 @@ pub use answer_processor::{
     apply_changes_to_section, apply_confirmations, apply_source_citations, classify_answer,
     dedup_titles, identify_affected_section,
     inbox::{apply_inbox_integration, extract_inbox_blocks},
-    interpret_answer, remove_processed_questions, replace_section, stamp_reviewed_by_text,
-    stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text, stamp_sequential_lines,
-    uncheck_deferred_questions, AnswerType, ChangeInstruction, InterpretedAnswer,
+    interpret_answer, remove_processed_questions, replace_section, stamp_citation_accepted,
+    stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
+    stamp_sequential_lines, uncheck_deferred_questions, AnswerType, ChangeInstruction,
+    InterpretedAnswer,
 };
 #[deprecated(note = "use factbase::config::prompts::*")]
 pub use config::prompts::{load_file_override, resolve_prompt, PromptsConfig};

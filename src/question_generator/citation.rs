@@ -20,6 +20,11 @@ use regex::Regex;
 /// Default number of days a reviewed marker suppresses question regeneration.
 const REVIEWED_SKIP_DAYS: i64 = 180;
 
+/// HTML comment marker appended to a footnote line when a weak-source question
+/// is dismissed after tier-2 evaluation. Prevents the footnote from being
+/// re-flagged on subsequent scans.
+pub const CITATION_ACCEPTED_MARKER: &str = "<!-- ✓ -->";
+
 /// A citation that failed tier-1 structural validation.
 /// Collected for tier-2 batch LLM review.
 #[derive(Debug, Clone)]
@@ -55,6 +60,9 @@ pub fn generate_weak_source_questions(content: &str, extra_patterns: &[Regex]) -
         .filter(|d| {
             if d.line_number > 0 && d.line_number <= lines.len() {
                 let line = lines[d.line_number - 1];
+                if line.contains(CITATION_ACCEPTED_MARKER) {
+                    return false;
+                }
                 if extract_reviewed_date(line)
                     .is_some_and(|dt| (today - dt).num_days() <= REVIEWED_SKIP_DAYS)
                 {
@@ -104,9 +112,12 @@ pub fn collect_weak_citations(
     defs.iter()
         .filter(|d| refs.iter().any(|r| r.number == d.number))
         .filter(|d| {
-            // Skip if recently reviewed
+            // Skip if accepted (<!-- ✓ -->) or recently reviewed
             if d.line_number > 0 && d.line_number <= lines.len() {
                 let line = lines[d.line_number - 1];
+                if line.contains(CITATION_ACCEPTED_MARKER) {
+                    return false;
+                }
                 if extract_reviewed_date(line)
                     .is_some_and(|dt| (today - dt).num_days() <= REVIEWED_SKIP_DAYS)
                 {
@@ -475,7 +486,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_weak_source_without_matching_pattern_still_generates_question() {
+    fn test_generate_weak_source_questions_without_matching_pattern_still_generates_question() {
         // A citation that fails universal tier-1 and doesn't match any perspective pattern → question
         let content = doc_with_source("AWS documentation");
         let patterns = vec![crate::models::CitationPattern {
@@ -486,5 +497,27 @@ mod tests {
         let compiled = crate::processor::compile_citation_patterns(&patterns);
         let qs = generate_weak_source_questions(&content, &compiled);
         assert!(!qs.is_empty(), "non-matching pattern should not suppress question");
+    }
+
+    #[test]
+    fn test_generate_weak_source_accepted_marker_suppresses_question() {
+        // Footnote with <!-- ✓ --> → no question generated
+        let content = format!(
+            "<!-- factbase:abc123 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
+            CITATION_ACCEPTED_MARKER
+        );
+        let qs = generate_weak_source_questions(&content, &[]);
+        assert!(qs.is_empty(), "accepted marker should suppress weak-source question");
+    }
+
+    #[test]
+    fn test_collect_weak_citations_accepted_marker_suppresses() {
+        // Footnote with <!-- ✓ --> → not collected for tier-2
+        let content = format!(
+            "<!-- factbase:abc123 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
+            CITATION_ACCEPTED_MARKER
+        );
+        let weak = collect_weak_citations(&content, "abc123", "Test", &[]);
+        assert!(weak.is_empty(), "accepted marker should suppress collection");
     }
 }
