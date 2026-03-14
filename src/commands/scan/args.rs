@@ -125,6 +125,11 @@ pub struct ScanArgs {
         help = "Assess existing files without modifying anything (onboarding report)"
     )]
     pub assess: bool,
+    #[arg(
+        long,
+        help = "Force full re-sync of review questions from all documents (migration/repair)"
+    )]
+    pub reindex_reviews: bool,
 }
 
 #[cfg(test)]
@@ -249,5 +254,17 @@ mod tests {
     fn test_scan_args_no_embed_default_false() {
         let args = ScanArgs::try_parse_from(["scan"]).unwrap();
         assert!(!args.no_embed);
+    }
+
+    #[test]
+    fn test_scan_args_reindex_reviews() {
+        let args = ScanArgs::try_parse_from(["scan", "--reindex-reviews"]).unwrap();
+        assert!(args.reindex_reviews);
+    }
+
+    #[test]
+    fn test_scan_args_reindex_reviews_default_false() {
+        let args = ScanArgs::try_parse_from(["scan"]).unwrap();
+        assert!(!args.reindex_reviews);
     }
 }

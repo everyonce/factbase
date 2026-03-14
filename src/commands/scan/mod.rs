@@ -224,6 +224,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         skip_links: args.no_links,
         skip_embeddings: args.no_embed,
         force_relink: args.relink,
+        reindex_reviews: args.reindex_reviews,
         ..ScanOptions::from_config(&config)
     };
 

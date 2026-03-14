@@ -30,6 +30,7 @@ pub async fn scan_repository(
     // Wire force_reindex from MCP args
     opts.force_reindex = crate::mcp::tools::helpers::get_bool_arg(args, "force_reindex", false);
     opts.skip_embeddings = crate::mcp::tools::helpers::get_bool_arg(args, "skip_embeddings", false);
+    opts.reindex_reviews = crate::mcp::tools::helpers::get_bool_arg(args, "reindex_reviews", false);
 
     // MCP scan_repository skips link detection — use detect_links tool separately
     opts.skip_links = true;
