@@ -614,6 +614,43 @@ pub async fn full_scan(
         return Ok(result);
     }
 
+    // Full review question sync: populate DB for all unchanged documents.
+    // Triggered automatically when the table is substantially empty vs document count
+    // (migration case), or explicitly via reindex_reviews flag.
+    if !ctx.opts.dry_run {
+        let needs_full_review_sync = ctx.opts.reindex_reviews || {
+            let (answered, unanswered, deferred) =
+                db.count_review_questions_by_status(Some(&repo.id))?;
+            let total_rq = answered + unanswered + deferred;
+            let total_docs = known.len() as u64;
+            total_docs > 0 && total_rq < total_docs / 2
+        };
+        if needs_full_review_sync {
+            let mut synced_docs = 0usize;
+            let mut synced_questions = 0usize;
+            for (id, doc) in &known {
+                if changed_ids.contains(id) || doc.is_deleted {
+                    continue; // already synced during this scan, or deleted
+                }
+                if doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
+                    if let Some(questions) =
+                        crate::processor::parse_review_queue(&doc.content)
+                    {
+                        synced_questions += questions.len();
+                        let _ = db.sync_review_questions(id, &questions);
+                    }
+                }
+                synced_docs += 1;
+            }
+            if synced_docs > 0 {
+                info!(
+                    "First-time review question sync: indexed {} questions from {} documents",
+                    synced_questions, synced_docs
+                );
+            }
+        }
+    }
+
     // Check for duplicates if requested
     if ctx.opts.check_duplicates && !changed_ids.is_empty() {
         result.duplicates = check_duplicates(db, &changed_ids)?;
@@ -1592,5 +1629,111 @@ mod tests {
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         // All files skipped
         assert_eq!(result.added, 0);
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_auto_syncs_review_questions_on_empty_table() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        // Write a doc with a review section in the correct format
+        let content = "<!-- factbase:aaa111 -->\n# Doc\n\nSome fact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n";
+        std::fs::write(tmp.path().join("doc.md"), content).unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+
+        // First scan: doc is new, review questions synced during scan
+        full_scan(&repo, &db, &ctx).await.unwrap();
+        let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert!(unanswered > 0, "review questions should be indexed after first scan");
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_reindex_reviews_syncs_unchanged_docs() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        let content = "<!-- factbase:aaa111 -->\n# Doc\n\nSome fact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n";
+        std::fs::write(tmp.path().join("doc.md"), content).unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        // First scan: indexes the doc
+        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Manually clear review_questions to simulate migration scenario
+        {
+            let conn = db.get_conn().unwrap();
+            conn.execute("DELETE FROM review_questions", []).unwrap();
+        }
+        let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert_eq!(unanswered, 0, "table should be empty after manual clear");
+
+        // Second scan with reindex_reviews=true: doc is unchanged but questions re-synced
+        let opts2 = ScanOptions { skip_links: true, reindex_reviews: true, ..Default::default() };
+        let ctx2 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts2, &progress);
+        full_scan(&repo, &db, &ctx2).await.unwrap();
+
+        let (_, unanswered2, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert!(unanswered2 > 0, "review questions should be re-synced with reindex_reviews");
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_auto_migration_when_table_underpopulated() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        // Write multiple docs with review sections
+        for i in 0..4 {
+            let content = format!(
+                "<!-- factbase:id{i:04} -->\n# Doc {i}\n\nFact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n"
+            );
+            std::fs::write(tmp.path().join(format!("doc{i}.md")), content).unwrap();
+        }
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        // First scan: all docs indexed, review questions synced
+        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Manually clear review_questions to simulate underpopulated table
+        {
+            let conn = db.get_conn().unwrap();
+            conn.execute("DELETE FROM review_questions", []).unwrap();
+        }
+
+        // Second scan without flag: auto-detects empty table and re-syncs
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert!(unanswered > 0, "auto-migration should populate review questions");
     }
 }

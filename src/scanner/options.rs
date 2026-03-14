@@ -39,6 +39,8 @@ pub struct ScanOptions {
     pub deadline: Option<Instant>,
     /// Number of files to skip (for resume after interruption)
     pub file_offset: usize,
+    /// Force full re-sync of review questions from all documents (migration/repair)
+    pub reindex_reviews: bool,
 }
 
 impl Default for ScanOptions {
@@ -61,6 +63,7 @@ impl Default for ScanOptions {
             force_relink: false,
             deadline: None,
             file_offset: 0,
+            reindex_reviews: false,
         }
     }
 }
