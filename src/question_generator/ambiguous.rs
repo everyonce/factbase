@@ -94,20 +94,26 @@ pub fn collect_defined_terms(docs: &[crate::models::Document]) -> HashSet<String
 /// Collect all defined terms from glossary/definition/reference documents,
 /// with optional custom glossary types from perspective.yaml.
 ///
-/// Includes both terms extracted from document content (`**TERM**:`, `## TERM`)
-/// and document titles of glossary docs (for repos with one-doc-per-term layout).
+/// Includes:
+/// - Terms extracted from glossary doc content (`**TERM**:`, `## TERM`)
+/// - Titles of ALL documents — any entity with its own document is implicitly
+///   defined in the KB (entity name matching). This suppresses ambiguous questions
+///   for acronyms like "SME" when a document titled "SME" already exists.
 pub fn collect_defined_terms_with_types(
     docs: &[crate::models::Document],
     glossary_types: Option<&[String]>,
 ) -> HashSet<String> {
     let mut terms = HashSet::new();
     for doc in docs {
+        // All document titles are implicitly defined — any entity with its own
+        // document is defined in the KB (entity name matching).
+        if !doc.title.is_empty() {
+            terms.insert(doc.title.clone());
+        }
+        // For glossary/definition docs, also extract inline term definitions
+        // (e.g. **TERM**: definition, ## TERM headings).
         if is_glossary_doc_with_types(doc.doc_type.as_deref(), &doc.content, glossary_types) {
             terms.extend(extract_defined_terms(&doc.content));
-            // Include the doc title as a defined term (supports one-doc-per-term layout)
-            if !doc.title.is_empty() {
-                terms.insert(doc.title.clone());
-            }
         }
     }
     terms
@@ -644,8 +650,8 @@ mod tests {
         let terms = collect_defined_terms(&[glossary, regular]);
         assert!(terms.contains("HCLS"));
         assert!(terms.contains("RFP"));
-        assert!(terms.contains("Glossary")); // doc title is also included
-        assert_eq!(terms.len(), 3);
+        assert!(terms.contains("Glossary")); // glossary doc title
+        assert!(terms.contains("Project")); // all doc titles are now included
     }
 
     #[test]
@@ -791,28 +797,75 @@ mod tests {
     }
 
     #[test]
+    fn test_all_doc_titles_suppress_ambiguous_questions() {
+        use crate::models::Document;
+        // A non-glossary doc titled "SME" — its title alone should suppress the question
+        let sme_doc = Document {
+            id: "sme1".to_string(),
+            title: "SME".to_string(),
+            content: "# SME\n\n- Subject Matter Expert\n".to_string(),
+            doc_type: Some("concepts".to_string()), // NOT a glossary type
+            ..Document::test_default()
+        };
+        let terms = collect_defined_terms(&[sme_doc]);
+        assert!(terms.contains("SME"), "doc title SME should be a defined term");
+        // SME should not be flagged as ambiguous in other docs
+        let q = generate_ambiguous_questions_with_type(
+            "# Project\n\n- Working with SME team on deployment",
+            Some("project"),
+            &terms,
+        );
+        assert!(
+            q.iter().all(|q| !q.description.contains("SME")),
+            "SME should be suppressed by entity title match"
+        );
+        // XYZZY not in any doc title → still flagged
+        let q2 = generate_ambiguous_questions_with_type(
+            "# Project\n\n- Working on XYZZY initiative",
+            Some("project"),
+            &terms,
+        );
+        assert!(q2.iter().any(|q| q.description.contains("XYZZY")));
+    }
+
+    #[test]
     fn test_custom_glossary_types_from_perspective() {
         use crate::models::Document;
-        // Custom glossary type "acronym" configured via perspective.yaml
+        // Custom glossary type "acronym" configured via perspective.yaml.
+        // The doc has inline **TERM**: definitions in its content.
         let doc = Document {
             id: "c01".to_string(),
-            title: "FHIR".to_string(),
-            content: "# FHIR\n\nFast Healthcare Interoperability Resources\n".to_string(),
+            title: "Acronyms".to_string(),
+            content: "# Acronyms\n\n- **FHIR**: Fast Healthcare Interoperability Resources\n- **HL7**: Health Level Seven\n".to_string(),
             doc_type: Some("acronym".to_string()),
             ..Document::test_default()
         };
-        // Without custom types, "acronym" type is not recognized as glossary
+        // Without custom types, "acronym" type is not recognized as glossary,
+        // so inline content terms (FHIR, HL7) are NOT extracted.
+        // (The doc title "Acronyms" is always included via entity-name matching.)
         let terms_default = collect_defined_terms(&[doc.clone()]);
         assert!(
             !terms_default.contains("FHIR"),
-            "acronym type not in defaults"
+            "inline content term FHIR should not be extracted without custom glossary_types"
         );
-        // With custom types, it is recognized
+        assert!(
+            !terms_default.contains("HL7"),
+            "inline content term HL7 should not be extracted without custom glossary_types"
+        );
+        assert!(
+            terms_default.contains("Acronyms"),
+            "doc title is always included via entity-name matching"
+        );
+        // With custom types, inline content terms ARE extracted
         let custom = vec!["acronym".to_string()];
         let terms_custom = collect_defined_terms_with_types(&[doc], Some(&custom));
         assert!(
             terms_custom.contains("FHIR"),
-            "acronym type should be recognized with custom glossary_types"
+            "FHIR should be extracted from content with custom glossary_types"
+        );
+        assert!(
+            terms_custom.contains("HL7"),
+            "HL7 should be extracted from content with custom glossary_types"
         );
     }
 }
