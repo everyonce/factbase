@@ -409,6 +409,35 @@ pub fn stamp_reviewed_lines(content: &str, line_numbers: &[usize], date: &NaiveD
         .join("\n")
 }
 
+/// HTML comment marker appended to a footnote line when a weak-source question
+/// is dismissed after tier-2 evaluation. Prevents the footnote from being
+/// re-flagged on subsequent scans.
+pub const CITATION_ACCEPTED_MARKER: &str = "<!-- ✓ -->";
+
+/// Stamp `<!-- ✓ -->` on footnote definition lines to permanently suppress weak-source
+/// question regeneration for citations that have been evaluated and accepted.
+pub fn stamp_citation_accepted(content: &str, line_numbers: &[usize]) -> String {
+    if line_numbers.is_empty() {
+        return content.to_string();
+    }
+    content
+        .lines()
+        .enumerate()
+        .map(|(i, line)| {
+            let line_num = i + 1;
+            if line_numbers.contains(&line_num)
+                && line.trim_start().starts_with("[^")
+                && !line.contains(CITATION_ACCEPTED_MARKER)
+            {
+                format!("{line} {CITATION_ACCEPTED_MARKER}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Stamp `<!-- sequential -->` on fact lines to permanently suppress conflict regeneration.
 pub fn stamp_sequential_lines(content: &str, line_numbers: &[usize]) -> String {
     content
@@ -1256,6 +1285,36 @@ Content here
         let content = "- Fact line";
         let result = stamp_sequential_by_text(content, &[""]);
         assert!(!result.contains("<!-- sequential"));
+    }
+
+    // --- dedup_titles tests ---
+
+    #[test]
+    fn test_stamp_citation_accepted_stamps_footnote_line() {
+        let content = "# Doc\n\n- Fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10";
+        let result = stamp_citation_accepted(content, &[6]);
+        assert!(result.contains("[^1]: Phonetool lookup, 2026-02-10 <!-- ✓ -->"));
+    }
+
+    #[test]
+    fn test_stamp_citation_accepted_no_double_stamp() {
+        let content = "[^1]: Phonetool lookup <!-- ✓ -->";
+        let result = stamp_citation_accepted(content, &[1]);
+        assert_eq!(result.matches("<!-- ✓ -->").count(), 1);
+    }
+
+    #[test]
+    fn test_stamp_citation_accepted_skips_non_footnote_lines() {
+        let content = "# Title\n\n- Fact line";
+        let result = stamp_citation_accepted(content, &[1, 3]);
+        assert!(!result.contains("<!-- ✓ -->"));
+    }
+
+    #[test]
+    fn test_stamp_citation_accepted_empty_line_numbers() {
+        let content = "[^1]: Some source";
+        let result = stamp_citation_accepted(content, &[]);
+        assert_eq!(result, content);
     }
 
     // --- dedup_titles tests ---
