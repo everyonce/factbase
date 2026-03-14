@@ -574,7 +574,10 @@ fn maintain_step(
             "when_done": "Call workflow with workflow='maintain', step=4"
         }),
         4 => {
-            // Tier-2 batch citation review: collect all weak citations and present to agent
+            // Two-phase citation review.
+            // phase=1 (default): triage — large batches, pure reasoning, VALID/INVALID/WEAK labels.
+            // phase=2: resolve — small batches with tool calls, FIXED/DEFER.
+            let phase = get_u64_arg(_args, "phase", 1) as usize;
             let all_docs = crate::organize::detect::collect_active_documents(db, None)
                 .unwrap_or_default();
             let mut weak_citations: Vec<crate::question_generator::WeakCitation> = Vec::new();
@@ -593,25 +596,128 @@ fn maintain_step(
                     "when_done": "Call workflow with workflow='maintain', step=5"
                 });
             }
-            let batch_text = crate::question_generator::format_citation_batch(&weak_citations);
-            let citations_json: Vec<serde_json::Value> = weak_citations.iter().map(|c| serde_json::json!({
-                "doc_id": c.doc_id,
-                "doc_title": c.doc_title,
-                "footnote_number": c.footnote_number,
-                "citation_text": c.citation_text,
-                "failure_reason": c.failure_reason,
-                "line_number": c.line_number,
-            })).collect();
-            serde_json::json!({
-                "workflow": "maintain",
-                "step": 4, "total_steps": total,
-                "instruction": resolve(wf, "maintain.citation_review", DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION, &[]),
-                "citations_to_review": weak_citations.len(),
-                "citations": citations_json,
-                "batch_prompt": batch_text,
-                "next_tool": "factbase", "suggested_op": "get_entity",
-                "when_done": "After reviewing and fixing citations, call workflow with workflow='maintain', step=5"
-            })
+
+            if phase == 2 {
+                // Phase 2: resolve loop — small batches with tool calls.
+                // The agent passes triage_results from phase 1 to get hints.
+                let triage_results = _args.get("triage_results")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+
+                // Build hints map: index → suggestion from triage
+                let hints: Vec<String> = weak_citations.iter().enumerate().map(|(i, _)| {
+                    triage_results.iter()
+                        .find(|r| r.get("index").and_then(|v| v.as_u64()) == Some(i as u64 + 1))
+                        .and_then(|r| r.get("suggestion"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string()
+                }).collect();
+
+                // Filter to only INVALID and WEAK (skip VALID from triage)
+                let to_resolve: Vec<(usize, &crate::question_generator::WeakCitation, &String)> =
+                    weak_citations.iter().enumerate()
+                        .zip(hints.iter())
+                        .filter(|((i, _), _)| {
+                            let verdict = triage_results.iter()
+                                .find(|r| r.get("index").and_then(|v| v.as_u64()) == Some(*i as u64 + 1))
+                                .and_then(|r| r.get("verdict"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("INVALID"); // default to INVALID if no triage
+                            verdict != "VALID"
+                        })
+                        .map(|((i, c), h)| (i, c, h))
+                        .collect();
+
+                let batch_size = crate::question_generator::CITATION_RESOLVE_BATCH_SIZE;
+                let offset = get_u64_arg(_args, "offset", 0) as usize;
+                let batch_slice = &to_resolve[offset.min(to_resolve.len())..];
+                let batch_items: Vec<_> = batch_slice.iter().take(batch_size).collect();
+                let remaining = to_resolve.len().saturating_sub(offset + batch_items.len());
+                let continue_loop = remaining > 0;
+
+                let batch_citations: Vec<&crate::question_generator::WeakCitation> =
+                    batch_items.iter().map(|(_, c, _)| *c).collect();
+                let batch_hints: Vec<String> =
+                    batch_items.iter().map(|(_, _, h)| (*h).clone()).collect();
+
+                let citations_json: Vec<serde_json::Value> = batch_items.iter().map(|(_, c, h)| serde_json::json!({
+                    "doc_id": c.doc_id,
+                    "doc_title": c.doc_title,
+                    "footnote_number": c.footnote_number,
+                    "citation_text": c.citation_text,
+                    "failure_reason": c.failure_reason,
+                    "line_number": c.line_number,
+                    "hint": h.as_str(),
+                })).collect();
+
+                let batch_prompt = crate::question_generator::format_citation_resolve_batch(
+                    &batch_citations.iter().map(|c| (*c).clone()).collect::<Vec<_>>(),
+                    &batch_hints,
+                );
+
+                serde_json::json!({
+                    "workflow": "maintain",
+                    "step": 4, "total_steps": total,
+                    "phase": 2,
+                    "instruction": resolve(wf, "maintain.citation_resolve", DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION, &[]),
+                    "citations_in_batch": batch_items.len(),
+                    "citations_remaining": remaining,
+                    "citations": citations_json,
+                    "batch_prompt": batch_prompt,
+                    "continue": continue_loop,
+                    "next_offset": offset + batch_items.len(),
+                    "next_tool": "factbase", "suggested_op": "get_entity",
+                    "when_done": if continue_loop {
+                        format!("After fixing this batch, call workflow(workflow='maintain', step=4, phase=2, offset={}, triage_results=<your_triage_results>)", offset + batch_items.len())
+                    } else {
+                        "All citations resolved. Call workflow with workflow='maintain', step=5".to_string()
+                    }
+                })
+            } else {
+                // Phase 1: triage — large batches, pure reasoning.
+                let batch_size = crate::question_generator::CITATION_TRIAGE_BATCH_SIZE;
+                let offset = get_u64_arg(_args, "offset", 0) as usize;
+                let batch_slice = &weak_citations[offset.min(weak_citations.len())..];
+                let batch: Vec<&crate::question_generator::WeakCitation> =
+                    batch_slice.iter().take(batch_size).collect();
+                let remaining = weak_citations.len().saturating_sub(offset + batch.len());
+                let continue_loop = remaining > 0;
+
+                let citations_json: Vec<serde_json::Value> = batch.iter().map(|c| serde_json::json!({
+                    "index": weak_citations.iter().position(|x| std::ptr::eq(x, *c)).map(|i| i + 1).unwrap_or(0),
+                    "doc_id": c.doc_id,
+                    "doc_title": c.doc_title,
+                    "footnote_number": c.footnote_number,
+                    "citation_text": c.citation_text,
+                    "failure_reason": c.failure_reason,
+                    "line_number": c.line_number,
+                })).collect();
+
+                let batch_prompt = crate::question_generator::format_citation_triage_batch(
+                    &batch.iter().map(|c| (*c).clone()).collect::<Vec<_>>(),
+                );
+
+                serde_json::json!({
+                    "workflow": "maintain",
+                    "step": 4, "total_steps": total,
+                    "phase": 1,
+                    "instruction": resolve(wf, "maintain.citation_triage", DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION, &[]),
+                    "citations_total": weak_citations.len(),
+                    "citations_in_batch": batch.len(),
+                    "citations_remaining": remaining,
+                    "citations": citations_json,
+                    "batch_prompt": batch_prompt,
+                    "continue": continue_loop,
+                    "next_offset": offset + batch.len(),
+                    "when_done": if continue_loop {
+                        format!("After triaging this batch, call workflow(workflow='maintain', step=4, phase=1, offset={}) for the next triage batch. When all batches triaged, call workflow(workflow='maintain', step=4, phase=2, triage_results=<all_results>)", offset + batch.len())
+                    } else {
+                        "Triage complete. Call workflow(workflow='maintain', step=4, phase=2, triage_results=<your_triage_results>) to begin resolving INVALID and WEAK citations.".to_string()
+                    }
+                })
+            }
         }
         5 => serde_json::json!({
             "workflow": "maintain",
@@ -5209,21 +5315,96 @@ mod tests {
         // Insert a doc with a weak citation (tool name without URL)
         let content = "<!-- factbase:cit001 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10\n";
         insert_test_doc(&db, "cit001", content);
-        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        // Phase 1: triage
+        let step = maintain_step(4, &serde_json::json!({"phase": 1}), &None, 0, &db, &wf());
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 4);
-        // Should have citations to review
-        assert!(step["citations_to_review"].as_u64().unwrap() >= 1);
+        assert_eq!(step["phase"], 1);
+        assert!(step["citations_total"].as_u64().unwrap() >= 1);
         assert!(step["citations"].is_array());
+        // Phase 1 batch_prompt uses VALID/INVALID/WEAK format
+        assert!(step["batch_prompt"].as_str().unwrap().contains("VALID"));
+        assert!(step["batch_prompt"].as_str().unwrap().contains("WEAK"));
+        // Phase 1 when_done routes to phase=2
+        assert!(step["when_done"].as_str().unwrap().contains("phase=2"));
+    }
+
+    #[test]
+    fn test_maintain_step4_phase2_resolve_loop() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:cit002 -->\n# Entity\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10\n";
+        insert_test_doc(&db, "cit002", content);
+        // Phase 2: resolve with triage results
+        let triage_results = serde_json::json!([
+            {"index": 1, "verdict": "WEAK", "suggestion": "construct https://phonetool.amazon.com/users/{alias}"}
+        ]);
+        let step = maintain_step(4, &serde_json::json!({"phase": 2, "triage_results": triage_results}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "maintain");
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["phase"], 2);
+        assert!(step["citations"].is_array());
+        // Phase 2 batch_prompt uses FIXED/DEFER format
         assert!(step["batch_prompt"].as_str().unwrap().contains("FIXED"));
-        assert!(step["when_done"].as_str().unwrap().contains("step=5"));
+        assert!(step["batch_prompt"].as_str().unwrap().contains("DEFER"));
+        // Hint should appear in batch_prompt
+        assert!(step["batch_prompt"].as_str().unwrap().contains("phonetool.amazon.com"));
+    }
+
+    #[test]
+    fn test_maintain_step4_phase2_skips_valid_citations() {
+        let (db, _tmp) = test_db();
+        let content = "<!-- factbase:cit003 -->\n# Entity\n\n- Fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10\n";
+        insert_test_doc(&db, "cit003", content);
+        // Triage marks citation as VALID → phase 2 should have nothing to resolve
+        let triage_results = serde_json::json!([
+            {"index": 1, "verdict": "VALID", "suggestion": ""}
+        ]);
+        let step = maintain_step(4, &serde_json::json!({"phase": 2, "triage_results": triage_results}), &None, 0, &db, &wf());
+        assert_eq!(step["citations_in_batch"], 0);
+        assert_eq!(step["continue"], false);
+    }
+
+    #[test]
+    fn test_maintain_step4_phase1_batch_size_respected() {
+        let (db, _tmp) = test_db();
+        // Insert many docs with weak citations
+        for i in 0..5 {
+            let id = format!("cit{:03}", i + 10);
+            let content = format!("<!-- factbase:{id} -->\n# Entity {i}\n\n- Fact [^1]\n\n---\n[^1]: Phonetool lookup\n");
+            insert_test_doc(&db, &id, &content);
+        }
+        let step = maintain_step(4, &serde_json::json!({"phase": 1}), &None, 0, &db, &wf());
+        // All 5 fit within the 200-citation triage batch
+        assert!(step["citations_in_batch"].as_u64().unwrap() <= 200);
+        assert!(step["citations_in_batch"].as_u64().unwrap() >= 1);
+    }
+
+    #[test]
+    fn test_maintain_step4_phase2_batch_size_15() {
+        let (db, _tmp) = test_db();
+        // Insert 20 docs with weak citations
+        for i in 0..20 {
+            let id = format!("cit{:03}", i + 20);
+            let content = format!("<!-- factbase:{id} -->\n# Entity {i}\n\n- Fact [^1]\n\n---\n[^1]: Phonetool lookup\n");
+            insert_test_doc(&db, &id, &content);
+        }
+        // No triage results → all treated as INVALID
+        let step = maintain_step(4, &serde_json::json!({"phase": 2}), &None, 0, &db, &wf());
+        // Phase 2 batch size is 15
+        assert!(step["citations_in_batch"].as_u64().unwrap() <= 15);
+        assert_eq!(step["citations_in_batch"].as_u64().unwrap(), 15);
+        assert_eq!(step["continue"], true);
+        assert_eq!(step["next_offset"], 15);
     }
 
     #[test]
     fn test_maintain_citation_review_instruction_has_key_content() {
-        assert!(DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION.contains("FIXED"));
-        assert!(DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION.contains("DEFER"));
-        assert!(DEFAULT_MAINTAIN_CITATION_REVIEW_INSTRUCTION.contains("URL"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("VALID"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("INVALID"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("WEAK"));
+        assert!(DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION.contains("FIXED"));
+        assert!(DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION.contains("DEFER"));
+        assert!(DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION.contains("URL"));
     }
 
     #[test]

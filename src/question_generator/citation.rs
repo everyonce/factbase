@@ -90,29 +90,75 @@ pub fn collect_weak_citations(content: &str, doc_id: &str, doc_title: &str) -> V
         .collect()
 }
 
-/// Format a list of weak citations as a numbered batch for agent review.
+/// Phase 1 triage batch size: evaluate up to this many citations per LLM call.
+pub const CITATION_TRIAGE_BATCH_SIZE: usize = 200;
+
+/// Phase 2 resolve batch size: fix up to this many citations per LLM call (tool calls needed).
+pub const CITATION_RESOLVE_BATCH_SIZE: usize = 15;
+
+/// Format a list of weak citations as a Phase 1 triage batch.
 ///
-/// Returns the formatted prompt text and the count of citations.
-pub fn format_citation_batch(citations: &[WeakCitation]) -> String {
+/// The agent labels each citation VALID, INVALID, or WEAK + suggestion.
+/// No tool calls needed — pure reasoning over the citation text.
+pub fn format_citation_triage_batch(citations: &[WeakCitation]) -> String {
     if citations.is_empty() {
         return String::new();
     }
     let mut out = String::from(
-        "Review these citations. For each, respond with either:\n\
-         - FIXED: provide the corrected citation text\n\
-         - DEFER: explain why it cannot be improved\n\n",
+        "Evaluate these citations. For each, respond with:\n\
+         - VALID — citation is specific enough to verify independently\n\
+         - INVALID — citation is too vague to fix without research\n\
+         - WEAK — partial info present; include a suggestion for what to look up\n\n",
     );
     for (i, c) in citations.iter().enumerate() {
         out.push_str(&format!(
-            "{}. [^{}] doc: {} — '{}' — {}\n",
+            "{}. [doc: {}] [^{}] \"{}\" — {}\n",
             i + 1,
-            c.footnote_number,
             c.doc_title,
+            c.footnote_number,
             c.citation_text,
             c.failure_reason,
         ));
     }
     out
+}
+
+/// Format a list of weak citations as a Phase 2 resolve batch.
+///
+/// Each entry includes the doc context and an optional hint from Phase 1 triage.
+/// The agent uses tool calls (web_search, get_entity, etc.) to fix each citation.
+pub fn format_citation_resolve_batch(citations: &[WeakCitation], hints: &[String]) -> String {
+    if citations.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from(
+        "Fix these citations using your available tools. For each:\n\
+         - FIXED: provide the corrected footnote text\n\
+         - DEFER: explain what you tried and why it cannot be improved\n\n",
+    );
+    for (i, c) in citations.iter().enumerate() {
+        let hint = hints.get(i).map(|s| s.as_str()).unwrap_or("");
+        out.push_str(&format!(
+            "{}. [doc: {}, id: {}] [^{}] \"{}\"\n",
+            i + 1,
+            c.doc_title,
+            c.doc_id,
+            c.footnote_number,
+            c.citation_text,
+        ));
+        if !hint.is_empty() {
+            out.push_str(&format!("   Hint: {hint}\n"));
+        }
+    }
+    out
+}
+
+/// Format a list of weak citations as a numbered batch for agent review.
+///
+/// Legacy format — kept for backward compatibility.
+/// New code should use `format_citation_triage_batch` + `format_citation_resolve_batch`.
+pub fn format_citation_batch(citations: &[WeakCitation]) -> String {
+    format_citation_triage_batch(citations)
 }
 
 #[cfg(test)]
@@ -233,6 +279,7 @@ mod tests {
 
     #[test]
     fn test_format_citation_batch_numbered() {
+        // format_citation_batch is now an alias for format_citation_triage_batch
         let citations = vec![
             WeakCitation {
                 doc_id: "doc1".into(),
@@ -252,11 +299,73 @@ mod tests {
             },
         ];
         let batch = format_citation_batch(&citations);
-        assert!(batch.contains("1. [^3] doc: John Smith"));
-        assert!(batch.contains("2. [^7] doc: XSOLIS"));
+        // New triage format: "[doc: Title] [^N] "text" — reason"
+        assert!(batch.contains("1. [doc: John Smith] [^3]"));
+        assert!(batch.contains("2. [doc: XSOLIS] [^7]"));
         assert!(batch.contains("Phonetool lookup"));
+        assert!(batch.contains("VALID"));
+        assert!(batch.contains("WEAK"));
+    }
+
+    #[test]
+    fn test_format_citation_triage_batch_format() {
+        let citations = vec![WeakCitation {
+            doc_id: "doc1".into(),
+            doc_title: "Amazon S3".into(),
+            footnote_number: 2,
+            citation_text: "AWS documentation".into(),
+            failure_reason: "source type unrecognized — add URL, record ID, or other navigable reference",
+            line_number: 5,
+        }];
+        let batch = format_citation_triage_batch(&citations);
+        assert!(batch.contains("VALID"));
+        assert!(batch.contains("INVALID"));
+        assert!(batch.contains("WEAK"));
+        assert!(batch.contains("[doc: Amazon S3] [^2]"));
+        assert!(batch.contains("AWS documentation"));
+    }
+
+    #[test]
+    fn test_format_citation_resolve_batch_includes_hints() {
+        let citations = vec![WeakCitation {
+            doc_id: "doc1".into(),
+            doc_title: "John Smith".into(),
+            footnote_number: 3,
+            citation_text: "Phonetool lookup, 2026-02-10".into(),
+            failure_reason: "tool name present but no URL — add the direct URL",
+            line_number: 10,
+        }];
+        let hints = vec!["construct https://phonetool.amazon.com/users/{alias}".to_string()];
+        let batch = format_citation_resolve_batch(&citations, &hints);
         assert!(batch.contains("FIXED"));
         assert!(batch.contains("DEFER"));
+        assert!(batch.contains("[doc: John Smith, id: doc1] [^3]"));
+        assert!(batch.contains("Phonetool lookup"));
+        assert!(batch.contains("phonetool.amazon.com"));
+    }
+
+    #[test]
+    fn test_format_citation_resolve_batch_no_hints() {
+        let citations = vec![WeakCitation {
+            doc_id: "doc2".into(),
+            doc_title: "XSOLIS".into(),
+            footnote_number: 7,
+            citation_text: "Meeting with account team, January".into(),
+            failure_reason: "meeting/call source missing participants or date",
+            line_number: 15,
+        }];
+        let batch = format_citation_resolve_batch(&citations, &[]);
+        assert!(batch.contains("FIXED"));
+        assert!(batch.contains("DEFER"));
+        assert!(batch.contains("[doc: XSOLIS, id: doc2] [^7]"));
+        // No hint line when hints is empty
+        assert!(!batch.contains("Hint:"));
+    }
+
+    #[test]
+    fn test_citation_batch_sizes() {
+        assert_eq!(CITATION_TRIAGE_BATCH_SIZE, 200);
+        assert_eq!(CITATION_RESOLVE_BATCH_SIZE, 15);
     }
 
     // --- QuestionType::WeakSource still parseable (for backward compat) ---
