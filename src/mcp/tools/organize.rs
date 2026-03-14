@@ -1300,10 +1300,10 @@ mod tests {
 
     #[test]
     fn test_maintain_workflow_lists_organize_operations() {
-        // Test via the workflow function output (step 5 = organize step)
+        // Test via the workflow function output (step 6 = organize step)
         let (db, _tmp) = crate::database::tests::test_db();
         crate::database::tests::test_repo_in_db(&db, "test", _tmp.path());
-        let args = serde_json::json!({"workflow": "maintain", "step": 5});
+        let args = serde_json::json!({"workflow": "maintain", "step": 6});
         let result = crate::mcp::tools::workflow::workflow(&db, &args).unwrap();
         let instruction = result["instruction"].as_str().unwrap();
         assert!(
