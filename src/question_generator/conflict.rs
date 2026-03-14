@@ -401,6 +401,24 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
     // Classify the conflict pattern and include hint in description
     let pattern = classify_conflict_pattern(&fact1.text, &fact2.text, start1, end1, start2, end2);
 
+    // Suppress same-document parallel_overlap when facts have different start dates and
+    // no shared attribute key.  Concurrent properties of the same entity with different
+    // temporal anchors are almost never contradictions (e.g. "Opened door to free jazz
+    // @t[1960..]" vs "Influenced rock/fusion @t[1965..]").  Same-start-date cases are
+    // already handled by is_parallel_properties above.  Facts sharing the same attribute
+    // key (e.g. "role: alpha" vs "role: beta") are real conflicts regardless of pattern.
+    if pattern == ConflictPattern::ParallelOverlap {
+        let s1_norm = normalize_date_for_comparison(start1);
+        let s2_norm = normalize_date_for_comparison(start2);
+        let different_starts = s1_norm != s2_norm;
+        let same_key = !have_different_attribute_keys(&fact1.text, &fact2.text)
+            && extract_attribute_key(&fact1.text).is_some()
+            && extract_attribute_key(&fact2.text).is_some();
+        if different_starts && !same_key {
+            return None;
+        }
+    }
+
     // Generate conflict question with pattern hint
     let description = format!(
         "\"{}\" @t[{}..{}] overlaps with \"{}\" @t[{}..{}] - were both true simultaneously? (line:{}) [pattern:{}]",
@@ -928,23 +946,18 @@ mod tests {
 
     #[test]
     fn test_generate_conflict_questions_overlapping() {
+        // Different entities → parallel_overlap → suppressed in same doc
         let content = "# Person\n\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
         let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].question_type, QuestionType::Conflict);
-        assert!(questions[0].description.contains("overlaps"));
-        assert!(questions[0].description.contains("simultaneously"));
-        assert_eq!(questions[0].line_ref, Some(3));
-        assert!(questions[0].description.contains("(line:4)"));
-        assert!(questions[0].description.contains("[pattern:"));
+        assert!(questions.is_empty());
     }
 
     #[test]
     fn test_generate_conflict_questions_ongoing_overlap() {
+        // Different entities with ongoing overlap → parallel_overlap → suppressed in same doc
         let content = "# Person\n\n- Engineer at Acme @t[2020..]\n- Developer at BigCo @t[2022..]";
         let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].question_type, QuestionType::Conflict);
+        assert!(questions.is_empty());
     }
 
     #[test]
@@ -966,11 +979,11 @@ mod tests {
 
     #[test]
     fn test_generate_conflict_questions_overlapping_locations() {
+        // Different-entity overlap → parallel_overlap → suppressed in same doc
         let content =
             "# Person\n\n- Lives in NYC @t[2020..2023]\n- Based in San Francisco @t[2022..2024]";
         let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].question_type, QuestionType::Conflict);
+        assert!(questions.is_empty());
     }
 
     #[test]
@@ -1045,10 +1058,11 @@ mod tests {
     }
 
     #[test]
-    fn test_same_section_still_conflicts() {
+    fn test_same_section_parallel_overlap_suppressed() {
+        // Different entities in same section → parallel_overlap → suppressed
         let content = "# Person\n\n## Career History\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
         let questions = generate_conflict_questions(content);
-        assert_eq!(questions.len(), 1);
+        assert!(questions.is_empty());
     }
 
     #[test]
@@ -1169,17 +1183,18 @@ mod tests {
     }
 
     #[test]
-    fn test_overlapping_entries_still_conflicts() {
+    fn test_overlapping_entries_parallel_overlap_suppressed() {
+        // Different-entity overlaps → parallel_overlap → suppressed in same doc
         let content = "# Entity\n\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
-        assert_eq!(generate_conflict_questions(content).len(), 1);
-        // Significant overlap
+        assert!(generate_conflict_questions(content).is_empty());
+        // Generic entries with no shared entity → parallel_overlap → suppressed
         let content2 = "# Entity\n\n- Entry A @t[2018..2022]\n- Entry B @t[2020..2023]";
-        assert_eq!(generate_conflict_questions(content2).len(), 1);
-        // Multi-year overlap at different entities
+        assert!(generate_conflict_questions(content2).is_empty());
+        // Multi-year overlap at different entities → suppressed
         let content3 = "# Entity\n\n\
             - Entry A @t[2018-01..2023-06]\n\
             - Entry B @t[2021-03..2024-12]";
-        assert_eq!(generate_conflict_questions(content3).len(), 1);
+        assert!(generate_conflict_questions(content3).is_empty());
     }
 
     // --- duplicate entry question tests ---
@@ -1377,7 +1392,8 @@ mod tests {
 
     #[test]
     fn test_conflict_description_includes_second_line() {
-        let content = "# Person\n\n- CTO at Acme @t[2020..2023]\n- CEO at BigCo @t[2022..2024]";
+        // Use same-entity conflict with same start date (avoids shared-entity-sequential suppression)
+        let content = "# Person\n\n- CTO at Acme @t[2022..2023]\n- CEO at Acme @t[2022..2024]";
         let questions = generate_conflict_questions(content);
         assert_eq!(questions.len(), 1);
         assert!(questions[0].description.contains("(line:4)"));
@@ -1429,8 +1445,8 @@ mod tests {
     }
 
     #[test]
-    fn test_different_entities_still_conflicts() {
-        // Different entities with overlap should still conflict
+    fn test_different_entities_parallel_overlap_suppressed() {
+        // Different entities with overlap → parallel_overlap → suppressed in same doc
         for content in [
             "# Person\n\n## Career History\n\
                 - VP at Acme @t[2020..2023]\n\
@@ -1439,10 +1455,9 @@ mod tests {
                 - Engineer at Google @t[2020..2023]\n\
                 - Manager at Amazon @t[2022..2024]",
         ] {
-            assert_eq!(
-                generate_conflict_questions(content).len(),
-                1,
-                "Should conflict for: {}",
+            assert!(
+                generate_conflict_questions(content).is_empty(),
+                "Should be suppressed (parallel_overlap) for: {}",
                 content
             );
         }
@@ -1652,10 +1667,10 @@ mod tests {
 
     #[test]
     fn test_non_kv_facts_still_conflict() {
-        // Facts without key-value structure should still be checked
+        // Non-KV facts with same entity and same start date still conflict
         let content = "# Entity\n\n\
-            - CTO at Acme @t[2020..2023]\n\
-            - CEO at BigCo @t[2022..2024]";
+            - CTO at Acme @t[2022..2023]\n\
+            - CEO at Acme @t[2022..2024]";
         assert_eq!(generate_conflict_questions(content).len(), 1);
     }
 
@@ -1846,5 +1861,68 @@ mod tests {
         filter_sequential_conflicts(content, &mut questions);
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question_type, QuestionType::Stale);
+    }
+
+    // --- parallel_overlap suppression (same-doc vs cross-doc) tests ---
+
+    #[test]
+    fn test_same_doc_parallel_overlap_not_generated() {
+        // Same-doc parallel_overlap: concurrent properties, not a conflict
+        // Modal Jazz: different start dates, different entities → parallel_overlap → suppressed
+        let content = "# Modal Jazz\n\n\
+            - Opened door to free jazz @t[1960..]\n\
+            - Influenced rock and fusion @t[1965..]";
+        assert!(
+            generate_conflict_questions(content).is_empty(),
+            "Same-doc parallel_overlap should not generate a question"
+        );
+
+        // Bebop: different start dates, different properties → parallel_overlap → suppressed
+        let content2 = "# Bebop\n\n\
+            - Laid foundation for modern jazz @t[1950..]\n\
+            - Monk innovations changed harmony @t[1940..]";
+        assert!(
+            generate_conflict_questions(content2).is_empty(),
+            "Same-doc parallel_overlap (Bebop) should not generate a question"
+        );
+    }
+
+    #[test]
+    fn test_cross_doc_parallel_overlap_still_generated_via_filter() {
+        // Cross-doc parallel_overlap questions (agent-created) are NOT suppressed
+        // by filter_sequential_conflicts unless they match a sequential pattern.
+        // Use facts that don't match any sequential heuristic.
+        let content = "# Modal Jazz\n\n\
+            - Opened door to free jazz @t[1960..]\n\
+            - Influenced rock and fusion @t[1965..]";
+        let mut questions = vec![
+            ReviewQuestion::new(
+                QuestionType::Conflict,
+                Some(3),
+                "Cross-check: \"Opened door to free jazz\" vs \"Influenced rock\" [pattern:parallel_overlap]".to_string(),
+            ),
+        ];
+        // filter_sequential_conflicts checks is_parallel_properties (same start date)
+        // These have different start dates so they are NOT suppressed by the filter
+        filter_sequential_conflicts(content, &mut questions);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Cross-doc parallel_overlap with different start dates should not be filtered"
+        );
+    }
+
+    #[test]
+    fn test_true_conflict_same_entity_still_generated() {
+        // True conflict: same entity, same start date → same_entity_transition → still generated
+        // (different start dates would be suppressed by is_shared_entity_sequential)
+        let content = "# Entity\n\n\
+            - Status active at Acme @t[2022..2023]\n\
+            - Status inactive at Acme @t[2022..2024]";
+        assert_eq!(
+            generate_conflict_questions(content).len(),
+            1,
+            "Same-entity contradictory facts should still generate a conflict question"
+        );
     }
 }
