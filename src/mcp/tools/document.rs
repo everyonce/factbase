@@ -4,7 +4,7 @@ use super::helpers::{load_glossary_terms, resolve_doc_path};
 use super::{get_str_arg, get_str_arg_required, resolve_repo};
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::patterns::{body_end_offset, ID_REGEX};
+use crate::patterns::{body_end_offset, SOURCE_DEF_REGEX, ID_REGEX};
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
@@ -74,6 +74,36 @@ fn merge_frontmatter_fields(base: &mut Vec<String>, overrides: &[String]) {
 
 /// Strip the `<!-- factbase:ID -->` header, YAML frontmatter, and first `# Title` line
 /// from content, returning only the body.
+/// Move footnote definitions that ended up after the review section to before it.
+///
+/// When an agent appends `[^N]: ...` lines to content that already contains a
+/// review section, the footnotes land after the `## Review Queue` boundary.
+/// This function detects that case and splices the footnotes into the body,
+/// preserving the review section intact.
+pub(crate) fn rescue_footnotes_from_review_section(content: String) -> String {
+    let rq_start = body_end_offset(&content);
+    if rq_start >= content.len() {
+        return content; // no review section
+    }
+    let review_part = &content[rq_start..];
+    let misplaced: Vec<&str> = review_part
+        .lines()
+        .filter(|l| SOURCE_DEF_REGEX.is_match(l))
+        .collect();
+    if misplaced.is_empty() {
+        return content; // nothing to rescue
+    }
+    // Remove the misplaced footnotes from the review section
+    let cleaned_review: String = review_part
+        .lines()
+        .filter(|l| !SOURCE_DEF_REGEX.is_match(l))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Insert them before the review section, after the body
+    let body_part = content[..rq_start].trim_end();
+    format!("{body_part}\n{}\n{cleaned_review}", misplaced.join("\n"))
+}
+
 pub(crate) fn strip_factbase_header(content: &str) -> String {
     let mut lines = content.lines().peekable();
 
@@ -343,6 +373,14 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
                 }
                 body.push_str(old_review_queue);
             }
+        }
+
+        // Rescue footnote definitions that ended up after the review section.
+        // This happens when an agent appends a footnote to content that already
+        // contains a review section (e.g. transition workflow adding a citation).
+        // Same pattern as #421 (links appended after review section).
+        if new_content.is_some() {
+            body = rescue_footnotes_from_review_section(body);
         }
 
         // Deduplicate inline acronym expansions (e.g. "DR (Disaster Recovery)" repeated 4x).
@@ -1915,5 +1953,116 @@ mod tests {
             err.contains("No repository found"),
             "error should be helpful: {err}"
         );
+    }
+
+    // --- rescue_footnotes_from_review_section ---
+
+    #[test]
+    fn test_rescue_footnotes_no_review_section() {
+        let content = "Body\n\n[^1]: Source A\n".to_string();
+        let result = rescue_footnotes_from_review_section(content.clone());
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_rescue_footnotes_no_misplaced() {
+        let content =
+            "Body\n\n[^1]: Source A\n\n## Review Queue\n\n<!-- factbase:review -->\n".to_string();
+        let result = rescue_footnotes_from_review_section(content.clone());
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_rescue_footnotes_from_review_section_basic() {
+        // Simulates: agent appended footnote after review section
+        let content = "Body\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Q?\n  > \n[^1]: Test transition, 2026-03-14".to_string();
+        let result = rescue_footnotes_from_review_section(content);
+        assert!(
+            result.contains("[^1]: Test transition, 2026-03-14"),
+            "footnote present: {result}"
+        );
+        // Footnote must appear BEFORE the review section
+        let fn_pos = result.find("[^1]:").unwrap();
+        let rq_pos = result.find("## Review Queue").unwrap();
+        assert!(
+            fn_pos < rq_pos,
+            "footnote should be before review section: {result}"
+        );
+    }
+
+    #[test]
+    fn test_rescue_footnotes_smashed_onto_review_header() {
+        // Exact pattern from bug #576: footnote smashed onto review section header
+        let content =
+            "Body\n\n[^1]: Test transition, 2026-03-14## Review Queue\n\n<!-- factbase:review -->\n"
+                .to_string();
+        // This content has the footnote smashed with the review header on one line.
+        // body_end_offset won't find "## Review Queue" as a standalone line here,
+        // so rescue won't trigger — but the update_document path handles this via
+        // the preserve-review-queue logic. The key test is the one above.
+        // Just verify it doesn't panic.
+        let _ = rescue_footnotes_from_review_section(content);
+    }
+
+    #[test]
+    fn test_update_document_rescues_footnote_after_review_section() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nSome facts\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, old_content).unwrap();
+
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: old_content.into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Agent appended footnote AFTER the review section (the transition workflow bug)
+        let new_content = "# Title\n\nSome facts\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n[^1]: Test transition, 2026-03-14";
+        let args = serde_json::json!({"id": "abc123", "content": new_content});
+        update_document(&db, &args).unwrap();
+
+        let on_disk = fs::read_to_string(&file).unwrap();
+        // Footnote must be present
+        assert!(
+            on_disk.contains("[^1]: Test transition, 2026-03-14"),
+            "footnote present: {on_disk}"
+        );
+        // Footnote must appear BEFORE the review section
+        let fn_pos = on_disk.find("[^1]:").unwrap();
+        let rq_pos = on_disk.find("## Review Queue").unwrap();
+        assert!(
+            fn_pos < rq_pos,
+            "footnote should be before review section, got: {on_disk}"
+        );
+        // Footnote text must not be smashed onto the review section header
+        assert!(
+            !on_disk.contains("[^1]: Test transition, 2026-03-14## Review Queue"),
+            "footnote must not be smashed onto review header: {on_disk}"
+        );
+        // Review section must still be intact
+        assert!(on_disk.contains("## Review Queue"), "review section present");
+        assert!(on_disk.contains("@q[temporal]"), "question preserved");
     }
 }
