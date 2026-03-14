@@ -5399,9 +5399,18 @@ mod tests {
 
     #[test]
     fn test_maintain_citation_review_instruction_has_key_content() {
+        // Tier 2 triage uses Variant B: contextual judgment, not rule-based
         assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("VALID"));
         assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("INVALID"));
         assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("WEAK"));
+        // Variant B criteria
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("Source authority"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("Accessibility"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("Specificity"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("Duplicates"));
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("Fabrication risk"));
+        // Actionable suggestions required
+        assert!(DEFAULT_MAINTAIN_CITATION_TRIAGE_INSTRUCTION.contains("specific replacement"));
         assert!(DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION.contains("FIXED"));
         assert!(DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION.contains("DEFER"));
         assert!(DEFAULT_MAINTAIN_CITATION_RESOLVE_INSTRUCTION.contains("URL"));
