@@ -34,6 +34,16 @@ static IDENTIFIER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 static DATE_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\d{4}-\d{2}(?:-\d{2})?").expect("date regex"));
 
+/// Domain-style URL without protocol (e.g. "linkedin.com/in/username", "github.com/org/repo")
+static DOMAIN_URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b[a-zA-Z0-9][a-zA-Z0-9-]*\.[a-zA-Z]{2,}/[^\s,]+").expect("domain url regex")
+});
+
+/// Catalog/record number: 1-4 uppercase letters + separator + 2+ digits (e.g. "CL 1355", "A-77", "SD 1361")
+static CATALOG_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b[A-Z]{1,4}[-\s]\d{2,}\b").expect("catalog number regex")
+});
+
 static NAMED_PERSON_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:with|from|by|interview)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+")
         .expect("named person regex")
@@ -197,8 +207,8 @@ pub fn validate_citation(ct: &CitationType, text: &str) -> bool {
         // Already navigable — pass immediately
         CitationType::Url | CitationType::FilePath => true,
 
-        // Navigable tool: REQUIRE a URL
-        CitationType::NavigableTool => URL_REGEX.is_match(text),
+        // Navigable tool: REQUIRE a URL or domain-style URL
+        CitationType::NavigableTool => URL_REGEX.is_match(text) || DOMAIN_URL_REGEX.is_match(text),
 
         // Book: require page/chapter/section/verse reference
         CitationType::Book => PAGE_SECTION_REGEX.is_match(text),
@@ -242,8 +252,27 @@ pub fn validate_citation(ct: &CitationType, text: &str) -> bool {
             has_date && has_participants
         }
 
-        // Unknown: fail — send to tier 2
-        CitationType::Unknown => false,
+        // Unknown: check fallback patterns that don't fit a named type but are still specific
+        CitationType::Unknown => {
+            // Domain-style URL without protocol (e.g. linkedin.com/in/username)
+            if DOMAIN_URL_REGEX.is_match(text) {
+                return true;
+            }
+            // Named person + ISO date (e.g. "from John Smith, 2026-02-15")
+            if NAMED_PERSON_REGEX.is_match(text) && DATE_REGEX.is_match(text) {
+                return true;
+            }
+            // Channel reference + ISO date without a Slack/Teams keyword
+            let has_channel = Regex::new(r"#[a-zA-Z][\w-]+").unwrap().is_match(text);
+            if has_channel && DATE_REGEX.is_match(text) {
+                return true;
+            }
+            // Catalog/record number (e.g. "CL 1355", "A-77", "SD 1361")
+            if CATALOG_NUMBER_REGEX.is_match(text) {
+                return true;
+            }
+            false
+        }
     }
 }
 
@@ -697,5 +726,51 @@ mod tests {
     #[test]
     fn test_industry_standard_is_vague() {
         assert!(!is_citation_specific("Industry standard"));
+    }
+
+    // --- Regression: patterns that should pass tier 1 ---
+
+    #[test]
+    fn test_named_person_with_date_is_specific() {
+        // Named person + ISO date — was valid before #590, must still pass
+        assert!(is_citation_specific("from John Smith, 2026-02-15"));
+    }
+
+    #[test]
+    fn test_channel_author_date_is_specific() {
+        // #channel + date without "Slack" keyword
+        assert!(is_citation_specific("#general, @author, 2026-02"));
+    }
+
+    #[test]
+    fn test_linkedin_domain_url_is_specific() {
+        // Domain-style URL without https:// — navigable, should pass
+        assert!(is_citation_specific("linkedin.com/in/username"));
+    }
+
+    #[test]
+    fn test_catalog_number_cl_is_specific() {
+        assert!(is_citation_specific("CL 1355"));
+    }
+
+    #[test]
+    fn test_catalog_number_sd_is_specific() {
+        assert!(is_citation_specific("SD 1361"));
+    }
+
+    #[test]
+    fn test_catalog_number_hyphen_is_specific() {
+        assert!(is_citation_specific("A-77"));
+    }
+
+    #[test]
+    fn test_phonetool_without_url_still_fails() {
+        // Tool name + date but no URL or domain URL → tier 2
+        assert!(!is_citation_specific("Phonetool lookup, 2026-02-10"));
+    }
+
+    #[test]
+    fn test_meeting_notes_still_fails() {
+        assert!(!is_citation_specific("Meeting notes"));
     }
 }
