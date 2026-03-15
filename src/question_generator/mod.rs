@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn test_iter_fact_lines_skips_frontmatter_with_comment_header() {
         // Block-style tags inside frontmatter must not generate questions
-        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Amazon Aurora\n\n- Real fact\n";
+        let content = "---\nfactbase_id: abc123\ntype: services\ntags:\n  - services\n  - aws\n---\n# Amazon Aurora\n\n- Real fact\n";
         let results: Vec<_> = iter_fact_lines(content).collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].2, "Real fact");

@@ -981,7 +981,7 @@ mod tests {
         let md_path = repo_dir.path().join("test-doc.md");
         std::fs::write(
             &md_path,
-            "<!-- factbase:ttt -->\n# Test\n\n- Fact without temporal tag\n",
+            "---\nfactbase_id: ttt\n---\n# Test\n\n- Fact without temporal tag\n",
         )
         .unwrap();
 
@@ -1001,7 +1001,7 @@ mod tests {
         let doc = Document {
             id: "ttt".to_string(),
             title: "Test".to_string(),
-            content: "<!-- factbase:ttt -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ttt\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "test-repo".to_string(),
             ..Document::test_default()
@@ -1083,7 +1083,7 @@ mod tests {
         let md_path = repo_dir.path().join("test-doc.md");
         std::fs::write(
             &md_path,
-            "<!-- factbase:ddd -->\n# Test\n\n- Fact without temporal tag\n",
+            "---\nfactbase_id: ddd\n---\n# Test\n\n- Fact without temporal tag\n",
         )
         .unwrap();
 
@@ -1101,7 +1101,7 @@ mod tests {
         let doc = Document {
             id: "ddd".to_string(),
             title: "Test".to_string(),
-            content: "<!-- factbase:ddd -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ddd\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "test-repo".to_string(),
             ..Document::test_default()
@@ -1172,7 +1172,7 @@ mod tests {
         let md_path = repo_dir.path().join("test-doc.md");
 
         // Disk file: no review marker
-        let disk_content = "<!-- factbase:eee -->\n# Test\n\n- Fact without temporal tag\n";
+        let disk_content = "---\nfactbase_id: eee\n---\n# Test\n\n- Fact without temporal tag\n";
         std::fs::write(&md_path, disk_content).unwrap();
 
         let repo = crate::models::Repository {
@@ -1297,7 +1297,7 @@ mod tests {
         let embedding = MockEmbedding::new(4);
 
         // Content with a deferred ambiguous question (simulating a placement question)
-        let content = "<!-- factbase:def001 -->\n# Deferred Test\n\n\
+        let content = "---\nfactbase_id: def001\n---\n# Deferred Test\n\n\
             - Fact one @t[=2024-01]\n\n\
             ---\n\n## Review Queue\n\n\
             <!-- factbase:review -->\n\
@@ -1362,7 +1362,7 @@ mod tests {
         let md_path = repo_dir.path().join("test-doc.md");
         std::fs::write(
             &md_path,
-            "<!-- factbase:ooo -->\n# Test\n\n- Fact without temporal tag\n",
+            "---\nfactbase_id: ooo\n---\n# Test\n\n- Fact without temporal tag\n",
         )
         .unwrap();
 
@@ -1398,7 +1398,7 @@ mod tests {
         let doc = Document {
             id: "ooo".to_string(),
             title: "Test".to_string(),
-            content: "<!-- factbase:ooo -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ooo\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "obs-repo".to_string(),
             ..Document::test_default()
@@ -1437,7 +1437,7 @@ mod tests {
         let md_path = repo_dir.path().join("test-doc.md");
         std::fs::write(
             &md_path,
-            "<!-- factbase:ppp -->\n# Test\n\n- Fact without temporal tag\n",
+            "---\nfactbase_id: ppp\n---\n# Test\n\n- Fact without temporal tag\n",
         )
         .unwrap();
 
@@ -1455,7 +1455,7 @@ mod tests {
         let doc = Document {
             id: "ppp".to_string(),
             title: "Test".to_string(),
-            content: "<!-- factbase:ppp -->\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ppp\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "plain-repo".to_string(),
             ..Document::test_default()

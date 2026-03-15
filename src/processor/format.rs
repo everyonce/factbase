@@ -3,7 +3,7 @@
 //! Handles frontmatter generation, ID placement, and link formatting
 //! based on the resolved format configuration.
 
-use crate::models::format::{IdPlacement, LinkStyle, ResolvedFormat};
+use crate::models::format::{LinkStyle, ResolvedFormat};
 
 /// YAML frontmatter field keys managed by factbase — these are written by
 /// `build_document_header` and must not be duplicated from extra fields.
@@ -103,21 +103,12 @@ pub fn merge_path_tags(extra: &mut Vec<String>, path_tags: &[String]) {
 pub fn extract_extra_frontmatter(content: &str) -> Vec<String> {
     let mut lines = content.lines();
 
-    // Skip optional HTML comment header (<!-- factbase:... -->)
     let first = match lines.next() {
         Some(l) => l,
         None => return Vec::new(),
     };
-    let fm_start = if crate::patterns::ID_REGEX.is_match(first) {
-        match lines.next() {
-            Some(l) => l,
-            None => return Vec::new(),
-        }
-    } else {
-        first
-    };
 
-    if fm_start.trim() != "---" {
+    if first.trim() != "---" {
         return Vec::new();
     }
 
@@ -137,11 +128,9 @@ pub fn extract_extra_frontmatter(content: &str) -> Vec<String> {
 /// Build a document header (ID + title) according to format config.
 ///
 /// `extra_fields` are raw YAML lines (e.g. `"reviewed: 2026-02-21"`) that will
-/// be included in the frontmatter block.  They are ignored when the format does
-/// not use frontmatter.
+/// be included in the frontmatter block.
 ///
-/// For `IdPlacement::Comment`: `<!-- factbase:id -->\n# Title\n\n`
-/// For `IdPlacement::Frontmatter`: `---\nfactbase_id: id\ntype: ...\n---\n# Title\n\n`
+/// Always generates YAML frontmatter: `---\nfactbase_id: id\ntype: ...\n---\n# Title\n\n`
 pub fn build_document_header(
     id: &str,
     title: &str,
@@ -149,49 +138,24 @@ pub fn build_document_header(
     format: &ResolvedFormat,
     extra_fields: &[String],
 ) -> String {
-    match format.id_placement {
-        IdPlacement::Comment => {
-            if format.frontmatter {
-                // Frontmatter without ID (ID stays in comment)
-                let mut fm = String::from("<!-- factbase:");
-                fm.push_str(id);
-                fm.push_str(" -->\n---\n");
-                if let Some(t) = doc_type {
-                    fm.push_str("type: ");
-                    fm.push_str(t);
-                    fm.push('\n');
-                }
-                for field in extra_fields {
-                    fm.push_str(field);
-                    fm.push('\n');
-                }
-                fm.push_str("---\n# ");
-                fm.push_str(title);
-                fm.push_str("\n\n");
-                fm
-            } else {
-                format!("<!-- factbase:{id} -->\n# {title}\n\n")
-            }
-        }
-        IdPlacement::Frontmatter => {
-            let mut fm = String::from("---\nfactbase_id: ");
-            fm.push_str(id);
-            fm.push('\n');
-            if let Some(t) = doc_type {
-                fm.push_str("type: ");
-                fm.push_str(t);
-                fm.push('\n');
-            }
-            for field in extra_fields {
-                fm.push_str(field);
-                fm.push('\n');
-            }
-            fm.push_str("---\n# ");
-            fm.push_str(title);
-            fm.push_str("\n\n");
-            fm
-        }
+    // Both Comment and Frontmatter placement now use YAML frontmatter
+    let _ = format.id_placement; // kept for API compatibility
+    let mut fm = String::from("---\nfactbase_id: ");
+    fm.push_str(id);
+    fm.push('\n');
+    if let Some(t) = doc_type {
+        fm.push_str("type: ");
+        fm.push_str(t);
+        fm.push('\n');
     }
+    for field in extra_fields {
+        fm.push_str(field);
+        fm.push('\n');
+    }
+    fm.push_str("---\n# ");
+    fm.push_str(title);
+    fm.push_str("\n\n");
+    fm
 }
 
 /// Strip `.md` extension from a file path for wikilink targets.
@@ -292,12 +256,13 @@ pub fn format_references_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::format::IdPlacement;
 
     #[test]
     fn test_build_header_default() {
         let fmt = ResolvedFormat::default();
         let h = build_document_header("abc123", "Test Title", None, &fmt, &[]);
-        assert_eq!(h, "<!-- factbase:abc123 -->\n# Test Title\n\n");
+        assert_eq!(h, "---\nfactbase_id: abc123\n---\n# Test Title\n\n");
     }
 
     #[test]
@@ -328,13 +293,14 @@ mod tests {
 
     #[test]
     fn test_build_header_comment_with_frontmatter() {
+        // Comment placement now behaves same as Frontmatter
         let fmt = ResolvedFormat {
-            id_placement: IdPlacement::Comment,
+            id_placement: crate::models::format::IdPlacement::Comment,
             frontmatter: true,
             ..Default::default()
         };
         let h = build_document_header("abc123", "Test", Some("note"), &fmt, &[]);
-        assert!(h.starts_with("<!-- factbase:abc123 -->\n---\n"));
+        assert!(h.starts_with("---\nfactbase_id: abc123\n"));
         assert!(h.contains("type: note\n"));
         assert!(h.contains("---\n# Test\n\n"));
     }
@@ -468,7 +434,7 @@ mod tests {
 
     #[test]
     fn test_extract_extra_frontmatter_no_frontmatter() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\nBody";
+        let content = "# Title\n\nBody";
         assert!(extract_extra_frontmatter(content).is_empty());
     }
 
@@ -488,7 +454,7 @@ mod tests {
     #[test]
     fn test_extract_extra_frontmatter_with_comment_header() {
         let content =
-            "<!-- factbase:abc123 -->\n---\ntype: person\nreviewed: 2026-03-06\n---\n# Title\n";
+            "---\nfactbase_id: abc123\ntype: person\nreviewed: 2026-03-06\n---\n# Title\n";
         let extra = extract_extra_frontmatter(content);
         assert_eq!(extra, vec!["reviewed: 2026-03-06"]);
     }
@@ -517,8 +483,9 @@ mod tests {
 
     #[test]
     fn test_build_header_comment_frontmatter_with_extra_fields() {
+        // Comment placement now behaves same as Frontmatter
         let fmt = ResolvedFormat {
-            id_placement: IdPlacement::Comment,
+            id_placement: crate::models::format::IdPlacement::Comment,
             frontmatter: true,
             ..Default::default()
         };
@@ -533,12 +500,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_header_comment_no_frontmatter_ignores_extra() {
-        let fmt = ResolvedFormat::default(); // Comment, no frontmatter
+    fn test_build_header_default_includes_extra_fields() {
+        let fmt = ResolvedFormat::default();
         let extra = vec!["reviewed: 2026-02-21".to_string()];
         let h = build_document_header("abc123", "Test", None, &fmt, &extra);
-        assert_eq!(h, "<!-- factbase:abc123 -->\n# Test\n\n");
-        assert!(!h.contains("reviewed"));
+        assert!(h.starts_with("---\nfactbase_id: abc123\n"));
+        assert!(h.contains("reviewed: 2026-02-21\n"));
     }
 
     // --- tags_from_path tests ---
@@ -632,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_update_frontmatter_type_no_frontmatter_unchanged() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n";
+        let content = "# Title\n\nSome content without frontmatter\n";
         let result = update_frontmatter_type(content, "person");
         assert_eq!(result, content);
     }

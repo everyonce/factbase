@@ -22,11 +22,11 @@ pub enum LinkStyle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum IdPlacement {
-    /// `<!-- factbase:hex_id -->` HTML comment (default)
+    /// `factbase_id: hex_id` in YAML frontmatter (default)
     #[default]
-    Comment,
-    /// `factbase_id: hex_id` in YAML frontmatter
     Frontmatter,
+    /// Deprecated: treated as `Frontmatter`. Kept for config backward compatibility.
+    Comment,
 }
 
 /// User-facing format config from `perspective.yaml`.
@@ -66,9 +66,9 @@ impl Default for ResolvedFormat {
     fn default() -> Self {
         Self {
             link_style: LinkStyle::Factbase,
-            frontmatter: false,
+            frontmatter: true,
             inline_links: false,
-            id_placement: IdPlacement::Comment,
+            id_placement: IdPlacement::Frontmatter,
             review_callout: false,
             reviewed_in_frontmatter: false,
         }
@@ -273,9 +273,9 @@ mod tests {
         let cfg = FormatConfig::default();
         let r = cfg.resolve();
         assert_eq!(r.link_style, LinkStyle::Factbase);
-        assert!(!r.frontmatter);
+        assert!(r.frontmatter);
         assert!(!r.inline_links);
-        assert_eq!(r.id_placement, IdPlacement::Comment);
+        assert_eq!(r.id_placement, IdPlacement::Frontmatter);
         assert!(!r.review_callout);
     }
 
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(r.link_style, LinkStyle::Wikilink);
         assert!(r.frontmatter);
         assert!(!r.inline_links); // default
-        assert_eq!(r.id_placement, IdPlacement::Comment); // default
+        assert_eq!(r.id_placement, IdPlacement::Frontmatter); // default
     }
 
     #[test]

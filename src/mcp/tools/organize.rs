@@ -762,12 +762,12 @@ mod tests {
 
         // Create a file on disk
         let file_path = tmp.path().join("doc.md");
-        std::fs::write(&file_path, "<!-- factbase:aaa111 -->\n# Test\n\nContent").unwrap();
+        std::fs::write(&file_path, "---\nfactbase_id: aaa111\n---\n# Test\n\nContent").unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "aaa111".to_string();
         doc.title = "Test".to_string();
-        doc.content = "<!-- factbase:aaa111 -->\n# Test\n\nContent".to_string();
+        doc.content = "---\nfactbase_id: aaa111\n---\n# Test\n\nContent".to_string();
         doc.file_path = "doc.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -798,21 +798,21 @@ mod tests {
         std::fs::create_dir_all(&src_dir).unwrap();
         std::fs::write(
             src_dir.join("target.md"),
-            "<!-- factbase:tgt001 -->\n# Target\n\nContent",
+            "---\nfactbase_id: tgt001\n---\n# Target\n\nContent",
         )
         .unwrap();
 
         // Create a referencing file with wikilink
         std::fs::write(
             tmp.path().join("ref.md"),
-            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.",
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[old/target|Target]] for details.",
         )
         .unwrap();
 
         let mut target_doc = crate::models::Document::test_default();
         target_doc.id = "tgt001".to_string();
         target_doc.title = "Target".to_string();
-        target_doc.content = "<!-- factbase:tgt001 -->\n# Target\n\nContent".to_string();
+        target_doc.content = "---\nfactbase_id: tgt001\n---\n# Target\n\nContent".to_string();
         target_doc.file_path = "old/target.md".to_string();
         target_doc.repo_id = "test".to_string();
         db.upsert_document(&target_doc).unwrap();
@@ -821,7 +821,7 @@ mod tests {
         ref_doc.id = "ref001".to_string();
         ref_doc.title = "Ref".to_string();
         ref_doc.content =
-            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[old/target|Target]] for details.".to_string();
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[old/target|Target]] for details.".to_string();
         ref_doc.file_path = "ref.md".to_string();
         ref_doc.repo_id = "test".to_string();
         db.upsert_document(&ref_doc).unwrap();
@@ -860,19 +860,19 @@ mod tests {
 
         std::fs::write(
             tmp.path().join("old-name.md"),
-            "<!-- factbase:ren001 -->\n# Entity\n\nContent",
+            "---\nfactbase_id: ren001\n---\n# Entity\n\nContent",
         )
         .unwrap();
         std::fs::write(
             tmp.path().join("other.md"),
-            "<!-- factbase:oth001 -->\n# Other\n\nSee [[old-name|Entity]].",
+            "---\nfactbase_id: oth001\n---\n# Other\n\nSee [[old-name|Entity]].",
         )
         .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "ren001".to_string();
         doc.title = "Entity".to_string();
-        doc.content = "<!-- factbase:ren001 -->\n# Entity\n\nContent".to_string();
+        doc.content = "---\nfactbase_id: ren001\n---\n# Entity\n\nContent".to_string();
         doc.file_path = "old-name.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -880,7 +880,7 @@ mod tests {
         let mut other = crate::models::Document::test_default();
         other.id = "oth001".to_string();
         other.title = "Other".to_string();
-        other.content = "<!-- factbase:oth001 -->\n# Other\n\nSee [[old-name|Entity]].".to_string();
+        other.content = "---\nfactbase_id: oth001\n---\n# Other\n\nSee [[old-name|Entity]].".to_string();
         other.file_path = "other.md".to_string();
         other.repo_id = "test".to_string();
         db.upsert_document(&other).unwrap();
@@ -909,19 +909,19 @@ mod tests {
 
         std::fs::write(
             tmp.path().join("entity.md"),
-            "<!-- factbase:ent001 -->\n# Old Name\n\nContent",
+            "---\nfactbase_id: ent001\n---\n# Old Name\n\nContent",
         )
         .unwrap();
         std::fs::write(
             tmp.path().join("ref.md"),
-            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[entity|Old Name]].",
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[entity|Old Name]].",
         )
         .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "ent001".to_string();
         doc.title = "Old Name".to_string();
-        doc.content = "<!-- factbase:ent001 -->\n# Old Name\n\nContent".to_string();
+        doc.content = "---\nfactbase_id: ent001\n---\n# Old Name\n\nContent".to_string();
         doc.file_path = "entity.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -929,7 +929,7 @@ mod tests {
         let mut ref_doc = crate::models::Document::test_default();
         ref_doc.id = "ref001".to_string();
         ref_doc.title = "Ref".to_string();
-        ref_doc.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[entity|Old Name]].".to_string();
+        ref_doc.content = "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[entity|Old Name]].".to_string();
         ref_doc.file_path = "ref.md".to_string();
         ref_doc.repo_id = "test".to_string();
         db.upsert_document(&ref_doc).unwrap();
@@ -957,14 +957,14 @@ mod tests {
 
         std::fs::write(
             tmp.path().join("doc.md"),
-            "<!-- factbase:dry001 -->\n# Doc\n\nContent",
+            "---\nfactbase_id: dry001\n---\n# Doc\n\nContent",
         )
         .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "dry001".to_string();
         doc.title = "Doc".to_string();
-        doc.content = "<!-- factbase:dry001 -->\n# Doc\n\nContent".to_string();
+        doc.content = "---\nfactbase_id: dry001\n---\n# Doc\n\nContent".to_string();
         doc.file_path = "doc.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -994,7 +994,7 @@ mod tests {
         let mut doc = crate::models::Document::test_default();
         doc.id = "del001".to_string();
         doc.title = "Will Delete".to_string();
-        doc.content = "<!-- factbase:del001 -->\n# Will Delete\n\nContent".to_string();
+        doc.content = "---\nfactbase_id: del001\n---\n# Will Delete\n\nContent".to_string();
         doc.file_path = "del.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -1019,12 +1019,12 @@ mod tests {
 
         std::fs::write(
             tmp.join("source.md"),
-            "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n",
+            "---\nfactbase_id: src001\n---\n# Source Doc\n\n- Source fact A\n- Source fact B\n",
         )
         .unwrap();
         std::fs::write(
             tmp.join("target.md"),
-            "<!-- factbase:tgt001 -->\n# Target Doc\n\n- Target fact X\n",
+            "---\nfactbase_id: tgt001\n---\n# Target Doc\n\n- Target fact X\n",
         )
         .unwrap();
 
@@ -1032,7 +1032,7 @@ mod tests {
         src.id = "src001".to_string();
         src.title = "Source Doc".to_string();
         src.content =
-            "<!-- factbase:src001 -->\n# Source Doc\n\n- Source fact A\n- Source fact B\n"
+            "---\nfactbase_id: src001\n---\n# Source Doc\n\n- Source fact A\n- Source fact B\n"
                 .to_string();
         src.file_path = "source.md".to_string();
         src.repo_id = "test".to_string();
@@ -1041,7 +1041,7 @@ mod tests {
         let mut tgt = crate::models::Document::test_default();
         tgt.id = "tgt001".to_string();
         tgt.title = "Target Doc".to_string();
-        tgt.content = "<!-- factbase:tgt001 -->\n# Target Doc\n\n- Target fact X\n".to_string();
+        tgt.content = "---\nfactbase_id: tgt001\n---\n# Target Doc\n\n- Target fact X\n".to_string();
         tgt.file_path = "target.md".to_string();
         tgt.repo_id = "test".to_string();
         db.upsert_document(&tgt).unwrap();
@@ -1077,19 +1077,19 @@ mod tests {
         // Both docs have "Shared fact"
         std::fs::write(
             tmp.path().join("a.md"),
-            "<!-- factbase:aaa001 -->\n# Doc A\n\n- Shared fact\n- Unique A\n",
+            "---\nfactbase_id: aaa001\n---\n# Doc A\n\n- Shared fact\n- Unique A\n",
         )
         .unwrap();
         std::fs::write(
             tmp.path().join("b.md"),
-            "<!-- factbase:bbb001 -->\n# Doc B\n\n- Shared fact\n- Unique B\n",
+            "---\nfactbase_id: bbb001\n---\n# Doc B\n\n- Shared fact\n- Unique B\n",
         )
         .unwrap();
 
         let mut a = crate::models::Document::test_default();
         a.id = "aaa001".to_string();
         a.title = "Doc A".to_string();
-        a.content = "<!-- factbase:aaa001 -->\n# Doc A\n\n- Shared fact\n- Unique A\n".to_string();
+        a.content = "---\nfactbase_id: aaa001\n---\n# Doc A\n\n- Shared fact\n- Unique A\n".to_string();
         a.file_path = "a.md".to_string();
         a.repo_id = "test".to_string();
         db.upsert_document(&a).unwrap();
@@ -1097,7 +1097,7 @@ mod tests {
         let mut b = crate::models::Document::test_default();
         b.id = "bbb001".to_string();
         b.title = "Doc B".to_string();
-        b.content = "<!-- factbase:bbb001 -->\n# Doc B\n\n- Shared fact\n- Unique B\n".to_string();
+        b.content = "---\nfactbase_id: bbb001\n---\n# Doc B\n\n- Shared fact\n- Unique B\n".to_string();
         b.file_path = "b.md".to_string();
         b.repo_id = "test".to_string();
         db.upsert_document(&b).unwrap();
@@ -1121,13 +1121,13 @@ mod tests {
         // Create a third doc that links to source
         std::fs::write(
             tmp.path().join("ref.md"),
-            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[src001]] for details.",
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[src001]] for details.",
         )
         .unwrap();
         let mut r = crate::models::Document::test_default();
         r.id = "ref001".to_string();
         r.title = "Ref".to_string();
-        r.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[src001]] for details.".to_string();
+        r.content = "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[src001]] for details.".to_string();
         r.file_path = "ref.md".to_string();
         r.repo_id = "test".to_string();
         db.upsert_document(&r).unwrap();
@@ -1167,14 +1167,14 @@ mod tests {
 
         std::fs::write(
             tmp.path().join("victim.md"),
-            "<!-- factbase:vic001 -->\n# Victim\n\n- Some fact\n",
+            "---\nfactbase_id: vic001\n---\n# Victim\n\n- Some fact\n",
         )
         .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "vic001".to_string();
         doc.title = "Victim".to_string();
-        doc.content = "<!-- factbase:vic001 -->\n# Victim\n\n- Some fact\n".to_string();
+        doc.content = "---\nfactbase_id: vic001\n---\n# Victim\n\n- Some fact\n".to_string();
         doc.file_path = "victim.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -1198,19 +1198,19 @@ mod tests {
 
         std::fs::write(
             tmp.path().join("target.md"),
-            "<!-- factbase:del001 -->\n# Target\n\n- Fact\n",
+            "---\nfactbase_id: del001\n---\n# Target\n\n- Fact\n",
         )
         .unwrap();
         std::fs::write(
             tmp.path().join("ref.md"),
-            "<!-- factbase:ref001 -->\n# Ref\n\nSee [[del001]] here.",
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[del001]] here.",
         )
         .unwrap();
 
         let mut target = crate::models::Document::test_default();
         target.id = "del001".to_string();
         target.title = "Target".to_string();
-        target.content = "<!-- factbase:del001 -->\n# Target\n\n- Fact\n".to_string();
+        target.content = "---\nfactbase_id: del001\n---\n# Target\n\n- Fact\n".to_string();
         target.file_path = "target.md".to_string();
         target.repo_id = "test".to_string();
         db.upsert_document(&target).unwrap();
@@ -1218,7 +1218,7 @@ mod tests {
         let mut r = crate::models::Document::test_default();
         r.id = "ref001".to_string();
         r.title = "Ref".to_string();
-        r.content = "<!-- factbase:ref001 -->\n# Ref\n\nSee [[del001]] here.".to_string();
+        r.content = "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[del001]] here.".to_string();
         r.file_path = "ref.md".to_string();
         r.repo_id = "test".to_string();
         db.upsert_document(&r).unwrap();
@@ -1253,13 +1253,13 @@ mod tests {
 
         std::fs::write(
             tmp.path().join("multi.md"),
-            "<!-- factbase:mul001 -->\n# Multi Topic\n\n## Section A\n- Fact A\n\n## Section B\n- Fact B\n",
+            "---\nfactbase_id: mul001\n---\n# Multi Topic\n\n## Section A\n- Fact A\n\n## Section B\n- Fact B\n",
         ).unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "mul001".to_string();
         doc.title = "Multi Topic".to_string();
-        doc.content = "<!-- factbase:mul001 -->\n# Multi Topic\n\n## Section A\n- Fact A\n\n## Section B\n- Fact B\n".to_string();
+        doc.content = "---\nfactbase_id: mul001\n---\n# Multi Topic\n\n## Section A\n- Fact A\n\n## Section B\n- Fact B\n".to_string();
         doc.file_path = "multi.md".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
@@ -1363,17 +1363,17 @@ mod tests {
         // alpha references beta and gamma
         fs::write(
             ent_dir.join("alpha.md"),
-            "<!-- factbase:aaa001 -->\n# Alpha\n\n- See [[entities/beta|Beta]] for details.\n- Also see [[entities/gamma|Gamma]].\n",
+            "---\nfactbase_id: aaa001\n---\n# Alpha\n\n- See [[entities/beta|Beta]] for details.\n- Also see [[entities/gamma|Gamma]].\n",
         ).unwrap();
         // beta references alpha
         fs::write(
             ent_dir.join("beta.md"),
-            "<!-- factbase:bbb001 -->\n# Beta\n\n- Related to [[entities/alpha|Alpha]].\n",
+            "---\nfactbase_id: bbb001\n---\n# Beta\n\n- Related to [[entities/alpha|Alpha]].\n",
         ).unwrap();
         // gamma references alpha and beta
         fs::write(
             ent_dir.join("gamma.md"),
-            "<!-- factbase:ccc001 -->\n# Gamma\n\n- Linked to [[entities/alpha|Alpha]] and [[entities/beta|Beta]].\n",
+            "---\nfactbase_id: ccc001\n---\n# Gamma\n\n- Linked to [[entities/alpha|Alpha]] and [[entities/beta|Beta]].\n",
         ).unwrap();
 
         // --- Seed DB ---
@@ -1389,15 +1389,15 @@ mod tests {
 
         db.upsert_document(&make_doc(
             "aaa001", "Alpha", "entities/alpha.md",
-            "<!-- factbase:aaa001 -->\n# Alpha\n\n- See [[entities/beta|Beta]] for details.\n- Also see [[entities/gamma|Gamma]].\n",
+            "---\nfactbase_id: aaa001\n---\n# Alpha\n\n- See [[entities/beta|Beta]] for details.\n- Also see [[entities/gamma|Gamma]].\n",
         )).unwrap();
         db.upsert_document(&make_doc(
             "bbb001", "Beta", "entities/beta.md",
-            "<!-- factbase:bbb001 -->\n# Beta\n\n- Related to [[entities/alpha|Alpha]].\n",
+            "---\nfactbase_id: bbb001\n---\n# Beta\n\n- Related to [[entities/alpha|Alpha]].\n",
         )).unwrap();
         db.upsert_document(&make_doc(
             "ccc001", "Gamma", "entities/gamma.md",
-            "<!-- factbase:ccc001 -->\n# Gamma\n\n- Linked to [[entities/alpha|Alpha]] and [[entities/beta|Beta]].\n",
+            "---\nfactbase_id: ccc001\n---\n# Gamma\n\n- Linked to [[entities/alpha|Alpha]] and [[entities/beta|Beta]].\n",
         )).unwrap();
 
         // --- Step 2: store suggestions via update_document ---
@@ -1515,19 +1515,19 @@ mod tests {
         // Source entity
         fs::write(
             src_dir.join("report.md"),
-            "<!-- factbase:src001 -->\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n",
+            "---\nfactbase_id: src001\n---\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n",
         ).unwrap();
         // Destination entity (same filename, different folder)
         fs::write(
             dst_dir.join("report.md"),
-            "<!-- factbase:dst001 -->\n# Final Report\n\n- Final fact X\n",
+            "---\nfactbase_id: dst001\n---\n# Final Report\n\n- Final fact X\n",
         ).unwrap();
 
         let mut src = crate::models::Document::test_default();
         src.id = "src001".to_string();
         src.title = "Draft Report".to_string();
         src.file_path = "drafts/report.md".to_string();
-        src.content = "<!-- factbase:src001 -->\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n".to_string();
+        src.content = "---\nfactbase_id: src001\n---\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n".to_string();
         src.repo_id = "test".to_string();
         db.upsert_document(&src).unwrap();
 
@@ -1535,7 +1535,7 @@ mod tests {
         dst.id = "dst001".to_string();
         dst.title = "Final Report".to_string();
         dst.file_path = "final/report.md".to_string();
-        dst.content = "<!-- factbase:dst001 -->\n# Final Report\n\n- Final fact X\n".to_string();
+        dst.content = "---\nfactbase_id: dst001\n---\n# Final Report\n\n- Final fact X\n".to_string();
         dst.repo_id = "test".to_string();
         db.upsert_document(&dst).unwrap();
 

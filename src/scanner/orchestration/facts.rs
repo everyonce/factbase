@@ -158,7 +158,7 @@ mod tests {
         let repo = test_repo();
         db.upsert_repository(&repo).unwrap();
 
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact one\n- Fact two\n- Fact three\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact one\n- Fact two\n- Fact three\n";
         db.upsert_document(&make_doc("abc123", content)).unwrap();
 
         let embedding = MockEmbedding::new(1024);
@@ -186,7 +186,7 @@ mod tests {
         let repo = test_repo();
         db.upsert_repository(&repo).unwrap();
 
-        let content = "<!-- factbase:abc123 -->\n# Test\n\nNo bullet points here.\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\nNo bullet points here.\n";
         db.upsert_document(&make_doc("abc123", content)).unwrap();
 
         let embedding = MockEmbedding::new(1024);
@@ -215,7 +215,7 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         // First scan
-        let content1 = "<!-- factbase:abc123 -->\n# Test\n\n- Old fact\n";
+        let content1 = "---\nfactbase_id: abc123\n---\n# Test\n\n- Old fact\n";
         db.upsert_document(&make_doc("abc123", content1)).unwrap();
 
         let embedding = MockEmbedding::new(1024);
@@ -236,7 +236,7 @@ mod tests {
         assert_eq!(db.get_fact_embedding_count_for_doc("abc123").unwrap(), 1);
 
         // Rescan with different content
-        let content2 = "<!-- factbase:abc123 -->\n# Test\n\n- New fact A\n- New fact B\n";
+        let content2 = "---\nfactbase_id: abc123\n---\n# Test\n\n- New fact A\n- New fact B\n";
         db.upsert_document(&make_doc("abc123", content2)).unwrap();
 
         let result = run_fact_embedding_phase(&FactEmbeddingInput {
@@ -260,7 +260,7 @@ mod tests {
         let repo = test_repo();
         db.upsert_repository(&repo).unwrap();
 
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Real fact\n\n## Review Queue\n\n- @q[temporal] Not a fact\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Real fact\n\n## Review Queue\n\n- @q[temporal] Not a fact\n";
         db.upsert_document(&make_doc("abc123", content)).unwrap();
 
         let embedding = MockEmbedding::new(1024);

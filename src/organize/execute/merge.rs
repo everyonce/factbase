@@ -199,8 +199,8 @@ mod tests {
         // Create test files
         let doc1_path = repo_path.join("doc1.md");
         let doc2_path = repo_path.join("doc2.md");
-        fs::write(&doc1_path, "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A").unwrap();
-        fs::write(&doc2_path, "<!-- factbase:doc2 -->\n# Doc 2\n- Fact B").unwrap();
+        fs::write(&doc1_path, "---\nfactbase_id: doc1\n---\n# Doc 1\n- Fact A").unwrap();
+        fs::write(&doc2_path, "---\nfactbase_id: doc2\n---\n# Doc 2\n- Fact B").unwrap();
 
         // Create documents in database
         test_doc(&db, "doc1", "repo1", "Doc 1", "- Fact A", "doc1.md");
@@ -232,7 +232,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content:
-                "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A\n\n## Merged Content\n\n- Fact B\n"
+                "---\nfactbase_id: doc1\n---\n# Doc 1\n- Fact A\n\n## Merged Content\n\n- Fact B\n"
                     .to_string(),
             temporal_issues: vec![],
         };
@@ -263,10 +263,10 @@ mod tests {
         // Create test files
         let doc1_path = repo_path.join("doc1.md");
         let doc2_path = repo_path.join("doc2.md");
-        fs::write(&doc1_path, "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A").unwrap();
+        fs::write(&doc1_path, "---\nfactbase_id: doc1\n---\n# Doc 1\n- Fact A").unwrap();
         fs::write(
             &doc2_path,
-            "<!-- factbase:doc2 -->\n# Doc 2\n- Fact B\n- Fact C",
+            "---\nfactbase_id: doc2\n---\n# Doc 2\n- Fact B\n- Fact C",
         )
         .unwrap();
 
@@ -315,7 +315,7 @@ mod tests {
             merge_ids: vec!["doc2".to_string()],
             ledger,
             combined_content:
-                "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A\n\n## Merged Content\n\n- Fact B\n"
+                "---\nfactbase_id: doc1\n---\n# Doc 1\n- Fact A\n\n## Merged Content\n\n- Fact B\n"
                     .to_string(),
             temporal_issues: vec![],
         };
@@ -343,11 +343,11 @@ mod tests {
         let doc1_path = repo_path.join("doc1.md");
         let doc2_path = repo_path.join("doc2.md");
         let doc3_path = repo_path.join("doc3.md");
-        fs::write(&doc1_path, "<!-- factbase:doc1 -->\n# Doc 1\n- Fact A").unwrap();
-        fs::write(&doc2_path, "<!-- factbase:doc2 -->\n# Doc 2\n- Fact B").unwrap();
+        fs::write(&doc1_path, "---\nfactbase_id: doc1\n---\n# Doc 1\n- Fact A").unwrap();
+        fs::write(&doc2_path, "---\nfactbase_id: doc2\n---\n# Doc 2\n- Fact B").unwrap();
         fs::write(
             &doc3_path,
-            "<!-- factbase:doc3 -->\n# Doc 3\n- Links to Doc 2",
+            "---\nfactbase_id: doc3\n---\n# Doc 3\n- Links to Doc 2",
         )
         .unwrap();
 

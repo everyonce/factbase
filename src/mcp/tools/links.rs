@@ -529,10 +529,10 @@ mod tests {
         let tmp_dir = tempfile::TempDir::new().unwrap();
         let src_path = tmp_dir.path().join("doc1.md");
         let tgt_path = tmp_dir.path().join("target.md");
-        std::fs::write(&src_path, "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.").unwrap();
+        std::fs::write(&src_path, "---\nfactbase_id: doc001\n---\n# Doc 1\n\nContent.").unwrap();
         std::fs::write(
             &tgt_path,
-            "<!-- factbase:abc123 -->\n# Target Doc\n\nContent.",
+            "---\nfactbase_id: abc123\n---\n# Target Doc\n\nContent.",
         )
         .unwrap();
 
@@ -571,7 +571,7 @@ mod tests {
         let file_path = tmp_dir.path().join("doc1.md");
         std::fs::write(
             &file_path,
-            "<!-- factbase:doc001 -->\n# Doc 1\n\nContent.\n\nReferences: [[abc123]]",
+            "---\nfactbase_id: doc001\n---\n# Doc 1\n\nContent.\n\nReferences: [[abc123]]",
         )
         .unwrap();
 

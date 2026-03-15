@@ -227,7 +227,7 @@ mod tests {
 
     fn doc_with_source(footnote_text: &str) -> String {
         format!(
-            "<!-- factbase:abc123 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: {footnote_text}\n"
+            "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: {footnote_text}\n"
         )
     }
 
@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn test_generate_weak_source_questions_unreferenced_not_generated() {
         // Unreferenced footnote → no question
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
         assert!(generate_weak_source_questions(content, &[]).is_empty());
     }
 
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_unreferenced_source_not_collected() {
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
         let weak = collect_weak_citations(content, "abc123", "Test", &[]);
         assert!(weak.is_empty(), "Unreferenced sources should not be collected");
     }
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn test_collect_multiple_sources_mixed() {
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n\
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n\
             - Fact one [^1]\n\
             - Fact two [^2]\n\
             - Fact three [^3]\n\n\
@@ -503,7 +503,7 @@ mod tests {
     fn test_generate_weak_source_accepted_marker_suppresses_question() {
         // Footnote with <!-- ✓ --> → no question generated
         let content = format!(
-            "<!-- factbase:abc123 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
+            "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
             CITATION_ACCEPTED_MARKER
         );
         let qs = generate_weak_source_questions(&content, &[]);
@@ -514,7 +514,7 @@ mod tests {
     fn test_collect_weak_citations_accepted_marker_suppresses() {
         // Footnote with <!-- ✓ --> → not collected for tier-2
         let content = format!(
-            "<!-- factbase:abc123 -->\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
+            "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
             CITATION_ACCEPTED_MARKER
         );
         let weak = collect_weak_citations(&content, "abc123", "Test", &[]);

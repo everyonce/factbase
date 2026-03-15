@@ -4,7 +4,7 @@ use super::helpers::{load_glossary_terms, resolve_doc_path};
 use super::{get_str_arg, get_str_arg_required, resolve_repo};
 use crate::database::Database;
 use crate::error::FactbaseError;
-use crate::patterns::{body_end_offset, SOURCE_DEF_REGEX, ID_REGEX};
+use crate::patterns::{body_end_offset, SOURCE_DEF_REGEX};
 use crate::processor::DocumentProcessor;
 use crate::ProgressReporter;
 use serde_json::Value;
@@ -72,7 +72,7 @@ fn merge_frontmatter_fields(base: &mut Vec<String>, overrides: &[String]) {
     }
 }
 
-/// Strip the `<!-- factbase:ID -->` header, YAML frontmatter, and first `# Title` line
+/// Strip the `---\nfactbase_id: ID\n---` header, YAML frontmatter, and first `# Title` line
 /// from content, returning only the body.
 /// Move footnote definitions that ended up after the review section to before it.
 ///
@@ -106,13 +106,6 @@ pub(crate) fn rescue_footnotes_from_review_section(content: String) -> String {
 
 pub(crate) fn strip_factbase_header(content: &str) -> String {
     let mut lines = content.lines().peekable();
-
-    // Skip factbase HTML comment header if present
-    if let Some(first) = lines.peek() {
-        if ID_REGEX.is_match(first) {
-            lines.next();
-        }
-    }
 
     // Skip YAML frontmatter block if present
     if let Some(first) = lines.peek() {
@@ -740,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_strip_factbase_header_with_header_and_title() {
-        let content = "<!-- factbase:a1cb2b -->\n# Stacey Lee\n\n- fact 1\n- fact 2";
+        let content = "---\nfactbase_id: a1cb2b\n---\n# Stacey Lee\n\n- fact 1\n- fact 2";
         assert_eq!(strip_factbase_header(content), "- fact 1\n- fact 2");
     }
 
@@ -758,7 +751,7 @@ mod tests {
 
     #[test]
     fn test_strip_factbase_header_preserves_html_comments() {
-        let content = "<!-- factbase:a1cb2b -->\n# Title\n\n<!-- important note -->\n- fact 1";
+        let content = "---\nfactbase_id: a1cb2b\n---\n# Title\n\n<!-- important note -->\n- fact 1";
         assert_eq!(
             strip_factbase_header(content),
             "<!-- important note -->\n- fact 1"
@@ -767,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_strip_factbase_header_preserves_later_h1() {
-        let content = "<!-- factbase:a1cb2b -->\n# Title\n\n## Section\n# Another H1";
+        let content = "---\nfactbase_id: a1cb2b\n---\n# Title\n\n## Section\n# Another H1";
         assert_eq!(strip_factbase_header(content), "## Section\n# Another H1");
     }
 
@@ -816,14 +809,14 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Old Title\n\nOld body").unwrap();
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body").unwrap();
 
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Old Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Old Title\n\nOld body".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body".into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -864,14 +857,14 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Old Title\n\nOld body").unwrap();
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body").unwrap();
 
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Old Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Old Title\n\nOld body".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body".into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -880,7 +873,7 @@ mod tests {
         // Pass content with a new title embedded — no separate title param
         let args = serde_json::json!({
             "id": "abc123",
-            "content": "<!-- factbase:abc123 -->\n# Fixed Title\n\nCleaned body"
+            "content": "---\nfactbase_id: abc123\n---\n# Fixed Title\n\nCleaned body"
         });
         let result = update_document(&db, &args).unwrap();
         assert_eq!(result["title"], "Fixed Title");
@@ -920,14 +913,14 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Old\n\nBody").unwrap();
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Old\n\nBody").unwrap();
 
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Old".into(),
-            content: "<!-- factbase:abc123 -->\n# Old\n\nBody".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Old\n\nBody".into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -969,14 +962,14 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\nOld").unwrap();
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Title\n\nOld").unwrap();
 
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Title\n\nOld".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Title\n\nOld".into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -1011,7 +1004,7 @@ mod tests {
         };
         db.upsert_repository(&repo).unwrap();
 
-        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nSome facts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n  > \n";
+        let old_content = "---\nfactbase_id: abc123\n---\n# Title\n\nSome facts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n  > \n";
         let file = repo_dir.path().join("test.md");
         fs::write(&file, old_content).unwrap();
 
@@ -1058,7 +1051,7 @@ mod tests {
         };
         db.upsert_repository(&repo).unwrap();
 
-        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nFacts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Old question\n  > \n";
+        let old_content = "---\nfactbase_id: abc123\n---\n# Title\n\nFacts\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Old question\n  > \n";
         let file = repo_dir.path().join("test.md");
         fs::write(&file, old_content).unwrap();
 
@@ -1107,7 +1100,7 @@ mod tests {
         };
         db.upsert_repository(&repo).unwrap();
 
-        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nPlain facts";
+        let old_content = "---\nfactbase_id: abc123\n---\n# Title\n\nPlain facts";
         let file = repo_dir.path().join("test.md");
         fs::write(&file, old_content).unwrap();
 
@@ -1273,7 +1266,7 @@ mod tests {
     fn test_strip_leading_title_with_factbase_header() {
         // If content includes the factbase header + title, it should NOT strip
         // because the first # line would be the factbase comment, not a heading
-        let content = "<!-- factbase:abc123 -->\n# Amanita muscaria\n\nContent";
+        let content = "---\nfactbase_id: abc123\n---\n# Amanita muscaria\n\nContent";
         let result = strip_leading_title(content, "Amanita muscaria");
         // Should not strip — the first non-whitespace is a comment, not a heading
         assert_eq!(result, content);
@@ -1299,14 +1292,14 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\nOld").unwrap();
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Title\n\nOld").unwrap();
 
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Title\n\nOld".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Title\n\nOld".into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -1365,14 +1358,14 @@ mod tests {
         db.upsert_document(&glossary_doc).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\nOld").unwrap();
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Title\n\nOld").unwrap();
 
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Title\n\nOld".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Title\n\nOld".into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -1430,7 +1423,7 @@ mod tests {
 
     #[test]
     fn test_strip_factbase_header_html_comment() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\nBody text";
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\nBody text";
         let body = strip_factbase_header(content);
         assert_eq!(body, "Body text");
     }
@@ -1444,7 +1437,7 @@ mod tests {
 
     #[test]
     fn test_strip_factbase_header_comment_plus_frontmatter() {
-        let content = "<!-- factbase:abc123 -->\n---\ntype: person\n---\n# Title\n\nBody text";
+        let content = "---\nfactbase_id: abc123\ntype: person\n---\n# Title\n\nBody text";
         let body = strip_factbase_header(content);
         assert_eq!(body, "Body text");
     }
@@ -1679,9 +1672,10 @@ mod tests {
         create_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(repo_dir.path().join("services/aurora.md")).unwrap();
+        // Default format now uses frontmatter, so path tags are included
         assert!(
-            !on_disk.contains("tags:"),
-            "no tags in default format: {on_disk}"
+            on_disk.contains("tags:"),
+            "default format includes tags: {on_disk}"
         );
     }
 
@@ -1713,14 +1707,14 @@ mod tests {
         create_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(repo_dir.path().join("notes/test.md")).unwrap();
-        // Default format: HTML comment, no frontmatter
+        // Default format: YAML frontmatter
         assert!(
-            on_disk.starts_with("<!-- factbase:"),
-            "should start with HTML comment: {on_disk}"
+            on_disk.starts_with("---\n"),
+            "should start with frontmatter: {on_disk}"
         );
         assert!(
-            !on_disk.contains("---\n"),
-            "should NOT have frontmatter: {on_disk}"
+            on_disk.contains("factbase_id:"),
+            "should have factbase_id: {on_disk}"
         );
     }
 
@@ -1820,7 +1814,7 @@ mod tests {
         };
         db.upsert_repository(&repo).unwrap();
 
-        let original = "<!-- factbase:abc123 -->\n---\ntype: people\nreviewed: 2026-03-06\n---\n# Entity\n\n- Old fact";
+        let original = "---\nfactbase_id: abc123\ntype: people\nreviewed: 2026-03-06\n---\n# Entity\n\n- Old fact";
         let file = repo_dir.path().join("people/test.md");
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, original).unwrap();
@@ -2023,7 +2017,7 @@ mod tests {
         };
         db.upsert_repository(&repo).unwrap();
 
-        let old_content = "<!-- factbase:abc123 -->\n# Title\n\nSome facts\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
+        let old_content = "---\nfactbase_id: abc123\n---\n# Title\n\nSome facts\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
         let file = repo_dir.path().join("test.md");
         fs::write(&file, old_content).unwrap();
 

@@ -1127,7 +1127,7 @@ mod tests {
 
         std::fs::write(
             repo_path.join("doc1.md"),
-            "<!-- factbase:aaa111 -->\n# Doc One\n\n- Fact alpha\n- Fact beta\n",
+            "---\nfactbase_id: aaa111\n---\n# Doc One\n\n- Fact alpha\n- Fact beta\n",
         )
         .unwrap();
         test_repo_in_db(&db, "test", repo_path);
@@ -1172,7 +1172,7 @@ mod tests {
 
         std::fs::write(
             repo_path.join("doc1.md"),
-            "<!-- factbase:bbb222 -->\n# Doc One\n\n- Fact one\n",
+            "---\nfactbase_id: bbb222\n---\n# Doc One\n\n- Fact one\n",
         )
         .unwrap();
         test_repo_in_db(&db, "test", repo_path);
@@ -1252,7 +1252,7 @@ mod tests {
             let hex = format!("{:06x}", i + 0xa0);
             std::fs::write(
                 repo_path.join(format!("doc{i}.md")),
-                format!("<!-- factbase:{hex} -->\n# Doc {i}\nContent {i}."),
+                format!("---\nfactbase_id: {hex}\n---\n# Doc {i}\nContent {i}."),
             )
             .unwrap();
         }
@@ -1298,7 +1298,7 @@ mod tests {
 
         std::fs::write(
             repo_path.join("doc1.md"),
-            "<!-- factbase:aaa001 -->\n# Doc One\nContent.",
+            "---\nfactbase_id: aaa001\n---\n# Doc One\nContent.",
         )
         .unwrap();
         test_repo_in_db(&db, "test", repo_path);

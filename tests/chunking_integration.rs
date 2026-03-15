@@ -104,7 +104,7 @@ async fn test_scan_with_chunking() {
 
     // Create a large document that will be chunked
     let large_content = format!(
-        "<!-- factbase:abc123 -->\n# Large Document\n\n{}",
+        "---\nfactbase_id: abc123\n---\n# Large Document\n\n{}",
         "This is test content. ".repeat(5000) // ~110K chars
     );
 
@@ -114,7 +114,7 @@ async fn test_scan_with_chunking() {
             ("large.md", &large_content),
             (
                 "small.md",
-                "<!-- factbase:def456 -->\n# Small Document\n\nShort content.",
+                "---\nfactbase_id: def456\n---\n# Small Document\n\nShort content.",
             ),
         ],
     );
@@ -176,7 +176,7 @@ async fn test_search_deduplicates_chunks() {
 
     // Create document with repeated content that will match multiple chunks
     let repeated_content = format!(
-        "<!-- factbase:abc123 -->\n# Repeated Content\n\n{}",
+        "---\nfactbase_id: abc123\n---\n# Repeated Content\n\n{}",
         "The quick brown fox jumps over the lazy dog. ".repeat(3000) // ~135K chars
     );
 
@@ -241,7 +241,7 @@ async fn test_search_returns_best_chunk() {
 
     // Create document with distinct content in different sections
     let content = format!(
-        "<!-- factbase:abc123 -->\n# Mixed Content\n\n{}\n\n{}\n\n{}",
+        "---\nfactbase_id: abc123\n---\n# Mixed Content\n\n{}\n\n{}\n\n{}",
         "Introduction about general topics. ".repeat(1500), // ~50K chars
         "UNIQUE_KEYWORD_SECTION: This section contains very specific information about quantum computing and neural networks. ".repeat(500), // ~60K chars
         "Conclusion with summary. ".repeat(1500) // ~40K chars

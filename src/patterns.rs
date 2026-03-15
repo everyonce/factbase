@@ -11,11 +11,6 @@ use std::sync::LazyLock;
 // Document ID patterns
 // =============================================================================
 
-/// Matches factbase document header: `<!-- factbase:a1cb2b -->`
-pub(crate) static ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^<!-- factbase:([a-f0-9]{6}) -->").expect("factbase header regex should be valid")
-});
-
 /// Validates a bare 6-character hex document ID (e.g., `a1cb2b`).
 pub(crate) static DOC_ID_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-f0-9]{6}$").expect("doc id regex should be valid"));
@@ -300,8 +295,7 @@ pub fn content_body(content: &str) -> &str {
 /// start of `content`.
 ///
 /// Returns 0 when there is no frontmatter.  The count includes the opening
-/// `---`, all field lines, and the closing `---`, as well as any optional
-/// `<!-- factbase:... -->` comment header that precedes the block.
+/// `---`, all field lines, and the closing `---`.
 ///
 /// Used by `iter_fact_lines` to skip frontmatter lines so that YAML metadata
 /// fields (e.g. `type: services`, block-style `tags:` lists) are never treated
@@ -316,20 +310,7 @@ pub(crate) fn frontmatter_line_count(content: &str) -> usize {
     };
     count += 1;
 
-    // Skip optional HTML comment header (<!-- factbase:... -->)
-    let fm_start = if ID_REGEX.is_match(first) {
-        match lines.next() {
-            Some(l) => {
-                count += 1;
-                l
-            }
-            None => return 0,
-        }
-    } else {
-        first
-    };
-
-    if fm_start.trim() != "---" {
+    if first.trim() != "---" {
         return 0;
     }
 
@@ -672,9 +653,6 @@ mod tests {
         assert!(is_reference_doc(
             "<!-- factbase:reference -->\n# AWS Lambda\n"
         ));
-        assert!(is_reference_doc(
-            "<!-- factbase:abc123 -->\n<!-- factbase:reference -->\n# AWS Lambda\n"
-        ));
         assert!(!is_reference_doc("# Regular Doc\n\nContent"));
         assert!(!is_reference_doc("<!-- factbase:review -->\n# Doc\n"));
     }
@@ -686,12 +664,6 @@ mod tests {
         assert_eq!(clean_title("No refs here"), "No refs here");
         assert_eq!(clean_title("  Spaced [^3]  "), "Spaced");
         assert_eq!(clean_title("[^1] Leading ref"), "Leading ref");
-    }
-
-    #[test]
-    fn test_id_regex() {
-        assert!(ID_REGEX.is_match("<!-- factbase:a1cb2b -->"));
-        assert!(!ID_REGEX.is_match("<!-- factbase:invalid -->"));
     }
 
     #[test]
@@ -759,15 +731,9 @@ mod tests {
 
     #[test]
     fn test_frontmatter_line_count_no_frontmatter() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact\n";
-        assert_eq!(frontmatter_line_count(content), 0);
-    }
-
-    #[test]
-    fn test_frontmatter_line_count_with_comment_header() {
-        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags: [services]\n---\n# Title\n\n- Fact\n";
-        // Lines: comment(1) + ---(2) + type(3) + tags(4) + ---(5) = 5
-        assert_eq!(frontmatter_line_count(content), 5);
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\n- Fact\n";
+        // Lines: ---(1) + factbase_id(2) + ---(3) = 3
+        assert_eq!(frontmatter_line_count(content), 3);
     }
 
     #[test]
@@ -943,9 +909,9 @@ mod tests {
 
     #[test]
     fn test_strip_reviewed_markers_preserves_other_comments() {
-        let content = "- Fact <!-- factbase:abc123 -->\n- Other <!-- reviewed:2026-01-15 -->";
+        let content = "- Fact <!-- factbase:reference -->\n- Other <!-- reviewed:2026-01-15 -->";
         let result = strip_reviewed_markers(content);
-        assert!(result.contains("<!-- factbase:abc123 -->"));
+        assert!(result.contains("<!-- factbase:reference -->"));
         assert!(!result.contains("reviewed"));
     }
 
@@ -1137,8 +1103,8 @@ mod tests {
 
     #[test]
     fn test_merge_review_queue_stale_disk_preserves_db_queue() {
-        let disk = "<!-- factbase:abc123 -->\n# Title\n\n- fact one\n";
-        let db = "<!-- factbase:abc123 -->\n# Title\n\n- fact one\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
+        let disk = "---\nfactbase_id: abc123\n---\n# Title\n\n- fact one\n";
+        let db = "---\nfactbase_id: abc123\n---\n# Title\n\n- fact one\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
         let merged = merge_review_queue(disk, db).unwrap();
         assert!(merged.contains("<!-- factbase:review -->"));
         assert!(merged.contains("@q[temporal]"));
@@ -1169,7 +1135,7 @@ mod tests {
     #[test]
     fn test_extract_heading_title_found() {
         assert_eq!(
-            extract_heading_title("<!-- factbase:abc123 -->\n# My Title\n\n- fact"),
+            extract_heading_title("---\nfactbase_id: abc123\n---\n# My Title\n\n- fact"),
             Some("My Title".to_string())
         );
     }
@@ -1211,7 +1177,7 @@ mod tests {
 
     #[test]
     fn test_extract_frontmatter_reviewed_date_no_frontmatter() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n";
+        let content = "# Title\n";
         assert!(extract_frontmatter_reviewed_date(content).is_none());
     }
 
@@ -1344,7 +1310,7 @@ mod tests {
             Some("Title".into())
         );
         assert_eq!(
-            extract_heading_title("<!-- factbase:abc123 -->\n# Title"),
+            extract_heading_title("---\nfactbase_id: abc123\n---\n# Title"),
             Some("Title".into())
         );
         assert_eq!(extract_heading_title("No heading here"), None);

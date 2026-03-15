@@ -308,12 +308,16 @@ pub fn identify_affected_section(
     let min_line = line_refs.first().copied().unwrap_or(1);
     let max_line = line_refs.last().copied().unwrap_or(lines.len());
 
-    // Determine the minimum start line: skip the factbase header comment and
+    // Determine the minimum start line: skip YAML frontmatter and
     // the document title (# Heading) so they are never sent to the LLM.  This
     // prevents the LLM from duplicating the title in its output.
     let mut min_start = 1; // 1-based
-    for (i, line) in lines.iter().enumerate() {
-        if line.starts_with("<!-- factbase:") || line.starts_with("# ") {
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
+    if fm_lines > 0 {
+        min_start = fm_lines + 1;
+    }
+    for (i, line) in lines.iter().enumerate().skip(fm_lines) {
+        if line.starts_with("# ") {
             min_start = i + 2; // 1-based line after this one
         } else if !line.trim().is_empty() {
             break;
@@ -1321,7 +1325,7 @@ Content here
 
     #[test]
     fn test_dedup_titles_removes_duplicate() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n# Title\n\n- Fact";
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n# Title\n\n- Fact";
         let result = dedup_titles(content);
         assert_eq!(result.matches("# Title").count(), 1);
         assert!(result.contains("- Fact"));
@@ -1329,7 +1333,7 @@ Content here
 
     #[test]
     fn test_dedup_titles_preserves_single() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact";
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\n- Fact";
         let result = dedup_titles(content);
         assert_eq!(result, content);
     }
@@ -1343,7 +1347,7 @@ Content here
 
     #[test]
     fn test_dedup_titles_no_title() {
-        let content = "<!-- factbase:abc123 -->\n\n- Fact";
+        let content = "---\nfactbase_id: abc123\n---\n\n- Fact";
         let result = dedup_titles(content);
         assert_eq!(result, content);
     }
@@ -1353,7 +1357,7 @@ Content here
     #[test]
     fn test_identify_section_excludes_header_and_title() {
         let content =
-            "<!-- factbase:abc123 -->\n# My Document\n\n- Fact on line 4\n- Fact on line 5";
+            "---\nfactbase_id: abc123\n---\n# My Document\n\n- Fact on line 4\n- Fact on line 5";
         let questions = vec![make_question(Some(4))];
         let result = identify_affected_section(content, &questions);
         assert!(result.is_some());

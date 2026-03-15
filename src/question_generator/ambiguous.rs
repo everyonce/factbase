@@ -41,10 +41,13 @@ pub fn is_glossary_doc_with_types(
         } else {
             DEFAULT_GLOSSARY_TYPES.iter().any(|d| *d == l)
         }
-    }) || content.lines().take(3).any(|l| {
-        let lower = l.to_lowercase();
-        lower.contains("# glossary") || lower.contains("# definitions")
-    })
+    }) || {
+        let fm_lines = crate::patterns::frontmatter_line_count(content);
+        content.lines().skip(fm_lines).take(3).any(|l| {
+            let lower = l.to_lowercase();
+            lower.contains("# glossary") || lower.contains("# definitions")
+        })
+    }
 }
 
 /// Extract defined terms from a definitions/glossary document.
@@ -622,7 +625,7 @@ mod tests {
         // By title in content
         assert!(is_glossary_doc(
             None,
-            "<!-- factbase:abc123 -->\n# Glossary\n\n- **TERM**: def"
+            "---\nfactbase_id: abc123\n---\n# Glossary\n\n- **TERM**: def"
         ));
         assert!(is_glossary_doc(None, "# Definitions\n\n- **TERM**: def"));
         // Not a glossary

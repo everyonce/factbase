@@ -209,7 +209,7 @@ mod tests {
 
         std::fs::write(
             repo_dir.join("doc.md"),
-            "<!-- factbase:aaa111 -->\n# Doc\nContent",
+            "---\nfactbase_id: aaa111\n---\n# Doc\nContent",
         )
         .unwrap();
         upsert_doc(
@@ -217,7 +217,7 @@ mod tests {
             "aaa111",
             "test",
             "doc.md",
-            "<!-- factbase:aaa111 -->\n# Doc\nContent",
+            "---\nfactbase_id: aaa111\n---\n# Doc\nContent",
         );
 
         let results = detect_ghost_files(&db, Some("test"), &ProgressReporter::Silent).unwrap();
@@ -232,9 +232,9 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         test_repo_in_db(&db, "test", &repo_dir);
 
-        let content_a = "<!-- factbase:aaa111 -->\n# Entity\nShort content";
+        let content_a = "---\nfactbase_id: aaa111\n---\n# Entity\nShort content";
         let content_b =
-            "<!-- factbase:aaa111 -->\n# Entity\nMuch longer content\nwith more lines\nand details";
+            "---\nfactbase_id: aaa111\n---\n# Entity\nMuch longer content\nwith more lines\nand details";
 
         std::fs::write(sub.join("overview.md"), content_a).unwrap();
         std::fs::write(sub.join("entity-name.md"), content_b).unwrap();
@@ -257,8 +257,8 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         test_repo_in_db(&db, "test", &repo_dir);
 
-        let content_a = "<!-- factbase:aaa111 -->\n# Same Title\nContent A";
-        let content_b = "<!-- factbase:bbb222 -->\n# Same Title\nContent B with more";
+        let content_a = "---\nfactbase_id: aaa111\n---\n# Same Title\nContent A";
+        let content_b = "---\nfactbase_id: bbb222\n---\n# Same Title\nContent B with more";
 
         std::fs::write(sub.join("overview.md"), content_a).unwrap();
         std::fs::write(sub.join("item-name.md"), content_b).unwrap();
@@ -281,7 +281,7 @@ mod tests {
         std::fs::create_dir_all(&dir_b).unwrap();
         test_repo_in_db(&db, "test", &repo_dir);
 
-        let content = "<!-- factbase:aaa111 -->\n# Entity\nContent";
+        let content = "---\nfactbase_id: aaa111\n---\n# Entity\nContent";
         std::fs::write(dir_a.join("doc.md"), content).unwrap();
         std::fs::write(dir_b.join("doc.md"), content).unwrap();
 
@@ -310,9 +310,9 @@ mod tests {
         std::fs::create_dir(&repo_dir).unwrap();
         test_repo_in_db(&db, "test", &repo_dir);
 
-        let content_short = "<!-- factbase:aaa111 -->\n# Entity\nLine 1";
+        let content_short = "---\nfactbase_id: aaa111\n---\n# Entity\nLine 1";
         let content_long =
-            "<!-- factbase:aaa111 -->\n# Entity\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5";
+            "---\nfactbase_id: aaa111\n---\n# Entity\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5";
 
         std::fs::write(repo_dir.join("overview.md"), content_short).unwrap();
         std::fs::write(repo_dir.join("entity.md"), content_long).unwrap();
@@ -321,7 +321,7 @@ mod tests {
 
         let results = detect_ghost_files(&db, Some("test"), &ProgressReporter::Silent).unwrap();
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].tracked_lines, 7);
-        assert_eq!(results[0].ghost_lines, 3);
+        assert_eq!(results[0].tracked_lines, 9);
+        assert_eq!(results[0].ghost_lines, 5);
     }
 }

@@ -52,7 +52,7 @@ use factbase::{
 
 /// Generate a document with N facts, each with temporal tags and source references
 fn generate_document(num_facts: usize) -> String {
-    let mut content = String::from("<!-- factbase:abc123 -->\n# Test Document\n\n");
+    let mut content = String::from("---\nfactbase_id: abc123\n---\n# Test Document\n\n");
 
     for i in 1..=num_facts {
         let year = 2020 + (i % 5);
@@ -79,7 +79,7 @@ fn generate_document(num_facts: usize) -> String {
 
 /// Generate a document with review queue questions
 fn generate_document_with_review_queue(num_questions: usize) -> String {
-    let mut content = String::from("<!-- factbase:abc123 -->\n# Test Document\n\n");
+    let mut content = String::from("---\nfactbase_id: abc123\n---\n# Test Document\n\n");
     content.push_str("Some content here.\n\n");
     content.push_str("<!-- factbase:review -->\n## Review Queue\n\n");
 
@@ -108,7 +108,7 @@ fn generate_document_with_review_queue(num_questions: usize) -> String {
 
 /// Generate a document of approximately N characters
 fn generate_document_by_size(target_chars: usize) -> String {
-    let mut content = String::from("<!-- factbase:abc123 -->\n# Test Document\n\n");
+    let mut content = String::from("---\nfactbase_id: abc123\n---\n# Test Document\n\n");
 
     // Each paragraph is roughly 200 chars
     let paragraph = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. \

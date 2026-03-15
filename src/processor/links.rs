@@ -724,7 +724,7 @@ mod tests {
 
     #[test]
     fn test_append_links_before_callout_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "---\nfactbase_id: aaa111\n---\n# Title\n\nSome content.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_links_to_content(content, &["abc123"]);
         let refs_pos = result.find("References:").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn test_append_links_before_plain_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n## Review Queue\n- [ ] @q[temporal] When?\n<!-- factbase:review -->";
+        let content = "---\nfactbase_id: aaa111\n---\n# Title\n\nSome content.\n\n## Review Queue\n- [ ] @q[temporal] When?\n<!-- factbase:review -->";
         let result = append_links_to_content(content, &["abc123"]);
         let refs_pos = result.find("References:").unwrap();
         let review_pos = result.find("## Review Queue").unwrap();
@@ -748,7 +748,7 @@ mod tests {
 
     #[test]
     fn test_append_referenced_by_before_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nSome content.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "---\nfactbase_id: aaa111\n---\n# Title\n\nSome content.\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_referenced_by_to_content(content, &["abc123"]);
         let refby_pos = result.find("Referenced by:").unwrap();
         let review_pos = result.find("> [!review]- Review Queue").unwrap();
@@ -768,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_append_links_styled_before_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nContent.\n\n> [!review]- Review Queue\n> - [ ] @q[stale] Check?\n> <!-- factbase:review -->";
+        let content = "---\nfactbase_id: aaa111\n---\n# Title\n\nContent.\n\n> [!review]- Review Queue\n> - [ ] @q[stale] Check?\n> <!-- factbase:review -->";
         let ids = vec![("abc123", Some("Doc"), Some("notes/doc.md"))];
         let result = append_links_to_content_styled(
             content,
@@ -785,7 +785,7 @@ mod tests {
 
     #[test]
     fn test_append_referenced_by_styled_before_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\nContent.\n\n## Review Queue\n- [ ] @q[stale] Check?\n<!-- factbase:review -->";
+        let content = "---\nfactbase_id: aaa111\n---\n# Title\n\nContent.\n\n## Review Queue\n- [ ] @q[stale] Check?\n<!-- factbase:review -->";
         let ids = vec![("abc123", Some("Doc"), Some("notes/doc.md"))];
         let result = append_referenced_by_to_content_styled(
             content,
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_append_links_with_footnotes_and_review_section() {
-        let content = "<!-- factbase:aaa111 -->\n# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
+        let content = "---\nfactbase_id: aaa111\n---\n# Title\n\n- Fact [^1]\n\n---\n[^1]: Source\n\n> [!review]- Review Queue\n> - [ ] @q[temporal] When?\n> <!-- factbase:review -->";
         let result = append_links_to_content(content, &["abc123"]);
         assert!(result.contains("References: [[abc123]]"));
         assert!(result.contains("[^1]: Source"));

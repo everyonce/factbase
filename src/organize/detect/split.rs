@@ -27,11 +27,14 @@ pub fn extract_sections(content: &str) -> Vec<SplitSection> {
     let mut current_start: usize = 1;
     let mut current_content = Vec::new();
 
+    // Determine frontmatter line count to skip
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
+
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
 
-        // Skip factbase header
-        if line.starts_with("<!-- factbase:") {
+        // Skip YAML frontmatter
+        if line_num <= fm_lines {
             continue;
         }
 
@@ -263,7 +266,7 @@ mod tests {
 
     #[test]
     fn test_extract_sections_skips_factbase_header() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\nContent here.";
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\nContent here.";
         let sections = extract_sections(content);
 
         assert_eq!(sections.len(), 1);

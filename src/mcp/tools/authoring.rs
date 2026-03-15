@@ -52,10 +52,10 @@ pub fn get_authoring_guide() -> Value {
         "structure": {
             "title": "First # Heading becomes the document title",
             "type": "Derived from parent folder: species/ → 'species', events/ → 'event', people/ → 'person'. Entity folder convention: if filename matches parent folder (e.g., species/amanita-muscaria/amanita-muscaria.md), type comes from grandparent ('species')",
-            "id_header": "<!-- factbase:XXXXXX --> is auto-injected on first scan — never create or modify this",
+            "id_header": "---\nfactbase_id: XXXXXX\n--- is auto-injected on first scan — never create or modify this",
             "length": "Minimum 100 chars, optimal 500-5000 chars",
             "filenames": "lowercase-with-hyphens.md (e.g., amanita-muscaria.md, battle-of-thermopylae.md, platform-api.md)",
-            "reorganization": "If a file is in the wrong folder or has a poor name, rename or move it freely using file tools. Just run scan_repository afterward to re-index. The factbase ID in the <!-- factbase:XXXXXX --> header is stable across renames.",
+            "reorganization": "If a file is in the wrong folder or has a poor name, rename or move it freely using file tools. Just run scan_repository afterward to re-index. The factbase ID in the ---\nfactbase_id: XXXXXX\n--- header is stable across renames.",
             "archive": "Documents in archive/ folders are indexed and searchable but skipped by quality checks. Use for stable/historical documents: species/archive/reclassified.md, events/archive/superseded.md",
             "reference_entities": "Add `<!-- factbase:reference -->` to documents that exist primarily as link targets — external entities you reference but don't track in depth (e.g., well-known products, standards, organizations). Reference docs are indexed, searchable, and participate in link detection, but are skipped by quality checks (check, enrich, resolve workflows). Place the marker after the factbase ID header."
         },
@@ -119,7 +119,7 @@ pub fn get_authoring_guide() -> Value {
         },
         "inbox_blocks": {
             "description": "Stage corrections or new facts for LLM-assisted integration into the document body.",
-            "format": "<!-- factbase:inbox -->\n- New fact here\n<!-- /factbase:inbox -->",
+            "format": "---\nfactbase_id: inbox\n---\n- New fact here\n<!-- /factbase:inbox -->",
             "processing": "Processed by the agent via update_document, then the block is removed"
         },
         "common_mistakes": [
@@ -130,7 +130,7 @@ pub fn get_authoring_guide() -> Value {
             "Missing source footnotes — always cite where facts came from",
             "Untraceable sources — 'Wikipedia' or 'a paper' alone is insufficient; include title, date, URL, or DOI",
             "Using 'Author knowledge' as a source — this is reserved for human-authored knowledge files only; agents must cite the actual data source",
-            "Modifying the <!-- factbase:XXXXXX --> header"
+            "Modifying the ---\nfactbase_id: XXXXXX\n--- header"
         ],
         "template_pattern": {
             "description": "All factbase documents follow the same structural pattern regardless of domain. Adapt the sections to fit your subject matter.",

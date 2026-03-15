@@ -103,7 +103,7 @@ RULES:
 4. Insert new facts into the appropriate section
 5. Do NOT remove existing content unless the inbox explicitly says to delete or replace it
 6. Do NOT include the inbox block markers in the output
-7. Preserve the factbase ID header (<!-- factbase:XXXXXX -->)
+7. Preserve the factbase ID header (---\nfactbase_id: XXXXXX\n---)
 8. Preserve the Review Queue section (<!-- factbase:review -->) if present
 9. Output the complete updated document only"#;
 
@@ -153,12 +153,12 @@ mod tests {
 
     #[test]
     fn test_extract_inbox_blocks_single() {
-        let content = "<!-- factbase:a1cb2b -->\n# Title\n\nSome content\n\n<!-- factbase:inbox -->\nUpdate: CEO changed to Jane Doe in 2026\n<!-- /factbase:inbox -->\n";
+        let content = "---\nfactbase_id: a1cb2b\n---\n# Title\n\nSome content\n\n<!-- factbase:inbox -->\nUpdate: CEO changed to Jane Doe in 2026\n<!-- /factbase:inbox -->\n";
         let blocks = extract_inbox_blocks(content);
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].content, "Update: CEO changed to Jane Doe in 2026");
-        assert_eq!(blocks[0].start_line, 5);
-        assert_eq!(blocks[0].end_line, 7);
+        assert_eq!(blocks[0].start_line, 7);
+        assert_eq!(blocks[0].end_line, 9);
     }
 
     #[test]

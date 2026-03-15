@@ -587,7 +587,7 @@ mod tests {
         let file_path = repo_dir.path().join("test.md");
         std::fs::write(
             &file_path,
-            "<!-- factbase:abc123 -->\n# Old Title\n\nOld body",
+            "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body",
         )
         .unwrap();
 
@@ -596,7 +596,7 @@ mod tests {
             repo_id: "test-repo".to_string(),
             file_path: file_path.to_string_lossy().to_string(),
             title: "Old Title".to_string(),
-            content: "<!-- factbase:abc123 -->\n# Old Title\n\nOld body".to_string(),
+            content: "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body".to_string(),
             file_hash: "hash1".to_string(),
             ..Document::test_default()
         };
@@ -668,7 +668,7 @@ mod tests {
         let file_path = repo_dir.path().join("entity.md");
         std::fs::write(
             &file_path,
-            "<!-- factbase:def456 -->\n# Old Name\n\n- old fact\n- garbage [^1]",
+            "---\nfactbase_id: def456\n---\n# Old Name\n\n- old fact\n- garbage [^1]",
         )
         .unwrap();
 
@@ -677,7 +677,7 @@ mod tests {
             repo_id: "test-repo".to_string(),
             file_path: "entity.md".to_string(),
             title: "Old Name".to_string(),
-            content: "<!-- factbase:def456 -->\n# Old Name\n\n- old fact\n- garbage [^1]"
+            content: "---\nfactbase_id: def456\n---\n# Old Name\n\n- old fact\n- garbage [^1]"
                 .to_string(),
             file_hash: "hash1".to_string(),
             ..Document::test_default()
@@ -693,7 +693,7 @@ mod tests {
                 "name": "update_document",
                 "arguments": {
                     "id": "def456",
-                    "content": "<!-- factbase:def456 -->\n# Fixed Name\n\n- cleaned fact"
+                    "content": "---\nfactbase_id: def456\n---\n# Fixed Name\n\n- cleaned fact"
                 }
             }
         })

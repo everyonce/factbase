@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_frontmatter_with_comment_header_not_temporal_questions() {
-        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags:\n  - services\n---\n# Title\n\n- Real fact\n";
+        let content = "---\nfactbase_id: abc123\ntype: services\ntags:\n  - services\n---\n# Title\n\n- Real fact\n";
         let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 1);
         assert!(questions[0].description.contains("Real fact"));

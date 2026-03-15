@@ -468,7 +468,7 @@ mod tests {
         std::fs::create_dir_all(&repo_dir).unwrap();
         let doc_file = repo_dir.join("test.md");
         // Document has NO inline review section
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact [^1]\n\n---\n[^1]: Some source\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact [^1]\n\n---\n[^1]: Some source\n";
         std::fs::write(&doc_file, content).unwrap();
 
         let db_path = dir.path().join("test.db");
@@ -529,7 +529,7 @@ mod tests {
         let repo_dir = dir.path().join("myrepo");
         std::fs::create_dir_all(&repo_dir).unwrap();
         let doc_file = repo_dir.join("test.md");
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
         std::fs::write(&doc_file, content).unwrap();
 
         let db_path = dir.path().join("test.db");
@@ -574,7 +574,7 @@ mod tests {
         let repo_dir = dir.path().join("myrepo");
         std::fs::create_dir_all(&repo_dir).unwrap();
         let doc_file = repo_dir.join("test.md");
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [x] `@q[stale]` Line 4: Old\n  > Already answered\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [x] `@q[stale]` Line 4: Old\n  > Already answered\n";
         std::fs::write(&doc_file, content).unwrap();
 
         let db_path = dir.path().join("test.db");
@@ -656,7 +656,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let repo_dir = dir.path().join("myrepo");
         std::fs::create_dir_all(&repo_dir).unwrap();
-        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n";
         std::fs::write(repo_dir.join("test.md"), content).unwrap();
         let db_path = dir.path().join("test.db");
         let db = crate::database::Database::new(&db_path).unwrap();

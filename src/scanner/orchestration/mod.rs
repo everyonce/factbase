@@ -884,7 +884,7 @@ mod tests {
     fn test_pre_read_files_reads_content_and_hash() {
         let tmp = TempDir::new().unwrap();
         let p = tmp.path().join("doc.md");
-        std::fs::write(&p, "<!-- factbase:abc123 -->\n# Hello").unwrap();
+        std::fs::write(&p, "---\nfactbase_id: abc123\n---\n# Hello").unwrap();
 
         let results = pre_read_files(vec![p]);
         assert_eq!(results.len(), 1);
@@ -1110,7 +1110,7 @@ mod tests {
     fn test_pre_read_files_with_existing_id() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("doc.md");
-        std::fs::write(&path, "<!-- factbase:abc123 -->\n# Title\n\nContent.").unwrap();
+        std::fs::write(&path, "---\nfactbase_id: abc123\n---\n# Title\n\nContent.").unwrap();
         let results = pre_read_files(vec![path]);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].existing_id.as_deref(), Some("abc123"));
@@ -1137,7 +1137,7 @@ mod tests {
         // Both formats present — HTML comment is checked first
         std::fs::write(
             &path,
-            "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\n---\n# Title",
+            "---\nfactbase_id: aaa111\nfactbase_id: bbb222\n---\n# Title",
         )
         .unwrap();
         let results = pre_read_files(vec![path]);
@@ -1679,7 +1679,7 @@ mod tests {
         let (tmp, repo) = setup_repo(&db);
 
         // Write a doc with a review section in the correct format
-        let content = "<!-- factbase:aaa111 -->\n# Doc\n\nSome fact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n";
+        let content = "---\nfactbase_id: aaa111\n---\n# Doc\n\nSome fact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n";
         std::fs::write(tmp.path().join("doc.md"), content).unwrap();
 
         let scanner = super::super::Scanner::new(&[]);
@@ -1711,7 +1711,7 @@ mod tests {
         let (db, _db_tmp) = test_db();
         let (tmp, repo) = setup_repo(&db);
 
-        let content = "<!-- factbase:aaa111 -->\n# Doc\n\nSome fact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n";
+        let content = "---\nfactbase_id: aaa111\n---\n# Doc\n\nSome fact.\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When did this happen?\n";
         std::fs::write(tmp.path().join("doc.md"), content).unwrap();
 
         let scanner = super::super::Scanner::new(&[]);

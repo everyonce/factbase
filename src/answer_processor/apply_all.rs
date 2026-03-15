@@ -705,7 +705,7 @@ mod tests {
 
         // Disk file has answered questions (the source of truth)
         let disk_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -722,7 +722,7 @@ mod tests {
 
         // DB content is stale — still has unanswered questions
         let db_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -800,7 +800,7 @@ mod tests {
 
         // Disk file has unanswered questions (simulating divergence)
         let disk_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -817,7 +817,7 @@ mod tests {
 
         // DB content has the same question answered
         let db_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -906,7 +906,7 @@ mod tests {
 
         // Both disk and DB have the answered question
         let content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -979,7 +979,7 @@ mod tests {
         std::fs::create_dir_all(&repo_dir).unwrap();
 
         let content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -1058,7 +1058,7 @@ mod tests {
 
         // Disk file has a review queue with answered questions
         let disk_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -1075,7 +1075,7 @@ mod tests {
 
         // DB content has NO review queue (simulating stale has_review_queue=FALSE)
         let db_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n";
@@ -1147,7 +1147,7 @@ mod tests {
 
         // Content with multiple answered questions (simulating agent editing file directly)
         let content = "\
-<!-- factbase:543601 -->\n\
+---\nfactbase_id: 543601\n---\n\
 # Technologies\n\
 \n\
 - Uses Rust @t[=2024-01]\n\
@@ -1233,7 +1233,7 @@ mod tests {
 
         // DB content has answered questions but NO file on disk
         let db_content = "\
-<!-- factbase:abc123 -->\n\
+---\nfactbase_id: abc123\n---\n\
 # Test Entity\n\
 \n\
 - Some fact\n\
@@ -1320,7 +1320,7 @@ mod tests {
         std::fs::create_dir_all(&repo_dir).unwrap();
 
         let content = "\
-<!-- factbase:aaa111 -->\n\
+---\nfactbase_id: aaa111\n---\n\
 # Test Doc\n\
 \n\
 - Fact one\n\

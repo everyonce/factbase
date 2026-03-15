@@ -1,7 +1,7 @@
 //! Retype execution for document reorganization.
 //!
 //! Overrides a document's type without moving the file. The type is stored
-//! in the database and optionally persisted to the file via a type override comment.
+//! in the database and optionally persisted to the file via YAML frontmatter.
 
 use std::path::Path;
 
@@ -10,13 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::organize::fs_helpers::{read_file, write_file};
-use crate::patterns::ID_REGEX;
 use crate::processor::normalize_type;
-
-/// Comment format for type override in markdown files.
-/// Format: `<!-- factbase:type:typename -->`
-const TYPE_OVERRIDE_PREFIX: &str = "<!-- factbase:type:";
-const TYPE_OVERRIDE_SUFFIX: &str = " -->";
 
 /// Result of executing a retype operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,47 +76,29 @@ pub fn execute_retype(
     })
 }
 
-/// Persist type override to file by adding/updating type comment.
+/// Persist type override to file by updating YAML frontmatter.
 fn persist_type_to_file(file_path: &Path, new_type: &str) -> Result<(), FactbaseError> {
     let content = read_file(file_path)?;
-    let updated = update_type_comment(&content, new_type);
+    let updated = crate::processor::update_frontmatter_type(&content, new_type);
     write_file(file_path, &updated)?;
     Ok(())
 }
 
-/// Update or insert type override comment in content.
-/// Places it on the line after the factbase ID comment.
-fn update_type_comment(content: &str, new_type: &str) -> String {
-    let type_comment = format!("{TYPE_OVERRIDE_PREFIX}{new_type}{TYPE_OVERRIDE_SUFFIX}");
-    let mut lines: Vec<&str> = content.lines().collect();
-
-    // Find existing type comment
-    if let Some(idx) = lines
-        .iter()
-        .position(|line| line.trim().starts_with(TYPE_OVERRIDE_PREFIX))
-    {
-        // Replace existing
-        lines[idx] = &type_comment;
-        return lines.join("\n") + if content.ends_with('\n') { "\n" } else { "" };
-    }
-
-    // Find factbase ID line and insert after it
-    if let Some(idx) = lines.iter().position(|line| ID_REGEX.is_match(line)) {
-        lines.insert(idx + 1, &type_comment);
-        return lines.join("\n") + if content.ends_with('\n') { "\n" } else { "" };
-    }
-
-    // No ID line found, prepend type comment
-    format!("{type_comment}\n{content}")
-}
-
-/// Extract type override from content if present.
+/// Extract type override from YAML frontmatter if present.
 pub fn extract_type_override(content: &str) -> Option<String> {
-    for line in content.lines() {
+    let mut lines = content.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    for line in lines {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix(TYPE_OVERRIDE_PREFIX) {
-            if let Some(type_name) = rest.strip_suffix(TYPE_OVERRIDE_SUFFIX) {
-                return Some(type_name.to_string());
+        if trimmed == "---" {
+            break;
+        }
+        if let Some(val) = trimmed.strip_prefix("type:") {
+            let t = val.trim().to_string();
+            if !t.is_empty() {
+                return Some(t);
             }
         }
     }
@@ -159,50 +135,30 @@ mod tests {
     }
 
     #[test]
-    fn test_update_type_comment_insert_after_id() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\nContent";
-        let result = update_type_comment(content, "person");
-        assert_eq!(
-            result,
-            "<!-- factbase:abc123 -->\n<!-- factbase:type:person -->\n# Title\n\nContent"
-        );
+    fn test_persist_type_updates_frontmatter() {
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\nContent";
+        let result = crate::processor::update_frontmatter_type(content, "person");
+        assert!(result.contains("type: person\n"));
+        assert!(result.contains("factbase_id: abc123\n"));
     }
 
     #[test]
-    fn test_update_type_comment_replace_existing() {
-        let content =
-            "<!-- factbase:abc123 -->\n<!-- factbase:type:project -->\n# Title\n\nContent";
-        let result = update_type_comment(content, "person");
-        assert_eq!(
-            result,
-            "<!-- factbase:abc123 -->\n<!-- factbase:type:person -->\n# Title\n\nContent"
-        );
-    }
-
-    #[test]
-    fn test_update_type_comment_no_id() {
-        let content = "# Title\n\nContent";
-        let result = update_type_comment(content, "person");
-        assert!(result.starts_with("<!-- factbase:type:person -->"));
-        assert!(result.contains("# Title"));
-    }
-
-    #[test]
-    fn test_update_type_comment_preserves_trailing_newline() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n";
-        let result = update_type_comment(content, "person");
-        assert!(result.ends_with('\n'));
+    fn test_persist_type_replaces_existing() {
+        let content = "---\nfactbase_id: abc123\ntype: project\n---\n# Title\n\nContent";
+        let result = crate::processor::update_frontmatter_type(content, "person");
+        assert!(result.contains("type: person\n"));
+        assert!(!result.contains("type: project"));
     }
 
     #[test]
     fn test_extract_type_override_present() {
-        let content = "<!-- factbase:abc123 -->\n<!-- factbase:type:person -->\n# Title";
+        let content = "---\nfactbase_id: abc123\ntype: person\n---\n# Title";
         assert_eq!(extract_type_override(content), Some("person".to_string()));
     }
 
     #[test]
     fn test_extract_type_override_absent() {
-        let content = "<!-- factbase:abc123 -->\n# Title";
+        let content = "---\nfactbase_id: abc123\n---\n# Title";
         assert_eq!(extract_type_override(content), None);
     }
 
@@ -243,7 +199,7 @@ mod tests {
 
         // Create file
         let file_path = temp.path().join("test.md");
-        let content = "<!-- factbase:abc123 -->\n# Test Doc\n\nContent here.";
+        let content = "---\nfactbase_id: abc123\n---\n# Test Doc\n\nContent here.";
         fs::write(&file_path, content).unwrap();
 
         let doc = test_doc("abc123", "Test Doc", "test.md", Some("project"));
@@ -255,7 +211,7 @@ mod tests {
 
         // Verify file updated
         let updated_content = fs::read_to_string(&file_path).unwrap();
-        assert!(updated_content.contains("<!-- factbase:type:person -->"));
+        assert!(updated_content.contains("type: person"));
     }
 
     #[test]
