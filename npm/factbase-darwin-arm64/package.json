@@ -1,10 +1,10 @@
 {
   "name": "@everyonce/factbase-darwin-arm64",
-  "version": "2026.3.14",
+  "version": "2026.3.31",
   "description": "factbase binary for macOS Apple Silicon",
   "repository": {
     "type": "git",
-    "url": "https://github.com/everyonce/factbase.git"
+    "url": "git+https://github.com/everyonce/factbase.git"
   },
   "homepage": "https://github.com/everyonce/factbase",
   "bugs": "https://github.com/everyonce/factbase/issues",
