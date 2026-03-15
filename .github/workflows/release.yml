@@ -83,6 +83,8 @@ jobs:
         run: |
           VERSION=${{ steps.version.outputs.version }}
 
+          mkdir -p npm/factbase-linux-x64/bin npm/factbase-darwin-arm64/bin npm/factbase-darwin-x64/bin npm/factbase-win32-x64/bin
+
           cp artifacts/factbase-linux-x64/factbase   npm/factbase-linux-x64/bin/factbase
           cp artifacts/factbase-darwin-arm64/factbase npm/factbase-darwin-arm64/bin/factbase
           cp artifacts/factbase-darwin-x64/factbase   npm/factbase-darwin-x64/bin/factbase
