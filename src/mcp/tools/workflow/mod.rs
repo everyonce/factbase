@@ -2100,6 +2100,23 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_intro_has_author_confidence_path() {
+        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        assert!(
+            intro.contains("author"),
+            "resolve intro must document the author confidence path"
+        );
+        assert!(
+            intro.contains("self-attested"),
+            "resolve intro must note author answers are self-attested"
+        );
+        assert!(
+            intro.contains("KB owner"),
+            "resolve intro must explain when author confidence is appropriate"
+        );
+    }
+
+    #[test]
     fn test_resolve_stale_days_in_instructions() {
         let p = mock_perspective();
         let (db, _tmp) = test_db();

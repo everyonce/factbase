@@ -176,11 +176,17 @@ pub fn answer_question(
             "deferred": true, "believed": believed, "note": answer_text, "message": message
         }))
     } else {
+        let self_attested = answer_text.starts_with("author: ");
+        let message = if self_attested {
+            "Question answered as self-attested (KB owner is the authoritative source). Use update_document to apply changes."
+        } else {
+            "Question answered. Use update_document to apply changes to the document."
+        };
         Ok(serde_json::json!({
             "success": true, "doc_id": params.doc_id, "question_index": params.question_index,
             "question_type": type_str, "description": question.description,
             "answer": answer_text,
-            "message": "Question answered. Use update_document to apply changes to the document."
+            "message": message
         }))
     }
 }
