@@ -303,6 +303,9 @@ pub async fn full_scan(
                 (content, hash)
             };
 
+            // Derive type once; reused for frontmatter injection and DB upsert.
+            let doc_type = ctx.processor.derive_type(&pre.path, &repo.path);
+
             let id = if let Some(id) = pre.existing_id {
                 id
             } else if ctx.opts.dry_run {
@@ -315,13 +318,11 @@ pub async fn full_scan(
                     .and_then(|p| p.format.as_ref())
                     .map(|f| f.resolve())
                     .unwrap_or_default();
-                // Derive type now so it can be written to frontmatter alongside the ID
-                let new_doc_type = ctx.processor.derive_type(&pre.path, &repo.path);
                 let new_content = ctx.processor.inject_id_with_format(
                     &content,
                     &id,
                     &resolved_format,
-                    Some(&new_doc_type),
+                    Some(&doc_type),
                 );
                 fs::write(&pre.path, &new_content)?;
                 id
@@ -393,7 +394,7 @@ pub async fn full_scan(
                 continue;
             }
 
-            let doc_type = ctx.processor.derive_type(&pre.path, &repo.path);
+            // doc_type was computed above (before the id block)
 
             // When a file moves, update the type in frontmatter (Obsidian format) so
             // Dataview queries stay accurate after reorganisation.
@@ -593,11 +594,12 @@ pub async fn full_scan(
         // stale cross-validation results and needs re-checking.
         if !changed_ids.is_empty() {
             let mut to_invalidate: HashSet<String> = HashSet::new();
-            for id in &changed_ids {
-                if let Ok(links) = db.get_links_to(id) {
-                    for link in links {
+            let ids_ref: Vec<&str> = changed_ids.iter().map(String::as_str).collect();
+            if let Ok(links_map) = db.get_links_for_documents(&ids_ref) {
+                for (_, (_, incoming)) in &links_map {
+                    for link in incoming {
                         if !changed_ids.contains(&link.source_id) {
-                            to_invalidate.insert(link.source_id);
+                            to_invalidate.insert(link.source_id.clone());
                         }
                     }
                 }

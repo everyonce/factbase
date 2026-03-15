@@ -272,8 +272,56 @@ impl Database {
         Ok(added)
     }
 
-    /// Returns true if any links exist for documents in the given repository.
+    /// Returns outgoing and incoming link counts for multiple documents in batch.
     ///
+    /// Eliminates N+1 query pattern when only counts are needed (not full link data).
+    /// Returns a map of doc_id → (outgoing_count, incoming_count).
+    /// Documents with no links will have (0, 0).
+    pub fn get_link_counts_batch(
+        &self,
+        doc_ids: &[&str],
+    ) -> Result<HashMap<String, (usize, usize)>, FactbaseError> {
+        if doc_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let conn = self.get_conn()?;
+        let mut counts: HashMap<String, (usize, usize)> = doc_ids
+            .iter()
+            .map(|id| ((*id).to_string(), (0usize, 0usize)))
+            .collect();
+        let placeholders: String = doc_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            doc_ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        // Outgoing counts
+        let sql = format!(
+            "SELECT source_id, COUNT(*) FROM document_links WHERE source_id IN ({placeholders}) GROUP BY source_id"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let n: i64 = row.get(1)?;
+            if let Some(e) = counts.get_mut(&id) {
+                e.0 = n as usize;
+            }
+        }
+        // Incoming counts
+        let sql = format!(
+            "SELECT target_id, COUNT(*) FROM document_links WHERE target_id IN ({placeholders}) GROUP BY target_id"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            let n: i64 = row.get(1)?;
+            if let Some(e) = counts.get_mut(&id) {
+                e.1 = n as usize;
+            }
+        }
+        Ok(counts)
+    }
+
+    /// Returns true if any links exist for documents in the given repository.    ///
     /// Used to detect empty link tables (e.g., migrated/copied KBs) so that
     /// link detection can be triggered even when no documents changed.
     pub fn has_links_for_repo(&self, repo_id: &str) -> Result<bool, FactbaseError> {
@@ -595,6 +643,60 @@ mod tests {
         let (outgoing, incoming) = result.get("doc1").expect("doc1 should be in result");
         assert!(outgoing.is_empty());
         assert!(incoming.is_empty());
+    }
+
+    #[test]
+    fn test_get_link_counts_batch_empty() {
+        let (db, _tmp) = test_db();
+        let result = db.get_link_counts_batch(&[]).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_get_link_counts_batch_no_links() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("d1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("d2", "Doc 2")).unwrap();
+
+        let counts = db.get_link_counts_batch(&["d1", "d2"]).unwrap();
+        assert_eq!(counts["d1"], (0, 0));
+        assert_eq!(counts["d2"], (0, 0));
+    }
+
+    #[test]
+    fn test_get_link_counts_batch_with_links() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("d1", "Doc 1")).unwrap();
+        db.upsert_document(&test_doc("d2", "Doc 2")).unwrap();
+        db.upsert_document(&test_doc("d3", "Doc 3")).unwrap();
+
+        // d1 -> d2, d1 -> d3
+        db.update_links(
+            "d1",
+            &[
+                DetectedLink { target_id: "d2".into(), target_title: "Doc 2".into(), mention_text: "Doc 2".into(), context: "".into() },
+                DetectedLink { target_id: "d3".into(), target_title: "Doc 3".into(), mention_text: "Doc 3".into(), context: "".into() },
+            ],
+        )
+        .unwrap();
+        // d2 -> d3
+        db.update_links(
+            "d2",
+            &[DetectedLink { target_id: "d3".into(), target_title: "Doc 3".into(), mention_text: "Doc 3".into(), context: "".into() }],
+        )
+        .unwrap();
+
+        let counts = db.get_link_counts_batch(&["d1", "d2", "d3"]).unwrap();
+        // d1: 2 outgoing, 0 incoming
+        assert_eq!(counts["d1"], (2, 0));
+        // d2: 1 outgoing, 1 incoming (from d1)
+        assert_eq!(counts["d2"], (1, 1));
+        // d3: 0 outgoing, 2 incoming (from d1 and d2)
+        assert_eq!(counts["d3"], (0, 2));
     }
 
     #[test]
