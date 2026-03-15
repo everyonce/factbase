@@ -114,12 +114,19 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: (cd npm/factbase && npm publish --access public)
 
+      - name: Rename artifacts for GitHub Release
+        run: |
+          cp artifacts/factbase-linux-x64/factbase     artifacts/factbase-linux-x64/factbase-linux-x64
+          cp artifacts/factbase-darwin-arm64/factbase  artifacts/factbase-darwin-arm64/factbase-darwin-arm64
+          cp artifacts/factbase-darwin-x64/factbase    artifacts/factbase-darwin-x64/factbase-darwin-x64
+          cp artifacts/factbase-win32-x64/factbase.exe artifacts/factbase-win32-x64/factbase-win32-x64.exe
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/factbase-linux-x64/factbase
-            artifacts/factbase-darwin-arm64/factbase
-            artifacts/factbase-darwin-x64/factbase
-            artifacts/factbase-win32-x64/factbase.exe
+            artifacts/factbase-linux-x64/factbase-linux-x64
+            artifacts/factbase-darwin-arm64/factbase-darwin-arm64
+            artifacts/factbase-darwin-x64/factbase-darwin-x64
+            artifacts/factbase-win32-x64/factbase-win32-x64.exe
           generate_release_notes: true
