@@ -110,6 +110,9 @@ pub fn answer_question(
         new_content = wrap_review_callout(&new_content);
     }
 
+    // Auto-stamp footnote for dismissed weak-source questions
+    new_content = stamp_weak_source_footnote(&new_content, question, &answer_text, defer);
+
     fs::write(&file_path, &new_content)?;
     let new_hash = content_hash(&new_content);
     db.update_document_content(&params.doc_id, &new_content, &new_hash)?;
@@ -278,6 +281,10 @@ pub fn bulk_answer_questions(
             let modified_queue = modify_question_in_queue(queue_content, *qi, &text, defer)
                 .ok_or_else(|| FactbaseError::internal("Failed to find question to modify"))?;
             content = format!("{before_marker}{marker}{modified_queue}");
+            // Auto-stamp footnote for dismissed weak-source questions
+            if *qi < questions.len() {
+                content = stamp_weak_source_footnote(&content, &questions[*qi], &text, defer);
+            }
         }
 
         if was_callout {
@@ -357,6 +364,54 @@ pub fn bulk_answer_questions(
         "remaining_believed": total_believed,
         "message": format!("Answered {} question(s), skipped {} already-answered. {} unanswered remain. Run `factbase review --apply` to process.", answered, skipped, remaining_unanswered)
     }))
+}
+
+/// Stamp `<!-- ✓ -->` on the footnote definition line when a weak-source question
+/// is dismissed via a definitive answer (VALID or dismiss prefix).
+/// This prevents the footnote from being re-flagged on subsequent scans.
+fn stamp_weak_source_footnote(
+    content: &str,
+    question: &crate::models::ReviewQuestion,
+    answer_text: &str,
+    defer: bool,
+) -> String {
+    use crate::models::QuestionType;
+    if defer || question.question_type != QuestionType::WeakSource {
+        return content.to_string();
+    }
+    let lower = answer_text.trim().to_lowercase();
+    if !lower.starts_with("valid") && !lower.starts_with("dismiss") {
+        return content.to_string();
+    }
+    let Some(num) = extract_footnote_num_from_desc(&question.description) else {
+        return content.to_string();
+    };
+    let prefix = format!("[^{num}]:");
+    const MARKER: &str = "<!-- ✓ -->";
+    content
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with(prefix.as_str()) && !line.contains(MARKER) {
+                format!("{line} {MARKER}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Extract the first footnote number `N` from `[^N]` in a question description.
+fn extract_footnote_num_from_desc(description: &str) -> Option<&str> {
+    let start = description.find("[^")?;
+    let rest = &description[start + 2..];
+    let end = rest.find(']')?;
+    let num = &rest[..end];
+    if !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+        Some(num)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
@@ -544,5 +599,124 @@ mod tests {
         }];
         // Doc not found propagates as an error
         assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
+    }
+
+    fn make_weak_source_doc(dir: &std::path::Path, footnote_num: u32) -> (crate::database::Database, String) {
+        let repo_dir = dir.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let content = format!(
+            "<!-- factbase:ws001 -->\n# Test\n\n- Fact [^{footnote_num}]\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Citation [^{footnote_num}]: weak tier\n  > \n\n---\n[^{footnote_num}]: Some source\n"
+        );
+        std::fs::write(repo_dir.join("test.md"), &content).unwrap();
+        let db_path = dir.join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(), name: "r1".into(), path: repo_dir,
+            perspective: None, created_at: chrono::Utc::now(),
+            last_indexed_at: None, last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "ws001".into(), repo_id: "r1".into(),
+            file_path: "test.md".into(), title: "Test".into(),
+            content: content.clone(), ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+        (db, content)
+    }
+
+    #[test]
+    fn test_weak_source_valid_answer_stamps_footnote() {
+        let dir = tempfile::tempdir().unwrap();
+        let (db, _) = make_weak_source_doc(dir.path(), 1);
+        let result = answer_question(&db, &AnswerQuestionParams {
+            doc_id: "ws001".into(), question_index: 0,
+            answer: "VALID: sufficient per policy".into(), confidence: None,
+        }).unwrap();
+        assert_eq!(result["success"], true);
+        let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
+        assert!(disk.contains("[^1]: Some source <!-- ✓ -->"), "footnote should be stamped: {disk}");
+    }
+
+    #[test]
+    fn test_weak_source_dismiss_answer_stamps_footnote() {
+        let dir = tempfile::tempdir().unwrap();
+        let (db, _) = make_weak_source_doc(dir.path(), 2);
+        answer_question(&db, &AnswerQuestionParams {
+            doc_id: "ws001".into(), question_index: 0,
+            answer: "dismiss: internal source".into(), confidence: None,
+        }).unwrap();
+        let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
+        assert!(disk.contains("[^2]: Some source <!-- ✓ -->"), "footnote should be stamped: {disk}");
+    }
+
+    #[test]
+    fn test_weak_source_believed_answer_does_not_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let (db, _) = make_weak_source_doc(dir.path(), 3);
+        answer_question(&db, &AnswerQuestionParams {
+            doc_id: "ws001".into(), question_index: 0,
+            answer: "probably ok".into(), confidence: Some("believed".into()),
+        }).unwrap();
+        let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
+        assert!(!disk.contains("<!-- ✓ -->"), "footnote should NOT be stamped for believed: {disk}");
+    }
+
+    #[test]
+    fn test_non_weak_source_dismiss_does_not_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let content = "<!-- factbase:ns001 -->\n# Test\n\n- Fact [^1]\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Line 4: When?\n  > \n\n---\n[^1]: Some source\n";
+        std::fs::write(repo_dir.join("test.md"), content).unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(), name: "r1".into(), path: repo_dir,
+            perspective: None, created_at: chrono::Utc::now(),
+            last_indexed_at: None, last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "ns001".into(), repo_id: "r1".into(),
+            file_path: "test.md".into(), title: "Test".into(),
+            content: content.into(), ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+        answer_question(&db, &AnswerQuestionParams {
+            doc_id: "ns001".into(), question_index: 0,
+            answer: "dismiss".into(), confidence: None,
+        }).unwrap();
+        let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
+        assert!(!disk.contains("<!-- ✓ -->"), "non-weak-source should NOT stamp: {disk}");
+    }
+
+    #[test]
+    fn test_weak_source_no_duplicate_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let content = "<!-- factbase:dup001 -->\n# Test\n\n- Fact [^1]\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Citation [^1]: weak tier\n  > \n\n---\n[^1]: Some source <!-- ✓ -->\n";
+        std::fs::write(repo_dir.join("test.md"), content).unwrap();
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(), name: "r1".into(), path: repo_dir,
+            perspective: None, created_at: chrono::Utc::now(),
+            last_indexed_at: None, last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "dup001".into(), repo_id: "r1".into(),
+            file_path: "test.md".into(), title: "Test".into(),
+            content: content.into(), ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+        answer_question(&db, &AnswerQuestionParams {
+            doc_id: "dup001".into(), question_index: 0,
+            answer: "VALID: already accepted".into(), confidence: None,
+        }).unwrap();
+        let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
+        assert_eq!(disk.matches("<!-- ✓ -->").count(), 1, "should not duplicate marker: {disk}");
     }
 }
