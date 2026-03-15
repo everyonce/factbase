@@ -106,13 +106,13 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
           for pkg in factbase-linux-x64 factbase-darwin-arm64 factbase-darwin-x64 factbase-win32-x64; do
-            npm publish npm/$pkg --access public
+            (cd npm/$pkg && npm publish --access public)
           done
 
       - name: Publish main package
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish npm/factbase --access public
+        run: (cd npm/factbase && npm publish --access public)
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
