@@ -375,6 +375,49 @@ impl Database {
         Ok((count, affected))
     }
 
+    /// Load review questions for a document from the DB as `ReviewQuestion` structs.
+    ///
+    /// Returns questions ordered by `question_index`, excluding dismissed ones.
+    /// Used as a fallback when inline `@q[]` markers are missing from the document.
+    pub fn get_review_questions_for_doc(
+        &self,
+        doc_id: &str,
+    ) -> Result<Vec<ReviewQuestion>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let questions = conn
+            .prepare(
+                "SELECT question_type, line_ref, description, answer, status \
+                 FROM review_questions \
+                 WHERE doc_id = ?1 AND status != 'dismissed' \
+                 ORDER BY question_index",
+            )?
+            .query_map([doc_id], |row| {
+                let qt_str: String = row.get(0)?;
+                let line_ref: Option<i64> = row.get(1)?;
+                let description: String = row.get(2)?;
+                let answer: Option<String> = row.get(3)?;
+                let status: String = row.get(4)?;
+                Ok((qt_str, line_ref, description, answer, status))
+            })?
+            .filter_map(Result::ok)
+            .map(|(qt_str, line_ref, description, answer, status)| {
+                let question_type = qt_str
+                    .parse::<crate::models::QuestionType>()
+                    .unwrap_or(crate::models::QuestionType::Missing);
+                let answered = status == "verified";
+                let mut q = ReviewQuestion::new(
+                    question_type,
+                    line_ref.map(|n| n as usize),
+                    description,
+                );
+                q.answered = answered;
+                q.answer = answer;
+                q
+            })
+            .collect();
+        Ok(questions)
+    }
+
     /// Check if the review_questions table has any rows (used to detect if populated).
     pub fn has_review_questions_indexed(&self) -> bool {
         let conn = match self.get_conn() {
