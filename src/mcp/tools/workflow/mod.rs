@@ -491,8 +491,7 @@ fn resolve_step(
             "workflow": "resolve",
             "step": 4, "total_steps": total,
             "instruction": resolve(wf, "resolve.verify", DEFAULT_RESOLVE_VERIFY_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "check",
-            "suggested_args": {"dry_run": true},
+            "next_tool": "factbase", "suggested_op": "get_entity",
             "when_done": "Call workflow with workflow='resolve', step=5"
         }),
         5 => serde_json::json!({
