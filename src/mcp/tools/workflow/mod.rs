@@ -2063,6 +2063,44 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_intro_weak_source_internal_sources_policy_uses_verified() {
+        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        assert!(
+            intro.contains("internal_sources policy"),
+            "resolve intro must mention internal_sources policy for weak-source"
+        );
+        assert!(
+            intro.contains("confidence='verified'"),
+            "resolve intro must instruct agent to use verified for policy-matched citations"
+        );
+        assert!(
+            intro.contains("dismiss: VALID"),
+            "resolve intro must show dismiss: VALID answer format"
+        );
+        assert!(
+            intro.contains("IS verification"),
+            "resolve intro must explain that policy evaluation IS verification"
+        );
+    }
+
+    #[test]
+    fn test_variant_type_evidence_intro_weak_source_internal_sources_policy() {
+        let intro = VARIANT_TYPE_EVIDENCE_INTRO;
+        assert!(
+            intro.contains("internal_sources policy"),
+            "variant intro must mention internal_sources policy for weak-source"
+        );
+        assert!(
+            intro.contains("confidence='verified'"),
+            "variant intro must instruct agent to use verified for policy-matched citations"
+        );
+        assert!(
+            intro.contains("dismiss: VALID"),
+            "variant intro must show dismiss: VALID answer format"
+        );
+    }
+
+    #[test]
     fn test_resolve_stale_days_in_instructions() {
         let p = mock_perspective();
         let (db, _tmp) = test_db();
