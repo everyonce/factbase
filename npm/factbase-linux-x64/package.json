@@ -1,6 +1,6 @@
 {
   "name": "@everyonce/factbase-linux-x64",
-  "version": "2026.3.35",
+  "version": "2026.3.36",
   "description": "factbase binary for Linux x64",
   "repository": {
     "type": "git",
