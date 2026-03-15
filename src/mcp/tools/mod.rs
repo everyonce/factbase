@@ -50,7 +50,7 @@ pub use organize::{organize, organize_analyze};
 pub use repository::{detect_links, scan_repository};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, check_repository, generate_questions,
-    get_deferred_items, get_review_queue,
+    get_deferred_items, get_review_queue, reset_deferred_questions,
 };
 pub use search::{get_fact_pairs, search_content, search_knowledge};
 
@@ -198,6 +198,12 @@ async fn dispatch_tool<E: EmbeddingProvider>(
         }
         "get_review_queue" => get_review_queue(db, args, reporter),
         "get_deferred_items" => get_deferred_items(db, args, reporter),
+        "reset_deferred_questions" => {
+            let db = db.clone();
+            let a = args.clone();
+            let r = reporter.clone();
+            run_blocking(move || reset_deferred_questions(&db, &a, &r)).await
+        }
         "answer_questions" => {
             let db = db.clone();
             let a = args.clone();
@@ -284,6 +290,7 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
         "review_queue" => "get_review_queue",
         "answer" => "answer_questions",
         "deferred" => "get_deferred_items",
+        "reset_deferred" => "reset_deferred_questions",
         "fact_pairs" => "get_fact_pairs",
         "authoring_guide" => "get_authoring_guide",
         _ => return None,

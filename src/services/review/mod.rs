@@ -15,8 +15,62 @@ pub use queue::{get_deferred_items, get_review_queue, ReviewQueueParams};
 
 use crate::database::Database;
 use crate::error::FactbaseError;
+use crate::processor::strip_deferred_answers_by_type;
 use crate::ProgressReporter;
 use serde_json::Value;
+
+/// Reset deferred/believed questions of a given type back to open status.
+///
+/// Updates the DB and strips blockquote answers from the markdown files so the
+/// resolve loop will re-evaluate each question with current tools and policy.
+pub fn reset_deferred_questions(
+    db: &Database,
+    question_type: &str,
+    repo_id: Option<&str>,
+    _progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let (count, affected) = db.reset_deferred_questions_by_type(question_type, repo_id)?;
+
+    let mut files_updated = 0usize;
+    let mut file_errors: Vec<String> = Vec::new();
+
+    for (_doc_id, file_path) in &affected {
+        match std::fs::read_to_string(file_path) {
+            Ok(content) => {
+                let (new_content, stripped) =
+                    strip_deferred_answers_by_type(&content, question_type);
+                if stripped > 0 {
+                    if let Err(e) = std::fs::write(file_path, new_content) {
+                        file_errors.push(format!("{file_path}: {e}"));
+                    } else {
+                        files_updated += 1;
+                    }
+                }
+            }
+            Err(e) => {
+                file_errors.push(format!("{file_path}: {e}"));
+            }
+        }
+    }
+
+    let mut result = serde_json::json!({
+        "success": true,
+        "reset": count,
+        "files_updated": files_updated,
+        "message": format!(
+            "Reset {count} deferred/believed {question_type} question(s) to open across {files_updated} file(s)."
+        )
+    });
+    if !file_errors.is_empty() {
+        result["file_errors"] = Value::Array(
+            file_errors
+                .into_iter()
+                .map(Value::String)
+                .collect(),
+        );
+    }
+    Ok(result)
+}
 
 /// Unified answer dispatch: routes to single, bulk, or bulk-dismiss based on params.
 pub fn answer_questions(
