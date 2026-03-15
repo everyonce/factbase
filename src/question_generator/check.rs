@@ -1387,6 +1387,7 @@ mod tests {
                 }),
                 link_match_mode: None,
                 citation_patterns: None,
+                internal_sources: None,
             }),
             created_at: chrono::Utc::now(),
             last_indexed_at: None,

@@ -52,6 +52,9 @@ pub struct Perspective {
     /// Domain-specific citation patterns for tier-1 validation.
     #[serde(default)]
     pub citation_patterns: Option<Vec<CitationPattern>>,
+    /// Free-text description of internal source policy, injected into tier-2 citation triage.
+    #[serde(default)]
+    pub internal_sources: Option<String>,
 }
 
 /// Default perspective.yaml template created by init commands.
@@ -143,6 +146,7 @@ pub fn load_perspective_from_file(repo_root: &Path) -> Option<Perspective> {
                 || p.format.is_some()
                 || p.link_match_mode.is_some()
                 || p.citation_patterns.is_some()
+                || p.internal_sources.is_some()
             {
                 Some(p)
             } else {
@@ -409,6 +413,31 @@ mod tests {
         )
         .unwrap();
         // citation_patterns alone should make the perspective non-None
+        assert!(load_perspective_from_file(tmp.path()).is_some());
+    }
+
+    #[test]
+    fn test_load_perspective_with_internal_sources() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: test\ninternal_sources: |\n  Internal wiki: needs page title + date\n  Chat: needs channel + date\n",
+        )
+        .unwrap();
+        let p = load_perspective_from_file(tmp.path()).unwrap();
+        let policy = p.internal_sources.unwrap();
+        assert!(policy.contains("Internal wiki"));
+        assert!(policy.contains("Chat"));
+    }
+
+    #[test]
+    fn test_load_perspective_internal_sources_is_meaningful_field() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "internal_sources: \"Internal wiki: needs page title + date\"\n",
+        )
+        .unwrap();
         assert!(load_perspective_from_file(tmp.path()).is_some());
     }
 }

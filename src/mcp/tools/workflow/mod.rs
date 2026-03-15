@@ -847,6 +847,11 @@ fn resolve_step2_batch(
                      - Fabrication risk (does this source actually exist?)\n\
                      Respond: VALID|INVALID|WEAK — reason — suggestion with specific replacement if applicable\n\n",
                 );
+                if let Some(policy) = perspective.as_ref().and_then(|p| p.internal_sources.as_deref()) {
+                    triage_prompt.push_str(&format!(
+                        "This KB has the following internal source policy:\n{policy}\nUse this to judge whether internal citations are sufficient.\n\n"
+                    ));
+                }
                 for item in &weak_source_batch {
                     triage_prompt.push_str(&format!(
                         "{}. [doc: {}] {}\n",
@@ -1758,6 +1763,7 @@ mod tests {
             format: None,
             link_match_mode: None,
             citation_patterns: None,
+            internal_sources: None,
         })
     }
 
