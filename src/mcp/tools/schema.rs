@@ -89,10 +89,6 @@ pub fn removed_legacy_tool_messages() -> &'static [(&'static str, &'static str)]
             "'list_repositories' removed. Use factbase(op='perspective') instead.",
         ),
         (
-            "init_repository",
-            "'init_repository' removed. Repositories auto-initialize on first scan.",
-        ),
-        (
             "search_content",
             "'search_content' removed. Use the 'search' tool with mode='content' instead.",
         ),
@@ -426,8 +422,9 @@ mod tests {
         let removed = removed_legacy_tool_messages();
         let names: Vec<&str> = removed.iter().map(|(name, _)| *name).collect();
         assert!(names.contains(&"list_repositories"));
-        assert!(names.contains(&"init_repository"));
         assert!(names.contains(&"migrate_links"));
+        // init_repository is no longer removed — it's available via factbase(op='init_repository')
+        assert!(!names.contains(&"init_repository"));
     }
 
     #[test]

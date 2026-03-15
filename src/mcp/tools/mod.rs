@@ -47,7 +47,7 @@ pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_too
 pub use entity::{get_entity, get_perspective, list_entities};
 pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
-pub use repository::{detect_links, scan_repository};
+pub use repository::{detect_links, init_repository, scan_repository};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, check_repository, generate_questions,
     get_deferred_items, get_review_queue, reset_deferred_questions,
@@ -212,6 +212,11 @@ async fn dispatch_tool<E: EmbeddingProvider>(
         }
         "check_repository" => check_repository(db, embedding, args, reporter).await,
         "scan_repository" => scan_repository(db, embedding, args, reporter).await,
+        "init_repository" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || init_repository(&db, &a)).await
+        }
         "detect_links" => detect_links(db, args, reporter).await,
         "organize_analyze" => organize_analyze(db, embedding, args, reporter).await,
         "organize" => organize(db, embedding, args, reporter).await,
@@ -285,6 +290,7 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
         "delete" => "delete_document",
         "bulk_create" => "bulk_create_documents",
         "scan" => "scan_repository",
+        "init_repository" => "init_repository",
         "check" => "check_repository",
         "detect_links" => "detect_links",
         "review_queue" => "get_review_queue",
