@@ -26,6 +26,7 @@ jobs:
           - os: macos-14
             target: darwin-x64
             rust_target: x86_64-apple-darwin
+            cargo_flags: --no-default-features --features progress,compression,mcp,bedrock
             binary: factbase
             artifact: factbase-darwin-x64
           - os: windows-latest
@@ -44,9 +45,9 @@ jobs:
         shell: bash
         run: |
           if [ -n "${{ matrix.rust_target }}" ]; then
-            cargo build --release --target ${{ matrix.rust_target }}
+            cargo build --release --target ${{ matrix.rust_target }} ${{ matrix.cargo_flags }}
           else
-            cargo build --release
+            cargo build --release ${{ matrix.cargo_flags }}
           fi
       - name: Stage binary
         shell: bash
