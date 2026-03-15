@@ -305,7 +305,7 @@ async fn test_agent_workflow_via_mcp() {
         }),
         created_at: Utc::now(),
         last_indexed_at: None,
-        last_check_at: None,
+        last_lint_at: None,
     };
     db.add_repository(&repo).unwrap();
 

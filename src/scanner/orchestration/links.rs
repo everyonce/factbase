@@ -237,7 +237,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
 
@@ -418,7 +418,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
 

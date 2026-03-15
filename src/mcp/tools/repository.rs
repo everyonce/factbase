@@ -358,7 +358,7 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         perspective: None,
         created_at: chrono::Utc::now(),
         last_indexed_at: None,
-        last_check_at: None,
+        last_lint_at: None,
     };
     db.upsert_repository(&repo)?;
 

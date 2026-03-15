@@ -5,7 +5,7 @@
 //! - Repository retrieval ([`Database::get_repository`], [`Database::get_repository_by_path`])
 //! - Repository listing ([`Database::list_repositories`], [`Database::list_repositories_with_stats`])
 //! - Repository removal ([`Database::remove_repository`])
-//! - Metadata updates ([`Database::update_last_check_at`])
+//! - Metadata updates ([`Database::update_last_lint_at`])
 //!
 //! # Repository Identity
 //!
@@ -22,7 +22,7 @@ use super::{repo_not_found, Database};
 
 /// Column list for SELECT queries that map to `row_to_repository()`.
 const REPOSITORY_COLUMNS: &str =
-    "id, name, path, perspective, created_at, last_indexed_at, last_check_at";
+    "id, name, path, perspective, created_at, last_indexed_at, last_lint_at";
 
 impl Database {
     /// Inserts or updates a repository record.
@@ -44,7 +44,7 @@ impl Database {
             rusqlite::params![repo.path.to_string_lossy(), repo.id],
         )?;
         conn.execute(
-            "INSERT INTO repositories (id, name, path, perspective, created_at, last_indexed_at, last_check_at)
+            "INSERT INTO repositories (id, name, path, perspective, created_at, last_indexed_at, last_lint_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
@@ -52,11 +52,11 @@ impl Database {
                 perspective = excluded.perspective,
                 created_at = excluded.created_at,
                 last_indexed_at = excluded.last_indexed_at,
-                last_check_at = excluded.last_check_at",
+                last_lint_at = excluded.last_lint_at",
             rusqlite::params![
                 repo.id, repo.name, repo.path.to_string_lossy(), perspective,
                 repo.created_at.to_rfc3339(), repo.last_indexed_at.map(|t| t.to_rfc3339()),
-                repo.last_check_at.map(|t| t.to_rfc3339())
+                repo.last_lint_at.map(|t| t.to_rfc3339())
             ],
         )?;
         Ok(())
@@ -215,14 +215,14 @@ impl Database {
     }
 
     /// Update the last lint timestamp for a repository.
-    pub fn update_last_check_at(
+    pub fn update_last_lint_at(
         &self,
         repo_id: &str,
         timestamp: DateTime<Utc>,
     ) -> Result<(), FactbaseError> {
         let conn = self.get_conn()?;
         conn.execute(
-            "UPDATE repositories SET last_check_at = ?1 WHERE id = ?2",
+            "UPDATE repositories SET last_lint_at = ?1 WHERE id = ?2",
             rusqlite::params![timestamp.to_rfc3339(), repo_id],
         )?;
         Ok(())
@@ -258,7 +258,7 @@ impl Database {
             perspective,
             created_at: super::parse_rfc3339_utc(&created_str),
             last_indexed_at: last_indexed_str.and_then(|s| super::parse_rfc3339_utc_opt(&s)),
-            last_check_at: last_check_str.and_then(|s| super::parse_rfc3339_utc_opt(&s)),
+            last_lint_at: last_check_str.and_then(|s| super::parse_rfc3339_utc_opt(&s)),
         })
     }
 }

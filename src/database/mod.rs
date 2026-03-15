@@ -41,7 +41,7 @@
 //! - [`Database::remove_repository`] - Remove repository and docs
 //! - [`Database::get_repository_by_path`] - Find repo by filesystem path
 //! - [`Database::list_repositories_with_stats`] - List repos with doc counts
-//! - [`Database::update_last_check_at`] - Update check timestamp
+//! - [`Database::update_last_lint_at`] - Update check timestamp
 //!
 //! ### Document Operations (17) — `documents/` submodule
 //!
@@ -381,7 +381,7 @@ pub(crate) mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).expect("create repo");
     }
@@ -394,7 +394,7 @@ pub(crate) mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         }
     }
 
@@ -406,7 +406,7 @@ pub(crate) mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         }
     }
 

@@ -480,7 +480,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
@@ -541,7 +541,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
@@ -586,7 +586,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
@@ -667,7 +667,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
@@ -718,7 +718,7 @@ mod tests {
         let repo = crate::models::Repository {
             id: "r1".into(), name: "r1".into(), path: repo_dir,
             perspective: None, created_at: chrono::Utc::now(),
-            last_indexed_at: None, last_check_at: None,
+            last_indexed_at: None, last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
@@ -779,7 +779,7 @@ mod tests {
         let repo = crate::models::Repository {
             id: "r1".into(), name: "r1".into(), path: repo_dir,
             perspective: None, created_at: chrono::Utc::now(),
-            last_indexed_at: None, last_check_at: None,
+            last_indexed_at: None, last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
@@ -808,7 +808,7 @@ mod tests {
         let repo = crate::models::Repository {
             id: "r1".into(), name: "r1".into(), path: repo_dir,
             perspective: None, created_at: chrono::Utc::now(),
-            last_indexed_at: None, last_check_at: None,
+            last_indexed_at: None, last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
