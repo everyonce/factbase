@@ -1360,7 +1360,7 @@ dependencies = [
 
 [[package]]
 name = "factbase"
-version = "2026.3.28"
+version = "2026.3.29"
 dependencies = [
  "anyhow",
  "aws-config",
