@@ -257,8 +257,8 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "workflow": "setup",
             "step": 5, "total_steps": total,
             "title": "Step 5 of 6: Scan & Verify",
-            "instruction": resolve(wf, "setup.scan", DEFAULT_SETUP_SCAN_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "scan",
+            "instruction": resolve(wf, "setup.scan", DEFAULT_SETUP_SCAN_INSTRUCTION, &[("path", path)]),
+            "next_tool": "factbase", "suggested_op": "init_repository",
             "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
         }),
         6 => {
@@ -2754,6 +2754,7 @@ mod tests {
         assert_eq!(step["step"], 5);
         assert_eq!(step["next_tool"], "factbase");
         let instruction = step["instruction"].as_str().unwrap();
+        assert!(instruction.contains("factbase(op='init_repository')"), "scan step must call init_repository first");
         assert!(instruction.contains("factbase(op='scan')"));
         assert!(instruction.contains("factbase(op='check')"));
     }
