@@ -301,7 +301,6 @@ pub async fn detect_links(
 }
 
 /// Initialize a new repository at the given path.
-#[allow(dead_code)] // Kept for backward compat testing; removed from MCP dispatch
 pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let path_str = crate::mcp::tools::get_str_arg_required(args, "path")?;
     let id = crate::mcp::tools::get_str_arg(args, "id");
