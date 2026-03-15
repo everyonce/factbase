@@ -8,6 +8,7 @@ use crate::error::FactbaseError;
 use crate::models::normalize_pair;
 use crate::organize::MergeCandidate;
 use crate::ProgressReporter;
+use std::collections::HashMap;
 use std::collections::HashSet;
 
 /// Detects documents that are candidates for merging based on embedding similarity.
@@ -37,6 +38,11 @@ pub fn detect_merge_candidates(
     let mut seen_pairs: HashSet<(String, String)> = HashSet::new();
     let total = docs.len();
 
+    // Pre-fetch link counts for all docs in one batch (2 queries instead of 4 per candidate)
+    let all_doc_ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+    let link_counts: HashMap<String, (usize, usize)> =
+        db.get_link_counts_batch(&all_doc_ids).unwrap_or_default();
+
     for (i, doc) in docs.iter().enumerate() {
         progress.report(i + 1, total, &doc.title);
         let similar = db.find_similar_documents(&doc.id, threshold)?;
@@ -55,11 +61,19 @@ pub fn detect_merge_candidates(
                 continue;
             };
 
-            // Determine which document to keep based on content length and links
-            let doc_links_from = db.get_links_from(&doc.id)?.len();
-            let doc_links_to = db.get_links_to(&doc.id)?.len();
-            let similar_links_from = db.get_links_from(&similar_id)?.len();
-            let similar_links_to = db.get_links_to(&similar_id)?.len();
+            // Determine which document to keep based on content length and links.
+            // Use pre-fetched counts; fall back to (0,0) for docs outside the batch
+            // (e.g. similar doc from a different repo when repo_id filter is active).
+            let (doc_links_from, doc_links_to) =
+                link_counts.get(&doc.id).copied().unwrap_or((0, 0));
+            let (similar_links_from, similar_links_to) =
+                link_counts.get(&similar_id).copied().unwrap_or_else(|| {
+                    // similar_id not in pre-fetched set — fetch individually
+                    db.get_link_counts_batch(&[similar_id.as_str()])
+                        .ok()
+                        .and_then(|mut m| m.remove(&similar_id))
+                        .unwrap_or((0, 0))
+                });
 
             let doc_score = doc.content.len() + (doc_links_from + doc_links_to) * 100;
             let similar_score =

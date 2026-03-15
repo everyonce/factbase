@@ -39,7 +39,7 @@ impl Database {
         )?;
         // Clean up embeddings: get chunk IDs first, then delete from vec0 and chunks table
         let stale_chunk_ids: Vec<String> = conn
-            .prepare("SELECT ec.id FROM embedding_chunks ec JOIN documents d ON ec.document_id = d.id WHERE d.repo_id = ?1 AND d.file_path = ?2 AND d.id != ?3")?
+            .prepare_cached("SELECT ec.id FROM embedding_chunks ec JOIN documents d ON ec.document_id = d.id WHERE d.repo_id = ?1 AND d.file_path = ?2 AND d.id != ?3")?
             .query_map(rusqlite::params![doc.repo_id, doc.file_path, doc.id], |r| r.get(0))?
             .filter_map(Result::ok)
             .collect();
@@ -56,7 +56,7 @@ impl Database {
         )?;
         // Clean up fact-level embeddings and metadata (foreign key on document_id)
         let stale_fact_ids: Vec<String> = conn
-            .prepare("SELECT fm.id FROM fact_metadata fm JOIN documents d ON fm.document_id = d.id WHERE d.repo_id = ?1 AND d.file_path = ?2 AND d.id != ?3")?
+            .prepare_cached("SELECT fm.id FROM fact_metadata fm JOIN documents d ON fm.document_id = d.id WHERE d.repo_id = ?1 AND d.file_path = ?2 AND d.id != ?3")?
             .query_map(rusqlite::params![doc.repo_id, doc.file_path, doc.id], |r| r.get(0))?
             .filter_map(Result::ok)
             .collect();
@@ -312,7 +312,7 @@ impl Database {
         conn.execute("DELETE FROM document_content_fts WHERE doc_id = ?1", [id])?;
         // Clean up fact-level embeddings and metadata (foreign key on document_id)
         let fact_ids: Vec<String> = conn
-            .prepare("SELECT id FROM fact_metadata WHERE document_id = ?1")?
+            .prepare_cached("SELECT id FROM fact_metadata WHERE document_id = ?1")?
             .query_map([id], |r| r.get(0))?
             .filter_map(Result::ok)
             .collect();
@@ -335,36 +335,53 @@ impl Database {
         let conn = self.get_conn()?;
         // Collect IDs to purge
         let ids: Vec<String> = conn
-            .prepare("SELECT id FROM documents WHERE repo_id = ?1 AND is_deleted = TRUE")?
+            .prepare_cached("SELECT id FROM documents WHERE repo_id = ?1 AND is_deleted = TRUE")?
             .query_map([repo_id], |r| r.get(0))?
             .filter_map(Result::ok)
             .collect();
         if ids.is_empty() {
             return Ok(0);
         }
-        for id in &ids {
-            conn.execute(
-                "DELETE FROM document_embeddings WHERE id LIKE ?1 || '%'",
-                [id],
-            )?;
-            conn.execute("DELETE FROM embedding_chunks WHERE document_id = ?1", [id])?;
-            conn.execute(
-                "DELETE FROM document_links WHERE source_id = ?1 OR target_id = ?1",
-                [id],
-            )?;
-            conn.execute("DELETE FROM review_questions WHERE doc_id = ?1", [id])?;
-            // fact_metadata / fact_embeddings
-            let fact_ids: Vec<String> = conn
-                .prepare("SELECT id FROM fact_metadata WHERE document_id = ?1")?
-                .query_map([id], |r| r.get(0))?
-                .filter_map(Result::ok)
-                .collect();
-            for fid in &fact_ids {
-                let _ = conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [fid]);
-            }
-            conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [id])?;
-            conn.execute("DELETE FROM documents WHERE id = ?1", [id])?;
-        }
+        let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let params: Vec<&dyn rusqlite::ToSql> =
+            ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+        conn.execute_batch("BEGIN")?;
+        // Delete embeddings via subquery through embedding_chunks (avoids LIKE per-row)
+        conn.execute(
+            &format!("DELETE FROM document_embeddings WHERE id IN (SELECT id FROM embedding_chunks WHERE document_id IN ({placeholders}))"),
+            params.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM embedding_chunks WHERE document_id IN ({placeholders})"),
+            params.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM document_links WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})"),
+            // params used twice for source_id and target_id
+            {
+                let mut p: Vec<&dyn rusqlite::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
+                p.extend(ids.iter().map(|s| s as &dyn rusqlite::ToSql));
+                p
+            }.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM review_questions WHERE doc_id IN ({placeholders})"),
+            params.as_slice(),
+        )?;
+        // fact_embeddings via subquery through fact_metadata
+        conn.execute(
+            &format!("DELETE FROM fact_embeddings WHERE id IN (SELECT id FROM fact_metadata WHERE document_id IN ({placeholders}))"),
+            params.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM fact_metadata WHERE document_id IN ({placeholders})"),
+            params.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM documents WHERE id IN ({placeholders})"),
+            params.as_slice(),
+        )?;
+        conn.execute_batch("COMMIT")?;
         self.invalidate_stats_cache(repo_id);
         Ok(ids.len())
     }
