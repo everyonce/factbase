@@ -3,7 +3,8 @@
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::processor::{
-    content_hash, is_callout_review, parse_review_queue, unwrap_review_callout, wrap_review_callout,
+    append_review_questions, content_hash, is_callout_review, parse_review_queue,
+    unwrap_review_callout, wrap_review_callout,
 };
 use crate::ProgressReporter;
 use serde_json::Value;
@@ -15,6 +16,30 @@ use tracing::instrument;
 use super::helpers::{
     count_queue_questions, modify_question_in_queue, resolve_confidence, resolve_doc_path,
 };
+
+/// Recover inline review questions from the DB `review_questions` table when
+/// the document's inline `@q[]` markers are missing.
+///
+/// If the DB has unanswered questions for this doc but the content has none,
+/// injects them into the content, writes to disk, and updates the DB document.
+/// Returns the (possibly updated) content.
+fn recover_questions_from_db_table(
+    db: &Database,
+    doc_id: &str,
+    file_path: &std::path::Path,
+    content: &str,
+) -> Result<String, FactbaseError> {
+    let db_questions = db.get_review_questions_for_doc(doc_id)?;
+    if db_questions.is_empty() {
+        return Ok(content.to_string());
+    }
+    let use_callout = is_callout_review(content);
+    let updated = append_review_questions(content, &db_questions, use_callout);
+    fs::write(file_path, &updated)?;
+    let new_hash = content_hash(&updated);
+    db.update_document_content(doc_id, &updated, &new_hash)?;
+    Ok(updated)
+}
 
 /// Typed parameters for answering a single question.
 #[derive(Debug)]
@@ -64,12 +89,20 @@ pub fn answer_question(
     }
 
     let marker = "<!-- factbase:review -->";
-    let questions = parse_review_queue(&content).ok_or_else(|| {
-        FactbaseError::not_found(format!(
+    let mut questions = parse_review_queue(&content).unwrap_or_default();
+
+    // Fallback: if inline questions are missing, recover from the DB review_questions table
+    if questions.is_empty() {
+        content = recover_questions_from_db_table(db, &params.doc_id, &file_path, &content)?;
+        questions = parse_review_queue(&content).unwrap_or_default();
+    }
+
+    if questions.is_empty() {
+        return Err(FactbaseError::not_found(format!(
             "No review queue in document {} — it may have been cleaned up or not yet generated. Run check_repository to regenerate.",
             params.doc_id
-        ))
-    })?;
+        )));
+    }
 
     if params.question_index >= questions.len() {
         return Err(FactbaseError::parse(format!(
@@ -207,11 +240,19 @@ pub fn bulk_answer_questions(
             fs::write(&file_path, &disk_content)?;
         }
 
-        let questions = parse_review_queue(&disk_content).ok_or_else(|| {
-            FactbaseError::not_found(format!(
+        let mut questions = parse_review_queue(&disk_content).unwrap_or_default();
+
+        // Fallback: if inline questions are missing, recover from the DB review_questions table
+        if questions.is_empty() {
+            disk_content = recover_questions_from_db_table(db, doc_id, &file_path, &disk_content)?;
+            questions = parse_review_queue(&disk_content).unwrap_or_default();
+        }
+
+        if questions.is_empty() {
+            return Err(FactbaseError::not_found(format!(
                 "No review queue in document {doc_id} — it may have been cleaned up or not yet generated. Run check_repository to regenerate."
-            ))
-        })?;
+            )));
+        }
         for (qi, _, _) in answers_for_doc {
             if *qi >= questions.len() {
                 return Err(FactbaseError::parse(format!(
@@ -417,6 +458,70 @@ fn extract_footnote_num_from_desc(description: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_answer_question_db_only_questions_fallback() {
+        // Regression test: answer op should work when questions exist only in the
+        // review_questions DB table, not in the document's inline @q[] markers.
+        let dir = tempfile::tempdir().unwrap();
+        let repo_dir = dir.path().join("myrepo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let doc_file = repo_dir.join("test.md");
+        // Document has NO inline review section
+        let content = "<!-- factbase:abc123 -->\n# Test\n\n- Fact [^1]\n\n---\n[^1]: Some source\n";
+        std::fs::write(&doc_file, content).unwrap();
+
+        let db_path = dir.path().join("test.db");
+        let db = crate::database::Database::new(&db_path).unwrap();
+        let repo = crate::models::Repository {
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir.clone(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_check_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+        let doc = crate::models::Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Simulate: questions exist only in the DB table (not inline)
+        db.sync_review_questions(
+            "abc123",
+            &[crate::models::ReviewQuestion::new(
+                crate::models::QuestionType::WeakSource,
+                None,
+                "Citation [^1]: weak tier".to_string(),
+            )],
+        )
+        .unwrap();
+
+        // This should NOT fail with "Document has 0 questions"
+        let result = answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "abc123".into(),
+                question_index: 0,
+                answer: "VALID: primary source".into(),
+                confidence: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(result["success"], true);
+        assert!(result.get("skipped").is_none());
+
+        // The question should now be inline in the file
+        let disk = std::fs::read_to_string(&doc_file).unwrap();
+        assert!(disk.contains("@q[weak-source]"), "question should be injected inline: {disk}");
+    }
 
     #[test]
     fn test_answer_question_basic() {
