@@ -23,8 +23,9 @@ jobs:
             target: darwin-arm64
             binary: factbase
             artifact: factbase-darwin-arm64
-          - os: macos-13
+          - os: macos-14
             target: darwin-x64
+            rust_target: x86_64-apple-darwin
             binary: factbase
             artifact: factbase-darwin-x64
           - os: windows-latest
@@ -34,14 +35,31 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release
+      - name: Build
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cargo build --release --target ${{ matrix.rust_target }}
+          else
+            cargo build --release
+          fi
+      - name: Stage binary
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cp target/${{ matrix.rust_target }}/release/${{ matrix.binary }} ${{ matrix.binary }}
+          else
+            cp target/release/${{ matrix.binary }} ${{ matrix.binary }}
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/release/${{ matrix.binary }}
+          path: ${{ matrix.binary }}
 
   publish:
     name: Publish
