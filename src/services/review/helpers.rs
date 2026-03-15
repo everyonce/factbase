@@ -104,6 +104,7 @@ pub fn resolve_confidence(
     }
     match confidence {
         Some("believed") => Ok((true, format!("believed: {answer}"))),
+        Some("author") => Ok((false, format!("author: {answer}"))),
         _ => Ok((false, answer.to_string())),
     }
 }
@@ -211,6 +212,13 @@ mod tests {
         let (defer, text) = resolve_confidence("Still accurate", Some("believed")).unwrap();
         assert!(defer);
         assert!(text.starts_with("believed:"));
+    }
+
+    #[test]
+    fn test_resolve_confidence_author() {
+        let (defer, text) = resolve_confidence("I set this up myself", Some("author")).unwrap();
+        assert!(!defer);
+        assert!(text.starts_with("author:"));
     }
 
     #[test]
