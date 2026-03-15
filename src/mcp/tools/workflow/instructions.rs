@@ -37,7 +37,7 @@ pub(crate) const DEFAULT_RESOLVE_ANSWER_INSTRUCTION: &str = "Your goal is to ANS
 
 pub(crate) const DEFAULT_RESOLVE_APPLY_INSTRUCTION: &str = "Apply your answers by rewriting the documents directly.\n\nFor each document you answered questions about:\n1. Call factbase(op='get_entity') to read the current content\n2. Apply your answers: insert @t[...] tags, add source footnotes, resolve conflicts, etc.\n3. Call factbase(op='update') with the modified content\n\nThis gives you full control over the edits — no LLM intermediary.";
 
-pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call factbase(op='check') with doc_id and dry_run=true to check if your answers introduced new issues. If new questions appear, resolve them now.";
+pub(crate) const DEFAULT_RESOLVE_VERIFY_INSTRUCTION: &str = "Verify your work. For each document you modified, call factbase(op='get_entity') to confirm your changes were applied correctly — check that @t[] tags, footnotes, and other edits appear in the content.\n\n⚠️ Do NOT call factbase(op='check') here. check generates new review questions and belongs to the maintain workflow, not resolve. Calling it during resolve causes the queue to grow faster than questions can be answered.";
 
 pub(crate) const DEFAULT_RESOLVE_CLEANUP_INSTRUCTION: &str = "Clean up the knowledge base after applying changes. Run factbase(op='scan') to re-index all documents. This prunes answered [x] questions and re-indexes modified files. Do NOT run check — resolve only cleans up, it does not generate new work.";
 
