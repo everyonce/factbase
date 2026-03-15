@@ -192,7 +192,7 @@ fn find_bare_review_heading(content: &str) -> Option<usize> {
 /// If the marker is missing, appends a blank review section.
 /// Returns the (possibly modified) content and whether it was changed.
 pub fn ensure_review_section(content: &str, use_callout: bool) -> (String, bool) {
-    if content.contains(REVIEW_QUEUE_MARKER) {
+    if content.contains(REVIEW_QUEUE_MARKER) || is_callout_review(content) {
         return (content.to_string(), false);
     }
     let mut result = content.to_string();
@@ -200,12 +200,9 @@ pub fn ensure_review_section(content: &str, use_callout: bool) -> (String, bool)
         result.push('\n');
     }
     if use_callout {
-        result.push_str(&format!(
-            "\n{}\n> {}\n",
-            REVIEW_CALLOUT_HEADER, REVIEW_QUEUE_MARKER
-        ));
+        result.push_str(&format!("\n{REVIEW_CALLOUT_HEADER}\n"));
     } else {
-        result.push_str(&format!("\n{}\n## Review Queue\n", REVIEW_QUEUE_MARKER));
+        result.push_str(&format!("\n{REVIEW_QUEUE_MARKER}\n## Review Queue\n"));
     }
     (result, true)
 }

@@ -500,7 +500,7 @@ pub async fn full_scan(
                     };
                     db.upsert_document(&document)?;
                     // Sync review questions to DB
-                    if document.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
+                    if crate::patterns::has_review_section(&document.content) {
                         if let Some(questions) = crate::processor::parse_review_queue(&document.content) {
                             let _ = db.sync_review_questions(&document.id, &questions);
                         }
@@ -625,7 +625,7 @@ pub async fn full_scan(
             // Count active docs in known that have a review section
             let docs_with_reviews = known
                 .values()
-                .filter(|d| d.content.contains(crate::patterns::REVIEW_QUEUE_MARKER))
+                .filter(|d| crate::patterns::has_review_section(&d.content))
                 .count() as u64;
             if docs_with_reviews == 0 {
                 false
@@ -646,7 +646,7 @@ pub async fn full_scan(
             let mut synced_docs = 0usize;
             let mut synced_questions = 0usize;
             for (id, doc) in &known {
-                if doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
+                if crate::patterns::has_review_section(&doc.content) {
                     if let Some(questions) =
                         crate::processor::parse_review_queue(&doc.content)
                     {

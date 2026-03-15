@@ -442,11 +442,11 @@ pub async fn check_all_documents(
 
         let count = questions.len();
         let has_dup_sections = has_duplicate_review_sections(&pruned_content);
-        let disk_missing_marker = !content.contains(crate::patterns::REVIEW_QUEUE_MARKER)
-            && doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
-        // Disk has marker but no questions while DB has unanswered questions
+        let disk_missing_marker = !crate::patterns::has_review_section(content)
+            && crate::patterns::has_review_section(&doc.content);
+        // Disk has review section but no questions while DB has unanswered questions
         let disk_empty_review =
-            content.contains(crate::patterns::REVIEW_QUEUE_MARKER) && existing_unanswered == 0 && {
+            crate::patterns::has_review_section(content) && existing_unanswered == 0 && {
                 let db_qs = parse_review_queue(&doc.content).unwrap_or_default();
                 db_qs.iter().any(|q| !q.answered)
             };

@@ -28,7 +28,7 @@ impl Database {
         };
         // Calculate word count for efficient stats queries
         let word_count = crate::models::word_count(&doc.content) as i64;
-        let has_review_queue = doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
+        let has_review_queue = crate::patterns::has_review_section(&doc.content);
 
         // Remove any stale document at the same path with a different ID.
         // This handles the case where a file's factbase ID was regenerated.
@@ -149,7 +149,7 @@ impl Database {
             content
         };
         let word_count = crate::models::word_count(content) as i64;
-        let has_review_queue = content.contains(crate::patterns::REVIEW_QUEUE_MARKER);
+        let has_review_queue = crate::patterns::has_review_section(content);
         conn.execute(
             "UPDATE documents SET content = ?1, file_hash = ?2, word_count = ?3, has_review_queue = ?4 WHERE id = ?5 AND is_deleted = FALSE",
             rusqlite::params![content_to_store, new_hash, word_count, has_review_queue, id],

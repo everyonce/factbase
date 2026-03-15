@@ -237,11 +237,21 @@ pub static WIKILINK_REGEX: LazyLock<Regex> =
 /// Review Queue marker comment.
 pub(crate) const REVIEW_QUEUE_MARKER: &str = "<!-- factbase:review -->";
 
-/// Callout header used for Obsidian-format review sections.
+/// Callout header used for Obsidian-format review sections (primary marker).
 pub(crate) const REVIEW_CALLOUT_HEADER: &str = "> [!review]- Review Queue";
 
 /// Legacy callout header (pre-v53) — accepted on read for backward compatibility.
 pub(crate) const REVIEW_CALLOUT_HEADER_LEGACY: &str = "> [!info]- Review Queue";
+
+/// Returns `true` if the document content contains a review section,
+/// detected by callout header (primary) or legacy HTML marker (fallback).
+pub fn has_review_section(content: &str) -> bool {
+    content.contains(REVIEW_QUEUE_MARKER)
+        || content.lines().any(|l| {
+            let t = l.trim();
+            t == REVIEW_CALLOUT_HEADER || t == REVIEW_CALLOUT_HEADER_LEGACY
+        })
+}
 
 /// Reference entity marker comment.
 pub const REFERENCE_MARKER: &str = "<!-- factbase:reference -->";
@@ -326,23 +336,30 @@ pub(crate) fn frontmatter_line_count(content: &str) -> usize {
 }
 
 /// Extract the review queue section from `content`, including any preceding
-/// `---` separator. Returns `None` if no review queue marker is present.
+/// `---` separator. Returns `None` if no review queue section is present.
+/// Handles both callout format (primary) and legacy HTML marker format.
 pub(crate) fn extract_review_queue_section(content: &str) -> Option<&str> {
-    if !content.contains(REVIEW_QUEUE_MARKER) {
-        return None;
-    }
-    let mut offset = body_end_offset(content);
-    // Walk backwards over blank lines and a `---` separator if present
-    let before = &content[..offset];
-    let trimmed = before.trim_end_matches('\n');
-    if trimmed.ends_with("---") {
-        offset = trimmed.len() - 3;
-        // Also include a preceding newline if present
-        if offset > 0 && content.as_bytes()[offset - 1] == b'\n' {
-            offset -= 1;
+    if content.contains(REVIEW_QUEUE_MARKER) {
+        let mut offset = body_end_offset(content);
+        // Walk backwards over blank lines and a `---` separator if present
+        let before = &content[..offset];
+        let trimmed = before.trim_end_matches('\n');
+        if trimmed.ends_with("---") {
+            offset = trimmed.len() - 3;
+            // Also include a preceding newline if present
+            if offset > 0 && content.as_bytes()[offset - 1] == b'\n' {
+                offset -= 1;
+            }
         }
+        return Some(&content[offset..]);
     }
-    Some(&content[offset..])
+    // Callout-only format: section starts at the callout header line
+    let offset = body_end_offset(content);
+    if offset < content.len() {
+        Some(&content[offset..])
+    } else {
+        None
+    }
 }
 
 /// Merge a review queue from `db_content` into `disk_content` when the disk
@@ -351,8 +368,8 @@ pub(crate) fn extract_review_queue_section(content: &str) -> Option<&str> {
 /// Returns `Some(merged)` when the DB has a review queue and the disk does not.
 /// Returns `None` in all other cases (no merge needed).
 pub(crate) fn merge_review_queue(disk_content: &str, db_content: &str) -> Option<String> {
-    // If disk already has a review queue, disk wins (explicit user edit or both have it)
-    if disk_content.contains(REVIEW_QUEUE_MARKER) {
+    // If disk already has a review queue (marker or callout header), disk wins
+    if has_review_section(disk_content) {
         return None;
     }
     // If DB doesn't have a review queue, nothing to preserve
@@ -655,6 +672,18 @@ mod tests {
         ));
         assert!(!is_reference_doc("# Regular Doc\n\nContent"));
         assert!(!is_reference_doc("<!-- factbase:review -->\n# Doc\n"));
+    }
+
+    #[test]
+    fn test_has_review_section() {
+        // Legacy HTML marker
+        assert!(has_review_section("# Doc\n\n<!-- factbase:review -->\n"));
+        // Callout header (new primary format)
+        assert!(has_review_section("# Doc\n\n> [!review]- Review Queue\n> - [ ] q\n"));
+        // Legacy callout header
+        assert!(has_review_section("# Doc\n\n> [!info]- Review Queue\n> - [ ] q\n"));
+        // No review section
+        assert!(!has_review_section("# Doc\n\n- Just a fact\n"));
     }
 
     #[test]
@@ -1088,6 +1117,15 @@ mod tests {
         let section = extract_review_queue_section(content).unwrap();
         assert!(section.starts_with("---") || section.starts_with("\n---"));
         assert!(section.contains("<!-- factbase:review -->"));
+        assert!(section.contains("@q[temporal]"));
+    }
+
+    #[test]
+    fn test_extract_review_queue_section_callout_only() {
+        // New format: callout without HTML marker
+        let content = "# Title\n\n- fact\n\n> [!review]- Review Queue\n> - [ ] `@q[temporal]` When?\n>   > \n";
+        let section = extract_review_queue_section(content).unwrap();
+        assert!(section.contains("> [!review]- Review Queue"));
         assert!(section.contains("@q[temporal]"));
     }
 

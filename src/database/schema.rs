@@ -460,8 +460,6 @@ impl Database {
 
     /// Backfill has_review_queue for existing documents
     fn backfill_has_review_queue(conn: &DbConn) -> Result<(), FactbaseError> {
-        use crate::patterns::REVIEW_QUEUE_MARKER;
-
         let mut stmt =
             conn.prepare("SELECT id, content FROM documents WHERE is_deleted = FALSE")?;
         let mut rows = stmt.query([])?;
@@ -470,7 +468,7 @@ impl Database {
             let id: String = row.get(0)?;
             let stored: String = row.get(1)?;
             let content = super::decode_content_lossy(stored);
-            if content.contains(REVIEW_QUEUE_MARKER) {
+            if crate::patterns::has_review_section(&content) {
                 ids_with_review.push(id);
             }
         }
@@ -505,7 +503,6 @@ impl Database {
 
     /// Backfill review_questions table from existing documents (migration 16)
     fn backfill_review_questions(conn: &DbConn) -> Result<(), FactbaseError> {
-        use crate::patterns::REVIEW_QUEUE_MARKER;
         use crate::processor::parse_review_queue;
 
         let mut stmt =
@@ -518,7 +515,7 @@ impl Database {
             let doc_id: String = row.get(0)?;
             let stored: String = row.get(1)?;
             let content = super::decode_content_lossy(stored);
-            if !content.contains(REVIEW_QUEUE_MARKER) {
+            if !crate::patterns::has_review_section(&content) {
                 continue;
             }
             if let Some(questions) = parse_review_queue(&content) {
