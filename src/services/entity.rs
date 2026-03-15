@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_generate_preview_skips_header() {
-        let content = "<!-- factbase:abc123 -->\n\n# Title\n\nContent";
+        let content = "---\nfactbase_id: abc123\n---\n\n# Title\n\nContent";
         let preview = generate_preview(content, 500);
         assert!(!preview.contains("factbase:"));
         assert!(preview.contains("Title"));

@@ -350,7 +350,7 @@ mod tests {
         let mut doc = crate::models::Document::test_default();
         doc.id = "aaa111".to_string();
         doc.title = "Test Doc".to_string();
-        doc.content = "<!-- factbase:aaa111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.content = "---\nfactbase_id: aaa111\n---\n# Test Doc\n\n- Some fact\n".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 
@@ -438,14 +438,14 @@ mod tests {
         let doc_path = repo_path.join("test.md");
         std::fs::write(
             &doc_path,
-            "<!-- factbase:db1111 -->\n# Test Doc\n\n- Some fact\n",
+            "---\nfactbase_id: db1111\n---\n# Test Doc\n\n- Some fact\n",
         )
         .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "db1111".to_string();
         doc.title = "Test Doc".to_string();
-        doc.content = "<!-- factbase:db1111 -->\n# Test Doc\n\n- Some fact\n".to_string();
+        doc.content = "---\nfactbase_id: db1111\n---\n# Test Doc\n\n- Some fact\n".to_string();
         doc.repo_id = "test".to_string();
         doc.file_path = "test.md".to_string();
         db.upsert_document(&doc).unwrap();
@@ -509,13 +509,13 @@ mod tests {
         let path3 = repo_path.join("bat003.md");
         std::fs::write(
             &path3,
-            "<!-- factbase:bat003 -->\n# Doc Three\n\n- Another fact\n",
+            "---\nfactbase_id: bat003\n---\n# Doc Three\n\n- Another fact\n",
         )
         .unwrap();
         let mut doc3 = crate::models::Document::test_default();
         doc3.id = "bat003".to_string();
         doc3.title = "Doc Three".to_string();
-        doc3.content = "<!-- factbase:bat003 -->\n# Doc Three\n\n- Another fact\n".to_string();
+        doc3.content = "---\nfactbase_id: bat003\n---\n# Doc Three\n\n- Another fact\n".to_string();
         doc3.repo_id = "test".to_string();
         doc3.file_path = "bat003.md".to_string();
         db.upsert_document(&doc3).unwrap();
@@ -543,7 +543,7 @@ mod tests {
         let mut doc = crate::models::Document::test_default();
         doc.id = "nf0001".to_string();
         doc.title = "Exists".to_string();
-        doc.content = "<!-- factbase:nf0001 -->\n# Exists\n\n- Fact\n".to_string();
+        doc.content = "---\nfactbase_id: nf0001\n---\n# Exists\n\n- Fact\n".to_string();
         doc.repo_id = "test".to_string();
         db.upsert_document(&doc).unwrap();
 

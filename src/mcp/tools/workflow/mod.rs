@@ -2538,7 +2538,7 @@ mod tests {
     #[test]
     fn test_improve_step1_includes_entity_quality_when_doc_exists() {
         let (db, _tmp) = test_db();
-        let content = "<!-- factbase:doc001 -->\n# Test\n\n- Fact one @t[2024-01] [^1]\n- Fact two\n- Fact three @t[2024-02]\n\n---\n[^1]: Source A";
+        let content = "---\nfactbase_id: doc001\n---\n# Test\n\n- Fact one @t[2024-01] [^1]\n- Fact two\n- Fact three @t[2024-02]\n\n---\n[^1]: Source A";
         insert_test_doc(&db, "doc001", content);
         let step = improve_step(1, Some("doc001"), &None, &[], &db, &wf());
         let q = &step["entity_quality"];
@@ -2559,7 +2559,7 @@ mod tests {
     #[test]
     fn test_improve_step2_no_entity_quality() {
         let (db, _tmp) = test_db();
-        let content = "<!-- factbase:doc002 -->\n# Test\n\n- Fact one";
+        let content = "---\nfactbase_id: doc002\n---\n# Test\n\n- Fact one";
         insert_test_doc(&db, "doc002", content);
         let step = improve_step(2, Some("doc002"), &None, &[], &db, &wf());
         assert!(step.get("entity_quality").is_none());
@@ -2568,9 +2568,9 @@ mod tests {
     #[test]
     fn test_enrich_step1_includes_entity_quality_bulk() {
         let (db, _tmp) = test_db();
-        let content_a = "<!-- factbase:aaa001 -->\n# Alpha\n\n- Fact one\n- Fact two";
+        let content_a = "---\nfactbase_id: aaa001\n---\n# Alpha\n\n- Fact one\n- Fact two";
         let content_b =
-            "<!-- factbase:bbb001 -->\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
+            "---\nfactbase_id: bbb001\n---\n# Beta\n\n- Fact one @t[2024-01] [^1]\n\n---\n[^1]: Source";
         insert_test_doc(&db, "aaa001", content_a);
         insert_test_doc(&db, "bbb001", content_b);
         let step = enrich_step(1, &serde_json::json!({}), &None, &db, None, &wf());
@@ -3864,7 +3864,7 @@ mod tests {
     #[test]
     fn test_update_step1_full_rebuild_dimension_mismatch() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "aaa111", "<!-- factbase:aaa111 -->\n# Test\n\n- Fact");
+        insert_test_doc(&db, "aaa111", "---\nfactbase_id: aaa111\n---\n# Test\n\n- Fact");
         // Store embedding info with a different dimension than default config
         // (no actual embedding needed — dimension check fires first)
         let config = crate::Config::load(None).unwrap_or_default();
@@ -3885,7 +3885,7 @@ mod tests {
     #[test]
     fn test_update_step1_full_rebuild_model_change() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "bbb222", "<!-- factbase:bbb222 -->\n# Test\n\n- Fact");
+        insert_test_doc(&db, "bbb222", "---\nfactbase_id: bbb222\n---\n# Test\n\n- Fact");
         let config = crate::Config::load(None).unwrap_or_default();
         // Matching dimension but different model
         db.set_embedding_info("old-model-that-doesnt-match", config.embedding.dimension)
@@ -3902,7 +3902,7 @@ mod tests {
     #[test]
     fn test_update_step1_full_rebuild_empty_embeddings() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "ccc333", "<!-- factbase:ccc333 -->\n# Test\n\n- Fact");
+        insert_test_doc(&db, "ccc333", "---\nfactbase_id: ccc333\n---\n# Test\n\n- Fact");
         // No embeddings stored, no embedding info set
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
@@ -3917,7 +3917,7 @@ mod tests {
     #[test]
     fn test_update_step1_no_confirmation_for_incremental() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "ddd444", "<!-- factbase:ddd444 -->\n# Test\n\n- Fact");
+        insert_test_doc(&db, "ddd444", "---\nfactbase_id: ddd444\n---\n# Test\n\n- Fact");
         let config = crate::Config::load(None).unwrap_or_default();
         db.set_embedding_info(&config.embedding.model, config.embedding.dimension)
             .unwrap();
@@ -4042,7 +4042,7 @@ mod tests {
     fn test_resolve_step2_excludes_believed_from_batch() {
         let (db, _tmp) = test_db();
         // Insert a doc with one believed answer and one unanswered question
-        let content = "<!-- factbase:bel001 -->\n# Believed Test\n\n- Fact\n\n\
+        let content = "---\nfactbase_id: bel001\n---\n# Believed Test\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Old fact is stale\n\
             > believed: Still accurate per Wikipedia\n\
@@ -4066,7 +4066,7 @@ mod tests {
     fn test_resolve_step2_all_resolved_when_only_believed_remain() {
         let (db, _tmp) = test_db();
         // All questions are believed — none truly unanswered
-        let content = "<!-- factbase:bonly1 -->\n# Only Believed\n\n- Fact\n\n\
+        let content = "---\nfactbase_id: bonly1\n---\n# Only Believed\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Stale fact\n\
             > believed: Still accurate per Wikipedia\n\
@@ -4087,7 +4087,7 @@ mod tests {
     fn test_resolve_step2_believed_not_re_served_across_batches() {
         let (db, _tmp) = test_db();
         // Simulate: one believed + one unanswered
-        let content = "<!-- factbase:cyc01 -->\n# Cycle Test\n\n- Fact\n\n\
+        let content = "---\nfactbase_id: cyc01\n---\n# Cycle Test\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Already believed\n\
             > believed: Confirmed via search\n\
@@ -4103,7 +4103,7 @@ mod tests {
         assert_eq!(qs[0]["type"], "temporal");
 
         // Simulate answering with believed — update DB content
-        let updated = "<!-- factbase:cyc01 -->\n# Cycle Test\n\n- Fact\n\n\
+        let updated = "---\nfactbase_id: cyc01\n---\n# Cycle Test\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Already believed\n\
             > believed: Confirmed via search\n\
@@ -4126,7 +4126,7 @@ mod tests {
     fn test_resolve_step2_deferred_not_re_served_across_batches() {
         let (db, _tmp) = test_db();
         // Simulate: one deferred + one unanswered
-        let content = "<!-- factbase:dfc01 -->\n# Defer Cycle\n\n- Fact\n\n\
+        let content = "---\nfactbase_id: dfc01\n---\n# Defer Cycle\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[ambiguous]` Filed under X but links point to Y\n\
             > defer: cannot determine correct filing\n\
@@ -4143,7 +4143,7 @@ mod tests {
         assert_eq!(qs[0]["type"], "temporal");
 
         // Simulate deferring the remaining question too
-        let updated = "<!-- factbase:dfc01 -->\n# Defer Cycle\n\n- Fact\n\n\
+        let updated = "---\nfactbase_id: dfc01\n---\n# Defer Cycle\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[ambiguous]` Filed under X but links point to Y\n\
             > defer: cannot determine correct filing\n\
@@ -4506,7 +4506,7 @@ mod tests {
         let (db, _tmp) = test_db();
         // Insert a glossary document defining "HCLS"
         let glossary_content =
-            "<!-- factbase:gls001 -->\n# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n";
+            "---\nfactbase_id: gls001\n---\n# Glossary\n\n- **HCLS**: Healthcare and Life Sciences\n";
         use crate::database::tests::test_repo_in_db;
         use crate::models::Document;
         test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
@@ -4554,7 +4554,7 @@ mod tests {
         test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
         db.upsert_document(&Document {
             id: "gls002".to_string(),
-            content: "<!-- factbase:gls002 -->\n# Glossary\n\n- **HCLS**: Healthcare\n".to_string(),
+            content: "---\nfactbase_id: gls002\n---\n# Glossary\n\n- **HCLS**: Healthcare\n".to_string(),
             title: "Glossary".to_string(),
             file_path: "definitions/glossary.md".to_string(),
             doc_type: Some("definition".to_string()),
@@ -4679,7 +4679,7 @@ mod tests {
         test_repo_in_db(&db, "test-repo", &repo_path);
 
         // DB content has NO review queue
-        let db_content = "<!-- factbase:dsk001 -->\n# Disk Test\n\n- Fact\n";
+        let db_content = "---\nfactbase_id: dsk001\n---\n# Disk Test\n\n- Fact\n";
         db.upsert_document(&Document {
             id: "dsk001".to_string(),
             content: db_content.to_string(),
@@ -4724,7 +4724,7 @@ mod tests {
         test_repo_in_db(&db, "test-repo", &repo_path);
 
         // DB content has NO review queue (has_review_queue = FALSE)
-        let db_content = "<!-- factbase:dsk002 -->\n# Disk Only\n\n- Fact\n";
+        let db_content = "---\nfactbase_id: dsk002\n---\n# Disk Only\n\n- Fact\n";
         db.upsert_document(&Document {
             id: "dsk002".to_string(),
             content: db_content.to_string(),
@@ -4891,7 +4891,7 @@ mod tests {
         // DB content has NO review queue
         db.upsert_document(&Document {
             id: "dist01".to_string(),
-            content: "<!-- factbase:dist01 -->\n# Dist\n\n- Fact\n".to_string(),
+            content: "---\nfactbase_id: dist01\n---\n# Dist\n\n- Fact\n".to_string(),
             title: "Dist".to_string(),
             file_path: "dist01.md".to_string(),
             ..Document::test_default()

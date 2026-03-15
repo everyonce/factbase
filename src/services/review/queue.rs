@@ -132,7 +132,7 @@ mod tests {
         doc.id = "bbb222".to_string();
         doc.title = "Test".to_string();
         doc.repo_id = "test".to_string();
-        doc.content = "<!-- factbase:bbb222 -->\n# Test\n\n## Review Queue\n\n<!-- factbase:review -->\n\n- [ ] `@q[stale]` Is this current? (line 3)\n".to_string();
+        doc.content = "---\nfactbase_id: bbb222\n---\n# Test\n\n## Review Queue\n\n<!-- factbase:review -->\n\n- [ ] `@q[stale]` Is this current? (line 3)\n".to_string();
         db.upsert_document(&doc).unwrap();
         // Sync review questions (no deferred)
         db.sync_review_questions("bbb222", &[make_question(QuestionType::Stale, "Is this current? (line 3)")]).unwrap();
@@ -155,7 +155,7 @@ mod tests {
         doc.id = "aaa111".to_string();
         doc.title = "Test".to_string();
         doc.repo_id = "test".to_string();
-        doc.content = "<!-- factbase:aaa111 -->\n# Test\n\nSome fact\n".to_string();
+        doc.content = "---\nfactbase_id: aaa111\n---\n# Test\n\nSome fact\n".to_string();
         db.upsert_document(&doc).unwrap();
 
         // Sync: 1 open, 1 answered, 1 deferred

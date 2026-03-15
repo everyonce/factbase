@@ -79,27 +79,27 @@ fn setup_space_docs() -> TestContext {
         &[
             (
                 "earth.md",
-                "<!-- factbase:ea0001 -->\n# Earth\n\nEarth is the third planet from the Sun. @t[?]\n\n- Diameter: 12,742 km @t[?]\n- One natural satellite: the Moon @t[?]\n",
+                "---\nfactbase_id: ea0001\n---\n# Earth\n\nEarth is the third planet from the Sun. @t[?]\n\n- Diameter: 12,742 km @t[?]\n- One natural satellite: the Moon @t[?]\n",
             ),
             (
                 "jupiter.md",
-                "<!-- factbase:ab0002 -->\n# Jupiter\n\nJupiter is the largest planet in the Solar System. @t[?]\n\n- Diameter: 139,820 km @t[?]\n- Jupiter has at least 95 known moons @t[~2024]\n",
+                "---\nfactbase_id: ab0002\n---\n# Jupiter\n\nJupiter is the largest planet in the Solar System. @t[?]\n\n- Diameter: 139,820 km @t[?]\n- Jupiter has at least 95 known moons @t[~2024]\n",
             ),
             (
                 "saturn.md",
-                "<!-- factbase:ca0003 -->\n# Saturn\n\nSaturn is the sixth planet from the Sun, known for its ring system. @t[?]\n\n- Diameter: 116,460 km @t[?]\n- Saturn has at least 146 known moons @t[~2024]\n",
+                "---\nfactbase_id: ca0003\n---\n# Saturn\n\nSaturn is the sixth planet from the Sun, known for its ring system. @t[?]\n\n- Diameter: 116,460 km @t[?]\n- Saturn has at least 146 known moons @t[~2024]\n",
             ),
             (
                 "the-moon.md",
-                "<!-- factbase:de0004 -->\n# The Moon\n\nThe Moon is Earth's only natural satellite. @t[?]\n\n- Diameter: 3,474 km @t[?]\n- Distance from Earth: 384,400 km @t[?]\n",
+                "---\nfactbase_id: de0004\n---\n# The Moon\n\nThe Moon is Earth's only natural satellite. @t[?]\n\n- Diameter: 3,474 km @t[?]\n- Distance from Earth: 384,400 km @t[?]\n",
             ),
             (
                 "europa.md",
-                "<!-- factbase:ef0005 -->\n# Europa\n\nEuropa is one of Jupiter's Galilean moons. @t[?]\n\n- Diameter: 3,121 km @t[?]\n- Europa has a subsurface ocean @t[~2024]\n",
+                "---\nfactbase_id: ef0005\n---\n# Europa\n\nEuropa is one of Jupiter's Galilean moons. @t[?]\n\n- Diameter: 3,121 km @t[?]\n- Europa has a subsurface ocean @t[~2024]\n",
             ),
             (
                 "titan.md",
-                "<!-- factbase:fa0006 -->\n# Titan\n\nTitan is the largest moon of Saturn. @t[?]\n\n- Diameter: 5,149 km @t[?]\n- Titan has lakes of liquid methane @t[~2024]\n",
+                "---\nfactbase_id: fa0006\n---\n# Titan\n\nTitan is the largest moon of Saturn. @t[?]\n\n- Diameter: 5,149 km @t[?]\n- Titan has lakes of liquid methane @t[~2024]\n",
             ),
         ],
     )

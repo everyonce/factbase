@@ -19,7 +19,10 @@ use crate::patterns::{FACT_LINE_REGEX, SOURCE_REF_CAPTURE_REGEX, TEMPORAL_TAG_CO
 pub fn extract_facts(content: &str, doc_id: &str) -> Vec<TrackedFact> {
     let mut facts = Vec::new();
     let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
+
+    // Skip YAML frontmatter
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
+    let mut i = fm_lines;
 
     while i < lines.len() {
         let line = lines[i];
@@ -28,9 +31,8 @@ pub fn extract_facts(content: &str, doc_id: &str) -> Vec<TrackedFact> {
         // Skip empty lines, headers, factbase ID, and footnote definitions
         if line.trim().is_empty()
             || line.starts_with('#')
-            || line.starts_with("<!-- factbase:")
-            || line.starts_with("[^")
             || line.starts_with("---")
+            || line.starts_with("[^")
         {
             i += 1;
             continue;
@@ -171,7 +173,7 @@ mod tests {
 
     #[test]
     fn test_extract_skips_factbase_header() {
-        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact";
+        let content = "---\nfactbase_id: abc123\n---\n# Title\n\n- Fact";
         let facts = extract_facts(content, "abc123");
 
         assert_eq!(facts.len(), 1);
@@ -210,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_extract_mixed_content() {
-        let content = r#"<!-- factbase:abc123 -->
+        let content = r#"---\nfactbase_id: abc123\n---
 # Person Name
 
 Software engineer with 10 years experience.

@@ -426,7 +426,7 @@ mod tests {
         create_file(
             root,
             "people/alice.md",
-            "<!-- factbase:abc123 -->\n# Alice\n\n- Works at Acme @t[2020..] [^1]\n- Lives in NYC @t[=2023] [^1]\n\n---\n[^1]: LinkedIn, 2024-01\n",
+            "---\nfactbase_id: abc123\n---\n# Alice\n\n- Works at Acme @t[2020..] [^1]\n- Lives in NYC @t[=2023] [^1]\n\n---\n[^1]: LinkedIn, 2024-01\n",
         );
 
         let result = assess_file(&root.join("people/alice.md"), root).unwrap();

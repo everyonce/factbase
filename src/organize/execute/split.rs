@@ -109,8 +109,9 @@ pub fn execute_split(
         let new_filename = format!("{safe_title}.md");
         let new_path = source_dir.join(&new_filename);
 
-        // Inject factbase header into content
-        let content_with_header = processor.inject_header(&proposed.content, &new_id);
+        // Inject factbase ID into content via frontmatter
+        let fmt = crate::models::format::ResolvedFormat::default();
+        let content_with_header = processor.inject_id_with_format(&proposed.content, &new_id, &fmt, None);
 
         // Write the new file
         write_file(&new_path, &content_with_header)?;
@@ -228,7 +229,7 @@ mod tests {
         let doc_path = repo_path.join("doc1.md");
         fs::write(
             &doc_path,
-            "<!-- factbase:doc1 -->\n# Multi-Topic Doc\n\n## Career\n- CTO at Acme\n\n## Hobbies\n- Plays guitar",
+            "---\nfactbase_id: doc1\n---\n# Multi-Topic Doc\n\n## Career\n- CTO at Acme\n\n## Hobbies\n- Plays guitar",
         )
         .unwrap();
 
@@ -300,11 +301,11 @@ mod tests {
 
         // Verify content has factbase headers
         let career_content = fs::read_to_string(&career_path).unwrap();
-        assert!(career_content.starts_with("<!-- factbase:"));
+        assert!(career_content.starts_with("---\nfactbase_id:"));
         assert!(career_content.contains("CTO at Acme"));
 
         let hobbies_content = fs::read_to_string(&hobbies_path).unwrap();
-        assert!(hobbies_content.starts_with("<!-- factbase:"));
+        assert!(hobbies_content.starts_with("---\nfactbase_id:"));
         assert!(hobbies_content.contains("Plays guitar"));
     }
 
@@ -318,7 +319,7 @@ mod tests {
         let doc_path = repo_path.join("doc1.md");
         fs::write(
             &doc_path,
-            "<!-- factbase:doc1 -->\n# Doc\n- Fact A\n- Fact B",
+            "---\nfactbase_id: doc1\n---\n# Doc\n- Fact A\n- Fact B",
         )
         .unwrap();
 

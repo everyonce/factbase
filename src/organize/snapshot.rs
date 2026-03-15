@@ -380,7 +380,7 @@ mod tests {
 
         // Create test file
         let doc_path = repo_path.join("doc1.md");
-        fs::write(&doc_path, "<!-- factbase:doc1 -->\n# Doc 1\nContent").unwrap();
+        fs::write(&doc_path, "---\nfactbase_id: doc1\n---\n# Doc 1\nContent").unwrap();
 
         // Create document in database
         test_doc(&db, "doc1", "repo1", "Doc 1", "Content", "doc1.md");
@@ -430,7 +430,7 @@ mod tests {
 
         // Create test file
         let doc_path = repo_path.join("doc1.md");
-        let original_content = "<!-- factbase:doc1 -->\n# Doc 1\nOriginal";
+        let original_content = "---\nfactbase_id: doc1\n---\n# Doc 1\nOriginal";
         fs::write(&doc_path, original_content).unwrap();
 
         test_doc(&db, "doc1", "repo1", "Doc 1", "Original", "doc1.md");

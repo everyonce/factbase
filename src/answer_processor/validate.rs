@@ -171,15 +171,15 @@ mod tests {
 
     #[test]
     fn test_valid_document_passes() {
-        let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
-        let new_content = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme @t[2020..]\n";
+        let original = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- VP at Acme\n";
+        let new_content = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- VP at Acme @t[2020..]\n";
         let errors = validate_document(original, new_content);
         assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
     }
 
     #[test]
     fn test_document_header_lost() {
-        let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
+        let original = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- VP at Acme\n";
         let new_content = "# John Doe\n\n- VP at Acme\n";
         let errors = validate_document(original, new_content);
         assert!(errors
@@ -189,8 +189,8 @@ mod tests {
 
     #[test]
     fn test_document_title_changed() {
-        let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
-        let new_content = "<!-- factbase:abc123 -->\n# REWRITTEN SECTION\n\n- VP at Acme\n";
+        let original = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- VP at Acme\n";
+        let new_content = "---\nfactbase_id: abc123\n---\n# REWRITTEN SECTION\n\n- VP at Acme\n";
         let errors = validate_document(original, new_content);
         assert!(errors
             .iter()
@@ -199,8 +199,8 @@ mod tests {
 
     #[test]
     fn test_document_title_lost() {
-        let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
-        let new_content = "<!-- factbase:abc123 -->\n\n- VP at Acme\n";
+        let original = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- VP at Acme\n";
+        let new_content = "---\nfactbase_id: abc123\n---\n\n- VP at Acme\n";
         let errors = validate_document(original, new_content);
         assert!(errors
             .iter()
@@ -209,8 +209,8 @@ mod tests {
 
     #[test]
     fn test_document_fact_loss() {
-        let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- Fact 1\n- Fact 2\n- Fact 3\n- Fact 4\n- Fact 5\n- Fact 6\n";
-        let new_content = "<!-- factbase:abc123 -->\n# John Doe\n\n- Fact 1\n";
+        let original = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- Fact 1\n- Fact 2\n- Fact 3\n- Fact 4\n- Fact 5\n- Fact 6\n";
+        let new_content = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- Fact 1\n";
         let errors = validate_document(original, new_content);
         assert!(errors
             .iter()
@@ -219,9 +219,9 @@ mod tests {
 
     #[test]
     fn test_document_meta_text_in_output() {
-        let original = "<!-- factbase:abc123 -->\n# John Doe\n\n- VP at Acme\n";
+        let original = "---\nfactbase_id: abc123\n---\n# John Doe\n\n- VP at Acme\n";
         let new_content =
-            "<!-- factbase:abc123 -->\n# John Doe\n\nOUTPUT:\n- VP at Acme @t[2020..]\n";
+            "---\nfactbase_id: abc123\n---\n# John Doe\n\nOUTPUT:\n- VP at Acme @t[2020..]\n";
         let errors = validate_document(original, new_content);
         assert!(errors
             .iter()
@@ -239,8 +239,8 @@ mod tests {
 
     #[test]
     fn test_document_no_original_title_skips_check() {
-        let original = "<!-- factbase:abc123 -->\n\nSome content\n";
-        let new_content = "<!-- factbase:abc123 -->\n\nUpdated content\n";
+        let original = "---\nfactbase_id: abc123\n---\n\nSome content\n";
+        let new_content = "---\nfactbase_id: abc123\n---\n\nUpdated content\n";
         let errors = validate_document(original, new_content);
         assert!(!errors
             .iter()
@@ -252,7 +252,7 @@ mod tests {
         // Simulates the bug: document with facts + many review queue items.
         // After applying answers, the review queue items are removed.
         // This should NOT trigger content loss.
-        let original = "<!-- factbase:abc123 -->\n# Battle of Actium\n\n\
+        let original = "---\nfactbase_id: abc123\n---\n# Battle of Actium\n\n\
             - Octavian defeated Antony in 31 BCE\n\
             - Naval battle near Greece\n\
             - Resulted in end of Roman Republic\n\
@@ -264,7 +264,7 @@ mod tests {
             - [x] @q[stale] Is this still accurate? > Yes\n\
             - [x] @q[ambiguous] Which Octavian? > Gaius Octavius, later Augustus\n";
         // After applying: review questions removed, facts preserved
-        let new_content = "<!-- factbase:abc123 -->\n# Battle of Actium\n\n\
+        let new_content = "---\nfactbase_id: abc123\n---\n# Battle of Actium\n\n\
             - Octavian defeated Antony in 31 BCE\n\
             - Naval battle near Greece\n\
             - Resulted in end of Roman Republic\n";
@@ -281,12 +281,12 @@ mod tests {
     #[test]
     fn test_real_fact_loss_still_detected_with_review_queue() {
         // Even with a review queue, actual fact loss should still be caught
-        let original = "<!-- factbase:abc123 -->\n# Topic\n\n\
+        let original = "---\nfactbase_id: abc123\n---\n# Topic\n\n\
             - Fact 1\n- Fact 2\n- Fact 3\n- Fact 4\n- Fact 5\n- Fact 6\n\
             \n---\n\n## Review Queue\n<!-- factbase:review -->\n\
             - [x] @q[temporal] Question? > Answer\n";
         // Both facts AND review questions lost
-        let new_content = "<!-- factbase:abc123 -->\n# Topic\n\n- Fact 1\n";
+        let new_content = "---\nfactbase_id: abc123\n---\n# Topic\n\n- Fact 1\n";
         let errors = validate_document(original, new_content);
         assert!(
             errors
@@ -320,12 +320,12 @@ mod tests {
 
     #[test]
     fn test_validate_document_callout_review_no_false_content_loss() {
-        let original = "<!-- factbase:abc123 -->\n# Topic\n\n\
+        let original = "---\nfactbase_id: abc123\n---\n# Topic\n\n\
             - Fact 1\n- Fact 2\n- Fact 3\n\
             \n> [!review]- Review Queue\n> <!-- factbase:review -->\n\
             > - [x] @q[temporal] Q? > A\n";
         // Remove answered review question but keep all facts
-        let new_content = "<!-- factbase:abc123 -->\n# Topic\n\n\
+        let new_content = "---\nfactbase_id: abc123\n---\n# Topic\n\n\
             - Fact 1\n- Fact 2\n- Fact 3\n";
         let errors = validate_document(original, new_content);
         assert!(

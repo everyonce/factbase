@@ -157,7 +157,7 @@ mod tests {
         let people_dir = temp.path().join("people");
         fs::create_dir_all(&people_dir).unwrap();
         let source_path = people_dir.join("test.md");
-        fs::write(&source_path, "<!-- factbase:abc123 -->\n# Test").unwrap();
+        fs::write(&source_path, "---\nfactbase_id: abc123\n---\n# Test").unwrap();
 
         // Create destination file
         let projects_dir = temp.path().join("projects");
@@ -183,7 +183,7 @@ mod tests {
         let people_dir = temp.path().join("people");
         fs::create_dir_all(&people_dir).unwrap();
         let source_path = people_dir.join("john.md");
-        let content = "<!-- factbase:abc123 -->\n# John Doe\n\nSome content.";
+        let content = "---\nfactbase_id: abc123\n---\n# John Doe\n\nSome content.";
         fs::write(&source_path, content).unwrap();
 
         // Create doc in DB
@@ -208,7 +208,7 @@ mod tests {
 
         // Verify content preserved (including factbase header)
         let moved_content = fs::read_to_string(&new_path).unwrap();
-        assert!(moved_content.contains("<!-- factbase:abc123 -->"));
+        assert!(moved_content.contains("---\nfactbase_id: abc123\n---"));
         assert!(moved_content.contains("# John Doe"));
 
         // Verify database updated
@@ -224,7 +224,7 @@ mod tests {
 
         // Create source file at root
         let source_path = temp.path().join("test.md");
-        fs::write(&source_path, "<!-- factbase:abc123 -->\n# Test").unwrap();
+        fs::write(&source_path, "---\nfactbase_id: abc123\n---\n# Test").unwrap();
 
         // Create doc in DB
         let doc = test_doc("abc123", "Test", "test.md", None);
@@ -252,7 +252,7 @@ mod tests {
 
         // Create source file
         let source_path = temp.path().join("test.md");
-        fs::write(&source_path, "<!-- factbase:abc123 -->\n# Test").unwrap();
+        fs::write(&source_path, "---\nfactbase_id: abc123\n---\n# Test").unwrap();
 
         let doc = test_doc("abc123", "Test", "test.md", None);
         db.upsert_document(&doc).unwrap();

@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_clean_document_no_corruption() {
-        let content = "<!-- factbase:abc123 -->\n# Test Entity\n\n- Fact one @t[2024..] [^1]\n- Fact two @t[=2023-06] [^2]\n\n---\n[^1]: Source A, 2024-01-15\n[^2]: Source B, 2023-06-01\n";
+        let content = "---\nfactbase_id: abc123\n---\n# Test Entity\n\n- Fact one @t[2024..] [^1]\n- Fact two @t[=2023-06] [^2]\n\n---\n[^1]: Source A, 2024-01-15\n[^2]: Source B, 2023-06-01\n";
         let questions = generate_corruption_questions(content);
         assert!(
             questions.is_empty(),

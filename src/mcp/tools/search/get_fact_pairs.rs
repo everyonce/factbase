@@ -202,11 +202,11 @@ mod tests {
 
         // Create two docs using the standard test helpers
         let mut doc_a = crate::database::tests::test_doc("fp1111", "Entity A");
-        doc_a.content = "<!-- factbase:fp1111 -->\n# Entity A\n\n- Revenue: $10M\n".to_string();
+        doc_a.content = "---\nfactbase_id: fp1111\n---\n# Entity A\n\n- Revenue: $10M\n".to_string();
         db.upsert_document(&doc_a).unwrap();
 
         let mut doc_b = crate::database::tests::test_doc("fp2222", "Entity B");
-        doc_b.content = "<!-- factbase:fp2222 -->\n# Entity B\n\n- Revenue: $50M\n".to_string();
+        doc_b.content = "---\nfactbase_id: fp2222\n---\n# Entity B\n\n- Revenue: $50M\n".to_string();
         db.upsert_document(&doc_b).unwrap();
 
         // Insert similar fact embeddings
@@ -249,7 +249,7 @@ mod tests {
         db.upsert_document(&doc_a).unwrap();
 
         let mut doc_b = crate::database::tests::test_doc("rv2222", "Entity B");
-        doc_b.content = "<!-- factbase:rv2222 -->\n# Entity B\n\n- Revenue: $50M\n".to_string();
+        doc_b.content = "---\nfactbase_id: rv2222\n---\n# Entity B\n\n- Revenue: $50M\n".to_string();
         db.upsert_document(&doc_b).unwrap();
 
         // Insert similar fact embeddings at line 4

@@ -261,7 +261,7 @@ mod tests {
             TrackedFact::new("doc1", 5, "- Hired: 2020", None, vec![]),
         ];
         let content =
-            "<!-- factbase:abc123 -->\n# Test Doc\n\n**Role:** Engineer\n\n- Hired: 2020\n";
+            "---\nfactbase_id: abc123\n---\n# Test Doc\n\n**Role:** Engineer\n\n- Hired: 2020\n";
 
         let details = build_failure_details("Merge", 5, 2, &facts, content);
 

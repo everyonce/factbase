@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn test_repair_clean_document_no_changes() {
         let content =
-            "<!-- factbase:abc123 -->\n# Test Entity\n\n- Fact one [^1]\n\n[^1]: Source A\n";
+            "---\nfactbase_id: abc123\n---\n# Test Entity\n\n- Fact one [^1]\n\n[^1]: Source A\n";
         let result = repair_document(content);
         assert_eq!(result.fixes, 0);
         assert!(result.content.is_none());

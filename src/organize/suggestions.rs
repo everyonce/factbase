@@ -472,7 +472,7 @@ mod tests {
         fs::create_dir_all(&src_dir).unwrap();
         fs::write(
             src_dir.join("entity.md"),
-            "<!-- factbase:src001 -->\n# Entity\n\n- Source fact",
+            "---\nfactbase_id: src001\n---\n# Entity\n\n- Source fact",
         )
         .unwrap();
 
@@ -481,14 +481,14 @@ mod tests {
         fs::create_dir_all(&dst_dir).unwrap();
         fs::write(
             dst_dir.join("entity.md"),
-            "<!-- factbase:dst001 -->\n# Entity\n\n- Existing fact",
+            "---\nfactbase_id: dst001\n---\n# Entity\n\n- Existing fact",
         )
         .unwrap();
 
         let mut src = crate::models::Document::test_default();
         src.id = "src001".to_string();
         src.title = "Entity".to_string();
-        src.content = "<!-- factbase:src001 -->\n# Entity\n\n- Source fact".to_string();
+        src.content = "---\nfactbase_id: src001\n---\n# Entity\n\n- Source fact".to_string();
         src.file_path = "old/entity.md".to_string();
         src.repo_id = "test".to_string();
         db.upsert_document(&src).unwrap();
@@ -496,7 +496,7 @@ mod tests {
         let mut dst = crate::models::Document::test_default();
         dst.id = "dst001".to_string();
         dst.title = "Entity".to_string();
-        dst.content = "<!-- factbase:dst001 -->\n# Entity\n\n- Existing fact".to_string();
+        dst.content = "---\nfactbase_id: dst001\n---\n# Entity\n\n- Existing fact".to_string();
         dst.file_path = "new/entity.md".to_string();
         dst.repo_id = "test".to_string();
         db.upsert_document(&dst).unwrap();

@@ -4,7 +4,6 @@
 //! that handle document identity and metadata extraction.
 
 use crate::database::Database;
-use crate::patterns::ID_REGEX;
 use getrandom::getrandom;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -42,13 +41,9 @@ impl DocumentProcessor {
     }
 
     /// Static version of extract_id for use in parallel contexts.
-    /// Checks both HTML comment header and YAML frontmatter for factbase ID.
+    /// Checks YAML frontmatter for factbase ID.
     pub fn extract_id_static(content: &str) -> Option<String> {
         let first_line = content.lines().next()?;
-        // Check HTML comment: <!-- factbase:abc123 -->
-        if let Some(cap) = ID_REGEX.captures(first_line) {
-            return Some(cap[1].to_string());
-        }
         // Check YAML frontmatter: ---\nfactbase_id: abc123\n...---
         if first_line.trim() == "---" {
             for line in content.lines().skip(1) {
@@ -90,16 +85,10 @@ impl DocumentProcessor {
         self.generate_id() // fallback
     }
 
-    /// Inject the factbase ID header comment at the top of content.
-    pub fn inject_header(&self, content: &str, id: &str) -> String {
-        format!("<!-- factbase:{id} -->\n{content}")
-    }
-
     /// Inject the factbase ID into content according to format config.
     ///
-    /// For `IdPlacement::Comment`: prepends `<!-- factbase:id -->` (default behavior).
-    /// For `IdPlacement::Frontmatter`: adds `factbase_id: id` (and optionally `type: …`)
-    /// to existing frontmatter, or creates a new frontmatter block if none exists.
+    /// Adds `factbase_id: id` (and optionally `type: …`) to existing frontmatter,
+    /// or creates a new frontmatter block if none exists.
     pub fn inject_id_with_format(
         &self,
         content: &str,
@@ -109,8 +98,7 @@ impl DocumentProcessor {
     ) -> String {
         use crate::models::format::IdPlacement;
         match format.id_placement {
-            IdPlacement::Comment => self.inject_header(content, id),
-            IdPlacement::Frontmatter => {
+            IdPlacement::Comment | IdPlacement::Frontmatter => {
                 let mut lines = content.lines();
                 if let Some(first) = lines.next() {
                     if first.trim() == "---" {
@@ -153,9 +141,6 @@ impl DocumentProcessor {
                 if trimmed == "---" {
                     in_frontmatter = false;
                 }
-                continue;
-            }
-            if trimmed.starts_with("<!-- factbase:") {
                 continue;
             }
             if let Some(title) = trimmed.strip_prefix("# ") {
@@ -244,7 +229,7 @@ mod tests {
     #[test]
     fn test_extract_id_valid() {
         let processor = DocumentProcessor::new();
-        let content = "<!-- factbase:a1b2c3 -->\n# Title";
+        let content = "---\nfactbase_id: a1b2c3\n---\n# Title";
         assert_eq!(processor.extract_id(content), Some("a1b2c3".to_string()));
     }
 
@@ -257,7 +242,7 @@ mod tests {
 
     #[test]
     fn test_extract_id_static() {
-        let content = "<!-- factbase:abc123 -->\n# Test";
+        let content = "---\nfactbase_id: abc123\n---\n# Test";
         assert_eq!(
             DocumentProcessor::extract_id_static(content),
             Some("abc123".to_string())
@@ -273,18 +258,9 @@ mod tests {
     }
 
     #[test]
-    fn test_inject_header() {
-        let processor = DocumentProcessor::new();
-        let content = "# Title\nContent";
-        let result = processor.inject_header(content, "abc123");
-        assert!(result.starts_with("<!-- factbase:abc123 -->"));
-        assert!(result.contains("# Title"));
-    }
-
-    #[test]
     fn test_extract_title_from_h1() {
         let processor = DocumentProcessor::new();
-        let content = "<!-- factbase:abc123 -->\n# My Title\nContent";
+        let content = "---\nfactbase_id: abc123\n---\n# My Title\nContent";
         let path = PathBuf::from("/test/doc.md");
         assert_eq!(processor.extract_title(content, &path), "My Title");
     }
@@ -292,7 +268,7 @@ mod tests {
     #[test]
     fn test_extract_title_from_filename() {
         let processor = DocumentProcessor::new();
-        let content = "<!-- factbase:abc123 -->\nNo heading here";
+        let content = "---\nfactbase_id: abc123\n---\nNo heading here";
         let path = PathBuf::from("/test/my-document.md");
         assert_eq!(processor.extract_title(content, &path), "my-document");
     }
@@ -300,7 +276,7 @@ mod tests {
     #[test]
     fn test_extract_title_skips_factbase_header() {
         let processor = DocumentProcessor::new();
-        let content = "<!-- factbase:abc123 -->\n\n# Actual Title";
+        let content = "---\nfactbase_id: abc123\n---\n\n# Actual Title";
         let path = PathBuf::from("/test/doc.md");
         assert_eq!(processor.extract_title(content, &path), "Actual Title");
     }
@@ -308,7 +284,7 @@ mod tests {
     #[test]
     fn test_extract_title_strips_footnote_refs() {
         let processor = DocumentProcessor::new();
-        let content = "<!-- factbase:abc123 -->\n# Joan Butters [^8] [^9]\nContent";
+        let content = "---\nfactbase_id: abc123\n---\n# Joan Butters [^8] [^9]\nContent";
         let path = PathBuf::from("/test/doc.md");
         assert_eq!(processor.extract_title(content, &path), "Joan Butters");
     }
@@ -487,9 +463,9 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_id_prefers_html_comment() {
-        // HTML comment takes precedence (checked first)
-        let content = "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\n---\n# Title";
+    fn test_extract_id_first_wins() {
+        // First factbase_id in frontmatter is used
+        let content = "---\nfactbase_id: aaa111\nfactbase_id: bbb222\n---\n# Title";
         assert_eq!(
             DocumentProcessor::extract_id_static(content),
             Some("aaa111".to_string())
@@ -515,12 +491,12 @@ mod tests {
     // --- inject_id_with_format tests ---
 
     #[test]
-    fn test_inject_id_comment_format() {
+    fn test_inject_id_default_format() {
         let processor = DocumentProcessor::new();
         let fmt = crate::models::format::ResolvedFormat::default();
         let content = "# Title\nContent";
         let result = processor.inject_id_with_format(content, "abc123", &fmt, None);
-        assert_eq!(result, "<!-- factbase:abc123 -->\n# Title\nContent");
+        assert_eq!(result, "---\nfactbase_id: abc123\n---\n# Title\nContent");
     }
 
     #[test]

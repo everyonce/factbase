@@ -43,11 +43,14 @@ pub fn extract_entity_entries(content: &str, doc_id: &str) -> Vec<EntityEntry> {
     let mut current_section = String::new();
     let mut current_entry: Option<EntityEntry> = None;
 
+    // Determine frontmatter line count to skip
+    let fm_lines = crate::patterns::frontmatter_line_count(content);
+
     for (i, line) in lines.iter().enumerate() {
         let line_num = i + 1;
 
-        // Skip factbase header
-        if line.starts_with("<!-- factbase:") {
+        // Skip YAML frontmatter
+        if line_num <= fm_lines {
             continue;
         }
 
@@ -171,7 +174,7 @@ mod tests {
     #[test]
     fn test_extract_entries_h3_under_h2() {
         let content = "\
-<!-- factbase:abc123 -->
+---\nfactbase_id: abc123\n---
 # Acme Corp
 
 ## Team

@@ -84,7 +84,7 @@ async fn test_invalid_factbase_header_handling() {
     // Create file with malformed header
     fs::write(
         ctx.repo_path.join("malformed.md"),
-        "<!-- factbase:INVALID -->\n# Malformed Header\nContent here.",
+        "---\nfactbase_id: INVALID\n---\n# Malformed Header\nContent here.",
     )
     .unwrap();
 
@@ -98,7 +98,7 @@ async fn test_invalid_factbase_header_handling() {
     // Create file with wrong format
     fs::write(
         ctx.repo_path.join("wrong.md"),
-        "<!-- factbase:toolong123 -->\n# Wrong Format\nContent here.",
+        "---\nfactbase_id: toolong123\n---\n# Wrong Format\nContent here.",
     )
     .unwrap();
 

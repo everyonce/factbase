@@ -244,9 +244,9 @@ mod tests {
 
     #[test]
     fn test_preserves_factbase_header() {
-        let input = "<!-- factbase:abc123 -->\n# Title\n\n- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site";
+        let input = "---\nfactbase_id: abc123\n---\n# Title\n\n- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site";
         let expected =
-            "<!-- factbase:abc123 -->\n# Title\n\n- DR (Disaster Recovery) plan\n- DR site";
+            "---\nfactbase_id: abc123\n---\n# Title\n\n- DR (Disaster Recovery) plan\n- DR site";
         assert_eq!(dedup_acronym_expansions(input, &empty_glossary()), expected);
     }
 
