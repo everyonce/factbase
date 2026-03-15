@@ -12,5 +12,6 @@ pub use entity::{
 };
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, get_deferred_items, get_review_queue,
-    AnswerQuestionParams, BulkAnswerItem as ServiceBulkAnswerItem, ReviewQueueParams,
+    reset_deferred_questions, AnswerQuestionParams, BulkAnswerItem as ServiceBulkAnswerItem,
+    ReviewQueueParams,
 };

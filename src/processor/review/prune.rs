@@ -215,6 +215,84 @@ fn prune_stale_questions_inner(
     }
 }
 
+/// Strip blockquote answers from deferred/believed questions of a specific type.
+///
+/// For each `[ ]` question of `question_type` that has a non-empty blockquote
+/// answer (i.e. is deferred or believed), the blockquote lines are removed so
+/// the question becomes open/unanswered again.
+///
+/// Returns `(modified_content, count_reset)`.
+pub fn strip_deferred_answers_by_type(content: &str, question_type: &str) -> (String, usize) {
+    let (unwrapped, was_callout) = unwrap_review_callout(content);
+    let (result, count) = strip_deferred_answers_by_type_inner(&unwrapped, question_type);
+    if was_callout && count > 0 {
+        (wrap_review_callout(&result), count)
+    } else {
+        (result, count)
+    }
+}
+
+fn strip_deferred_answers_by_type_inner(content: &str, question_type: &str) -> (String, usize) {
+    let Some(marker_pos) = content.find(REVIEW_QUEUE_MARKER) else {
+        return (content.to_string(), 0);
+    };
+
+    let (before_marker, after_marker) = content.split_at(marker_pos);
+    let queue_content = &after_marker[REVIEW_QUEUE_MARKER.len()..];
+    let type_tag = format!("`@q[{question_type}]`");
+
+    let lines: Vec<&str> = queue_content.lines().collect();
+    let mut result_lines: Vec<&str> = Vec::new();
+    let mut reset = 0usize;
+    let mut i = 0;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+
+        // Only target unchecked questions of the right type
+        let is_target = trimmed.starts_with("- [ ]") && trimmed.contains(&type_tag);
+
+        if is_target {
+            result_lines.push(line);
+            i += 1;
+            // Collect any following blockquote lines
+            let mut bq_start = i;
+            // Skip blank lines before blockquote
+            while bq_start < lines.len() && lines[bq_start].trim().is_empty() {
+                bq_start += 1;
+            }
+            if bq_start < lines.len() {
+                let t = lines[bq_start].trim();
+                if t.starts_with('>') && t.len() > 1 && !t[1..].trim().is_empty() {
+                    // This is a deferred/believed answer — skip it (and any continuation lines)
+                    reset += 1;
+                    i = bq_start + 1;
+                    while i < lines.len() && lines[i].trim().starts_with('>') {
+                        i += 1;
+                    }
+                    continue;
+                }
+            }
+        } else {
+            result_lines.push(line);
+            i += 1;
+        }
+    }
+
+    if reset == 0 {
+        return (content.to_string(), 0);
+    }
+
+    let output = format!(
+        "{}{}\n{}",
+        before_marker,
+        REVIEW_QUEUE_MARKER,
+        result_lines.join("\n")
+    );
+    (output, reset)
+}
+
 /// Check if a question line's description matches any in the valid set.
 fn question_description_matches(line: &str, valid: &HashSet<String>) -> bool {
     // Question format: "- [ ] `@q[type]` Description text"
@@ -433,6 +511,87 @@ mod tests {
         let content = "# Doc\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n\
                        - [ ] `@q[temporal]` unanswered question\n  > \n";
         let (result, count) = strip_answered_questions(content);
+        assert_eq!(count, 0);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_removes_believed() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[weak-source]` Line 5: vague citation\n\
+                       > believed: citation is sufficient\n\
+                       - [ ] `@q[temporal]` When?\n\
+                       > defer: need more info\n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
+        assert_eq!(count, 1);
+        assert!(result.contains("vague citation"));
+        assert!(!result.contains("believed: citation is sufficient"));
+        // temporal deferred answer should be untouched
+        assert!(result.contains("defer: need more info"));
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_removes_defer() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[weak-source]` Line 5: vague citation\n\
+                       > defer: internal source, no URL\n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
+        assert_eq!(count, 1);
+        assert!(result.contains("vague citation"));
+        assert!(!result.contains("defer: internal source"));
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_noop_for_other_types() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[temporal]` When?\n\
+                       > defer: need more info\n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
+        assert_eq!(count, 0);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_noop_for_open_questions() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[weak-source]` Line 5: vague citation\n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
+        assert_eq!(count, 0);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_noop_no_review_section() {
+        let content = "# Doc\n\nJust content.\n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
+        assert_eq!(count, 0);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_multiple() {
+        let content = "# Doc\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[weak-source]` Line 1: first\n\
+                       > believed: ok\n\
+                       - [ ] `@q[weak-source]` Line 2: second\n\
+                       > defer: no url\n\
+                       - [ ] `@q[weak-source]` Line 3: open\n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
+        assert_eq!(count, 2);
+        assert!(result.contains("Line 1: first"));
+        assert!(result.contains("Line 2: second"));
+        assert!(result.contains("Line 3: open"));
+        assert!(!result.contains("believed: ok"));
+        assert!(!result.contains("defer: no url"));
+    }
+
+    #[test]
+    fn test_strip_deferred_answers_by_type_noop_for_empty_blockquote() {
+        // An empty blockquote `> ` is not a deferred answer — leave it alone
+        let content = "# Doc\n\n<!-- factbase:review -->\n\
+                       - [ ] `@q[weak-source]` Line 5: vague citation\n\
+                       > \n";
+        let (result, count) = strip_deferred_answers_by_type(content, "weak-source");
         assert_eq!(count, 0);
         assert_eq!(result, content);
     }

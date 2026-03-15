@@ -138,6 +138,19 @@ pub fn answer_questions(
     services::answer_questions(db, args, progress)
 }
 
+/// Resets deferred/believed questions of a given type back to open status.
+/// Parses JSON args and delegates to service.
+pub fn reset_deferred_questions(
+    db: &Database,
+    args: &Value,
+    progress: &crate::ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let question_type = crate::mcp::tools::get_str_arg(args, "question_type")
+        .unwrap_or("weak-source");
+    let repo = crate::mcp::tools::get_str_arg(args, "repo").map(String::from);
+    services::reset_deferred_questions(db, question_type, repo.as_deref(), progress)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

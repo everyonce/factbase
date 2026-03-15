@@ -310,6 +310,71 @@ impl Database {
         Ok((answered, unanswered, deferred))
     }
 
+    /// Reset deferred/believed questions of a given type back to open status.
+    ///
+    /// Clears both `status` (→ 'open') and `answer` (→ NULL) for all questions
+    /// matching `question_type` whose current status is 'deferred' or 'believed'.
+    ///
+    /// Returns `(count, Vec<(doc_id, file_path)>)` for the affected documents so
+    /// callers can also strip the blockquote answers from the markdown files.
+    pub fn reset_deferred_questions_by_type(
+        &self,
+        question_type: &str,
+        repo_id: Option<&str>,
+    ) -> Result<(usize, Vec<(String, String)>), FactbaseError> {
+        let conn = self.get_conn()?;
+        let now = chrono::Utc::now().to_rfc3339();
+
+        // Collect affected (doc_id, file_path) before updating
+        let affected: Vec<(String, String)> = if let Some(rid) = repo_id {
+            conn.prepare(
+                "SELECT DISTINCT rq.doc_id, d.file_path \
+                 FROM review_questions rq \
+                 JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
+                 WHERE rq.question_type = ?1 \
+                   AND rq.status IN ('deferred', 'believed') \
+                   AND d.repo_id = ?2",
+            )?
+            .query_map([question_type, rid], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect()
+        } else {
+            conn.prepare(
+                "SELECT DISTINCT rq.doc_id, d.file_path \
+                 FROM review_questions rq \
+                 JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
+                 WHERE rq.question_type = ?1 \
+                   AND rq.status IN ('deferred', 'believed')",
+            )?
+            .query_map([question_type], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect()
+        };
+
+        if affected.is_empty() {
+            return Ok((0, vec![]));
+        }
+
+        // Reset status and clear answer
+        let count = if let Some(rid) = repo_id {
+            conn.execute(
+                "UPDATE review_questions SET status = 'open', answer = NULL, updated_at = ?1 \
+                 WHERE question_type = ?2 \
+                   AND status IN ('deferred', 'believed') \
+                   AND doc_id IN (SELECT id FROM documents WHERE repo_id = ?3 AND is_deleted = FALSE)",
+                rusqlite::params![now, question_type, rid],
+            )?
+        } else {
+            conn.execute(
+                "UPDATE review_questions SET status = 'open', answer = NULL, updated_at = ?1 \
+                 WHERE question_type = ?2 AND status IN ('deferred', 'believed')",
+                rusqlite::params![now, question_type],
+            )?
+        };
+
+        Ok((count, affected))
+    }
+
     /// Check if the review_questions table has any rows (used to detect if populated).
     pub fn has_review_questions_indexed(&self) -> bool {
         let conn = match self.get_conn() {
@@ -571,6 +636,93 @@ mod tests {
             .count_review_questions_by_status(None)
             .unwrap();
         assert_eq!(unanswered, 0);
+    }
+
+    #[test]
+    fn test_reset_deferred_questions_by_type_basic() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![
+            make_deferred_question(QuestionType::WeakSource, "Vague citation A"),
+            make_deferred_question(QuestionType::WeakSource, "Vague citation B"),
+            make_deferred_question(QuestionType::Temporal, "When?"),
+        ];
+        // Mark first two as believed
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+        db.update_review_question_status(&doc_id, 0, "believed", Some("believed: ok"))
+            .unwrap();
+        db.update_review_question_status(&doc_id, 1, "deferred", Some("defer: no url"))
+            .unwrap();
+
+        let (count, affected) = db
+            .reset_deferred_questions_by_type("weak-source", None)
+            .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(affected.len(), 1);
+        assert_eq!(affected[0].0, doc_id);
+
+        // Verify DB state
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "unanswered".to_string(),
+            question_type: Some("weak-source".to_string()),
+            ..Default::default()
+        };
+        let (qs, _, unanswered, deferred) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(qs.len(), 2);
+        assert_eq!(unanswered, 2);
+        assert_eq!(deferred, 0);
+        // Answers should be cleared
+        assert!(qs.iter().all(|q| q["answer"].is_null()));
+    }
+
+    #[test]
+    fn test_reset_deferred_questions_by_type_only_target_type() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![
+            make_deferred_question(QuestionType::WeakSource, "Vague citation"),
+            make_deferred_question(QuestionType::Temporal, "When?"),
+        ];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+        db.update_review_question_status(&doc_id, 0, "believed", Some("believed: ok"))
+            .unwrap();
+        db.update_review_question_status(&doc_id, 1, "deferred", Some("defer: no date"))
+            .unwrap();
+
+        let (count, _) = db
+            .reset_deferred_questions_by_type("weak-source", None)
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Temporal deferred should still be deferred
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "deferred".to_string(),
+            ..Default::default()
+        };
+        let (_, _, _, deferred) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(deferred, 1);
+    }
+
+    #[test]
+    fn test_reset_deferred_questions_by_type_noop_when_none() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        db.sync_review_questions(
+            &doc_id,
+            &[make_question(QuestionType::WeakSource, "Open question")],
+        )
+        .unwrap();
+
+        let (count, affected) = db
+            .reset_deferred_questions_by_type("weak-source", None)
+            .unwrap();
+        assert_eq!(count, 0);
+        assert!(affected.is_empty());
     }
 
     #[test]

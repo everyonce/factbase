@@ -25,4 +25,4 @@ pub use append::{
 pub use callout::{is_callout_review, unwrap_review_callout, wrap_review_callout};
 pub use normalize::normalize_review_section;
 pub use parse::{normalize_conflict_desc, parse_review_queue};
-pub use prune::{prune_stale_questions, strip_answered_questions};
+pub use prune::{prune_stale_questions, strip_answered_questions, strip_deferred_answers_by_type};
