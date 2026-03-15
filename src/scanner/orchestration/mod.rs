@@ -1116,6 +1116,34 @@ mod tests {
         assert_eq!(results[0].existing_id.as_deref(), Some("abc123"));
     }
 
+    #[test]
+    fn test_pre_read_files_yaml_frontmatter_id() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("doc.md");
+        std::fs::write(
+            &path,
+            "---\nfactbase_id: def456\ntype: person\n---\n# Title\n\nContent.",
+        )
+        .unwrap();
+        let results = pre_read_files(vec![path]);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].existing_id.as_deref(), Some("def456"));
+    }
+
+    #[test]
+    fn test_pre_read_files_html_comment_takes_priority_over_frontmatter() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("doc.md");
+        // Both formats present — HTML comment is checked first
+        std::fs::write(
+            &path,
+            "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\n---\n# Title",
+        )
+        .unwrap();
+        let results = pre_read_files(vec![path]);
+        assert_eq!(results[0].existing_id.as_deref(), Some("aaa111"));
+    }
+
     // ── full_scan: new file detection ──
 
     #[tokio::test]
@@ -1749,6 +1777,55 @@ mod tests {
 
         let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
         assert!(unanswered > 0, "auto-migration should populate review questions");
+    }
+
+    #[tokio::test]
+    async fn test_full_scan_yaml_frontmatter_id_recognized() {
+        // Documents with YAML frontmatter IDs must be recognized as existing on rescan,
+        // not treated as new documents (which would assign a duplicate ID).
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        let path = tmp.path().join("doc.md");
+        std::fs::write(
+            &path,
+            "---\nfactbase_id: abc123\ntype: document\n---\n# Doc\n\nContent.",
+        )
+        .unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+
+        // First scan: doc is new (YAML frontmatter ID read correctly)
+        let r1 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r1.added, 1, "YAML frontmatter doc should be indexed as new");
+
+        // Second scan: same file, same ID — should be unchanged (not added again)
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.added, 0, "YAML frontmatter doc should not be re-added");
+        assert_eq!(r2.unchanged, 1, "YAML frontmatter doc should be unchanged");
+
+        // DB should have exactly one document with the correct ID
+        let docs = db.get_documents_for_repo("test").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(
+            docs.contains_key("abc123"),
+            "doc should be stored with YAML frontmatter ID"
+        );
     }
 
     #[tokio::test]
