@@ -419,6 +419,59 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }))
 }
 
+/// Check embedding provider connectivity and database health.
+///
+/// Attempts a test embedding generation to verify the provider is reachable.
+/// Returns a structured diagnostic report.
+pub async fn doctor_check(
+    db: &Database,
+    embedding: &dyn EmbeddingProvider,
+) -> Result<Value, FactbaseError> {
+    // Check database health
+    let db_ok = db.health_check().is_ok();
+    let repo_count = db.list_repositories().map(|r| r.len()).unwrap_or(0);
+
+    // Check embedding provider by generating a test embedding
+    let dim = embedding.dimension();
+    let (embed_ok, embed_error) = match embedding.generate("test").await {
+        Ok(v) if v.len() == dim => (true, None),
+        Ok(v) => (
+            false,
+            Some(format!(
+                "dimension mismatch: expected {dim}, got {}",
+                v.len()
+            )),
+        ),
+        Err(e) => (false, Some(e.to_string())),
+    };
+
+    let overall_healthy = db_ok && embed_ok;
+
+    let mut result = serde_json::json!({
+        "overall_healthy": overall_healthy,
+        "database": {
+            "available": db_ok,
+            "repositories": repo_count,
+        },
+        "embedding_provider": {
+            "available": embed_ok,
+            "dimension": dim,
+        },
+    });
+
+    if let Some(err) = embed_error {
+        result["embedding_provider"]["error"] = Value::String(err);
+    }
+
+    if !overall_healthy {
+        result["hint"] = Value::String(
+            "Run 'factbase doctor' (CLI) for detailed diagnostics and fix suggestions.".into(),
+        );
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,5 +600,30 @@ mod tests {
             "update step 2 should instruct detect_links"
         );
         assert_eq!(result["next_tool"], "factbase");
+    }
+
+    #[tokio::test]
+    async fn test_doctor_check_healthy() {
+        use crate::embedding::test_helpers::MockEmbedding;
+        let (db, _tmp) = test_db();
+        let embedding = MockEmbedding::new(1024);
+        let result = doctor_check(&db, &embedding).await.unwrap();
+        assert_eq!(result["overall_healthy"], true);
+        assert_eq!(result["database"]["available"], true);
+        assert_eq!(result["embedding_provider"]["available"], true);
+        assert_eq!(result["embedding_provider"]["dimension"], 1024);
+        assert!(result.get("hint").is_none());
+    }
+
+    #[test]
+    fn test_doctor_op_in_schema() {
+        let tools = crate::mcp::tools::tools_list();
+        let tools_arr = tools["tools"].as_array().unwrap();
+        let fb = tools_arr.iter().find(|t| t["name"] == "factbase").unwrap();
+        let ops = fb["inputSchema"]["properties"]["op"]["enum"]
+            .as_array()
+            .unwrap();
+        let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
+        assert!(op_strs.contains(&"doctor"), "doctor should be a factbase op");
     }
 }

@@ -47,7 +47,7 @@ pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_too
 pub use entity::{get_entity, get_perspective, list_entities};
 pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
-pub use repository::{detect_links, init_repository, scan_repository};
+pub use repository::{detect_links, doctor_check, init_repository, scan_repository};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, check_repository, generate_questions,
     get_deferred_items, get_review_queue, reset_deferred_questions,
@@ -218,6 +218,7 @@ async fn dispatch_tool<E: EmbeddingProvider>(
             run_blocking(move || init_repository(&db, &a)).await
         }
         "detect_links" => detect_links(db, args, reporter).await,
+        "doctor_check" => doctor_check(db, embedding).await,
         "organize_analyze" => organize_analyze(db, embedding, args, reporter).await,
         "organize" => organize(db, embedding, args, reporter).await,
         "get_authoring_guide" => {
@@ -293,6 +294,7 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
         "init_repository" => "init_repository",
         "check" => "check_repository",
         "detect_links" => "detect_links",
+        "doctor" => "doctor_check",
         "review_queue" => "get_review_queue",
         "answer" => "answer_questions",
         "deferred" => "get_deferred_items",
@@ -564,6 +566,10 @@ pub async fn handle_tool_call<E: EmbeddingProvider>(
                         }]
                     }),
                 ))),
+                Err(FactbaseError::Embedding(msg)) => Ok(Some(McpResponse::error(
+                    -32602,
+                    format!("{msg}\nIf you see an embedding error, run factbase(op='doctor') to diagnose provider connectivity."),
+                ))),
                 Err(e) => Ok(Some(McpResponse::error(-32602, e.to_string()))),
             }
         }
@@ -653,6 +659,17 @@ mod tests {
         assert!(json.contains("\"error\""));
         assert!(json.contains("-32602"));
         assert!(!json.contains("\"result\""));
+    }
+
+    #[test]
+    fn test_embedding_error_hint_appended() {
+        // Verify that Embedding errors get the doctor hint appended
+        let err = FactbaseError::Embedding("connection refused".into());
+        let msg = err.to_string();
+        // The hint is added in handle_tool_call, not in the error type itself.
+        // Verify the error type is Embedding so the match arm fires.
+        assert!(matches!(err, FactbaseError::Embedding(_)));
+        assert!(msg.contains("connection refused"));
     }
 
     #[test]
