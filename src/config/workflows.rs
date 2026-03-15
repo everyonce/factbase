@@ -142,7 +142,7 @@ impl WorkflowsConfig {
 /// | `setup.validate_ok` | `detail` |
 /// | `setup.validate_error` | `detail` |
 /// | `setup.create` | `format_rules` |
-/// | `setup.scan` | _(none)_ |
+/// | `setup.scan` | `path` |
 /// | `setup.complete` | _(none)_ |
 /// | `resolve.queue` | `ctx`, `deferred_note` |
 /// | `resolve.answer` | `stale`, `ctx` |
@@ -168,7 +168,7 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("setup.validate_ok", &["detail"]),
         ("setup.validate_error", &["detail"]),
         ("setup.create", &["format_rules"]),
-        ("setup.scan", &[] as &[&str]),
+        ("setup.scan", &["path"] as &[&str]),
         ("setup.complete", &[] as &[&str]),
         ("resolve.queue", &["ctx", "deferred_note"]),
         ("resolve.answer", &["stale", "ctx"]),
