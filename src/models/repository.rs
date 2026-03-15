@@ -180,7 +180,7 @@ pub struct Repository {
     /// When documents were last indexed
     pub last_indexed_at: Option<DateTime<Utc>>,
     /// When lint was last run
-    pub last_check_at: Option<DateTime<Utc>>,
+    pub last_lint_at: Option<DateTime<Utc>>,
 }
 
 impl Repository {
@@ -209,7 +209,7 @@ mod tests {
             perspective: None,
             created_at: Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         let json = repo.to_summary_json(5);
         assert_eq!(json["id"], "test");

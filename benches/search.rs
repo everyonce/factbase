@@ -41,7 +41,7 @@ fn setup_database(num_docs: usize) -> (TempDir, Database) {
         perspective: None,
         created_at: Utc::now(),
         last_indexed_at: None,
-        last_check_at: None,
+        last_lint_at: None,
     };
     db.add_repository(&repo).expect("Failed to add repository");
 

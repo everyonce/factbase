@@ -15,17 +15,17 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 16;
+pub(super) const SCHEMA_VERSION: i32 = 17;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
 /// Version 1 is the baseline schema (created by init_schema).
 pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
-    // Version 2: Add last_lint_at column (renamed to last_check_at in v8)
+    // Version 2: Add last_lint_at column (renamed to last_check_at in v8, restored in v17)
     (
         2,
-        "Add last_check_at to repositories",
-        "ALTER TABLE repositories ADD COLUMN last_check_at TIMESTAMP;",
+        "Add last_lint_at to repositories",
+        "ALTER TABLE repositories ADD COLUMN last_lint_at TIMESTAMP;",
     ),
     // Version 3: Add index on file_modified_at for --since filter performance
     (
@@ -57,7 +57,7 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         "Add FTS5 full-text search index",
         "CREATE VIRTUAL TABLE IF NOT EXISTS document_content_fts USING fts5(doc_id UNINDEXED, content);",
     ),
-    // Version 8: Rename last_lint_at → last_check_at
+    // Version 8: Rename last_lint_at → last_check_at (reverted in v17)
     (
         8,
         "Rename last_lint_at to last_check_at",
@@ -186,6 +186,12 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         CREATE INDEX IF NOT EXISTS idx_rq_status ON review_questions(status);
         CREATE INDEX IF NOT EXISTS idx_rq_type ON review_questions(question_type);",
     ),
+    // Version 17: Rename last_check_at back to last_lint_at
+    (
+        17,
+        "Rename last_check_at to last_lint_at",
+        "ALTER TABLE repositories RENAME COLUMN last_check_at TO last_lint_at;",
+    ),
 ];
 
 impl Database {
@@ -203,7 +209,7 @@ impl Database {
                 perspective TEXT,
                 created_at TIMESTAMP NOT NULL,
                 last_indexed_at TIMESTAMP,
-                last_check_at TIMESTAMP
+                last_lint_at TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS documents (
                 id TEXT PRIMARY KEY,
@@ -782,5 +788,70 @@ mod tests {
             .expect("query table");
 
         assert!(table_exists, "query_embedding_cache table should exist");
+    }
+
+    #[test]
+    fn test_last_lint_at_column_exists() {
+        let temp = TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+        let _db = Database::new(&db_path).expect("create database");
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open connection");
+        let column_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('repositories') WHERE name = 'last_lint_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query column");
+
+        assert!(column_exists, "last_lint_at column should exist in repositories table");
+    }
+
+    #[test]
+    fn test_migration_v17_renames_last_check_at() {
+        // Simulate a v16 database that has last_check_at and apply migration v17
+        let temp = TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+
+        // Create a database with last_check_at (simulating pre-v17 state)
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open connection");
+            conn.execute_batch(
+                "CREATE TABLE repositories (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    path TEXT UNIQUE NOT NULL,
+                    perspective TEXT,
+                    created_at TIMESTAMP NOT NULL,
+                    last_indexed_at TIMESTAMP,
+                    last_check_at TIMESTAMP
+                );
+                PRAGMA user_version = 16;",
+            )
+            .expect("create table");
+        }
+
+        // Opening the database should apply migration v17
+        let db = Database::new(&db_path).expect("open database");
+        let conn = db.get_conn().expect("get connection");
+
+        let has_lint_at: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('repositories') WHERE name = 'last_lint_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query column");
+        assert!(has_lint_at, "last_lint_at should exist after migration v17");
+
+        let has_check_at: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('repositories') WHERE name = 'last_check_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query column");
+        assert!(!has_check_at, "last_check_at should not exist after migration v17");
     }
 }

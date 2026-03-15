@@ -3,7 +3,6 @@
 use factbase::config::Config;
 use reqwest::Client;
 use serde::Serialize;
-use std::path::Path;
 
 /// Status of a single health check.
 #[derive(Serialize)]
@@ -40,28 +39,31 @@ pub struct DoctorOutput {
 
 /// Check database connectivity and return status.
 pub fn check_database(config: &Config) -> (bool, CheckStatus, String) {
-    let db_path = shellexpand::tilde(&config.database.path).to_string();
+    let db_path = std::env::current_dir()
+        .map(|d| d.join(".factbase").join("factbase.db"))
+        .unwrap_or_else(|_| std::path::PathBuf::from(".factbase/factbase.db"));
+    let db_path_str = db_path.to_string_lossy().to_string();
 
-    match config.open_database(Path::new(&db_path)) {
+    match config.open_database(&db_path) {
         Ok(db) => match db.health_check() {
             Ok(()) => {
                 let repos = db.list_repositories().unwrap_or_default();
                 (
                     true,
                     CheckStatus::ok(),
-                    format!("{} ({} repos)", db_path, repos.len()),
+                    format!("{} ({} repos)", db_path_str, repos.len()),
                 )
             }
             Err(e) => (
                 false,
                 CheckStatus::err(format!("health check failed: {e}")),
-                db_path,
+                db_path_str,
             ),
         },
         Err(e) => (
             false,
             CheckStatus::err(format!("cannot open: {e}")),
-            db_path,
+            db_path_str,
         ),
     }
 }

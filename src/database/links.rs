@@ -446,7 +446,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.add_repository(&repo2)
             .expect("add_repository repo2 should succeed");
@@ -656,7 +656,7 @@ mod tests {
             perspective: None,
             created_at: chrono::Utc::now(),
             last_indexed_at: None,
-            last_check_at: None,
+            last_lint_at: None,
         };
         db.add_repository(&repo2).unwrap();
         assert!(!db.has_links_for_repo("other-repo").unwrap());
