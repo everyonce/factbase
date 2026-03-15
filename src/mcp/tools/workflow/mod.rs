@@ -1942,6 +1942,60 @@ mod tests {
     }
 
     #[test]
+    fn test_ingest_create_has_glossary_maintenance() {
+        let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("definitions/"),
+            "ingest create must mention definitions/ folder for glossary"
+        );
+        assert!(
+            instruction.contains("factbase(op='list'"),
+            "ingest create must tell agent to check existing glossary"
+        );
+        assert!(
+            instruction.contains("ambiguous questions"),
+            "ingest create must explain why glossary prevents ambiguous questions"
+        );
+    }
+
+    #[test]
+    fn test_resolve_intro_ambiguous_requires_glossary_entry() {
+        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        assert!(
+            intro.contains("AMBIGUOUS"),
+            "resolve intro must have AMBIGUOUS guidance"
+        );
+        assert!(
+            intro.contains("glossary entry IS the fix"),
+            "resolve intro must explain glossary entry is the permanent fix"
+        );
+        assert!(
+            intro.contains("definitions/"),
+            "resolve intro must direct agent to create definitions/ entry"
+        );
+        assert!(
+            intro.contains("temporary fix"),
+            "resolve intro must contrast permanent vs temporary fix"
+        );
+    }
+
+    #[test]
+    fn test_enrich_research_has_glossary_maintenance() {
+        let (db, _tmp) = test_db();
+        let step = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("Glossary maintenance"),
+            "enrich research must include glossary maintenance instruction"
+        );
+        assert!(
+            instruction.contains("definitions/"),
+            "enrich research must mention definitions/ folder"
+        );
+    }
+
+    #[test]
     fn test_resolve_intro_has_weak_source_guidance() {
         let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
         assert!(
