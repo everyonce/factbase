@@ -407,7 +407,7 @@ pub(super) fn load_review_docs_from_disk(db: &Database) -> Vec<Document> {
             if let Some(disk) = abs_path.and_then(|p| std::fs::read_to_string(p).ok()) {
                 doc.content = disk;
             }
-            if doc.content.contains(crate::patterns::REVIEW_QUEUE_MARKER) {
+            if crate::patterns::has_review_section(&doc.content) {
                 Some(doc)
             } else {
                 None

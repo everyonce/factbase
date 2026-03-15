@@ -48,16 +48,18 @@ def convert_review_to_callout(content):
           > 
     
     After:
-        > [!info]- Review Queue
-        > <!-- factbase:review -->
+        > [!review]- Review Queue
         > - [ ] `@q[temporal]` ...
         >   > 
     """
     marker = '<!-- factbase:review -->'
+    callout_header = '> [!review]- Review Queue'
+    legacy_callout_header = '> [!info]- Review Queue'
     if marker not in content:
         return content
-    # Already in callout format
-    if f'> {marker}' in content:
+    # Already in callout format (check for callout header line)
+    lines_check = content.split('\n')
+    if any(l.strip() in (callout_header, legacy_callout_header) for l in lines_check):
         return content
     
     # Find the review section start (look for --- before ## Review Queue)
@@ -96,13 +98,13 @@ def convert_review_to_callout(content):
     while body_end > 0 and lines[body_end - 1].strip() == '':
         body_end -= 1
     
-    # Collect review content lines (from marker onward)
-    review_lines = lines[marker_idx:]
+    # Collect review content lines (from AFTER marker onward — skip the marker itself)
+    review_lines = lines[marker_idx + 1:]
     
-    # Build result
+    # Build result: callout header only, no HTML marker inside
     result_lines = lines[:body_end]
     result_lines.append('')
-    result_lines.append('> [!info]- Review Queue')
+    result_lines.append(callout_header)
     for line in review_lines:
         if line.strip() == '':
             result_lines.append('>')

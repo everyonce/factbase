@@ -1509,10 +1509,11 @@ Content here
 
     #[test]
     fn test_remove_processed_questions_callout_roundtrip() {
-        // Start with callout → remove one question → verify still callout
-        let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> <!-- factbase:review -->\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
+        // Start with callout (new format, no marker inside) → remove one question → verify still callout
+        let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
         let result = remove_processed_questions(content, &[0]);
         assert!(result.contains("> [!review]- Review Queue"));
-        assert!(result.contains("> <!-- factbase:review -->"));
+        assert!(!result.contains("> <!-- factbase:review -->"), "New format should not have marker inside callout");
+        assert!(result.contains("> - [ ] `@q[stale]` Q1"));
     }
 }

@@ -7,44 +7,35 @@ use crate::patterns::{REVIEW_CALLOUT_HEADER, REVIEW_CALLOUT_HEADER_LEGACY, REVIE
 
 /// Detect whether the review section uses Obsidian callout format.
 ///
-/// Looks for `> <!-- factbase:review -->` (marker prefixed with `> `).
+/// Checks for the callout header line `> [!review]- Review Queue` (or legacy
+/// `> [!info]- Review Queue`). This is the primary detection method; the HTML
+/// marker inside the callout is no longer required.
 pub fn is_callout_review(content: &str) -> bool {
-    content.contains(&format!("> {REVIEW_QUEUE_MARKER}"))
+    content.lines().any(|l| {
+        let t = l.trim();
+        t == REVIEW_CALLOUT_HEADER || t == REVIEW_CALLOUT_HEADER_LEGACY
+    })
 }
 
 /// Convert callout-wrapped review section to plain format for processing.
 ///
 /// Returns `(unwrapped_content, was_callout)`. If the content doesn't use
 /// callout format, returns it unchanged with `false`.
+///
+/// When unwrapping, injects `<!-- factbase:review -->` after `## Review Queue`
+/// if not already present, so all inner processing functions work unchanged.
 pub fn unwrap_review_callout(content: &str) -> (String, bool) {
     if !is_callout_review(content) {
         return (content.to_string(), false);
     }
 
     // Find the callout header line (accept both current and legacy header)
-    let mut lines: Vec<&str> = content.lines().collect();
+    let lines: Vec<&str> = content.lines().collect();
     let callout_start = lines.iter().position(|l| {
         l.trim() == REVIEW_CALLOUT_HEADER || l.trim() == REVIEW_CALLOUT_HEADER_LEGACY
     });
     let Some(start_idx) = callout_start else {
-        // Has `> <!-- factbase:review -->` but no callout header — strip `> ` from marker line onward
-        let marker_line = lines
-            .iter()
-            .position(|l| l.trim() == format!("> {REVIEW_QUEUE_MARKER}"));
-        if let Some(idx) = marker_line {
-            for line in &mut lines[idx..] {
-                *line = line
-                    .strip_prefix("> ")
-                    .or_else(|| line.strip_prefix(">"))
-                    .unwrap_or(line);
-            }
-            // Insert plain heading before marker
-            let heading = vec!["---", "", "## Review Queue", ""];
-            let mut result: Vec<&str> = lines[..idx].to_vec();
-            result.extend_from_slice(&heading);
-            result.extend_from_slice(&lines[idx..]);
-            return (result.join("\n"), true);
-        }
+        // Has callout header detection but no header line found — shouldn't happen
         return (content.to_string(), false);
     };
 
@@ -69,12 +60,26 @@ pub fn unwrap_review_callout(content: &str) -> (String, bool) {
     result.push(String::new());
 
     // Strip `> ` from remaining lines (skip the callout header itself)
+    let mut has_marker = false;
     for line in &lines[start_idx + 1..] {
         let stripped = line
             .strip_prefix("> ")
             .or_else(|| line.strip_prefix(">"))
             .unwrap_or(line);
+        if stripped.trim() == REVIEW_QUEUE_MARKER {
+            has_marker = true;
+        }
         result.push(stripped.to_string());
+    }
+
+    // Inject marker if not present (new callout format without HTML comment)
+    if !has_marker {
+        // Find the position after "## Review Queue\n\n" in result and insert marker
+        let heading_idx = result
+            .iter()
+            .rposition(|l| l.trim() == "## Review Queue")
+            .unwrap_or(result.len() - 1);
+        result.insert(heading_idx + 1, REVIEW_QUEUE_MARKER.to_string());
     }
 
     (result.join("\n"), true)
@@ -84,6 +89,8 @@ pub fn unwrap_review_callout(content: &str) -> (String, bool) {
 ///
 /// Finds the review section (separator + heading + marker + questions) and
 /// wraps it in a collapsed `> [!review]- Review Queue` callout.
+/// The `<!-- factbase:review -->` marker is NOT written inside the callout —
+/// the callout header itself is the primary section marker.
 pub fn wrap_review_callout(content: &str) -> String {
     if !content.contains(REVIEW_QUEUE_MARKER) {
         return content.to_string();
@@ -106,14 +113,14 @@ pub fn wrap_review_callout(content: &str) -> String {
             .to_string();
     }
 
-    // Find the marker in the review area and collect lines after it
+    // Find the marker in the review area and collect lines AFTER it (skip marker itself)
     let mut review_lines: Vec<&str> = Vec::new();
     let mut found_marker = false;
     for line in review_area.lines() {
         let t = line.trim();
         if t == REVIEW_QUEUE_MARKER {
             found_marker = true;
-            review_lines.push(line);
+            // Do NOT include the marker line in the callout output
         } else if found_marker {
             review_lines.push(line);
         }
@@ -186,7 +193,7 @@ mod tests {
         let content = "# Doc\n\nSome fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
         let result = wrap_review_callout(content);
         assert!(result.contains("> [!review]- Review Queue"));
-        assert!(result.contains("> <!-- factbase:review -->"));
+        assert!(!result.contains("> <!-- factbase:review -->"), "Marker should not appear inside callout");
         assert!(result.contains("> - [ ] `@q[temporal]` When?"));
         assert!(!result.contains("---\n\n## Review Queue"));
     }
@@ -235,8 +242,8 @@ mod tests {
             "Should have callout header, got:\n{result}"
         );
         assert!(
-            result.contains("> <!-- factbase:review -->"),
-            "Should have callout marker"
+            !result.contains("> <!-- factbase:review -->"),
+            "Should NOT have HTML marker inside callout"
         );
         assert!(
             result.contains("> - [ ] `@q[temporal]`"),
@@ -304,8 +311,8 @@ mod tests {
             "Should create callout section"
         );
         assert!(
-            result.contains("> <!-- factbase:review -->"),
-            "Should have callout marker"
+            !result.contains("> <!-- factbase:review -->"),
+            "Should NOT have HTML marker inside callout"
         );
     }
 
@@ -368,5 +375,36 @@ mod tests {
             rewrapped.contains("> [!review]- Review Queue"),
             "Re-wrap should use new header"
         );
+    }
+
+    #[test]
+    fn test_new_callout_format_no_marker_inside() {
+        // New format: callout header only, no HTML comment inside
+        let content = "# Doc\n\nSome fact\n\n> [!review]- Review Queue\n> - [ ] `@q[temporal]` When was this true?\n>   > \n";
+        // Should be detected as callout
+        assert!(is_callout_review(content), "Should detect callout by header");
+        // Should parse questions correctly
+        let questions = parse_review_queue(content).unwrap();
+        assert_eq!(questions.len(), 1);
+        assert_eq!(questions[0].description, "When was this true?");
+        // Unwrap should inject marker for inner processing
+        let (unwrapped, was_callout) = unwrap_review_callout(content);
+        assert!(was_callout);
+        assert!(unwrapped.contains("<!-- factbase:review -->"), "Unwrap should inject marker");
+        // Re-wrap should produce new format (no marker inside)
+        let rewrapped = wrap_review_callout(&unwrapped);
+        assert!(rewrapped.contains("> [!review]- Review Queue"));
+        assert!(!rewrapped.contains("> <!-- factbase:review -->"), "New format should not have marker inside");
+    }
+
+    #[test]
+    fn test_parse_review_queue_new_callout_no_marker() {
+        // New format: callout without HTML comment
+        let content = "# Doc\n\n> [!review]- Review Queue\n> - [ ] `@q[missing]` Source needed\n>   > \n> - [x] `@q[temporal]` When?\n> > believed: 2024\n";
+        let questions = parse_review_queue(content).unwrap();
+        assert_eq!(questions.len(), 2);
+        assert_eq!(questions[0].question_type, QuestionType::Missing);
+        assert!(!questions[0].answered);
+        assert!(questions[1].answered);
     }
 }
