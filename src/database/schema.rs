@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 18;
+pub(super) const SCHEMA_VERSION: i32 = 19;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -187,16 +187,23 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         CREATE INDEX IF NOT EXISTS idx_rq_type ON review_questions(question_type);",
     ),
     // Version 17: Rename last_check_at back to last_lint_at
+    // SQL is empty — handled in post-migration hook to be idempotent
     (
         17,
         "Rename last_check_at to last_lint_at",
-        "ALTER TABLE repositories RENAME COLUMN last_check_at TO last_lint_at;",
+        "",
     ),
     // Version 18: Composite index on review_questions(doc_id, status) for status-filtered queries
     (
         18,
         "Add composite index on review_questions(doc_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_review_questions_doc_status ON review_questions(doc_id, status);",
+    ),
+    // Version 19: Track review section hash separately for review-only change detection
+    (
+        19,
+        "Add review_section_hash to documents",
+        "", // handled in post-migration hook (idempotent column add)
     ),
 ];
 
@@ -231,6 +238,7 @@ impl Database {
                 word_count INTEGER,
                 cross_check_hash TEXT,
                 has_review_queue BOOLEAN DEFAULT FALSE,
+                review_section_hash TEXT,
                 UNIQUE(repo_id, file_path),
                 FOREIGN KEY (repo_id) REFERENCES repositories(id)
             );
@@ -461,12 +469,37 @@ impl Database {
                 if *version == 16 {
                     Self::backfill_review_questions(conn)?;
                 }
+                if *version == 17 {
+                    Self::rename_check_at_to_lint_at(conn)?;
+                }
+                if *version == 18 {
+                    Self::add_review_section_hash_column(conn)?;
+                }
 
                 Self::set_schema_version(conn, *version)?;
                 tracing::info!("Migration {} complete", version);
             }
         }
 
+        Ok(())
+    }
+
+    /// Idempotently rename last_check_at → last_lint_at (migration 17).
+    /// Skips the rename if last_lint_at already exists (handles databases where
+    /// both columns were present due to a prior inconsistent migration state).
+    fn rename_check_at_to_lint_at(conn: &DbConn) -> Result<(), FactbaseError> {
+        let has_lint_at: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('repositories') WHERE name = 'last_lint_at'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_lint_at {
+            conn.execute_batch(
+                "ALTER TABLE repositories RENAME COLUMN last_check_at TO last_lint_at;",
+            )?;
+        }
         Ok(())
     }
 
@@ -584,6 +617,23 @@ impl Database {
         }
         if count > 0 {
             tracing::info!("Backfilled FTS5 index for {} documents", count);
+        }
+        Ok(())
+    }
+
+    /// Add review_section_hash column if it doesn't already exist (idempotent).
+    fn add_review_section_hash_column(conn: &DbConn) -> Result<(), FactbaseError> {
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('documents') WHERE name = 'review_section_hash'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !exists {
+            conn.execute_batch(
+                "ALTER TABLE documents ADD COLUMN review_section_hash TEXT;",
+            )?;
         }
         Ok(())
     }
@@ -812,6 +862,50 @@ mod tests {
             .expect("query column");
 
         assert!(column_exists, "last_lint_at column should exist in repositories table");
+    }
+
+    #[test]
+    fn test_migration_v17_idempotent_when_lint_at_already_exists() {
+        // Simulate a database that somehow has both last_check_at AND last_lint_at
+        // (the broken state described in the bug report). Migration v17 must not fail.
+        let temp = TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open connection");
+            conn.execute_batch(
+                "CREATE TABLE repositories (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    path TEXT UNIQUE NOT NULL,
+                    perspective TEXT,
+                    created_at TIMESTAMP NOT NULL,
+                    last_indexed_at TIMESTAMP,
+                    last_check_at TIMESTAMP
+                );
+                PRAGMA user_version = 16;",
+            )
+            .expect("create table");
+            // Simulate the broken state: last_lint_at was added via ALTER TABLE
+            // while last_check_at still exists.
+            conn.execute_batch(
+                "ALTER TABLE repositories ADD COLUMN last_lint_at TIMESTAMP;",
+            )
+            .expect("add duplicate column");
+        }
+
+        // Opening the database must succeed (not panic or return an error).
+        let db = Database::new(&db_path).expect("open database with duplicate column state");
+        let conn = db.get_conn().expect("get connection");
+
+        let has_lint_at: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('repositories') WHERE name = 'last_lint_at'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query column");
+        assert!(has_lint_at, "last_lint_at should exist after migration v17");
     }
 
     #[test]
