@@ -194,6 +194,16 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
             &["correction", "source_note", "source_footnote", "today"],
         ),
         ("correct.cleanup", &["correction", "source"]),
+        ("transition.parse", &["change", "source_note", "today"]),
+        ("transition.nomenclature_question", &["change"]),
+        ("transition.search", &["nomenclature", "change"]),
+        (
+            "transition.apply",
+            &["change", "nomenclature", "effective_date", "source_note", "source_footnote"],
+        ),
+        ("transition.organize", &[] as &[&str]),
+        ("transition.maintain", &[] as &[&str]),
+        ("transition.report", &["change", "effective_date", "source", "nomenclature"]),
     ])
 }
 
@@ -309,7 +319,7 @@ mod tests {
     #[test]
     fn test_known_workflows_count() {
         let known = known_workflows();
-        assert_eq!(known.len(), 28);
+        assert_eq!(known.len(), 35);
     }
 
     #[test]
