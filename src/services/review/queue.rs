@@ -21,6 +21,9 @@ pub struct ReviewQueueParams {
 }
 
 /// Gets pending review questions — reads from DB index for fast access.
+/// Falls back to parsing document content when the DB index is empty but
+/// documents with review sections exist (e.g. after external edits that
+/// bypassed the scanner).
 #[instrument(name = "svc_get_review_queue", skip(db, params, progress))]
 pub fn get_review_queue(
     db: &Database,
@@ -34,7 +37,7 @@ pub fn get_review_queue(
     progress.log("Querying review questions from DB index");
 
     let db_params = ReviewQueueDbParams {
-        repo_id: repo_filter,
+        repo_id: repo_filter.clone(),
         doc_id: params.doc_id.clone(),
         question_type: params.question_type.clone(),
         status_filter: status_filter.clone(),
@@ -45,8 +48,41 @@ pub fn get_review_queue(
     let (questions, total_answered, total_unanswered, total_deferred) =
         db.query_review_questions_db(&db_params)?;
 
-    let returned = questions.len();
     let total = total_answered + total_unanswered + total_deferred;
+
+    // Fallback: if DB index is empty but documents with review sections exist,
+    // re-sync from stored content and re-query. This handles the case where
+    // review edits were made externally and the scanner hasn't run yet.
+    if total == 0 && params.doc_id.is_none() {
+        let docs_with_reviews =
+            db.get_documents_with_review_queue(repo_filter.as_deref())?;
+        if !docs_with_reviews.is_empty() {
+            progress.log("DB review index empty — re-syncing from stored content");
+            for doc in &docs_with_reviews {
+                if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
+                    let _ = db.sync_review_questions(&doc.id, &questions);
+                }
+            }
+            // Re-query after sync
+            let (questions2, ans2, unans2, def2) =
+                db.query_review_questions_db(&db_params)?;
+            let returned2 = questions2.len();
+            let total2 = ans2 + unans2 + def2;
+            return Ok(serde_json::json!({
+                "questions": questions2,
+                "total": total2,
+                "returned": returned2,
+                "offset": params.offset,
+                "limit": limit,
+                "answered": ans2,
+                "deferred": def2,
+                "unanswered": unans2,
+                "status_filter": status_filter
+            }));
+        }
+    }
+
+    let returned = questions.len();
 
     Ok(serde_json::json!({
         "questions": questions,
@@ -178,5 +214,50 @@ mod tests {
         let items = result["deferred_items"].as_array().unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0]["type"], "missing");
+    }
+
+    /// When DB review index is empty but documents with review sections exist,
+    /// get_review_queue should fall back to parsing stored content and re-sync.
+    #[test]
+    fn test_get_review_queue_fallback_when_db_empty() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "fb0001".to_string();
+        doc.repo_id = "test".to_string();
+        doc.content = "---\nfactbase_id: fb0001\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n".to_string();
+        db.upsert_document(&doc).unwrap();
+        // Intentionally do NOT call sync_review_questions — simulates stale DB index
+
+        let params = ReviewQueueParams {
+            limit: 10,
+            ..Default::default()
+        };
+        let result = get_review_queue(&db, &params, &ProgressReporter::Silent).unwrap();
+        // Fallback should have found and synced the question
+        assert_eq!(result["unanswered"], 1, "fallback should surface the unanswered question");
+        assert_eq!(result["total"], 1);
+    }
+
+    /// Fallback should not trigger when DB already has questions.
+    #[test]
+    fn test_get_review_queue_no_fallback_when_db_populated() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "fb0002".to_string();
+        doc.repo_id = "test".to_string();
+        doc.content = "---\nfactbase_id: fb0002\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n".to_string();
+        db.upsert_document(&doc).unwrap();
+        db.sync_review_questions("fb0002", &[make_question(QuestionType::Stale, "Is this current? (line 3)")]).unwrap();
+
+        let params = ReviewQueueParams {
+            limit: 10,
+            ..Default::default()
+        };
+        let result = get_review_queue(&db, &params, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["unanswered"], 1);
     }
 }
