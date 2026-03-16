@@ -1985,12 +1985,12 @@ mod tests {
         let step = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(
-            instruction.contains("Glossary maintenance"),
+            instruction.contains("GLOSSARY DISCIPLINE"),
             "enrich research must include glossary maintenance instruction"
         );
         assert!(
-            instruction.contains("definitions/"),
-            "enrich research must mention definitions/ folder"
+            instruction.contains("definition entry FIRST"),
+            "enrich research must say to add definition entry first"
         );
     }
 
