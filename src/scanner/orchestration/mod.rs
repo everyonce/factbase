@@ -49,6 +49,7 @@ pub(super) struct PreReadFile {
     pub path: PathBuf,
     pub content: Result<String, String>,
     pub hash: Option<String>,
+    pub review_section_hash: Option<String>,
     pub existing_id: Option<String>,
     pub modified_at: Option<DateTime<Utc>>,
 }
@@ -70,12 +71,14 @@ pub(super) fn pre_read_files(files: Vec<PathBuf>) -> Vec<PreReadFile> {
         .into_par_iter()
         .map(|path| {
             let content = fs::read_to_string(&path).map_err(|e| e.to_string());
-            let (hash, existing_id) = if let Ok(ref c) = content {
+            let (hash, review_section_hash, existing_id) = if let Ok(ref c) = content {
                 let h = content_hash(c);
+                let rh = crate::patterns::extract_review_queue_section(c)
+                    .map(|s| content_hash(s));
                 let id = DocumentProcessor::extract_id_static(c);
-                (Some(h), id)
+                (Some(h), rh, id)
             } else {
-                (None, None)
+                (None, None, None)
             };
             let modified_at = fs::metadata(&path)
                 .and_then(|m| m.modified())
@@ -85,6 +88,7 @@ pub(super) fn pre_read_files(files: Vec<PathBuf>) -> Vec<PreReadFile> {
                 path,
                 content,
                 hash,
+                review_section_hash,
                 existing_id,
                 modified_at,
             }
@@ -341,10 +345,41 @@ pub async fn full_scan(
             let is_modified = known.get(&id).is_some_and(|d| d.file_hash != hash);
             let is_moved = known.get(&id).is_some_and(|d| d.file_path != relative);
 
+            // Detect review-only change: full hash changed but document body is identical.
+            // In this case we skip re-embedding and only re-sync review questions.
+            let is_review_only_change = is_modified && !is_new && !ctx.opts.dry_run && {
+                let db_doc = known.get(&id).unwrap();
+                let new_body_hash =
+                    content_hash(crate::patterns::content_body(&content));
+                let stored_body_hash =
+                    content_hash(crate::patterns::content_body(&db_doc.content));
+                new_body_hash == stored_body_hash
+            };
+
             // Skip unchanged documents unless force_reindex is set
             if !is_new && !is_modified && !is_moved && !ctx.opts.force_reindex {
                 if ctx.opts.verbose || ctx.opts.dry_run {
                     println!("  UNCHANGED {}", pre.path.display());
+                }
+                result.unchanged += 1;
+                continue;
+            }
+
+            // Review-only change: re-sync questions, update hash, skip embedding
+            if is_review_only_change && !is_moved {
+                if ctx.opts.verbose {
+                    println!("  REVIEW-SYNC {relative}");
+                }
+                let new_review_hash = pre
+                    .review_section_hash
+                    .as_deref()
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let _ = db.update_review_section_hash(&id, &new_review_hash, &hash);
+                if crate::patterns::has_review_section(&content) {
+                    if let Some(questions) = crate::processor::parse_review_queue(&content) {
+                        let _ = db.sync_review_questions(&id, &questions);
+                    }
                 }
                 result.unchanged += 1;
                 continue;
@@ -1895,5 +1930,73 @@ mod tests {
 
         let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
         assert_eq!(unanswered, 3, "all 3 docs should have review questions synced");
+    }
+
+    /// Review-only change: editing the review section without changing the body
+    /// should re-sync questions without re-embedding.
+    #[tokio::test]
+    async fn test_full_scan_review_only_change_syncs_questions() {
+        let (db, _tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let scanner = crate::scanner::Scanner::new(Default::default());
+        let processor = DocumentProcessor::new();
+        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+
+        // Initial content: body + review section with one open question
+        let initial_content = "---\nfactbase_id: ab0001\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n";
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, initial_content).unwrap();
+
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Verify initial question synced
+        let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert_eq!(unanswered, 1);
+
+        // Simulate user adding defer: answer in Obsidian (review section changes, body unchanged)
+        let edited_content = "---\nfactbase_id: ab0001\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n  > defer: needs more research\n";
+        std::fs::write(&path, edited_content).unwrap();
+
+        let result = full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Doc should be counted as unchanged (no re-embedding)
+        assert_eq!(result.unchanged, 1, "review-only change should count as unchanged");
+
+        // But review questions should be re-synced (deferred question now)
+        let (_, unanswered2, deferred) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert_eq!(unanswered2, 0, "question should no longer be unanswered");
+        assert_eq!(deferred, 1, "question should be deferred after sync");
+    }
+
+    /// pre_read_files should compute review_section_hash for docs with review sections.
+    #[test]
+    fn test_pre_read_files_computes_review_section_hash() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("doc.md");
+        let content = "---\nfactbase_id: abc123\n---\n# Doc\n\nFact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Q? (line 3)\n";
+        std::fs::write(&p, content).unwrap();
+
+        let results = pre_read_files(vec![p]);
+        assert!(results[0].review_section_hash.is_some(), "should compute review section hash");
+
+        // Hash should differ from full content hash
+        let full_hash = results[0].hash.as_ref().unwrap();
+        let review_hash = results[0].review_section_hash.as_ref().unwrap();
+        assert_ne!(full_hash, review_hash);
+    }
+
+    /// pre_read_files should return None review_section_hash for docs without review sections.
+    #[test]
+    fn test_pre_read_files_no_review_section_hash_when_absent() {
+        let tmp = TempDir::new().unwrap();
+        let p = tmp.path().join("doc.md");
+        std::fs::write(&p, "# Doc\n\nJust a fact.\n").unwrap();
+
+        let results = pre_read_files(vec![p]);
+        assert!(results[0].review_section_hash.is_none(), "no review section → no hash");
     }
 }

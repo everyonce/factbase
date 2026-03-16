@@ -29,6 +29,8 @@ impl Database {
         // Calculate word count for efficient stats queries
         let word_count = crate::models::word_count(&doc.content) as i64;
         let has_review_queue = crate::patterns::has_review_section(&doc.content);
+        let review_section_hash = crate::patterns::extract_review_queue_section(&doc.content)
+            .map(|s| crate::processor::content_hash(s));
 
         // Remove any stale document at the same path with a different ID.
         // This handles the case where a file's factbase ID was regenerated.
@@ -67,14 +69,23 @@ impl Database {
             "DELETE FROM fact_metadata WHERE document_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
             rusqlite::params![doc.repo_id, doc.file_path, doc.id],
         )?;
+        // Clean up review_questions and organization_suggestions (foreign keys on doc_id/document_id)
+        conn.execute(
+            "DELETE FROM review_questions WHERE doc_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
+        conn.execute(
+            "DELETE FROM organization_suggestions WHERE doc_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3)",
+            rusqlite::params![doc.repo_id, doc.file_path, doc.id],
+        )?;
         conn.execute(
             "DELETE FROM documents WHERE repo_id = ?1 AND file_path = ?2 AND id != ?3",
             rusqlite::params![doc.repo_id, doc.file_path, doc.id],
         )?;
 
         conn.execute(
-            "INSERT INTO documents (id, repo_id, file_path, file_hash, title, doc_type, content, file_modified_at, indexed_at, is_deleted, word_count, has_review_queue)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, FALSE, ?10, ?11)
+            "INSERT INTO documents (id, repo_id, file_path, file_hash, title, doc_type, content, file_modified_at, indexed_at, is_deleted, word_count, has_review_queue, review_section_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, FALSE, ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET
                 repo_id = excluded.repo_id,
                 file_path = excluded.file_path,
@@ -86,10 +97,12 @@ impl Database {
                 indexed_at = excluded.indexed_at,
                 is_deleted = FALSE,
                 word_count = excluded.word_count,
-                has_review_queue = excluded.has_review_queue",
+                has_review_queue = excluded.has_review_queue,
+                review_section_hash = excluded.review_section_hash",
             rusqlite::params![
                 doc.id, doc.repo_id, doc.file_path, doc.file_hash, doc.title, doc.doc_type, content_to_store,
-                doc.file_modified_at.map(|t| t.to_rfc3339()), doc.indexed_at.to_rfc3339(), word_count, has_review_queue
+                doc.file_modified_at.map(|t| t.to_rfc3339()), doc.indexed_at.to_rfc3339(), word_count, has_review_queue,
+                review_section_hash
             ],
         )?;
         // Keep FTS5 index in sync
@@ -174,6 +187,36 @@ impl Database {
             return Err(doc_not_found(id));
         }
         Ok(())
+    }
+
+    /// Update the review section hash for a document.
+    /// Used when only the review section changed (body unchanged) to avoid re-embedding.
+    pub fn update_review_section_hash(
+        &self,
+        id: &str,
+        review_hash: &str,
+        full_hash: &str,
+    ) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "UPDATE documents SET review_section_hash = ?1, file_hash = ?2 WHERE id = ?3 AND is_deleted = FALSE",
+            rusqlite::params![review_hash, full_hash, id],
+        )?;
+        Ok(())
+    }
+
+    /// Get the stored review section hash for a document.
+    pub fn get_review_section_hash(&self, id: &str) -> Result<Option<String>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let result = conn
+            .query_row(
+                "SELECT review_section_hash FROM documents WHERE id = ?1 AND is_deleted = FALSE",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten();
+        Ok(result)
     }
 
     /// Update only the document title.
@@ -320,6 +363,8 @@ impl Database {
             let _ = conn.execute("DELETE FROM fact_embeddings WHERE id = ?1", [fact_id]);
         }
         conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [id])?;
+        conn.execute("DELETE FROM review_questions WHERE doc_id = ?1", [id])?;
+        conn.execute("DELETE FROM organization_suggestions WHERE doc_id = ?1", [id])?;
         conn.execute("DELETE FROM documents WHERE id = ?1", [id])?;
         if let Some(rid) = repo_id {
             self.invalidate_stats_cache(&rid);
@@ -366,6 +411,10 @@ impl Database {
         )?;
         conn.execute(
             &format!("DELETE FROM review_questions WHERE doc_id IN ({placeholders})"),
+            params.as_slice(),
+        )?;
+        conn.execute(
+            &format!("DELETE FROM organization_suggestions WHERE doc_id IN ({placeholders})"),
             params.as_slice(),
         )?;
         // fact_embeddings via subquery through fact_metadata
@@ -533,6 +582,78 @@ mod tests {
         assert_eq!(word_count, 5);
     }
 
+    #[test]
+    fn test_upsert_cleans_review_questions_and_suggestions_for_stale_doc() {
+        // Regression test: scan fails with FOREIGN KEY constraint failed when a document
+        // at the same path has a different ID and has review_questions / organization_suggestions.
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("create repo");
+
+        // Create old document at a specific path
+        let mut old_doc = test_doc_with_repo("old_id", "repo1", "Old Doc");
+        old_doc.file_path = "people/doc.md".to_string();
+        db.upsert_document(&old_doc).expect("upsert old doc");
+
+        // Add review_questions and organization_suggestions for the old doc
+        use crate::models::{QuestionType, ReviewQuestion};
+        let q = ReviewQuestion::new(QuestionType::Temporal, None, "When?".to_string());
+        db.sync_review_questions("old_id", &[q]).expect("sync review questions");
+        db.insert_suggestion("old_id", "move", "archive/", "update")
+            .expect("insert suggestion");
+
+        // Simulate scan finding a new ID at the same path (e.g. file had no ID header)
+        let mut new_doc = test_doc_with_repo("new_id", "repo1", "Old Doc");
+        new_doc.file_path = "people/doc.md".to_string();
+
+        // This must not fail with FOREIGN KEY constraint failed
+        db.upsert_document(&new_doc)
+            .expect("upsert new doc at same path should clean up stale FK rows");
+
+        // Old doc and its dependent rows should be gone
+        assert!(db.get_document("old_id").expect("query").is_none());
+        // New doc should exist
+        assert!(db.get_document("new_id").expect("query").is_some());
+    }
+
+    #[test]
+    fn test_hard_delete_cleans_review_questions_and_suggestions() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("create repo");
+
+        let doc = test_doc_with_repo("abc123", "repo1", "Test Doc");
+        db.upsert_document(&doc).expect("upsert");
+
+        use crate::models::{QuestionType, ReviewQuestion};
+        let q = ReviewQuestion::new(QuestionType::Missing, None, "Source?".to_string());
+        db.sync_review_questions("abc123", &[q]).expect("sync");
+        db.insert_suggestion("abc123", "rename", "new.md", "update")
+            .expect("insert suggestion");
+
+        // Must not fail with FOREIGN KEY constraint failed
+        db.hard_delete_document("abc123")
+            .expect("hard delete should clean up review_questions and organization_suggestions");
+    }
+
+    #[test]
+    fn test_purge_deleted_cleans_organization_suggestions() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("create repo");
+
+        let doc = test_doc_with_repo("abc123", "repo1", "Test Doc");
+        db.upsert_document(&doc).expect("upsert");
+        db.insert_suggestion("abc123", "move", "archive/", "update")
+            .expect("insert suggestion");
+
+        db.mark_deleted("abc123").expect("mark deleted");
+
+        // Must not fail with FOREIGN KEY constraint failed
+        let purged = db.purge_deleted_documents("repo1")
+            .expect("purge should clean up organization_suggestions");
+        assert_eq!(purged, 1);
+    }
     #[test]
     fn test_upsert_cleans_fact_metadata_for_stale_doc() {
         let (db, _temp) = test_db();
