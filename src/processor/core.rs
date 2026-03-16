@@ -41,12 +41,46 @@ impl DocumentProcessor {
     }
 
     /// Static version of extract_id for use in parallel contexts.
-    /// Checks YAML frontmatter for factbase ID.
+    ///
+    /// Checks for a factbase document ID in two formats (in priority order):
+    /// 1. YAML frontmatter: `---\nfactbase_id: abc123\n---`
+    /// 2. HTML comment header: `<!-- factbase:abc123 -->`
+    ///
+    /// When both are present (e.g. a legacy comment header followed by frontmatter),
+    /// the frontmatter ID wins. This handles the migration case where files have a
+    /// stale comment header but a valid frontmatter ID that matches the database.
     pub fn extract_id_static(content: &str) -> Option<String> {
-        let first_line = content.lines().next()?;
-        // Check YAML frontmatter: ---\nfactbase_id: abc123\n...---
-        if first_line.trim() == "---" {
-            for line in content.lines().skip(1) {
+        let mut lines = content.lines().peekable();
+        let first_line = lines.peek()?;
+
+        // Check for legacy HTML comment header: <!-- factbase:abc123 -->
+        // If found, consume it and then check for frontmatter below.
+        let comment_id =
+            if let Some(rest) = first_line.trim().strip_prefix("<!-- factbase:") {
+                if let Some(id) = rest.strip_suffix(" -->") {
+                    if crate::patterns::DOC_ID_REGEX.is_match(id) {
+                        lines.next(); // consume the comment line
+                        Some(id.to_string())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+        // Skip blank lines between comment header and frontmatter
+        while lines.peek().map(|l| l.trim().is_empty()).unwrap_or(false) {
+            lines.next();
+        }
+
+        // Check for YAML frontmatter: ---\nfactbase_id: abc123\n---
+        // Frontmatter ID takes priority over comment ID.
+        if lines.peek().map(|l| l.trim() == "---").unwrap_or(false) {
+            lines.next(); // consume opening ---
+            for line in lines {
                 let trimmed = line.trim();
                 if trimmed == "---" {
                     break;
@@ -59,7 +93,9 @@ impl DocumentProcessor {
                 }
             }
         }
-        None
+
+        // Fall back to comment ID if no frontmatter ID was found
+        comment_id
     }
 
     /// Generate a random 6-character hex document ID.
@@ -102,13 +138,31 @@ impl DocumentProcessor {
                 let mut lines = content.lines();
                 if let Some(first) = lines.next() {
                     if first.trim() == "---" {
-                        // Existing frontmatter — insert factbase_id (and type) after opening ---
+                        // Existing frontmatter — write factbase_id (and type) at the top,
+                        // skipping any pre-existing factbase_id/type lines to avoid duplicates.
                         let mut result = String::from("---\n");
                         result.push_str(&format!("factbase_id: {id}\n"));
                         if let Some(t) = doc_type {
                             result.push_str(&format!("type: {t}\n"));
                         }
+                        let mut in_fm = true;
                         for line in lines {
+                            if in_fm {
+                                let trimmed = line.trim();
+                                if trimmed == "---" {
+                                    in_fm = false;
+                                    result.push_str(line);
+                                    result.push('\n');
+                                    continue;
+                                }
+                                // Drop stale managed fields — we already wrote fresh ones above
+                                if trimmed.starts_with("factbase_id:") {
+                                    continue;
+                                }
+                                if doc_type.is_some() && trimmed.starts_with("type:") {
+                                    continue;
+                                }
+                            }
                             result.push_str(line);
                             result.push('\n');
                         }
@@ -537,5 +591,92 @@ mod tests {
         let result = processor.inject_id_with_format(content, "abc123", &fmt, Some("person"));
         assert!(result.contains("factbase_id: abc123\n"));
         assert!(result.contains("type: person\n"));
+    }
+
+    // --- HTML comment header ID extraction tests ---
+
+    #[test]
+    fn test_extract_id_from_comment_header() {
+        // Legacy format: <!-- factbase:abc123 -->
+        let content = "<!-- factbase:abc123 -->\n# Title\n\nContent";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_comment_header_invalid_id_ignored() {
+        // Non-hex value in comment header — not a valid doc ID
+        let content = "<!-- factbase:review -->\n# Title";
+        assert_eq!(DocumentProcessor::extract_id_static(content), None);
+    }
+
+    #[test]
+    fn test_extract_id_frontmatter_wins_over_comment_header() {
+        // When both are present, frontmatter ID takes priority.
+        // This is the core fix: files with a stale comment header but valid
+        // frontmatter should use the frontmatter ID (which matches the DB).
+        let content = "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\ntype: person\n---\n# Title";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("bbb222".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_comment_header_fallback_when_no_frontmatter() {
+        // Comment header is used when there is no frontmatter
+        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("abc123".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_id_comment_header_with_blank_line_before_frontmatter() {
+        // Blank line between comment header and frontmatter is tolerated
+        let content = "<!-- factbase:aaa111 -->\n\n---\nfactbase_id: bbb222\n---\n# Title";
+        assert_eq!(
+            DocumentProcessor::extract_id_static(content),
+            Some("bbb222".to_string())
+        );
+    }
+
+    // --- inject_id_with_format deduplication tests ---
+
+    #[test]
+    fn test_inject_id_replaces_existing_factbase_id_in_frontmatter() {
+        // When frontmatter already has factbase_id, it should be replaced, not duplicated
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat::default();
+        let content = "---\nfactbase_id: old111\ntype: person\n---\n# Title\nContent";
+        let result = processor.inject_id_with_format(content, "new222", &fmt, Some("person"));
+        assert!(result.contains("factbase_id: new222\n"));
+        assert!(!result.contains("factbase_id: old111"));
+        // type should appear exactly once
+        assert_eq!(result.matches("type: person").count(), 1);
+    }
+
+    #[test]
+    fn test_inject_id_replaces_existing_type_in_frontmatter() {
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat::default();
+        let content = "---\nfactbase_id: old111\ntype: old_type\n---\n# Title";
+        let result = processor.inject_id_with_format(content, "new222", &fmt, Some("new_type"));
+        assert!(result.contains("type: new_type\n"));
+        assert!(!result.contains("type: old_type"));
+    }
+
+    #[test]
+    fn test_inject_id_preserves_other_frontmatter_fields() {
+        let processor = DocumentProcessor::new();
+        let fmt = crate::models::format::ResolvedFormat::default();
+        let content = "---\nfactbase_id: old111\nreviewed: 2026-01-01\ntags: [a, b]\n---\n# Title";
+        let result = processor.inject_id_with_format(content, "new222", &fmt, None);
+        assert!(result.contains("factbase_id: new222\n"));
+        assert!(result.contains("reviewed: 2026-01-01\n"));
+        assert!(result.contains("tags: [a, b]\n"));
     }
 }
