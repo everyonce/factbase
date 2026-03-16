@@ -21,7 +21,7 @@ pub use ghost_files::detect_ghost_files;
 pub use merge::detect_merge_candidates;
 pub use misplaced::detect_misplaced;
 pub use split::{detect_split_candidates, extract_sections};
-pub use staleness::{assess_staleness, generate_stale_entry_questions, StaleDuplicate};
+pub use staleness::{assess_staleness, StaleDuplicate};
 
 use crate::database::Database;
 use crate::error::FactbaseError;

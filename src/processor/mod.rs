@@ -58,9 +58,8 @@ pub use acronyms::{dedup_acronym_expansions, strip_glossary_reviewed_markers};
 // Re-export temporal types and functions
 pub(crate) use temporal::ranges_overlap;
 pub use temporal::{
-    calculate_recency_boost, detect_illogical_sequences, detect_temporal_conflicts,
-    find_malformed_tags, overlaps_point, overlaps_range, parse_temporal_tags, validate_date,
-    validate_temporal_tags, TemporalConflict, TemporalSequenceError, TemporalValidationError,
+    calculate_recency_boost, find_malformed_tags, overlaps_point, overlaps_range,
+    parse_temporal_tags, validate_date, validate_temporal_tags, TemporalValidationError,
 };
 pub(crate) use temporal::{line_has_temporal_tag, normalize_temporal_tags};
 

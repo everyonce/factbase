@@ -35,32 +35,6 @@ pub(crate) fn remove_file(path: &Path) -> Result<(), FactbaseError> {
     fs::remove_file(path).map_err(|e| io_err(e, "remove", path))
 }
 
-/// Copy a file with a descriptive error on failure.
-pub(crate) fn copy_file(from: &Path, to: &Path) -> Result<(), FactbaseError> {
-    fs::copy(from, to).map_err(|e| {
-        FactbaseError::Io(io::Error::new(
-            e.kind(),
-            format!(
-                "Failed to copy {} to {}: {}",
-                from.display(),
-                to.display(),
-                e
-            ),
-        ))
-    })?;
-    Ok(())
-}
-
-/// Create a directory and all parent directories with a descriptive error on failure.
-pub(crate) fn create_dir(path: &Path) -> Result<(), FactbaseError> {
-    fs::create_dir_all(path).map_err(|e| io_err(e, "create directory", path))
-}
-
-/// Remove a directory and all its contents with a descriptive error on failure.
-pub(crate) fn remove_dir(path: &Path) -> Result<(), FactbaseError> {
-    fs::remove_dir_all(path).map_err(|e| io_err(e, "remove directory", path))
-}
-
 /// Canonicalize a path, stripping the Windows `\\?\` prefix if present.
 pub fn clean_canonicalize(path: &Path) -> PathBuf {
     let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
@@ -116,34 +90,6 @@ mod tests {
     fn test_remove_file_not_found() {
         let result = remove_file(Path::new("/nonexistent/file.md"));
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_copy_file_success() {
-        let tmp = TempDir::new().unwrap();
-        let src = tmp.path().join("src.md");
-        let dst = tmp.path().join("dst.md");
-        fs::write(&src, "original").unwrap();
-        copy_file(&src, &dst).unwrap();
-        assert_eq!(fs::read_to_string(&dst).unwrap(), "original");
-    }
-
-    #[test]
-    fn test_create_dir_nested() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("a").join("b").join("c");
-        create_dir(&path).unwrap();
-        assert!(path.is_dir());
-    }
-
-    #[test]
-    fn test_remove_dir_success() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("to_remove");
-        fs::create_dir(&path).unwrap();
-        fs::write(path.join("file.txt"), "content").unwrap();
-        remove_dir(&path).unwrap();
-        assert!(!path.exists());
     }
 
     #[test]

@@ -814,7 +814,7 @@ fn resolve_step2_batch(
             // No triage_results yet — return triage batch
             let docs = load_review_docs_from_disk(db);
             let mut weak_source_batch: Vec<serde_json::Value> = Vec::new();
-            let triage_batch_size = crate::question_generator::CITATION_TRIAGE_BATCH_SIZE;
+            let triage_batch_size = 200usize;
             for doc in &docs {
                 if weak_source_batch.len() >= triage_batch_size { break; }
                 if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {

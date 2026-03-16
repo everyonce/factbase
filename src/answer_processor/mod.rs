@@ -16,8 +16,6 @@
 //!
 //! ## Functions
 //! - [`interpret_answer`] - Interpret an answer to determine change instruction
-//! - [`format_changes_for_llm`] - Format instructions for LLM prompt
-//! - [`build_rewrite_prompt`] - Build LLM prompt for section rewriting
 //! - [`apply_changes_to_section`] - Apply changes to a section (deletes only; complex changes return error)
 //! - [`identify_affected_section`] - Find document section affected by questions
 //! - [`replace_section`] - Replace section in document content
@@ -35,8 +33,8 @@ use crate::ReviewQuestion;
 
 // Re-export public API
 pub use apply::{
-    apply_changes_to_section, apply_confirmations, apply_source_citations, build_rewrite_prompt,
-    dedup_titles, format_changes_for_llm, identify_affected_section, remove_processed_questions,
+    apply_changes_to_section, apply_confirmations, apply_source_citations,
+    dedup_titles, identify_affected_section, remove_processed_questions,
     replace_section, stamp_citation_accepted, stamp_reviewed_by_text, stamp_reviewed_lines,
     stamp_reviewed_markers, stamp_sequential_by_text, stamp_sequential_lines,
     uncheck_deferred_questions, CITATION_ACCEPTED_MARKER,

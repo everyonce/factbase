@@ -304,14 +304,6 @@ impl LinkDetector {
         }
     }
 
-    /// Create a new LinkDetector with custom batch size.
-    pub fn with_batch_size(batch_size: usize) -> Self {
-        Self {
-            batch_size,
-            match_mode: LinkMatchMode::Fuzzy,
-        }
-    }
-
     /// Set the link match mode.
     pub fn with_match_mode(mut self, mode: LinkMatchMode) -> Self {
         self.match_mode = mode;
