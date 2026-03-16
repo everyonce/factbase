@@ -1150,7 +1150,7 @@ fn resolve_step2_batch(
         if let Some(obj) = result.as_object_mut() {
             obj.insert("conflict_patterns".to_string(), serde_json::json!({
             "parallel_overlap": "Two overlapping facts about different entities that may legitimately coexist. Answer: 'Not a conflict: parallel overlap'.",
-            "same_entity_transition": "Two overlapping facts about the same entity where one likely supersedes the other. Adjust the earlier entry's end date.",
+            "same_entity_transition": "Two overlapping facts about the same entity. Ask: **'Could both of these be true simultaneously, given their descriptions and context?'** If YES → parallel_overlap (concurrent facts, not a conflict). If NO → same_entity_transition (one supersedes the other, adjust the earlier entry's end date). Examples of YES: joining a company AND starting a role (same event, different angles), consulting two clients at once, two products acquired in one deal. Examples of NO: same role with overlapping tenures.",
             "date_imprecision": "Small overlap relative to date ranges — likely data-source imprecision. Adjust the boundary date.",
             "unknown": "No recognized pattern — investigate which fact is current."
         }));
@@ -2333,6 +2333,17 @@ mod tests {
         assert!(patterns["same_entity_transition"].is_string());
         assert!(patterns["date_imprecision"].is_string());
         assert!(patterns["unknown"].is_string());
+
+        // same_entity_transition guidance must ask the concurrency question, not pattern-match
+        let set_desc = patterns["same_entity_transition"].as_str().unwrap();
+        assert!(
+            set_desc.contains("simultaneously"),
+            "same_entity_transition must ask 'could both be true simultaneously'"
+        );
+        assert!(
+            set_desc.contains("parallel_overlap"),
+            "same_entity_transition must explain parallel_overlap as the YES branch"
+        );
     }
 
     #[test]
