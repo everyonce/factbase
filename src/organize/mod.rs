@@ -11,7 +11,6 @@ mod links;
 mod orphans;
 pub mod plan;
 mod review;
-mod snapshot;
 pub mod suggestions;
 pub(crate) mod test_helpers;
 mod types;
@@ -20,7 +19,7 @@ mod verify;
 pub use detect::{
     assess_staleness, cosine_similarity, detect_duplicate_entries, detect_ghost_files,
     detect_merge_candidates, detect_misplaced, detect_split_candidates, discover_entities,
-    extract_entity_entries, extract_sections, generate_stale_entry_questions, EntityEntry,
+    extract_entity_entries, extract_sections, EntityEntry,
     StaleDuplicate, SuggestedEntity,
 };
 pub use execute::{
@@ -36,7 +35,6 @@ pub use review::{
     count_orphans, has_orphans, load_orphan_entries, orphan_file_path, parse_orphan_entries,
     process_orphan_answers, validate_orphan_answer, OrphanAnswer, OrphanEntry, OrphanProcessResult,
 };
-pub use snapshot::{cleanup, create_snapshot, rollback, DocumentBackup, FileBackup, Snapshot};
 pub use suggestions::{execute_suggestions, SuggestionExecutionResult};
 pub use types::{
     DuplicateEntry, EntryLocation, FactAssignment, FactDestination, FactLedger, GhostFile,

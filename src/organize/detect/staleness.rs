@@ -3,15 +3,12 @@
 //! Given duplicate entries across documents, determines which are current vs stale
 //! using temporal tags or file modification dates as a fallback.
 
-use std::collections::HashMap;
-
 use chrono::{NaiveDate, Utc};
 use serde::Serialize;
 
 use crate::database::Database;
 use crate::error::FactbaseError;
 use crate::models::TemporalTagType;
-use crate::models::{QuestionType, ReviewQuestion};
 use crate::organize::types::{DuplicateEntry, EntryLocation};
 use crate::processor::parse_temporal_tags;
 
@@ -85,36 +82,6 @@ pub fn assess_staleness(
     }
 
     Ok(results)
-}
-
-/// Generate review questions for stale duplicate entries.
-///
-/// Returns a map of `doc_id` → `Vec<ReviewQuestion>`. Each stale entry gets a
-/// `@q[stale]` question on its parent document referencing the document with
-/// more recent information.
-pub fn generate_stale_entry_questions(
-    stale_dups: &[StaleDuplicate],
-) -> HashMap<String, Vec<ReviewQuestion>> {
-    let mut questions: HashMap<String, Vec<ReviewQuestion>> = HashMap::new();
-
-    for sd in stale_dups {
-        for entry in &sd.stale {
-            let q = ReviewQuestion::new(
-                QuestionType::Stale,
-                Some(entry.line_start),
-                format!(
-                    "\"{}\" also appears in \"{}\" [{}] with more recent information. Is this entry (lines from {}) still current?",
-                    sd.entity_name,
-                    sd.current.doc_title,
-                    sd.current.doc_id,
-                    entry.line_start,
-                ),
-            );
-            questions.entry(entry.doc_id.clone()).or_default().push(q);
-        }
-    }
-
-    questions
 }
 
 /// Extract the latest temporal date from a set of fact lines.
@@ -344,49 +311,4 @@ mod tests {
         assert_eq!(result[0].stale.len(), 2);
     }
 
-    #[test]
-    fn test_generate_questions_basic() {
-        let stale_dups = vec![StaleDuplicate {
-            entity_name: "jane smith".to_string(),
-            current: loc("bbb222", "Globex Inc", vec!["- Director @t[2024..]"]),
-            stale: vec![loc(
-                "aaa111",
-                "Acme Corp",
-                vec!["- VP Engineering @t[2020..2023]"],
-            )],
-        }];
-
-        let questions = generate_stale_entry_questions(&stale_dups);
-        assert_eq!(questions.len(), 1);
-        let qs = &questions["aaa111"];
-        assert_eq!(qs.len(), 1);
-        assert_eq!(qs[0].question_type, QuestionType::Stale);
-        assert_eq!(qs[0].line_ref, Some(5));
-        assert!(qs[0].description.contains("jane smith"));
-        assert!(qs[0].description.contains("Globex Inc"));
-        assert!(qs[0].description.contains("bbb222"));
-    }
-
-    #[test]
-    fn test_generate_questions_multiple_stale_entries() {
-        let stale_dups = vec![StaleDuplicate {
-            entity_name: "bob jones".to_string(),
-            current: loc("ccc333", "Latest Corp", vec!["- CEO @t[2025..]"]),
-            stale: vec![
-                loc("aaa111", "Old Corp", vec!["- Manager @t[2018..2020]"]),
-                loc("bbb222", "Mid Corp", vec!["- VP @t[2021..2023]"]),
-            ],
-        }];
-
-        let questions = generate_stale_entry_questions(&stale_dups);
-        assert_eq!(questions.len(), 2); // Two different doc_ids
-        assert_eq!(questions["aaa111"].len(), 1);
-        assert_eq!(questions["bbb222"].len(), 1);
-    }
-
-    #[test]
-    fn test_generate_questions_empty() {
-        let questions = generate_stale_entry_questions(&[]);
-        assert!(questions.is_empty());
-    }
 }

@@ -16,42 +16,6 @@ pub struct InboxBlock {
     pub end_line: usize,
 }
 
-const INBOX_OPEN: &str = "<!-- factbase:inbox -->";
-const INBOX_CLOSE: &str = "<!-- /factbase:inbox -->";
-
-/// Extract all inbox blocks from document content.
-pub fn extract_inbox_blocks(content: &str) -> Vec<InboxBlock> {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut blocks = Vec::new();
-    let mut i = 0;
-
-    while i < lines.len() {
-        if lines[i].trim() == INBOX_OPEN {
-            let start = i;
-            i += 1;
-            // Find closing marker
-            while i < lines.len() && lines[i].trim() != INBOX_CLOSE {
-                i += 1;
-            }
-            if i < lines.len() {
-                // Collect content between markers
-                let inner: Vec<&str> = lines[start + 1..i].to_vec();
-                let content = inner.join("\n").trim().to_string();
-                if !content.is_empty() {
-                    blocks.push(InboxBlock {
-                        content,
-                        start_line: start,
-                        end_line: i,
-                    });
-                }
-            }
-        }
-        i += 1;
-    }
-
-    blocks
-}
-
 /// Remove inbox blocks from document content.
 /// Blocks must be sorted by start_line ascending (as returned by extract_inbox_blocks).
 pub fn strip_inbox_blocks(content: &str, blocks: &[InboxBlock]) -> String {
@@ -152,76 +116,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_inbox_blocks_single() {
-        let content = "---\nfactbase_id: a1cb2b\n---\n# Title\n\nSome content\n\n<!-- factbase:inbox -->\nUpdate: CEO changed to Jane Doe in 2026\n<!-- /factbase:inbox -->\n";
-        let blocks = extract_inbox_blocks(content);
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].content, "Update: CEO changed to Jane Doe in 2026");
-        assert_eq!(blocks[0].start_line, 7);
-        assert_eq!(blocks[0].end_line, 9);
-    }
-
-    #[test]
-    fn test_extract_inbox_blocks_multiple() {
-        let content = "# Title\n\n<!-- factbase:inbox -->\nFirst update\n<!-- /factbase:inbox -->\n\nMiddle content\n\n<!-- factbase:inbox -->\nSecond update\n<!-- /factbase:inbox -->\n";
-        let blocks = extract_inbox_blocks(content);
-        assert_eq!(blocks.len(), 2);
-        assert_eq!(blocks[0].content, "First update");
-        assert_eq!(blocks[1].content, "Second update");
-    }
-
-    #[test]
-    fn test_extract_inbox_blocks_empty() {
-        let content = "# Title\n\nNo inbox here\n";
-        let blocks = extract_inbox_blocks(content);
-        assert!(blocks.is_empty());
-    }
-
-    #[test]
-    fn test_extract_inbox_blocks_empty_content() {
-        let content = "# Title\n\n<!-- factbase:inbox -->\n\n<!-- /factbase:inbox -->\n";
-        let blocks = extract_inbox_blocks(content);
-        assert!(blocks.is_empty());
-    }
-
-    #[test]
-    fn test_extract_inbox_blocks_unclosed() {
-        let content = "# Title\n\n<!-- factbase:inbox -->\nOrphaned block\n";
-        let blocks = extract_inbox_blocks(content);
-        assert!(blocks.is_empty());
-    }
-
-    #[test]
-    fn test_extract_inbox_blocks_multiline() {
-        let content = "# Title\n\n<!-- factbase:inbox -->\nLine 1\nLine 2\nLine 3\n<!-- /factbase:inbox -->\n";
-        let blocks = extract_inbox_blocks(content);
-        assert_eq!(blocks.len(), 1);
-        assert_eq!(blocks[0].content, "Line 1\nLine 2\nLine 3");
-    }
-
-    #[test]
-    fn test_strip_inbox_blocks() {
-        let content = "# Title\n\nContent before\n\n<!-- factbase:inbox -->\nUpdate here\n<!-- /factbase:inbox -->\n\nContent after";
-        let blocks = extract_inbox_blocks(content);
-        let stripped = strip_inbox_blocks(content, &blocks);
-        assert_eq!(stripped, "# Title\n\nContent before\n\n\nContent after");
-    }
-
-    #[test]
     fn test_strip_inbox_blocks_none() {
         let content = "# Title\n\nNo inbox";
         let stripped = strip_inbox_blocks(content, &[]);
         assert_eq!(stripped, content);
-    }
-
-    #[test]
-    fn test_strip_inbox_blocks_multiple() {
-        let content = "# Title\n\n<!-- factbase:inbox -->\nA\n<!-- /factbase:inbox -->\n\nMiddle\n\n<!-- factbase:inbox -->\nB\n<!-- /factbase:inbox -->\n\nEnd";
-        let blocks = extract_inbox_blocks(content);
-        let stripped = strip_inbox_blocks(content, &blocks);
-        assert!(stripped.contains("Middle"));
-        assert!(stripped.contains("End"));
-        assert!(!stripped.contains("factbase:inbox"));
     }
 
     #[test]

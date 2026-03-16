@@ -103,25 +103,6 @@ pub mod ansi {
     pub const CLEAR_SCREEN: &str = "\x1b[2J\x1b[H";
 }
 
-/// Highlight all occurrences of a pattern in text using ANSI colors.
-pub fn highlight_text(text: &str, pattern: &str) -> String {
-    if pattern.is_empty() {
-        return text.to_string();
-    }
-    // Case-insensitive replacement
-    let Ok(regex) = regex::RegexBuilder::new(&regex::escape(pattern))
-        .case_insensitive(true)
-        .build()
-    else {
-        return text.to_string();
-    };
-    regex
-        .replace_all(text, |caps: &regex::Captures| {
-            format!("{}{}{}", ansi::BOLD_RED, &caps[0], ansi::RESET)
-        })
-        .to_string()
-}
-
 /// Truncate a string to at most `max` bytes, respecting char boundaries.
 pub(crate) fn truncate_str(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -181,25 +162,6 @@ mod tests {
     fn test_should_highlight() {
         assert!(should_highlight(Some(true)));
         assert!(!should_highlight(Some(false)));
-    }
-
-    #[test]
-    fn test_highlight_text() {
-        // Basic match with case insensitivity
-        let result = highlight_text("Hello World", "world");
-        assert!(result.contains(ansi::BOLD_RED) && result.contains(ansi::RESET));
-
-        // Empty pattern and no match return unchanged
-        assert_eq!(highlight_text("hello world", ""), "hello world");
-        assert_eq!(highlight_text("hello world", "xyz"), "hello world");
-
-        // Multiple matches
-        assert_eq!(
-            highlight_text("hello hello hello", "hello")
-                .matches(ansi::BOLD_RED)
-                .count(),
-            3
-        );
     }
 
     #[test]
