@@ -6,9 +6,38 @@ use crate::error::FactbaseError;
 use crate::models::Document;
 
 use super::super::Database;
-use super::DOCUMENT_COLUMNS;
+use super::{DocStub, DOCUMENT_COLUMNS};
 
 impl Database {
+    /// Retrieves lightweight stubs (id, title, file_path, is_deleted) for all active documents
+    /// in a repository. Much cheaper than `get_documents_for_repo` — skips content decompression.
+    ///
+    /// Use this when only metadata is needed (e.g. link detection filtering).
+    ///
+    /// # Errors
+    /// Returns `FactbaseError::Database` on SQL errors.
+    pub fn get_document_stubs_for_repo(
+        &self,
+        repo_id: &str,
+    ) -> Result<HashMap<String, DocStub>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, title, file_path, is_deleted FROM documents WHERE repo_id = ?1 AND is_deleted = FALSE",
+        )?;
+        let mut stubs = HashMap::new();
+        let mut rows = stmt.query([repo_id])?;
+        while let Some(row) = rows.next()? {
+            let stub = DocStub {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                file_path: row.get(2)?,
+                is_deleted: row.get(3)?,
+            };
+            stubs.insert(stub.id.clone(), stub);
+        }
+        Ok(stubs)
+    }
+
     /// Retrieves all active (non-deleted) documents for a repository as a map keyed by document ID.
     ///
     /// # Errors
@@ -128,6 +157,64 @@ impl Database {
 #[cfg(test)]
 mod tests {
     use crate::database::tests::{test_db, test_doc_with_repo, test_repo_with_id};
+
+    #[test]
+    fn test_get_document_stubs_for_repo() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("Failed to create repo");
+
+        let doc1 = test_doc_with_repo("abc123", "repo1", "Doc 1");
+        let doc2 = test_doc_with_repo("def456", "repo1", "Doc 2");
+        db.upsert_document(&doc1).expect("Failed to upsert");
+        db.upsert_document(&doc2).expect("Failed to upsert");
+
+        let stubs = db.get_document_stubs_for_repo("repo1").expect("Failed to get stubs");
+        assert_eq!(stubs.len(), 2);
+        assert!(stubs.contains_key("abc123"));
+        assert!(stubs.contains_key("def456"));
+        assert_eq!(stubs["abc123"].title, "Doc 1");
+        assert!(!stubs["abc123"].is_deleted);
+    }
+
+    #[test]
+    fn test_get_document_stubs_excludes_deleted() {
+        let (db, _temp) = test_db();
+        let repo = test_repo_with_id("repo1");
+        db.upsert_repository(&repo).expect("Failed to create repo");
+
+        let doc1 = test_doc_with_repo("abc123", "repo1", "Active");
+        let doc2 = test_doc_with_repo("def456", "repo1", "Deleted");
+        db.upsert_document(&doc1).expect("Failed to upsert");
+        db.upsert_document(&doc2).expect("Failed to upsert");
+        db.mark_deleted("def456").expect("Failed to mark deleted");
+
+        let stubs = db.get_document_stubs_for_repo("repo1").expect("Failed to get stubs");
+        assert_eq!(stubs.len(), 1);
+        assert!(stubs.contains_key("abc123"));
+        assert!(!stubs.contains_key("def456"));
+    }
+
+    #[test]
+    fn test_get_document_stubs_repo_isolation() {
+        let (db, _temp) = test_db();
+        let repo1 = test_repo_with_id("repo1");
+        let repo2 = test_repo_with_id("repo2");
+        db.upsert_repository(&repo1).expect("Failed to create repo1");
+        db.upsert_repository(&repo2).expect("Failed to create repo2");
+
+        let doc1 = test_doc_with_repo("abc123", "repo1", "Doc 1");
+        let doc2 = test_doc_with_repo("def456", "repo2", "Doc 2");
+        db.upsert_document(&doc1).expect("Failed to upsert");
+        db.upsert_document(&doc2).expect("Failed to upsert");
+
+        let stubs1 = db.get_document_stubs_for_repo("repo1").expect("Failed to get stubs");
+        let stubs2 = db.get_document_stubs_for_repo("repo2").expect("Failed to get stubs");
+        assert_eq!(stubs1.len(), 1);
+        assert_eq!(stubs2.len(), 1);
+        assert!(stubs1.contains_key("abc123"));
+        assert!(stubs2.contains_key("def456"));
+    }
 
     #[test]
     fn test_get_documents_for_repo() {

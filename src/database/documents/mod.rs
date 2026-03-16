@@ -32,6 +32,16 @@ use super::{decode_content, Database};
 pub(crate) const DOCUMENT_COLUMNS: &str =
     "id, repo_id, file_path, file_hash, title, doc_type, content, file_modified_at, indexed_at, is_deleted";
 
+/// Lightweight document stub — id, title, file_path, is_deleted only.
+/// Used where full content is not needed (e.g. link detection filtering).
+#[derive(Debug, Clone)]
+pub struct DocStub {
+    pub id: String,
+    pub title: String,
+    pub file_path: String,
+    pub is_deleted: bool,
+}
+
 /// Look up the repo_id for a document (for cache invalidation).
 fn repo_id_for_doc(conn: &super::DbConn, id: &str) -> Option<String> {
     conn.query_row("SELECT repo_id FROM documents WHERE id = ?1", [id], |r| {

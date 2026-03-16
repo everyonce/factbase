@@ -119,6 +119,7 @@ mod search;
 mod stats;
 
 pub use search::ContentSearchParams;
+pub use documents::DocStub;
 
 pub(crate) use compression::{compress_content, decode_content, decode_content_lossy};
 #[cfg(feature = "compression")]

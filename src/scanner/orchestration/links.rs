@@ -59,24 +59,13 @@ pub async fn run_link_detection_phase(
     let mut links_detected = 0usize;
 
     let known_entities = input.db.get_all_document_titles(Some(input.repo_id))?;
-    let all_docs = input.db.get_documents_for_repo(input.repo_id)?;
+    // Use lightweight stubs — avoids loading full content for all docs upfront.
+    // Content is loaded on-demand per batch below.
+    let all_stubs = input.db.get_document_stubs_for_repo(input.repo_id)?;
 
     // Force full link detection if --relink or if no links exist yet (migrated/copied KB)
     let force_all = input.force_relink
-        || (!all_docs.is_empty() && !input.db.has_links_for_repo(input.repo_id)?);
-
-    let new_titles: Vec<&str> = input
-        .changed_ids
-        .iter()
-        .filter_map(|id| all_docs.get(id).map(|d| d.title.as_str()))
-        .collect();
-
-    let new_keywords: HashSet<String> = new_titles
-        .iter()
-        .flat_map(|t| t.split_whitespace())
-        .filter(|w| w.len() >= 3)
-        .map(str::to_lowercase)
-        .collect();
+        || (!all_stubs.is_empty() && !input.db.has_links_for_repo(input.repo_id)?);
 
     let full_rescan = input.added_count > 10;
     let mut rescan_count = 0;
@@ -92,11 +81,14 @@ pub async fn run_link_detection_phase(
         );
     }
 
-    // Count docs needing link detection for progress bar
-    let docs_to_scan: Vec<_> = all_docs
+    // Count docs needing link detection for progress bar.
+    // Note: keyword matching against content is skipped here — content is not loaded
+    // until the batch processing step. When added_count > 0 and not full_rescan,
+    // only changed docs are rescanned (conservative but avoids loading all content).
+    let docs_to_scan: Vec<_> = all_stubs
         .iter()
-        .filter(|(id, doc)| {
-            if doc.is_deleted {
+        .filter(|(id, stub)| {
+            if stub.is_deleted {
                 return false;
             }
             if force_all {
@@ -105,12 +97,10 @@ pub async fn run_link_detection_phase(
             if input.changed_ids.contains(*id) {
                 return true;
             }
-            if input.added_count > 0 {
-                let should_rescan = full_rescan
-                    || new_keywords
-                        .iter()
-                        .any(|kw| doc.content.to_lowercase().contains(kw));
-                return should_rescan;
+            // When many docs were added, rescan everything so existing docs can
+            // pick up links to the new entities.
+            if full_rescan {
+                return true;
             }
             false
         })
@@ -173,16 +163,22 @@ pub async fn run_link_detection_phase(
             "documents link-detected",
         );
 
-        // Prepare batch data
-        let batch_docs: Vec<(&str, &str, &str)> = chunk
+        // Prepare batch data — load full content only for this batch
+        let mut batch_docs: Vec<(String, String, String)> = Vec::with_capacity(chunk.len());
+        for (id, _stub) in chunk.iter() {
+            if let Ok(Some(doc)) = input.db.get_document(id) {
+                batch_docs.push((doc.id, doc.title, doc.content));
+            }
+        }
+        let batch_refs: Vec<(&str, &str, &str)> = batch_docs
             .iter()
-            .map(|(id, doc)| (id.as_str(), doc.title.as_str(), doc.content.as_str()))
+            .map(|(id, title, content)| (id.as_str(), title.as_str(), content.as_str()))
             .collect();
 
         // Batch detect links
         let batch_results = input
             .link_detector
-            .detect_links_batch(&batch_docs, &known_entities);
+            .detect_links_batch(&batch_refs, &known_entities);
 
         // Store results
         for (id, _) in chunk {
@@ -205,7 +201,7 @@ pub async fn run_link_detection_phase(
             "Link detection: {} changed + {} keyword-matched of {} total docs",
             input.changed_ids.len(),
             rescan_count,
-            all_docs.len()
+            all_stubs.len()
         );
     }
 
