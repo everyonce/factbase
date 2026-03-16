@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 17;
+pub(super) const SCHEMA_VERSION: i32 = 18;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -191,6 +191,12 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         17,
         "Rename last_check_at to last_lint_at",
         "ALTER TABLE repositories RENAME COLUMN last_check_at TO last_lint_at;",
+    ),
+    // Version 18: Composite index on review_questions(doc_id, status) for status-filtered queries
+    (
+        18,
+        "Add composite index on review_questions(doc_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_review_questions_doc_status ON review_questions(doc_id, status);",
     ),
 ];
 
