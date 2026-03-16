@@ -190,3 +190,25 @@ When a step fails:
 | Version | Score | Date | Notes |
 |---|---|---|---|
 | v2026.3.39 | — | 2026-03-16 | First evaluation planned |
+
+---
+
+## Methodology Notes
+
+### v1 (Single-session evaluation)
+Run all 30 steps in one kiro session. The agent accumulates context across steps — by step 20, it has seen what the KB looks like and what worked before. This introduces context bias: higher-capability models may score higher partly because they benefit more from accumulated context.
+
+**Use for:** Quick baseline, understanding model differences, debugging obvious failures.
+
+### v2 (Isolated-session evaluation, recommended)
+Each step runs as a separate kiro session with:
+1. Fresh context (no memory of prior steps)
+2. KB reset to baseline: `git checkout baseline-tag -- .` before each step
+3. Only the user prompt passed to the agent
+
+This requires 30 tasks × N models = 30N tasks in the queue, but produces clean, reproducible results.
+
+**Use for:** Regression testing, comparing prompt changes, official scores.
+
+### Comparing results across methodology versions
+Results from v1 and v2 are not directly comparable. When comparing runs, always note which methodology was used.
