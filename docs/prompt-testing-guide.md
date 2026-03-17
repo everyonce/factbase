@@ -280,3 +280,63 @@ The model determines intent from user language:
 - Unclear entity → **ask ONE question** (no prep search)
 
 This is language-based, not KB-state-based. The model shouldn't need to look up whether the entity exists to decide which workflow to use.
+
+---
+
+## Eval Step Schema (v4)
+
+Each eval step should specify THREE fields, not just expected routing:
+
+```
+step_type:    ingest | correct | clarify | maintain | refresh | transition
+pre_action:   search_ok | none | ask_ok
+routing:      workflow(add) | workflow(correct) | workflow(transition) | workflow(maintain) | ask_user | ...
+```
+
+### Pre-action rules by step type
+- **ingest**: `search_ok` — searching before ingesting is PASS (dedup check)
+- **correct**: `none` — any pre-action before routing = FAIL
+- **clarify**: `none` — no search to formulate the question; just ask
+- **maintain**: `none` — no pre-action needed
+- **refresh**: `search_ok` — searching for new info is the point
+- **transition**: `none` — like correct, user stated the change; route immediately
+
+### Scoring with the schema
+1. Check pre-action: was it appropriate for the step type? (0 or 1 point)
+2. Check routing: did the right workflow get called? (0 or 1 point)
+3. Step score: both points = PASS, one point = PARTIAL, zero = FAIL
+
+### Step type annotations for the 30 eval steps
+
+| Step | Type | Pre-action | Expected routing |
+|---|---|---|---|
+| 1 | ingest | search_ok | workflow(create) |
+| 2 | ingest | search_ok | workflow(add) |
+| 3 | ingest | search_ok | workflow(correct) [add fact to existing entity] |
+| 4 | maintain | none | workflow(maintain) |
+| 5 | refresh | search_ok | workflow(refresh) |
+| 6 | correct | none | workflow(correct) |
+| 7 | correct | none | workflow(correct) |
+| 8 | transition | none | workflow(transition) |
+| 9 | correct | none | workflow(correct) |
+| 10 | correct | none | workflow(correct) |
+| 11 | clarify | none | clarifying_question |
+| 12 | clarify | none | clarifying_question |
+| 13 | maintain | none | workflow(maintain) |
+| 14 | ingest | search_ok | workflow(correct) [add concurrent facts] |
+| 15 | ingest | search_ok | workflow(correct) [add overlapping roles] |
+| 16 | ingest | search_ok | workflow(correct) [add concurrent events] |
+| 17 | ingest | search_ok | workflow(correct) [add contradictory facts, check detects conflict] |
+| 18 | ingest | search_ok | workflow(correct) [add fact with URL] |
+| 19 | ingest | search_ok | workflow(correct) [add fact with vague citation] |
+| 20 | resolve | none | factbase(op=answer, answer='resolve_question: VALID...') |
+| 21 | resolve | none | factbase(op=answer) with Phonetool URL |
+| 22 | ingest | search_ok | workflow(correct) [add birthplace to existing entity] |
+| 23 | ingest | search_ok | workflow(correct) [add stable fact] |
+| 24 | ingest | search_ok | workflow(correct) [add temporal fact with open-ended range] |
+| 25 | ingest | search_ok | search + factbase answer |
+| 26 | ingest | search_ok | workflow(correct) [add fact with known acronym] |
+| 27 | ingest | search_ok | search glossary, then workflow(correct) |
+| 28 | ingest | search_ok | workflow(add) [create new glossary entry] |
+| 29 | ingest | search_ok | workflow(add) [create new document] |
+| 30 | ingest | search_ok | workflow(add) [create document with proper @t + citations] |
