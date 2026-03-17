@@ -96,6 +96,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             deferred(),
             db,
             &wf_config,
+            repo_resolved.as_deref(),
         )),
         "refresh" => Ok(refresh_step(
             step,
@@ -125,7 +126,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             workflow_name.as_str(),
         )),
         "update" => Ok(rebrand_step(
-            maintain_step(step, args, &perspective, deferred(), db, &wf_config),
+            maintain_step(step, args, &perspective, deferred(), db, &wf_config, repo_resolved.as_deref()),
             "maintain",
             "update",
         )),
@@ -531,6 +532,7 @@ fn maintain_step(
     deferred: usize,
     db: &Database,
     wf: &WorkflowsConfig,
+    repo_id: Option<&str>,
 ) -> Value {
     let ctx = perspective_context(perspective);
     let total = 7;
@@ -624,6 +626,24 @@ fn maintain_step(
                 "health": health,
                 "complete": true
             });
+            // Surface high-confidence conflict hints (same_entity_transition pattern)
+            let hints = db.get_conflict_hints(repo_id, 5).unwrap_or_default();
+            if !hints.is_empty() {
+                let hint_values: Vec<Value> = hints
+                    .into_iter()
+                    .map(|(doc_id, doc_title, description)| {
+                        serde_json::json!({
+                            "doc_id": doc_id,
+                            "doc_title": doc_title,
+                            "conflict": description,
+                            "suggested_action": format!(
+                                "workflow(workflow='correct', correction='Resolve conflict in {doc_title}: {description}')"
+                            )
+                        })
+                    })
+                    .collect();
+                resp["conflict_hints"] = Value::Array(hint_values);
+            }
             if is_obsidian_format(perspective) {
                 resp["tip"] = serde_json::json!("If you renamed files in Obsidian since the last scan, run factbase(op=scan) to sync the database with the new paths.");
             }
@@ -5289,7 +5309,7 @@ mod tests {
     #[test]
     fn test_maintain_step1_scan() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(1, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(1, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 1);
         assert_eq!(step["total_steps"], 7);
@@ -5299,7 +5319,7 @@ mod tests {
     #[test]
     fn test_maintain_step2_detect_links() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(2, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 2);
         assert_eq!(step["next_tool"], "factbase");
@@ -5308,7 +5328,7 @@ mod tests {
     #[test]
     fn test_maintain_step3_check() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 3);
         assert_eq!(step["next_tool"], "factbase");
@@ -5317,7 +5337,7 @@ mod tests {
     #[test]
     fn test_maintain_check_includes_temporal_filtering_guidance() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         let instr = step["instruction"].as_str().unwrap();
         assert!(
             instr.contains("TEMPORAL QUESTION FILTERING"),
@@ -5337,7 +5357,7 @@ mod tests {
     fn test_maintain_step4_links() {
         let (db, _tmp) = test_db();
         // Step 4 is now links (citation_review removed)
-        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(4, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 4);
         assert_eq!(step["next_tool"], "factbase");
@@ -5348,7 +5368,7 @@ mod tests {
     fn test_maintain_step5_organize() {
         let (db, _tmp) = test_db();
         // Step 5 is organize
-        let step = maintain_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(5, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 5);
         assert_eq!(step["suggested_op"], "organize");
@@ -5359,7 +5379,7 @@ mod tests {
         let (db, _tmp) = test_db();
         insert_doc_with_questions(&db, "mnt001", &["temporal", "stale"]);
         // Step 6 is resolve
-        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 6);
         assert_eq!(step["next_tool"], "workflow");
@@ -5380,7 +5400,7 @@ mod tests {
     fn test_maintain_step6_skips_when_no_questions() {
         let (db, _tmp) = test_db();
         // Step 6 is resolve (skips when no questions)
-        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(6, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["total_unanswered"], 0);
         assert!(step["instruction"].as_str().unwrap().contains("clean"));
     }
@@ -5389,7 +5409,7 @@ mod tests {
     fn test_maintain_step7_report() {
         let (db, _tmp) = test_db();
         // Step 7 is the report (final step)
-        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["complete"], true);
         assert!(step.get("remaining_questions").is_some());
@@ -5407,14 +5427,7 @@ mod tests {
             ..Default::default()
         });
         // Step 7 is the final report step
-        let step = maintain_step(
-            7,
-            &serde_json::json!({}),
-            &obsidian_perspective,
-            0,
-            &db,
-            &wf(),
-        );
+        let step = maintain_step(7, &serde_json::json!({}), &obsidian_perspective, 0, &db, &wf(), None);
         let tip = step["tip"]
             .as_str()
             .expect("tip should be present for obsidian format");
@@ -5426,8 +5439,41 @@ mod tests {
     fn test_maintain_step7_no_tip_without_obsidian_format() {
         let (db, _tmp) = test_db();
         // Step 7 is the final report step
-        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert!(step.get("tip").is_none(), "no tip without obsidian format");
+    }
+
+    #[test]
+    fn test_maintain_step7_conflict_hints_included_when_present() {
+        use crate::database::tests::{test_doc_with_repo, test_repo_with_id};
+        use crate::models::{QuestionType, ReviewQuestion};
+
+        let (db, _tmp) = test_db();
+        let repo = test_repo_with_id("r1");
+        db.upsert_repository(&repo).unwrap();
+        let doc = test_doc_with_repo("doc1", "r1", "Test Entity");
+        db.upsert_document(&doc).unwrap();
+
+        let conflict_desc = "\"fact A\" @t[2020..2022] overlaps with \"fact B\" @t[2021..2023] - were both true simultaneously? (line:5) [pattern:same_entity_transition]";
+        db.sync_review_questions(
+            "doc1",
+            &[ReviewQuestion::new(QuestionType::Conflict, None, conflict_desc.to_string())],
+        )
+        .unwrap();
+
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf(), None);
+        let hints = step["conflict_hints"].as_array().expect("conflict_hints should be present");
+        assert_eq!(hints.len(), 1);
+        assert_eq!(hints[0]["doc_id"], "doc1");
+        assert!(hints[0]["conflict"].as_str().unwrap().contains("same_entity_transition"));
+        assert!(hints[0]["suggested_action"].as_str().unwrap().contains("workflow(workflow='correct'"));
+    }
+
+    #[test]
+    fn test_maintain_step7_no_conflict_hints_when_none() {
+        let (db, _tmp) = test_db();
+        let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf(), None);
+        assert!(step.get("conflict_hints").is_none(), "no conflict_hints when none exist");
     }
 
     #[test]
@@ -5530,12 +5576,12 @@ mod tests {
     fn test_maintain_runs_check_only_at_step_3() {
         let (db, _tmp) = test_db();
         // Step 3 should suggest check
-        let step3 = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        let step3 = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step3["suggested_op"], "check");
 
         // No other maintain step should suggest check
         for s in [1, 2, 4, 5, 6, 7] {
-            let step = maintain_step(s, &serde_json::json!({}), &None, 0, &db, &wf());
+            let step = maintain_step(s, &serde_json::json!({}), &None, 0, &db, &wf(), None);
             let suggested = step
                 .get("suggested_op")
                 .and_then(|v| v.as_str())

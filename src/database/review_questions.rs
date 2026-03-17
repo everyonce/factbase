@@ -471,6 +471,54 @@ impl Database {
         Ok(count)
     }
 
+    /// Get open high-confidence conflict questions with document titles.
+    ///
+    /// Returns `(doc_id, doc_title, description)` tuples for open conflict questions
+    /// matching the `same_entity_transition` pattern (highest confidence).
+    /// Used by the maintain workflow report to surface actionable conflict hints.
+    pub fn get_conflict_hints(
+        &self,
+        repo_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<(String, String, String)>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let limit = limit.max(1) as i64;
+        let rows: Vec<(String, String, String)> = if let Some(rid) = repo_id {
+            conn.prepare(
+                "SELECT rq.doc_id, d.title, rq.description \
+                 FROM review_questions rq \
+                 JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
+                 WHERE d.repo_id = ?1 AND rq.question_type = 'conflict' \
+                   AND rq.status = 'open' \
+                   AND rq.description LIKE '%[pattern:same_entity_transition]%' \
+                 ORDER BY rq.created_at DESC \
+                 LIMIT ?2",
+            )?
+            .query_map(rusqlite::params![rid, limit], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .filter_map(Result::ok)
+            .collect()
+        } else {
+            conn.prepare(
+                "SELECT rq.doc_id, d.title, rq.description \
+                 FROM review_questions rq \
+                 JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
+                 WHERE rq.question_type = 'conflict' \
+                   AND rq.status = 'open' \
+                   AND rq.description LIKE '%[pattern:same_entity_transition]%' \
+                 ORDER BY rq.created_at DESC \
+                 LIMIT ?1",
+            )?
+            .query_map(rusqlite::params![limit], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?
+            .filter_map(Result::ok)
+            .collect()
+        };
+        Ok(rows)
+    }
+
     /// Check if the review_questions table has any rows (used to detect if populated).
     pub fn has_review_questions_indexed(&self) -> bool {
         let conn = match self.get_conn() {
@@ -833,5 +881,62 @@ mod tests {
         )
         .unwrap();
         assert!(db.has_review_questions_indexed());
+    }
+
+    #[test]
+    fn test_get_conflict_hints_returns_same_entity_transition_only() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![
+            make_question(
+                QuestionType::Conflict,
+                "\"fact A\" @t[2020..2022] overlaps with \"fact B\" @t[2021..2023] - were both true simultaneously? (line:5) [pattern:same_entity_transition]",
+            ),
+            make_question(
+                QuestionType::Conflict,
+                "\"fact C\" @t[2020..2022] overlaps with \"fact D\" @t[2021..2023] - were both true simultaneously? (line:8) [pattern:parallel_overlap]",
+            ),
+            make_question(QuestionType::Temporal, "When?"),
+        ];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        let hints = db.get_conflict_hints(None, 10).unwrap();
+        assert_eq!(hints.len(), 1);
+        assert!(hints[0].2.contains("[pattern:same_entity_transition]"));
+    }
+
+    #[test]
+    fn test_get_conflict_hints_excludes_non_open() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let desc = "\"fact A\" @t[2020..2022] overlaps with \"fact B\" @t[2021..2023] - were both true simultaneously? (line:5) [pattern:same_entity_transition]";
+        db.sync_review_questions(&doc_id, &[make_question(QuestionType::Conflict, desc)])
+            .unwrap();
+        db.update_review_question_status(&doc_id, 0, "dismissed", None)
+            .unwrap();
+
+        let hints = db.get_conflict_hints(None, 10).unwrap();
+        assert!(hints.is_empty());
+    }
+
+    #[test]
+    fn test_get_conflict_hints_respects_limit() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions: Vec<ReviewQuestion> = (0..5)
+            .map(|i| {
+                make_question(
+                    QuestionType::Conflict,
+                    &format!("\"fact {i}\" @t[2020..2022] overlaps with \"fact x\" @t[2021..2023] - were both true simultaneously? (line:{i}) [pattern:same_entity_transition]"),
+                )
+            })
+            .collect();
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        let hints = db.get_conflict_hints(None, 3).unwrap();
+        assert_eq!(hints.len(), 3);
     }
 }
