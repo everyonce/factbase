@@ -5988,6 +5988,58 @@ mod tests {
     }
 
     #[test]
+    fn test_correct_parse_contradiction_check_runs_first() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        // Contradiction check must appear before the parse task
+        let contradiction_pos = instr.find("CONTRADICTION CHECK").unwrap();
+        let parse_pos = instr.find("Parse the correction").unwrap();
+        assert!(
+            contradiction_pos < parse_pos,
+            "contradiction check must appear before parse task"
+        );
+    }
+
+    #[test]
+    fn test_correct_parse_contradiction_check_halts_on_conflict() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        assert!(
+            instr.contains("DO NOT call step 2"),
+            "contradiction check must instruct agent not to proceed"
+        );
+        assert!(
+            instr.contains("I see two contradictory values"),
+            "contradiction check must provide the exact halt message"
+        );
+        assert!(
+            instr.contains("Wait for the user to clarify"),
+            "contradiction check must instruct agent to wait for clarification"
+        );
+    }
+
+    #[test]
+    fn test_correct_parse_contradiction_check_domain_agnostic() {
+        let wf = WorkflowsConfig::default();
+        let args = serde_json::json!({"correction": "test"});
+        let result = correct_step(1, &args, &wf);
+        let instr = result["instruction"].as_str().unwrap();
+        // Examples in the check must use generic facts, not domain-specific ones
+        assert!(
+            instr.contains("founded in"),
+            "contradiction check should use a generic founding-date example"
+        );
+        assert!(
+            instr.contains("Two different dates"),
+            "contradiction check should describe the date conflict pattern"
+        );
+    }
+
+    #[test]
     fn test_correct_parse_domain_agnostic() {
         // Mushroom test: instruction should not reference any specific domain
         let wf = WorkflowsConfig::default();
