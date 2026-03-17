@@ -6,6 +6,7 @@
 
 pub mod entity;
 pub mod review;
+pub mod status;
 
 pub use entity::{
     get_document_stats, get_entity, get_perspective, list_entities, list_repositories,
@@ -15,3 +16,4 @@ pub use review::{
     reset_deferred_questions, AnswerQuestionParams, BulkAnswerItem as ServiceBulkAnswerItem,
     ReviewQueueParams,
 };
+pub use status::kb_status;

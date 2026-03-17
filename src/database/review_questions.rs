@@ -418,6 +418,59 @@ impl Database {
         Ok(questions)
     }
 
+    /// Count open (unanswered) review questions grouped by question_type.
+    ///
+    /// Returns a map of question_type → count for all non-dismissed, open questions.
+    pub fn count_open_questions_by_type(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<std::collections::HashMap<String, u64>, FactbaseError> {
+        let conn = self.get_conn()?;
+        let rows: Vec<(String, u64)> = if let Some(rid) = repo_id {
+            conn.prepare(
+                "SELECT rq.question_type, COUNT(*) \
+                 FROM review_questions rq \
+                 JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
+                 WHERE d.repo_id = ?1 AND rq.status = 'open' \
+                 GROUP BY rq.question_type",
+            )?
+            .query_map([rid], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect()
+        } else {
+            conn.prepare(
+                "SELECT question_type, COUNT(*) FROM review_questions \
+                 WHERE status = 'open' GROUP BY question_type",
+            )?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .filter_map(Result::ok)
+            .collect()
+        };
+        Ok(rows.into_iter().collect())
+    }
+
+    /// Count documents with has_review_queue = TRUE (fast, no file parsing).
+    pub fn count_docs_with_review_queue(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<usize, FactbaseError> {
+        let conn = self.get_conn()?;
+        let count: usize = if let Some(rid) = repo_id {
+            conn.query_row(
+                "SELECT COUNT(*) FROM documents WHERE repo_id = ?1 AND has_review_queue = TRUE AND is_deleted = FALSE",
+                [rid],
+                |r| r.get(0),
+            )?
+        } else {
+            conn.query_row(
+                "SELECT COUNT(*) FROM documents WHERE has_review_queue = TRUE AND is_deleted = FALSE",
+                [],
+                |r| r.get(0),
+            )?
+        };
+        Ok(count)
+    }
+
     /// Check if the review_questions table has any rows (used to detect if populated).
     pub fn has_review_questions_indexed(&self) -> bool {
         let conn = match self.get_conn() {

@@ -419,6 +419,13 @@ pub fn init_repository(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }))
 }
 
+/// Return structured KB health status report.
+pub fn kb_status_tool(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
+    let repo_id = crate::mcp::tools::get_str_arg(args, "repo");
+    let resolved = crate::mcp::tools::helpers::resolve_repo_filter(db, repo_id)?;
+    crate::services::kb_status(db, resolved.as_deref())
+}
+
 /// Check embedding provider connectivity and database health.
 ///
 /// Attempts a test embedding generation to verify the provider is reachable.
