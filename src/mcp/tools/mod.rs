@@ -47,7 +47,7 @@ pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_too
 pub use entity::{get_entity, get_perspective, list_entities};
 pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
-pub use repository::{detect_links, doctor_check, init_repository, scan_repository};
+pub use repository::{detect_links, doctor_check, init_repository, kb_status_tool, scan_repository};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, check_repository, generate_questions,
     get_deferred_items, get_review_queue, reset_deferred_questions,
@@ -266,6 +266,11 @@ async fn dispatch_tool<E: EmbeddingProvider>(
             let a = args.clone();
             run_blocking(move || get_fact_pairs(&db, &a)).await
         }
+        "kb_status" => {
+            let db = db.clone();
+            let a = args.clone();
+            run_blocking(move || kb_status_tool(&db, &a)).await
+        }
         "workflow" => {
             let is_bootstrap = args.get("workflow").and_then(|v| v.as_str()) == Some("bootstrap");
             if is_bootstrap {
@@ -301,6 +306,7 @@ fn op_to_tool_name(op: &str) -> Option<&'static str> {
         "reset_deferred" => "reset_deferred_questions",
         "fact_pairs" => "get_fact_pairs",
         "authoring_guide" => "get_authoring_guide",
+        "status" => "kb_status",
         _ => return None,
     })
 }

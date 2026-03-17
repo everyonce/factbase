@@ -613,12 +613,15 @@ fn maintain_step(
             let type_dist = compute_type_distribution(db);
             let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
             let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
+            // Include structured health status for the final report
+            let health = crate::services::kb_status(db, None).unwrap_or_default();
             let mut resp = serde_json::json!({
                 "workflow": "maintain",
                 "step": 7, "total_steps": total,
                 "instruction": resolve(wf, "maintain.report", DEFAULT_MAINTAIN_REPORT_INSTRUCTION, &[]),
                 "remaining_questions": remaining,
                 "deferred_questions": new_deferred,
+                "health": health,
                 "complete": true
             });
             if is_obsidian_format(perspective) {
@@ -711,12 +714,14 @@ fn refresh_step(
             let type_dist = compute_type_distribution(db);
             let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
             let new_deferred = db.count_deferred_questions(None).unwrap_or(0);
+            let health = crate::services::kb_status(db, None).unwrap_or_default();
             let mut resp = serde_json::json!({
                 "workflow": "refresh",
                 "step": 6, "total_steps": total,
                 "instruction": resolve(wf, "refresh.report", DEFAULT_REFRESH_REPORT_INSTRUCTION, &[]),
                 "remaining_questions": remaining,
                 "deferred_questions": new_deferred,
+                "health": health,
                 "complete": true
             });
             if is_obsidian_format(perspective) {

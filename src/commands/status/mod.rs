@@ -57,7 +57,14 @@ pub fn cmd_status(args: StatusArgs) -> anyhow::Result<()> {
         None
     };
 
-    let json_data = format_repo_status_json(
+    // Include KB health status in JSON output
+    let health = if since.is_none() {
+        factbase::services::kb_status(db, Some(&repo.id)).ok()
+    } else {
+        None
+    };
+
+    let mut json_data = format_repo_status_json(
         repo,
         &stats,
         detailed.as_ref(),
@@ -66,6 +73,16 @@ pub fn cmd_status(args: StatusArgs) -> anyhow::Result<()> {
         source_stats.as_ref(),
         since.as_ref(),
     );
+
+    // Merge health fields into JSON output
+    if let Some(ref h) = health {
+        if let (Some(obj), Some(h_obj)) = (json_data.as_object_mut(), h.as_object()) {
+            for (k, v) in h_obj {
+                obj.entry(k).or_insert_with(|| v.clone());
+            }
+        }
+    }
+
     print_output(format, &json_data, || {
         print_repo_status_text(
             repo,
@@ -75,7 +92,14 @@ pub fn cmd_status(args: StatusArgs) -> anyhow::Result<()> {
             temporal_stats.as_ref(),
             source_stats.as_ref(),
             since.as_ref(),
-        )
+        );
+        // Print health summary in text mode
+        if let Some(ref h) = health {
+            if let Some(summary) = h.get("summary").and_then(|v| v.as_str()) {
+                println!();
+                println!("{summary}");
+            }
+        }
     })?;
 
     // Show aggregate stats (merged from old `stats` command)

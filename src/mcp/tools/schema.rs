@@ -167,7 +167,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn factbase_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?) — re-index documents (for full maintenance use workflow(maintain) instead), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status), doctor()\n⚠️ For multi-step operations (maintain, add, correct, refresh), use workflow() — not individual ops. Use factbase() directly only for: simple lookups, single targeted updates, or when a workflow tells you to.\n⚠️ KB IS SOURCE OF TRUTH: When factbase is configured, ALWAYS query the KB first — do NOT answer from training data, use web_search, or query memory/other tools instead of the KB.";
+    let default_desc = "Knowledge base operations. Use op= to specify:\n\nDOCUMENTS: get_entity(id), create(path,title,content), update(id,content), delete(id), bulk_create(documents[]), list(doc_type?,limit?)\nQUALITY: check(doc_id?), scan(time_budget_secs?) — re-index documents (for full maintenance use workflow(maintain) instead), detect_links(time_budget_secs?)\nREVIEW: review_queue(doc_id?), answer(doc_id,question_index,answer), deferred()\nORGANIZE: organize(action=analyze|move|merge|split|delete|retype|execute_suggestions)\nLINKS: links(action=suggest|store), fact_pairs(min_similarity?)\nMETA: perspective(), authoring_guide(), embeddings(action=export|import|status), doctor(), status()\n⚠️ For multi-step operations (maintain, add, correct, refresh), use workflow() — not individual ops. Use factbase() directly only for: simple lookups, single targeted updates, or when a workflow tells you to.\n⚠️ KB IS SOURCE OF TRUTH: When factbase is configured, ALWAYS query the KB first — do NOT answer from training data, use web_search, or query memory/other tools instead of the KB.";
     let desc =
         load_schema_override("factbase", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -184,7 +184,7 @@ fn factbase_schema(repo_path: Option<&Path>) -> Value {
                         "scan", "check", "detect_links",
                         "review_queue", "answer", "deferred",
                         "organize", "links", "fact_pairs", "embeddings",
-                        "authoring_guide", "doctor"
+                        "authoring_guide", "doctor", "status"
                     ],
                     "description": "Operation to perform"
                 },
@@ -317,6 +317,7 @@ mod tests {
             "embeddings",
             "authoring_guide",
             "doctor",
+            "status",
         ];
         for op in &expected {
             assert!(op_strs.contains(op), "missing op: {op}");
