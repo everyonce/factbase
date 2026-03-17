@@ -248,3 +248,35 @@ When a citation quality question is resolved, use `resolve_question` (not "dismi
 - `resolve_question` = close the review question; the citation stays unchanged; the question is answered
 - `defer` = waits for human review
 - The citation itself is never affected by resolving the question
+
+---
+
+## Eval Criteria Update (2026-03-17)
+
+### Two different "correct first call" standards
+
+**Add/ingest steps (steps 1-6, step 22, 24, 27):**
+- Search BEFORE ingesting is CORRECT behavior — that's the dedup check
+- Expected pattern: `search(query='...')` or `factbase(op=list)` THEN ingest/add
+- Do NOT penalize search-before-ingest
+- The routing principle "execute immediately" applies to *correct*, not *add*
+
+**Correct steps (steps 7-10):**
+- Route to `workflow(correct)` IMMEDIATELY — no search
+- User has explicitly told you something is wrong
+- Expected pattern: `workflow(workflow='correct')` as FIRST call
+- Penalize search before routing to correct
+
+**Clarification steps (steps 11-12):**
+- Ask ONE question — no search to formulate the question
+- "Fix John" → ask "Which John?" — do NOT search KB for Johns first
+- Expected: no tool call before the clarifying question
+
+### The routing question
+
+The model determines intent from user language:
+- "Here's info about X" / "Add X to the KB" → **add** (search first OK)
+- "X is wrong, it should be Y" / "Fix this fact" → **correct** (route immediately)
+- Unclear entity → **ask ONE question** (no prep search)
+
+This is language-based, not KB-state-based. The model shouldn't need to look up whether the entity exists to decide which workflow to use.
