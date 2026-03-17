@@ -2123,4 +2123,18 @@ mod tests {
         // Too short predicate after stripping names → not attribution conflict
         assert!(!is_attribution_conflict("Miles Davis led", "Bill Evans led"));
     }
+
+    #[test]
+    fn test_concurrent_roles_not_flagged() {
+        // Task spec case 3: concurrent roles — "led sessions" vs "contributed arrangements"
+        // Different predicates → not an attribution conflict
+        let content = "# Kind of Blue\n\n\
+            - Miles Davis led the Kind of Blue sessions @t[1959..]\n\
+            - Bill Evans contributed arrangements to Kind of Blue @t[1959..]";
+        let questions = generate_conflict_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Concurrent roles with different predicates should not be flagged"
+        );
+    }
 }
