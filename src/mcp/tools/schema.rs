@@ -128,7 +128,7 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify: create, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\nOPERATING PRINCIPLE: When the user's request has clear intent, execute immediately. Do not search, verify, or pre-check before routing.\n- Uncertain about WHICH ENTITY? → Ask ONE focused question before acting.\n- Uncertain about WHAT ACTION? → Execute with the best-fit workflow. The workflow handles validation.\n- Never search to confirm facts before routing. The KB owner corrects their own KB.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override.\nRouting rules (apply in order):\n- 'build', 'create', 'start', 'new KB' → workflow(create)\n- 'add [new topic/entity]' → workflow(add, topic=...)\n- 'add [note/flag/tag] to [existing entity]' → workflow(correct) [add vs correct: add=CREATE new entities not yet in KB; correct=MODIFY existing entities (add notes, annotations). 'Add a note to X' → correct if X exists]\n- 'scan', 'index', 'reindex' → workflow(maintain) — do NOT call factbase(op='scan') directly\n- 'check for new', 'look for updates', 'what's new' → workflow(refresh) [add vs refresh: add=CREATE new docs; refresh=UPDATE existing docs]\n- factual correction about existing entity → workflow(correct) IMMEDIATELY as FIRST action. Do NOT search first (may cause you to answer from training data)\n- change that happened over time → workflow(transition)\n- no entity named → ASK one focused clarifying question before acting\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct; YES → it was true until a specific point → use transition\n⚠️ CALL IMMEDIATELY: For correct/transition/refresh — call as your FIRST action. Do NOT search or fetch first. Searching first may cause you to answer from training data and skip the workflow.\n⚠️ KB IS SOURCE OF TRUTH: ALWAYS use factbase workflows FIRST — do NOT answer from training data, use web_search, or query memory instead of the KB.\n⚠️ CLARIFICATION: If no entity or change is specified and you cannot infer a reasonable default, ask ONE focused clarifying question. Do NOT ask when a reasonable default workflow exists (e.g. 'Make the KB better' → maintain).";
+    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify: create, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\nOPERATING PRINCIPLE: Routing behavior depends on the workflow type — do NOT apply the same rule to all cases.\n- For correct/transition: the user is telling you the truth. Route to correct/transition IMMEDIATELY as your FIRST action — do NOT search or verify their claim first. Searching first may cause you to answer from training data and skip the workflow.\n- For add/ingest: search the KB first to avoid creating duplicates. Then proceed with ingestion.\n- For clarification (unclear entity named): ask ONE focused question — do NOT search to formulate it.\n- Uncertain about WHAT ACTION? → Execute with the best-fit workflow. The workflow handles validation.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override.\nRouting rules (apply in order):\n- 'build', 'create', 'start', 'new KB' → workflow(create)\n- 'add [new topic/entity]' → workflow(add, topic=...)\n- 'add [note/flag/tag] to [existing entity]' → workflow(correct) [add vs correct: add=CREATE new entities not yet in KB; correct=MODIFY existing entities (add notes, annotations). 'Add a note to X' → correct if X exists]\n- 'scan', 'index', 'reindex' → workflow(maintain) — do NOT call factbase(op='scan') directly\n- 'check for new', 'look for updates', 'what's new' → workflow(refresh) [add vs refresh: add=CREATE new docs; refresh=UPDATE existing docs]\n- factual correction about existing entity → workflow(correct) IMMEDIATELY as FIRST action. Do NOT search first (may cause you to answer from training data)\n- change that happened over time → workflow(transition)\n- no entity named → ASK one focused clarifying question before acting\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct; YES → it was true until a specific point → use transition\n⚠️ KB IS SOURCE OF TRUTH: ALWAYS use factbase workflows FIRST — do NOT answer from training data, use web_search, or query memory instead of the KB.\n⚠️ CLARIFICATION: If no entity or change is specified and you cannot infer a reasonable default, ask ONE focused clarifying question. Do NOT ask when a reasonable default workflow exists (e.g. 'Make the KB better' → maintain).";
     let desc =
         load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -479,16 +479,16 @@ mod tests {
             "OPERATING PRINCIPLE should appear near the top of the description"
         );
         assert!(
-            desc.contains("Do not search, verify, or pre-check before routing"),
-            "operating principle should say not to search before routing"
+            desc.contains("correct/transition") && desc.contains("IMMEDIATELY"),
+            "operating principle should say correct/transition routes immediately"
         );
         assert!(
-            desc.contains("Uncertain about WHICH ENTITY"),
+            desc.contains("add/ingest") && desc.contains("search the KB first"),
+            "operating principle should say add/ingest searches first for dedup"
+        );
+        assert!(
+            desc.contains("ask ONE focused question"),
             "operating principle should handle ambiguous entity case"
-        );
-        assert!(
-            desc.contains("Never search to confirm facts before routing"),
-            "operating principle should explicitly forbid pre-routing search"
         );
         // Principle must appear before routing rules
         let principle_pos = desc.find("OPERATING PRINCIPLE").unwrap();
