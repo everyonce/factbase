@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use super::helpers::{load_glossary_terms, load_perspective, resolve_repo_filter};
 use super::review::format_question_json;
-use super::{get_str_arg, get_str_arg_required, get_u64_arg};
+use super::{get_bool_arg, get_str_arg, get_str_arg_required, get_u64_arg};
 use crate::config::workflows::WorkflowsConfig;
 use crate::processor::parse_review_queue;
 use crate::question_generator::extract_acronym_from_question;
@@ -454,6 +454,28 @@ fn resolve_step(
         1 => {
             let type_dist = compute_type_distribution(db);
             let total_unanswered: usize = type_dist.iter().map(|(_, c)| c).sum();
+
+            // Cost gate: confirm before resolving a large queue (>20 questions) unless already confirmed
+            const RESOLVE_GATE_THRESHOLD: usize = 20;
+            if total_unanswered > RESOLVE_GATE_THRESHOLD && !get_bool_arg(args, "confirmed", false) {
+                return serde_json::json!({
+                    "workflow": "resolve",
+                    "step": 1, "total_steps": total,
+                    "requires_confirmation": true,
+                    "confirmation_reason": "large review queue",
+                    "total_unanswered": total_unanswered,
+                    "instruction": format!(
+                        "⚠️ Before starting: tell the user what this will do and ask for confirmation.\n\n\
+                         Say something like: \"There are {total_unanswered} review questions to resolve. \
+                         This will go through each one and apply changes to the documents. \
+                         Want me to go ahead, or focus on a specific question type?\"\n\n\
+                         If the user confirms, call workflow(workflow='resolve', step=1, confirmed=true) to proceed.\n\
+                         If the user wants a targeted operation, pass question_type=<type> to focus on one category."
+                    ),
+                    "when_confirmed": "Call workflow(workflow='resolve', step=1, confirmed=true) to proceed"
+                });
+            }
+
             let type_dist_json: Value = type_dist
                 .iter()
                 .map(|(qt, count)| serde_json::json!({"type": qt.to_string(), "count": count}))
@@ -527,7 +549,7 @@ fn resolve_step(
 
 fn maintain_step(
     step: usize,
-    _args: &Value,
+    args: &Value,
     perspective: &Option<Perspective>,
     deferred: usize,
     db: &Database,
@@ -538,6 +560,38 @@ fn maintain_step(
     let total = 7;
     match step {
         1 => {
+            // Cost gate: full-KB maintain always requires user confirmation unless:
+            // - targeted at a specific document (doc_id set), or
+            // - caller already confirmed (confirmed=true)
+            let is_targeted = get_str_arg(args, "doc_id").is_some();
+            let confirmed = get_bool_arg(args, "confirmed", false);
+            if !is_targeted && !confirmed {
+                let doc_count = db.get_all_document_ids().ok().map(|ids| ids.len()).unwrap_or(0);
+                let est_mins = ((doc_count as f64 * 2.0) / 60.0).ceil() as usize;
+                let est_display = if est_mins >= 2 {
+                    format!("~{est_mins} minutes")
+                } else {
+                    "~1–2 minutes".to_string()
+                };
+                return serde_json::json!({
+                    "workflow": "maintain",
+                    "step": 1, "total_steps": total,
+                    "requires_confirmation": true,
+                    "confirmation_reason": "full KB maintenance pass",
+                    "confirmation_details": format!(
+                        "{doc_count} documents — scans all docs, detects links, runs quality checks, suggests links, analyzes structure, resolves review questions. Estimated time: {est_display}."
+                    ),
+                    "instruction": format!(
+                        "⚠️ Before starting: tell the user what this will do and ask for confirmation.\n\n\
+                         Say something like: \"That would run a full KB maintenance pass ({est_display}, {doc_count} docs — scan, link detection, quality checks, link suggestions, organize analysis, resolve questions). \
+                         Want me to go ahead, or focus on a specific area?\"\n\n\
+                         If the user confirms, call workflow(workflow='maintain', step=1, confirmed=true) to proceed.\n\
+                         If the user wants a targeted operation, use the appropriate focused command instead."
+                    ),
+                    "when_confirmed": "Call workflow(workflow='maintain', step=1, confirmed=true) to proceed"
+                });
+            }
+
             let mut resp = serde_json::json!({
                 "workflow": "maintain",
                 "step": 1, "total_steps": total,
@@ -5311,7 +5365,8 @@ mod tests {
     #[test]
     fn test_maintain_step1_scan() {
         let (db, _tmp) = test_db();
-        let step = maintain_step(1, &serde_json::json!({}), &None, 0, &db, &wf(), None);
+        // Must pass confirmed=true to bypass the cost gate
+        let step = maintain_step(1, &serde_json::json!({"confirmed": true}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 1);
         assert_eq!(step["total_steps"], 7);
@@ -6630,6 +6685,110 @@ mod tests {
         assert!(
             intro.contains("Construct the URL from the alias"),
             "resolve intro must explain how to derive the alias for the URL"
+        );
+    }
+
+    #[test]
+    fn test_maintain_cost_gate_triggers_without_confirmation() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        let result = maintain_step(1, &serde_json::json!({}), &None, 0, &db, &wf, None);
+        assert_eq!(
+            result["requires_confirmation"], true,
+            "maintain step 1 should require confirmation by default"
+        );
+        assert!(
+            result["instruction"].as_str().unwrap_or("").contains("confirm"),
+            "instruction should tell agent to ask for confirmation"
+        );
+        assert!(
+            result.get("next_tool").is_none(),
+            "cost gate should not include next_tool"
+        );
+        assert!(
+            result["when_confirmed"].as_str().unwrap_or("").contains("confirmed=true"),
+            "when_confirmed should tell agent to pass confirmed=true"
+        );
+    }
+
+    #[test]
+    fn test_maintain_cost_gate_bypassed_when_confirmed() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        let result = maintain_step(
+            1,
+            &serde_json::json!({"confirmed": true}),
+            &None,
+            0,
+            &db,
+            &wf,
+            None,
+        );
+        assert!(
+            result.get("requires_confirmation").is_none()
+                || result["requires_confirmation"] != true,
+            "confirmed=true should bypass the cost gate"
+        );
+        assert_eq!(
+            result["next_tool"], "factbase",
+            "confirmed maintain should proceed to scan"
+        );
+    }
+
+    #[test]
+    fn test_maintain_cost_gate_bypassed_when_targeted() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        let result = maintain_step(
+            1,
+            &serde_json::json!({"doc_id": "abc123"}),
+            &None,
+            0,
+            &db,
+            &wf,
+            None,
+        );
+        assert!(
+            result.get("requires_confirmation").is_none()
+                || result["requires_confirmation"] != true,
+            "targeted maintain (doc_id set) should bypass the cost gate"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cost_gate_triggers_for_large_queue() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        // With empty DB, total_unanswered=0, gate should NOT trigger
+        let result = resolve_step(1, &serde_json::json!({}), &None, 0, &db, &wf);
+        assert!(
+            result.get("requires_confirmation").is_none()
+                || result["requires_confirmation"] != true,
+            "resolve gate should not trigger for empty queue"
+        );
+    }
+
+    #[test]
+    fn test_resolve_cost_gate_bypassed_when_confirmed() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        // confirmed=true should always bypass the gate
+        let result = resolve_step(
+            1,
+            &serde_json::json!({"confirmed": true}),
+            &None,
+            0,
+            &db,
+            &wf,
+        );
+        assert!(
+            result.get("requires_confirmation").is_none()
+                || result["requires_confirmation"] != true,
+            "confirmed=true should bypass the resolve cost gate"
+        );
+        assert_eq!(
+            result["workflow"], "resolve",
+            "should return normal resolve step 1"
         );
     }
 }
