@@ -6488,4 +6488,34 @@ mod tests {
             "resolve intro should show the pattern format"
         );
     }
+
+    #[test]
+    fn test_resolve_answer_intro_has_citation_dismiss_worked_example() {
+        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        assert!(
+            intro.contains("WEAK-SOURCE WORKED EXAMPLES"),
+            "resolve intro must have WEAK-SOURCE WORKED EXAMPLES section"
+        );
+        assert!(
+            intro.contains("dismiss: VALID — [reason per internal_sources policy]"),
+            "resolve intro must show dismiss answer format for valid internal citation"
+        );
+        assert!(
+            intro.contains("<!-- ✓ -->"),
+            "resolve intro must mention the auto-stamp marker"
+        );
+    }
+
+    #[test]
+    fn test_resolve_answer_intro_has_phonetool_url_worked_example() {
+        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        assert!(
+            intro.contains("phonetool.amazon.com/users/johndoe"),
+            "resolve intro must show a concrete Phonetool URL example"
+        );
+        assert!(
+            intro.contains("Construct the URL from the alias"),
+            "resolve intro must explain how to derive the alias for the URL"
+        );
+    }
 }
