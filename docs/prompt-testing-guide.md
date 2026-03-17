@@ -212,3 +212,39 @@ This requires 30 tasks × N models = 30N tasks in the queue, but produces clean,
 
 ### Comparing results across methodology versions
 Results from v1 and v2 are not directly comparable. When comparing runs, always note which methodology was used.
+
+---
+
+## Core Workflow Philosophy (from Daniel, 2026-03-17)
+
+### add / ingest
+"Bring in new data." 
+
+This workflow is about ingestion — pulling in new facts or entities from an external source. The agent:
+1. **Searches existing KB first** — to check if an entity already exists under a different name (naming inconsistency). Rust/factbase can't catch all name variations; the agent's search can.
+2. **Creates new entities OR adds facts to existing entities** — both belong in `add`. If the entity exists, add the new facts to it. If it doesn't, create it.
+
+The `add` workflow is permissive — it doesn't require strong judgment about truth. It just requires checking for duplicates before creating.
+
+### correct
+"Something is incorrect somewhere, and here's the truth."
+
+This is the core purpose of factbase: helping users establish a knowledge base of facts they can trust. The `correct` workflow:
+1. **Finds where the false claim appears** across all documents
+2. **Compares new truth against existing facts** — this is where conflicts, comparisons, and trust live
+3. **Fixes without leaving disclaimers** — writes as if it was always correct
+
+The `correct` workflow requires significantly more judgment than `add`. It's not about volume — it's about accuracy.
+
+### Why they stay separate
+Both require agent judgment, but the nature of the judgment differs:
+- `add`: "Does this entity already exist? Do these facts already appear?"
+- `correct`: "Is this claim genuinely false? Where does it appear? How do I fix it without leaving evidence of the error?"
+
+Collapsing them would mix permissive ingestion with adversarial correction — two fundamentally different modes of operation.
+
+### resolve_question (was: dismiss)
+When a citation quality question is resolved, use `resolve_question` (not "dismiss"):
+- `resolve_question` = close the review question; the citation stays unchanged; the question is answered
+- `defer` = waits for human review
+- The citation itself is never affected by resolving the question
