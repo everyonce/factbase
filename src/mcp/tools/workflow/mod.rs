@@ -547,6 +547,24 @@ fn resolve_step(
 
 // --- Maintain workflow ---
 
+/// Returns true if the user's message is a vague improvement/cleanup request
+/// (e.g. "clean up the KB", "fix everything") rather than a precise operation
+/// (e.g. "run a scan", "suggest links", "check for conflicts").
+fn is_vague_maintain_request(msg: &str) -> bool {
+    let msg = msg.to_lowercase();
+    // Specific operation keywords indicate the user knows what they want — no gate needed
+    let specific = [
+        "scan", "link", "check", "conflict", "question", "review",
+        "detect", "suggest", "maintenance", "maintain",
+    ];
+    if specific.iter().any(|k| msg.contains(k)) {
+        return false;
+    }
+    // Vague improvement/cleanup keywords trigger the scope-confirm gate
+    let vague = ["clean", "fix", "improve", "tidy", "better", "organize", "sort", "help"];
+    vague.iter().any(|k| msg.contains(k))
+}
+
 fn maintain_step(
     step: usize,
     args: &Value,
@@ -560,11 +578,45 @@ fn maintain_step(
     let total = 7;
     match step {
         1 => {
+            let is_targeted = get_str_arg(args, "doc_id").is_some();
+            let confirmed = get_bool_arg(args, "confirmed", false);
+
+            // Scope-confirm gate: vague commands ("clean up", "fix everything", etc.)
+            // need clarification before launching a full maintenance cycle.
+            // Precise commands ("run a scan", "suggest links") bypass this gate.
+            if !is_targeted && !confirmed {
+                if let Some(msg) = get_str_arg(args, "user_message") {
+                    if is_vague_maintain_request(&msg) {
+                        let doc_count =
+                            db.get_all_document_ids().ok().map(|ids| ids.len()).unwrap_or(0);
+                        let est_mins =
+                            ((doc_count as f64 * 2.0) / 60.0).ceil().max(1.0) as usize;
+                        let est_display = if est_mins >= 2 {
+                            format!("~{est_mins} minutes")
+                        } else {
+                            "~1–2 minutes".to_string()
+                        };
+                        return serde_json::json!({
+                            "workflow": "maintain",
+                            "step": 1, "total_steps": total,
+                            "requires_scope_confirm": true,
+                            "instruction": format!(
+                                "STOP — ask the user before proceeding.\n\n\
+                                 Say: \"That will run a full KB maintenance cycle \
+                                 ({est_display}, {doc_count} docs). Want me to proceed, \
+                                 or did you have something specific in mind?\"\n\n\
+                                 Wait for the user's response:\n\
+                                 - If they confirm → call workflow(workflow='maintain', step=1, confirmed=true)\n\
+                                 - If they want something specific → use the appropriate focused command instead"
+                            )
+                        });
+                    }
+                }
+            }
+
             // Cost gate: full-KB maintain always requires user confirmation unless:
             // - targeted at a specific document (doc_id set), or
             // - caller already confirmed (confirmed=true)
-            let is_targeted = get_str_arg(args, "doc_id").is_some();
-            let confirmed = get_bool_arg(args, "confirmed", false);
             if !is_targeted && !confirmed {
                 let doc_count = db.get_all_document_ids().ok().map(|ids| ids.len()).unwrap_or(0);
                 let est_mins = ((doc_count as f64 * 2.0) / 60.0).ceil() as usize;
@@ -6753,6 +6805,111 @@ mod tests {
                 || result["requires_confirmation"] != true,
             "targeted maintain (doc_id set) should bypass the cost gate"
         );
+    }
+
+    #[test]
+    fn test_scope_confirm_gate_triggers_for_vague_message() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        for msg in &["clean up the KB", "fix everything", "improve the KB", "tidy it up"] {
+            let result = maintain_step(
+                1,
+                &serde_json::json!({"user_message": msg}),
+                &None,
+                0,
+                &db,
+                &wf,
+                None,
+            );
+            assert_eq!(
+                result["requires_scope_confirm"], true,
+                "vague message '{msg}' should trigger scope-confirm gate"
+            );
+            let instr = result["instruction"].as_str().unwrap_or("");
+            assert!(
+                instr.contains("Want me to proceed"),
+                "scope-confirm instruction should ask if user wants to proceed: {instr}"
+            );
+            assert!(
+                result.get("next_tool").is_none(),
+                "scope-confirm gate should not include next_tool"
+            );
+        }
+    }
+
+    #[test]
+    fn test_scope_confirm_gate_bypassed_for_specific_message() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        for msg in &["run a scan", "suggest links", "check for conflicts", "run maintenance"] {
+            let result = maintain_step(
+                1,
+                &serde_json::json!({"user_message": msg, "confirmed": true}),
+                &None,
+                0,
+                &db,
+                &wf,
+                None,
+            );
+            assert!(
+                result.get("requires_scope_confirm").is_none(),
+                "specific message '{msg}' should not trigger scope-confirm gate"
+            );
+        }
+    }
+
+    #[test]
+    fn test_scope_confirm_gate_bypassed_when_confirmed() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        let result = maintain_step(
+            1,
+            &serde_json::json!({"user_message": "clean up the KB", "confirmed": true}),
+            &None,
+            0,
+            &db,
+            &wf,
+            None,
+        );
+        assert!(
+            result.get("requires_scope_confirm").is_none(),
+            "confirmed=true should bypass scope-confirm gate even for vague message"
+        );
+        assert_eq!(result["next_tool"], "factbase", "confirmed maintain should proceed to scan");
+    }
+
+    #[test]
+    fn test_scope_confirm_gate_bypassed_when_targeted() {
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+        let result = maintain_step(
+            1,
+            &serde_json::json!({"user_message": "clean up the KB", "doc_id": "abc123"}),
+            &None,
+            0,
+            &db,
+            &wf,
+            None,
+        );
+        assert!(
+            result.get("requires_scope_confirm").is_none(),
+            "targeted maintain (doc_id set) should bypass scope-confirm gate"
+        );
+    }
+
+    #[test]
+    fn test_is_vague_maintain_request() {
+        assert!(is_vague_maintain_request("clean up the KB"));
+        assert!(is_vague_maintain_request("fix everything"));
+        assert!(is_vague_maintain_request("improve the knowledge base"));
+        assert!(is_vague_maintain_request("tidy it up"));
+        assert!(is_vague_maintain_request("make it better"));
+        assert!(is_vague_maintain_request("organize the KB"));
+        assert!(!is_vague_maintain_request("run a scan"));
+        assert!(!is_vague_maintain_request("suggest links"));
+        assert!(!is_vague_maintain_request("check for conflicts"));
+        assert!(!is_vague_maintain_request("run maintenance"));
+        assert!(!is_vague_maintain_request("review questions"));
     }
 
     #[test]
