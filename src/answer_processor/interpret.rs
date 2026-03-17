@@ -29,6 +29,7 @@ pub fn classify_answer(answer: &str) -> AnswerType {
     // Dismissal
     if lower == "dismiss"
         || lower == "ignore"
+        || lower.starts_with("resolve_question")
         || lower.starts_with("not a conflict")
         || lower.starts_with("no conflict")
         || lower.starts_with("not conflicting")
@@ -317,6 +318,8 @@ mod tests {
         assert_eq!(classify_answer("DISMISS"), AnswerType::Dismissal);
         assert_eq!(classify_answer("  Ignore  "), AnswerType::Dismissal);
         assert_eq!(classify_answer("not a conflict"), AnswerType::Dismissal);
+        assert_eq!(classify_answer("resolve_question: VALID — citation is fine"), AnswerType::Dismissal);
+        assert_eq!(classify_answer("resolve_question: VALID — per internal policy"), AnswerType::Dismissal);
         assert_eq!(
             classify_answer("Not a conflict. Promotion from Director to Senior Director"),
             AnswerType::Dismissal

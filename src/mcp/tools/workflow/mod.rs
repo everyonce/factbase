@@ -2098,8 +2098,8 @@ mod tests {
             "resolve intro must instruct agent to use verified for policy-matched citations"
         );
         assert!(
-            intro.contains("dismiss: VALID"),
-            "resolve intro must show dismiss: VALID answer format"
+            intro.contains("resolve_question: VALID"),
+            "resolve intro must show resolve_question: VALID answer format"
         );
         assert!(
             intro.contains("IS verification"),
@@ -2119,8 +2119,8 @@ mod tests {
             "variant intro must instruct agent to use verified for policy-matched citations"
         );
         assert!(
-            intro.contains("dismiss: VALID"),
-            "variant intro must show dismiss: VALID answer format"
+            intro.contains("resolve_question: VALID"),
+            "variant intro must show resolve_question: VALID answer format"
         );
     }
 
@@ -6548,8 +6548,8 @@ mod tests {
             "resolve intro must have WEAK-SOURCE WORKED EXAMPLES section"
         );
         assert!(
-            intro.contains("dismiss: VALID — [reason per internal_sources policy]"),
-            "resolve intro must show dismiss answer format for valid internal citation"
+            intro.contains("resolve_question: VALID — [reason per internal_sources policy]"),
+            "resolve intro must show resolve_question answer format for valid internal citation"
         );
         assert!(
             intro.contains("<!-- ✓ -->"),

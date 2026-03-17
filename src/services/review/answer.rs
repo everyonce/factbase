@@ -427,7 +427,7 @@ fn stamp_weak_source_footnote(
         return content.to_string();
     }
     let lower = answer_text.trim().to_lowercase();
-    if !lower.starts_with("valid") && !lower.starts_with("dismiss") {
+    if !lower.starts_with("valid") && !lower.starts_with("dismiss") && !lower.starts_with("resolve_question") {
         return content.to_string();
     }
     let Some(num) = extract_footnote_num_from_desc(&question.description) else {
@@ -759,6 +759,20 @@ mod tests {
         }).unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
         assert!(disk.contains("[^2]: Some source <!-- ✓ -->"), "footnote should be stamped: {disk}");
+    }
+
+    #[test]
+    fn test_weak_source_resolve_question_answer_stamps_footnote() {
+        let dir = tempfile::tempdir().unwrap();
+        let (db, _) = make_weak_source_doc(dir.path(), 2);
+        answer_question(&db, &AnswerQuestionParams {
+            doc_id: "ws001".into(), question_index: 0,
+            answer: "resolve_question: VALID — citation satisfies internal_sources policy".into(), confidence: Some("verified".into()),
+        }).unwrap();
+        let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
+        assert!(disk.contains("[^2]: Some source <!-- ✓ -->"), "footnote should be stamped with resolve_question: {disk}");
+        // Citation text must still be present — resolve_question does not remove it
+        assert!(disk.contains("[^2]: Some source"), "citation text must remain after resolve_question: {disk}");
     }
 
     #[test]
