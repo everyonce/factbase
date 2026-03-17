@@ -443,6 +443,10 @@ fn check_fact_conflict(fact1: &FactWithRange, fact2: &FactWithRange) -> Option<R
 ///
 /// Returns false for facts that are clearly about different entities
 /// (different proper names) or are cross-reference roster entries.
+///
+/// Exception: attribution conflicts — two facts with different proper-name
+/// subjects but the same predicate (e.g. "X is the primary composer" vs
+/// "Y is the primary composer") are allowed through even when names differ.
 fn facts_may_conflict(text1: &str, text2: &str) -> bool {
     // Roster lines with cross-references are distinct entries, not conflicts
     if MANUAL_LINK_REGEX.is_match(text1) || MANUAL_LINK_REGEX.is_match(text2) {
@@ -450,9 +454,14 @@ fn facts_may_conflict(text1: &str, text2: &str) -> bool {
     }
 
     // If both facts mention different proper names, they describe
-    // different entities and aren't mutually exclusive
+    // different entities and aren't mutually exclusive — UNLESS they share
+    // the same predicate (attribution conflict: "X is the [role]" vs "Y is the [role]").
     if contains_different_proper_names(text1, text2) {
-        return false;
+        // Allow through if the non-name content is very similar (same predicate).
+        // This catches "Miles Davis = primary composer" vs "Bill Evans = primary composer".
+        if !is_attribution_conflict(text1, text2) {
+            return false;
+        }
     }
 
     // Key-value facts with different keys describe independent attributes
@@ -462,6 +471,47 @@ fn facts_may_conflict(text1: &str, text2: &str) -> bool {
     }
 
     true
+}
+
+/// Returns true when two facts have different proper-name subjects but share
+/// the same predicate — indicating a contradictory attribution claim.
+///
+/// Detects patterns like:
+/// - "Miles Davis = primary composer" vs "Bill Evans = primary composer"
+/// - "Alice led the project" vs "Bob led the project"
+///
+/// Method: strip proper names and temporal markup from each text, then check
+/// if the remaining predicate words have high Jaccard similarity (≥ 0.6).
+fn is_attribution_conflict(text1: &str, text2: &str) -> bool {
+    let predicate1 = strip_temporal_markup(&strip_proper_names(text1));
+    let predicate2 = strip_temporal_markup(&strip_proper_names(text2));
+    // Need enough predicate content to compare (avoid false positives on short facts)
+    let words1: Vec<_> = predicate1
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .collect();
+    let words2: Vec<_> = predicate2
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 3)
+        .collect();
+    if words1.len() < 2 || words2.len() < 2 {
+        return false;
+    }
+    content_word_jaccard(&predicate1, &predicate2) >= 0.6
+}
+
+/// Remove proper names (2+ consecutive capitalized words) from text,
+/// returning the remaining predicate content.
+fn strip_proper_names(text: &str) -> String {
+    let names = extract_proper_names(text);
+    if names.is_empty() {
+        return text.to_string();
+    }
+    let mut result = text.to_string();
+    for name in &names {
+        result = result.replace(name.as_str(), " ");
+    }
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Extract the attribute key from a `Key: Value` or `**Key**: Value` fact.
@@ -597,6 +647,9 @@ fn is_boundary_month_sequential(start1: &str, end1: &str, start2: &str, end2: &s
 /// 1. Multi-word proper names (e.g., "Tivity Health", "Acme Corp")
 /// 2. Shared significant words — catches single-word names, camelCase (e.g.,
 ///    "axialHealthcare"), and other patterns that proper-name extraction misses.
+///
+/// Exception: when the role descriptions are nearly identical (same role at the
+/// same entity with overlapping dates), this is a real conflict, not a transition.
 fn is_shared_entity_sequential(text1: &str, text2: &str, start1: &str, start2: &str) -> bool {
     let names1 = extract_proper_names(text1);
     let names2 = extract_proper_names(text2);
@@ -608,7 +661,52 @@ fn is_shared_entity_sequential(text1: &str, text2: &str, start1: &str, start2: &
     // One must clearly start before the other (not simultaneous)
     let s1 = normalize_date_for_comparison(start1);
     let s2 = normalize_date_for_comparison(start2);
-    date_cmp(&s1, &s2) != std::cmp::Ordering::Equal
+    if date_cmp(&s1, &s2) == std::cmp::Ordering::Equal {
+        return false;
+    }
+    // If the role descriptions are nearly identical (same role, overlapping dates),
+    // this is a real conflict — not a sequential transition.  Strip temporal tags
+    // before comparing so "@t[1955..1959]" vs "@t[1957..1961]" doesn't dilute similarity.
+    let stripped1 = strip_temporal_markup(text1);
+    let stripped2 = strip_temporal_markup(text2);
+    if content_word_jaccard(&stripped1, &stripped2) >= 0.7 {
+        return false;
+    }
+    true
+}
+
+/// Strip `@t[...]`, `@q[...]`, `@s[...]` tags and `[^n]` footnote references
+/// from a fact text, returning only the descriptive content words.
+fn strip_temporal_markup(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '@' {
+            // Skip @X[...] tag: consume the tag letter and bracketed content
+            if chars.peek().map_or(false, |c| c.is_alphabetic()) {
+                chars.next(); // tag letter
+                if chars.peek() == Some(&'[') {
+                    chars.next(); // '['
+                    for c in chars.by_ref() {
+                        if c == ']' {
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+        } else if ch == '[' && chars.peek() == Some(&'^') {
+            // Skip [^n] footnote reference
+            for c in chars.by_ref() {
+                if c == ']' {
+                    break;
+                }
+            }
+            continue;
+        }
+        result.push(ch);
+    }
+    result.trim().to_string()
 }
 
 /// Returns true when one fact has an ongoing (open-ended) range and the other
@@ -1924,5 +2022,105 @@ mod tests {
             1,
             "Same-entity contradictory facts should still generate a conflict question"
         );
+    }
+
+    // --- intra-document conflict detection tests (v3 eval steps 15-17) ---
+
+    #[test]
+    fn test_same_role_overlapping_dates_generates_conflict() {
+        // Step 15: same role description with overlapping @t ranges → conflict
+        let content = "# Entity\n\n\
+            - led Quintet @t[1955..1959]\n\
+            - led Quintet @t[1957..1961]";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Same role with overlapping dates should generate a conflict question"
+        );
+        assert!(questions[0].description.contains("same_entity_transition"));
+    }
+
+    #[test]
+    fn test_different_events_same_date_not_flagged() {
+        // Step 16: two different events sharing the same date → NOT flagged
+        // (join date + first role, both in 1955 — could both be true simultaneously)
+        let content = "# Entity\n\n\
+            - joined the group @t[=1955]\n\
+            - started leading the Quintet @t[=1955]";
+        let questions = generate_conflict_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Different events at the same date should not be flagged as conflicts"
+        );
+    }
+
+    #[test]
+    fn test_contradictory_attribution_generates_conflict() {
+        // Step 17: two facts claiming different subjects for the same role → conflict
+        let content = "# Kind of Blue\n\n\
+            - Miles Davis was the primary composer @t[1959..]\n\
+            - Bill Evans was the primary composer @t[1959..]";
+        let questions = generate_conflict_questions(content);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Contradictory attribution claims should generate a conflict question"
+        );
+    }
+
+    #[test]
+    fn test_different_roles_different_people_not_flagged() {
+        // Different people with different roles — not contradictory
+        let content = "# Kind of Blue\n\n\
+            - Miles Davis was the bandleader @t[1959..]\n\
+            - Bill Evans was the pianist @t[1959..]";
+        let questions = generate_conflict_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Different roles for different people should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_same_role_sequential_promotion_not_flagged() {
+        // Same entity, different role descriptions, different start dates → promotion, not conflict
+        let content = "# Entity\n\n\
+            - led Small Group @t[1955..1959]\n\
+            - led Large Orchestra @t[1960..1965]";
+        let questions = generate_conflict_questions(content);
+        assert!(
+            questions.is_empty(),
+            "Sequential roles at different dates should not be flagged"
+        );
+    }
+
+    #[test]
+    fn test_strip_temporal_markup() {
+        assert_eq!(
+            strip_temporal_markup("led Quintet @t[1955..1959]"),
+            "led Quintet"
+        );
+        assert_eq!(
+            strip_temporal_markup("primary composer @t[1959..] [^1]"),
+            "primary composer"
+        );
+        assert_eq!(strip_temporal_markup("no tags here"), "no tags here");
+    }
+
+    #[test]
+    fn test_is_attribution_conflict() {
+        // Same predicate, different subjects → attribution conflict
+        assert!(is_attribution_conflict(
+            "Miles Davis was the primary composer",
+            "Bill Evans was the primary composer"
+        ));
+        // Different predicates → not attribution conflict
+        assert!(!is_attribution_conflict(
+            "Miles Davis was the bandleader",
+            "Bill Evans was the pianist"
+        ));
+        // Too short predicate after stripping names → not attribution conflict
+        assert!(!is_attribution_conflict("Miles Davis led", "Bill Evans led"));
     }
 }
