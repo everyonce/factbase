@@ -126,8 +126,8 @@ impl Database {
         );
 
         let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|a| a.as_ref()).collect();
-        let (total_answered, total_unanswered, total_deferred): (u64, u64, u64) = conn
-            .query_row(&count_sql, refs.as_slice(), |row| {
+        let (total_answered, total_unanswered, total_deferred): (u64, u64, u64) =
+            conn.query_row(&count_sql, refs.as_slice(), |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })?;
 
@@ -189,7 +189,16 @@ impl Database {
             })?
             .filter_map(Result::ok)
             .map(
-                |(doc_id, doc_title, question_index, question_type, description, line_ref, answer, status)| {
+                |(
+                    doc_id,
+                    doc_title,
+                    question_index,
+                    question_type,
+                    description,
+                    line_ref,
+                    answer,
+                    status,
+                )| {
                     let is_deferred = status == "deferred" || status == "believed";
                     let answered = status == "verified";
                     let mut obj = serde_json::json!({
@@ -405,11 +414,8 @@ impl Database {
                     .parse::<crate::models::QuestionType>()
                     .unwrap_or(crate::models::QuestionType::Missing);
                 let answered = status == "verified";
-                let mut q = ReviewQuestion::new(
-                    question_type,
-                    line_ref.map(|n| n as usize),
-                    description,
-                );
+                let mut q =
+                    ReviewQuestion::new(question_type, line_ref.map(|n| n as usize), description);
                 q.answered = answered;
                 q.answer = answer;
                 q
@@ -525,11 +531,9 @@ impl Database {
             Ok(c) => c,
             Err(_) => return false,
         };
-        conn.query_row(
-            "SELECT COUNT(*) > 0 FROM review_questions",
-            [],
-            |row| row.get::<_, bool>(0),
-        )
+        conn.query_row("SELECT COUNT(*) > 0 FROM review_questions", [], |row| {
+            row.get::<_, bool>(0)
+        })
         .unwrap_or(false)
     }
 }
@@ -581,8 +585,7 @@ mod tests {
             status_filter: "unanswered".to_string(),
             ..Default::default()
         };
-        let (qs, answered, unanswered, deferred) =
-            db.query_review_questions_db(&params).unwrap();
+        let (qs, answered, unanswered, deferred) = db.query_review_questions_db(&params).unwrap();
         assert_eq!(qs.len(), 2);
         assert_eq!(unanswered, 2);
         assert_eq!(answered, 0);
@@ -638,8 +641,7 @@ mod tests {
             status_filter: "all".to_string(),
             ..Default::default()
         };
-        let (_, answered, unanswered, deferred) =
-            db.query_review_questions_db(&params).unwrap();
+        let (_, answered, unanswered, deferred) = db.query_review_questions_db(&params).unwrap();
         assert_eq!(unanswered, 1);
         assert_eq!(deferred, 1);
         assert_eq!(answered, 1);
@@ -678,16 +680,10 @@ mod tests {
         db.upsert_document(&doc1).unwrap();
         db.upsert_document(&doc2).unwrap();
 
-        db.sync_review_questions(
-            "doc1",
-            &[make_question(QuestionType::Temporal, "Q1")],
-        )
-        .unwrap();
-        db.sync_review_questions(
-            "doc2",
-            &[make_question(QuestionType::Missing, "Q2")],
-        )
-        .unwrap();
+        db.sync_review_questions("doc1", &[make_question(QuestionType::Temporal, "Q1")])
+            .unwrap();
+        db.sync_review_questions("doc2", &[make_question(QuestionType::Missing, "Q2")])
+            .unwrap();
 
         let params = ReviewQueueDbParams {
             limit: 10,
@@ -717,9 +713,7 @@ mod tests {
             .unwrap();
         assert_eq!(rows, 2);
 
-        let (_, unanswered, _) = db
-            .count_review_questions_by_status(None)
-            .unwrap();
+        let (_, unanswered, _) = db.count_review_questions_by_status(None).unwrap();
         assert_eq!(unanswered, 1); // only temporal remains
     }
 
@@ -735,12 +729,7 @@ mod tests {
         db.sync_review_questions(&doc_id, &questions).unwrap();
 
         let rows = db
-            .bulk_update_review_question_status(
-                None,
-                None,
-                Some("%Phonetool%"),
-                "dismissed",
-            )
+            .bulk_update_review_question_status(None, None, Some("%Phonetool%"), "dismissed")
             .unwrap();
         assert_eq!(rows, 1);
     }
@@ -757,8 +746,7 @@ mod tests {
         ];
         db.sync_review_questions(&doc_id, &questions).unwrap();
 
-        let (answered, unanswered, deferred) =
-            db.count_review_questions_by_status(None).unwrap();
+        let (answered, unanswered, deferred) = db.count_review_questions_by_status(None).unwrap();
         assert_eq!(answered, 1);
         assert_eq!(unanswered, 1);
         assert_eq!(deferred, 1);
@@ -769,16 +757,11 @@ mod tests {
         let (db, _tmp) = test_db();
         let doc_id = setup(&db);
 
-        db.sync_review_questions(
-            &doc_id,
-            &[make_question(QuestionType::Temporal, "Q1")],
-        )
-        .unwrap();
+        db.sync_review_questions(&doc_id, &[make_question(QuestionType::Temporal, "Q1")])
+            .unwrap();
         db.sync_review_questions(&doc_id, &[]).unwrap();
 
-        let (_, unanswered, _) = db
-            .count_review_questions_by_status(None)
-            .unwrap();
+        let (_, unanswered, _) = db.count_review_questions_by_status(None).unwrap();
         assert_eq!(unanswered, 0);
     }
 
@@ -875,11 +858,8 @@ mod tests {
         assert!(!db.has_review_questions_indexed());
 
         let doc_id = setup(&db);
-        db.sync_review_questions(
-            &doc_id,
-            &[make_question(QuestionType::Temporal, "Q1")],
-        )
-        .unwrap();
+        db.sync_review_questions(&doc_id, &[make_question(QuestionType::Temporal, "Q1")])
+            .unwrap();
         assert!(db.has_review_questions_indexed());
     }
 

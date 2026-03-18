@@ -811,7 +811,10 @@ mod tests {
             ..Document::test_default()
         };
         let terms = collect_defined_terms(&[sme_doc]);
-        assert!(terms.contains("SME"), "doc title SME should be a defined term");
+        assert!(
+            terms.contains("SME"),
+            "doc title SME should be a defined term"
+        );
         // SME should not be flagged as ambiguous in other docs
         let q = generate_ambiguous_questions_with_type(
             "# Project\n\n- Working with SME team on deployment",

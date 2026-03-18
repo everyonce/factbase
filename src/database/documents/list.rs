@@ -169,7 +169,9 @@ mod tests {
         db.upsert_document(&doc1).expect("Failed to upsert");
         db.upsert_document(&doc2).expect("Failed to upsert");
 
-        let stubs = db.get_document_stubs_for_repo("repo1").expect("Failed to get stubs");
+        let stubs = db
+            .get_document_stubs_for_repo("repo1")
+            .expect("Failed to get stubs");
         assert_eq!(stubs.len(), 2);
         assert!(stubs.contains_key("abc123"));
         assert!(stubs.contains_key("def456"));
@@ -189,7 +191,9 @@ mod tests {
         db.upsert_document(&doc2).expect("Failed to upsert");
         db.mark_deleted("def456").expect("Failed to mark deleted");
 
-        let stubs = db.get_document_stubs_for_repo("repo1").expect("Failed to get stubs");
+        let stubs = db
+            .get_document_stubs_for_repo("repo1")
+            .expect("Failed to get stubs");
         assert_eq!(stubs.len(), 1);
         assert!(stubs.contains_key("abc123"));
         assert!(!stubs.contains_key("def456"));
@@ -200,16 +204,22 @@ mod tests {
         let (db, _temp) = test_db();
         let repo1 = test_repo_with_id("repo1");
         let repo2 = test_repo_with_id("repo2");
-        db.upsert_repository(&repo1).expect("Failed to create repo1");
-        db.upsert_repository(&repo2).expect("Failed to create repo2");
+        db.upsert_repository(&repo1)
+            .expect("Failed to create repo1");
+        db.upsert_repository(&repo2)
+            .expect("Failed to create repo2");
 
         let doc1 = test_doc_with_repo("abc123", "repo1", "Doc 1");
         let doc2 = test_doc_with_repo("def456", "repo2", "Doc 2");
         db.upsert_document(&doc1).expect("Failed to upsert");
         db.upsert_document(&doc2).expect("Failed to upsert");
 
-        let stubs1 = db.get_document_stubs_for_repo("repo1").expect("Failed to get stubs");
-        let stubs2 = db.get_document_stubs_for_repo("repo2").expect("Failed to get stubs");
+        let stubs1 = db
+            .get_document_stubs_for_repo("repo1")
+            .expect("Failed to get stubs");
+        let stubs2 = db
+            .get_document_stubs_for_repo("repo2")
+            .expect("Failed to get stubs");
         assert_eq!(stubs1.len(), 1);
         assert_eq!(stubs2.len(), 1);
         assert!(stubs1.contains_key("abc123"));

@@ -31,7 +31,10 @@ pub const CITATION_ACCEPTED_MARKER: &str = "<!-- ✓ -->";
 /// For each citation that fails `validate_citation()` and no `extra_patterns` match,
 /// emits a `@q[weak-source]` question with the failure reason.
 /// Suppressed by a recent `reviewed:` marker (same 180-day window as other generators).
-pub fn generate_weak_source_questions(content: &str, extra_patterns: &[Regex]) -> Vec<ReviewQuestion> {
+pub fn generate_weak_source_questions(
+    content: &str,
+    extra_patterns: &[Regex],
+) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
     let fm_skip = extract_frontmatter_reviewed_date(content)
         .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS);
@@ -92,7 +95,10 @@ mod tests {
         // Vague citation → generates a question
         let content = doc_with_source("AWS documentation, accessed 2026-03-07");
         let qs = generate_weak_source_questions(&content, &[]);
-        assert!(!qs.is_empty(), "vague citation should generate a weak-source question");
+        assert!(
+            !qs.is_empty(),
+            "vague citation should generate a weak-source question"
+        );
         assert_eq!(qs[0].question_type, crate::models::QuestionType::WeakSource);
     }
 
@@ -155,7 +161,10 @@ mod tests {
         }];
         let compiled = crate::processor::compile_citation_patterns(&patterns);
         let qs = generate_weak_source_questions(&content, &compiled);
-        assert!(qs.is_empty(), "perspective pattern should suppress weak-source question");
+        assert!(
+            qs.is_empty(),
+            "perspective pattern should suppress weak-source question"
+        );
     }
 
     #[test]
@@ -169,7 +178,10 @@ mod tests {
         }];
         let compiled = crate::processor::compile_citation_patterns(&patterns);
         let qs = generate_weak_source_questions(&content, &compiled);
-        assert!(!qs.is_empty(), "non-matching pattern should not suppress question");
+        assert!(
+            !qs.is_empty(),
+            "non-matching pattern should not suppress question"
+        );
     }
 
     #[test]
@@ -180,7 +192,9 @@ mod tests {
             CITATION_ACCEPTED_MARKER
         );
         let qs = generate_weak_source_questions(&content, &[]);
-        assert!(qs.is_empty(), "accepted marker should suppress weak-source question");
+        assert!(
+            qs.is_empty(),
+            "accepted marker should suppress weak-source question"
+        );
     }
-
 }

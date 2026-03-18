@@ -310,5 +310,4 @@ mod tests {
         assert_eq!(result[0].current.doc_id, "ccc333");
         assert_eq!(result[0].stale.len(), 2);
     }
-
 }

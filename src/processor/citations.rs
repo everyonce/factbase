@@ -13,8 +13,7 @@ use tracing::warn;
 
 // --- Regexes ---
 
-static URL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"https?://").expect("url regex"));
+static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"https?://").expect("url regex"));
 
 static FILE_PATH_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|[\s(])(?:[/~][^\s]+|[^\s]+\.(?:md|pdf|doc|docx|txt|csv|xlsx|html))\b")
@@ -41,9 +40,8 @@ static DOMAIN_URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Catalog/record number: 1-4 uppercase letters + separator + 2+ digits (e.g. "CL 1355", "A-77", "SD 1361")
-static CATALOG_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\b[A-Z]{1,4}[-\s]\d{2,}\b").expect("catalog number regex")
-});
+static CATALOG_NUMBER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b[A-Z]{1,4}[-\s]\d{2,}\b").expect("catalog number regex"));
 
 static NAMED_PERSON_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:with|from|by|interview)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+")
@@ -51,9 +49,8 @@ static NAMED_PERSON_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Scripture: book + chapter:verse (e.g. "Genesis 1:1", "John 3:16")
-static SCRIPTURE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b[A-Z][a-z]+\s+\d+:\d+").expect("scripture regex")
-});
+static SCRIPTURE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b[A-Z][a-z]+\s+\d+:\d+").expect("scripture regex"));
 
 /// Academic: author + year + venue (e.g. "Smith 2024, Nature 612:45" or "Smith et al. 2024")
 /// Matches: single capitalized word (non-month) + year, or "et al." pattern.
@@ -64,8 +61,18 @@ static ACADEMIC_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Month names to exclude from academic detection
 static MONTH_NAMES: &[&str] = &[
-    "January", "February", "March", "April", "May", "June",
-    "July", "August", "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 /// Known tool names that require a URL (navigable tools)
@@ -75,9 +82,8 @@ static KNOWN_TOOL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// System/DB: system name + record ID pattern (e.g. "Jira PROJ-678", "ServiceNow INC0012345")
-static SYSTEM_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b[A-Z][A-Z0-9_-]+[-_]\d+\b").expect("system id regex")
-});
+static SYSTEM_ID_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b[A-Z][A-Z0-9_-]+[-_]\d+\b").expect("system id regex"));
 
 /// Email keywords
 static EMAIL_REGEX: LazyLock<Regex> =
@@ -112,7 +118,8 @@ static STANDARD_BODY_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Standard number pattern (e.g. "RFC 7231", "ISO 27001", "IEEE 802.11")
 static STANDARD_NUMBER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\b(?:RFC|ISO|IEEE|NIST|ANSI|IETF|W3C)\s+[\d.]+\b").expect("standard number regex")
+    Regex::new(r"(?i)\b(?:RFC|ISO|IEEE|NIST|ANSI|IETF|W3C)\s+[\d.]+\b")
+        .expect("standard number regex")
 });
 
 // ---------------------------------------------------------------------------
@@ -162,7 +169,11 @@ pub fn detect_citation_type(text: &str) -> CitationType {
     if EMAIL_REGEX.is_match(text) {
         return CitationType::Email;
     }
-    if text.contains('#') && (text.to_lowercase().contains("slack") || text.to_lowercase().contains("teams") || text.contains('#')) {
+    if text.contains('#')
+        && (text.to_lowercase().contains("slack")
+            || text.to_lowercase().contains("teams")
+            || text.contains('#'))
+    {
         // Has a channel reference
         if Regex::new(r"#[a-zA-Z][\w-]+").unwrap().is_match(text) {
             return CitationType::SlackOrTeams;
@@ -301,7 +312,9 @@ pub fn citation_failure_reason(ct: &CitationType) -> &'static str {
     match ct {
         CitationType::Url | CitationType::FilePath => "already valid",
         CitationType::NavigableTool => "tool name present but no URL — add the direct URL",
-        CitationType::Book => "book/publication present but no page/chapter/section reference or publisher+year",
+        CitationType::Book => {
+            "book/publication present but no page/chapter/section reference or publisher+year"
+        }
         CitationType::SlackOrTeams => "Slack/Teams source missing channel (#name) or date",
         CitationType::Email => "email source missing sender or date",
         CitationType::SystemOrDb => "system/DB source missing record ID (e.g. PROJ-678)",
@@ -309,7 +322,9 @@ pub fn citation_failure_reason(ct: &CitationType) -> &'static str {
         CitationType::Scripture => "scripture reference missing chapter:verse",
         CitationType::Academic => "academic source missing author + year",
         CitationType::Conversation => "meeting/call source missing participants or date",
-        CitationType::Unknown => "source type unrecognized — add URL, record ID, or other navigable reference",
+        CitationType::Unknown => {
+            "source type unrecognized — add URL, record ID, or other navigable reference"
+        }
     }
 }
 
@@ -356,7 +371,10 @@ mod tests {
 
     #[test]
     fn test_detect_url() {
-        assert_eq!(detect_citation_type("https://example.com"), CitationType::Url);
+        assert_eq!(
+            detect_citation_type("https://example.com"),
+            CitationType::Url
+        );
     }
 
     #[test]
@@ -433,10 +451,7 @@ mod tests {
 
     #[test]
     fn test_detect_scripture() {
-        assert_eq!(
-            detect_citation_type("Genesis 1:1"),
-            CitationType::Scripture
-        );
+        assert_eq!(detect_citation_type("Genesis 1:1"), CitationType::Scripture);
     }
 
     #[test]
@@ -468,7 +483,10 @@ mod tests {
     #[test]
     fn test_url_passes() {
         let ct = CitationType::Url;
-        assert!(validate_citation(&ct, "https://docs.aws.amazon.com/page.html"));
+        assert!(validate_citation(
+            &ct,
+            "https://docs.aws.amazon.com/page.html"
+        ));
     }
 
     #[test]
@@ -902,8 +920,7 @@ mod tests {
     //    Gap: tier 1 cannot detect fabricated journal names; tier 2 must catch this.
     #[test]
     fn test_fabricated_journal_passes_tier1_as_book() {
-        let citation =
-            r#"Smith, J. (2024) "Volcanic Activity Patterns", Journal of Made-Up Science, vol.1, p.1-10"#;
+        let citation = r#"Smith, J. (2024) "Volcanic Activity Patterns", Journal of Made-Up Science, vol.1, p.1-10"#;
         assert_eq!(detect_citation_type(citation), CitationType::Book);
         assert!(is_citation_specific(citation));
     }
@@ -936,7 +953,9 @@ mod tests {
     // 9b. Personal communication without date — still fails
     #[test]
     fn test_personal_communication_no_date_fails_tier1() {
-        assert!(!is_citation_specific("Personal communication with Dr. Chen"));
+        assert!(!is_citation_specific(
+            "Personal communication with Dr. Chen"
+        ));
     }
 
     // 10. Confluence without URL — tier 1 fails (NavigableTool requires URL)
@@ -974,7 +993,10 @@ mod tests {
     #[test]
     fn test_book_with_catalog_number_passes() {
         let ct = CitationType::Book;
-        assert!(validate_citation(&ct, "Some Album, Label Records, SD 1361, 1962"));
+        assert!(validate_citation(
+            &ct,
+            "Some Album, Label Records, SD 1361, 1962"
+        ));
     }
 
     #[test]
@@ -996,13 +1018,17 @@ mod tests {
     #[test]
     fn test_book_title_year_only_still_fails() {
         // Only 1 comma — not enough parts to be a complete bibliographic ref
-        assert!(!is_citation_specific("Peterson Field Guide to Mushrooms, 2019"));
+        assert!(!is_citation_specific(
+            "Peterson Field Guide to Mushrooms, 2019"
+        ));
     }
 
     #[test]
     fn test_biography_detected_as_book() {
         assert_eq!(
-            detect_citation_type("Richard Cook, Blue Note Records: The Biography, Justin Charles & Co., 2003"),
+            detect_citation_type(
+                "Richard Cook, Blue Note Records: The Biography, Justin Charles & Co., 2003"
+            ),
             CitationType::Book
         );
     }
@@ -1018,18 +1044,27 @@ mod tests {
             description: None,
         }];
         let compiled = compile_citation_patterns(&patterns);
-        assert!(is_citation_specific_with_patterns("internal memo", &compiled));
+        assert!(is_citation_specific_with_patterns(
+            "internal memo",
+            &compiled
+        ));
     }
 
     #[test]
     fn test_no_perspective_patterns_falls_through_to_universal() {
         // Empty extra patterns — still passes via universal URL check
-        assert!(is_citation_specific_with_patterns("https://example.com", &[]));
+        assert!(is_citation_specific_with_patterns(
+            "https://example.com",
+            &[]
+        ));
     }
 
     #[test]
     fn test_vague_citation_no_patterns_fails() {
-        assert!(!is_citation_specific_with_patterns("AWS documentation", &[]));
+        assert!(!is_citation_specific_with_patterns(
+            "AWS documentation",
+            &[]
+        ));
     }
 
     #[test]
@@ -1059,7 +1094,13 @@ mod tests {
     #[test]
     fn test_empty_citation_patterns_works() {
         // No extra patterns — behaves like is_citation_specific
-        assert!(!is_citation_specific_with_patterns("AWS documentation", &[]));
-        assert!(is_citation_specific_with_patterns("https://example.com", &[]));
+        assert!(!is_citation_specific_with_patterns(
+            "AWS documentation",
+            &[]
+        ));
+        assert!(is_citation_specific_with_patterns(
+            "https://example.com",
+            &[]
+        ));
     }
 }

@@ -54,8 +54,7 @@ pub fn get_review_queue(
     // re-sync from stored content and re-query. This handles the case where
     // review edits were made externally and the scanner hasn't run yet.
     if total == 0 && params.doc_id.is_none() {
-        let docs_with_reviews =
-            db.get_documents_with_review_queue(repo_filter.as_deref())?;
+        let docs_with_reviews = db.get_documents_with_review_queue(repo_filter.as_deref())?;
         if !docs_with_reviews.is_empty() {
             progress.log("DB review index empty — re-syncing from stored content");
             for doc in &docs_with_reviews {
@@ -64,8 +63,7 @@ pub fn get_review_queue(
                 }
             }
             // Re-query after sync
-            let (questions2, ans2, unans2, def2) =
-                db.query_review_questions_db(&db_params)?;
+            let (questions2, ans2, unans2, def2) = db.query_review_questions_db(&db_params)?;
             let returned2 = questions2.len();
             let total2 = ans2 + unans2 + def2;
             return Ok(serde_json::json!({
@@ -171,7 +169,14 @@ mod tests {
         doc.content = "---\nfactbase_id: bbb222\n---\n# Test\n\n## Review Queue\n\n<!-- factbase:review -->\n\n- [ ] `@q[stale]` Is this current? (line 3)\n".to_string();
         db.upsert_document(&doc).unwrap();
         // Sync review questions (no deferred)
-        db.sync_review_questions("bbb222", &[make_question(QuestionType::Stale, "Is this current? (line 3)")]).unwrap();
+        db.sync_review_questions(
+            "bbb222",
+            &[make_question(
+                QuestionType::Stale,
+                "Is this current? (line 3)",
+            )],
+        )
+        .unwrap();
 
         let params = ReviewQueueParams {
             limit: 10,
@@ -195,7 +200,11 @@ mod tests {
         db.upsert_document(&doc).unwrap();
 
         // Sync: 1 open, 1 answered, 1 deferred
-        let mut answered_q = ReviewQuestion::new(QuestionType::Temporal, None, "When did this happen? (line 4)".to_string());
+        let mut answered_q = ReviewQuestion::new(
+            QuestionType::Temporal,
+            None,
+            "When did this happen? (line 4)".to_string(),
+        );
         answered_q.answered = true;
         answered_q.answer = Some("2024-01".to_string());
         let questions = vec![
@@ -236,7 +245,10 @@ mod tests {
         };
         let result = get_review_queue(&db, &params, &ProgressReporter::Silent).unwrap();
         // Fallback should have found and synced the question
-        assert_eq!(result["unanswered"], 1, "fallback should surface the unanswered question");
+        assert_eq!(
+            result["unanswered"], 1,
+            "fallback should surface the unanswered question"
+        );
         assert_eq!(result["total"], 1);
     }
 
@@ -251,7 +263,14 @@ mod tests {
         doc.repo_id = "test".to_string();
         doc.content = "---\nfactbase_id: fb0002\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n".to_string();
         db.upsert_document(&doc).unwrap();
-        db.sync_review_questions("fb0002", &[make_question(QuestionType::Stale, "Is this current? (line 3)")]).unwrap();
+        db.sync_review_questions(
+            "fb0002",
+            &[make_question(
+                QuestionType::Stale,
+                "Is this current? (line 3)",
+            )],
+        )
+        .unwrap();
 
         let params = ReviewQueueParams {
             limit: 10,

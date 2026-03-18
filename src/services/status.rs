@@ -59,7 +59,7 @@ pub fn kb_status(db: &Database, repo_id: Option<&str>) -> Result<Value, Factbase
     let by_type_questions = db.count_open_questions_by_type(repo_id_ref)?;
 
     // Build human-readable summary table
-    let summary = build_summary_table(
+    let summary = build_summary_table(SummaryTableArgs {
         active,
         docs_with_review,
         temporal_pct,
@@ -67,10 +67,10 @@ pub fn kb_status(db: &Database, repo_id: Option<&str>) -> Result<Value, Factbase
         total_facts,
         open,
         deferred,
-        &by_type_questions,
+        by_type: &by_type_questions,
         last_scan,
         last_maintain,
-    );
+    });
 
     Ok(serde_json::json!({
         "docs": {
@@ -98,7 +98,7 @@ pub fn kb_status(db: &Database, repo_id: Option<&str>) -> Result<Value, Factbase
     }))
 }
 
-fn build_summary_table(
+struct SummaryTableArgs<'a> {
     active: usize,
     docs_with_review: usize,
     temporal_pct: f32,
@@ -106,17 +106,42 @@ fn build_summary_table(
     total_facts: usize,
     open: u64,
     deferred: u64,
-    by_type: &std::collections::HashMap<String, u64>,
+    by_type: &'a std::collections::HashMap<String, u64>,
     last_scan: Option<chrono::DateTime<chrono::Utc>>,
     last_maintain: Option<chrono::DateTime<chrono::Utc>>,
-) -> String {
+}
+
+fn build_summary_table(args: SummaryTableArgs<'_>) -> String {
+    let SummaryTableArgs {
+        active,
+        docs_with_review,
+        temporal_pct,
+        source_pct,
+        total_facts,
+        open,
+        deferred,
+        by_type,
+        last_scan,
+        last_maintain,
+    } = args;
     let mut lines = vec![
         "KB Health Status".to_string(),
         "─────────────────────────────────────────".to_string(),
-        format!("Documents:        {} active  ({} with review sections)", active, docs_with_review),
+        format!(
+            "Documents:        {} active  ({} with review sections)",
+            active, docs_with_review
+        ),
         format!("Facts:            {} total", total_facts),
-        format!("Temporal coverage: {:.1}%  ({} facts tagged)", temporal_pct, (total_facts as f32 * temporal_pct / 100.0) as usize),
-        format!("Source coverage:   {:.1}%  ({} facts cited)", source_pct, (total_facts as f32 * source_pct / 100.0) as usize),
+        format!(
+            "Temporal coverage: {:.1}%  ({} facts tagged)",
+            temporal_pct,
+            (total_facts as f32 * temporal_pct / 100.0) as usize
+        ),
+        format!(
+            "Source coverage:   {:.1}%  ({} facts cited)",
+            source_pct,
+            (total_facts as f32 * source_pct / 100.0) as usize
+        ),
         "─────────────────────────────────────────".to_string(),
         format!("Open review questions: {}", open),
     ];
@@ -141,7 +166,10 @@ fn build_summary_table(
         lines.push("Last scan:    never".to_string());
     }
     if let Some(ts) = last_maintain {
-        lines.push(format!("Last maintain: {}", ts.format("%Y-%m-%d %H:%M UTC")));
+        lines.push(format!(
+            "Last maintain: {}",
+            ts.format("%Y-%m-%d %H:%M UTC")
+        ));
     }
 
     lines.join("\n")

@@ -334,7 +334,9 @@ mod tests {
         let content = "# Entity\n\n- Some fact @t[=2021] [^1]\n\n---\n[^1]: Report, 2021\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            !questions.iter().any(|q| q.description.contains("citation year")),
+            !questions
+                .iter()
+                .any(|q| q.description.contains("citation year")),
             "Should not flag temporal year matching citation year: {:?}",
             questions
         );
@@ -346,7 +348,9 @@ mod tests {
         let content = "# Entity\n\n- Some fact @t[2020-11] [^1]\n\n---\n[^1]: Source, Nov 2020\n";
         let questions = generate_corruption_questions(content);
         assert!(
-            !questions.iter().any(|q| q.description.contains("citation year")),
+            !questions
+                .iter()
+                .any(|q| q.description.contains("citation year")),
             "Should not flag temporal month matching citation: {:?}",
             questions
         );

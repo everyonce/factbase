@@ -1313,7 +1313,10 @@ Content here
         let content = "# Doc\n\nContent.\n\n> [!review]- Review Queue\n> - [x] `@q[temporal]` Q0\n>   > answer\n> - [ ] `@q[stale]` Q1\n>   > \n";
         let result = remove_processed_questions(content, &[0]);
         assert!(result.contains("> [!review]- Review Queue"));
-        assert!(!result.contains("> <!-- factbase:review -->"), "New format should not have marker inside callout");
+        assert!(
+            !result.contains("> <!-- factbase:review -->"),
+            "New format should not have marker inside callout"
+        );
         assert!(result.contains("> - [ ] `@q[stale]` Q1"));
     }
 }

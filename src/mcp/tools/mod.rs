@@ -47,7 +47,9 @@ pub use embeddings::{embeddings_export, embeddings_import, embeddings_status_too
 pub use entity::{get_entity, get_perspective, list_entities};
 pub use links::{get_link_suggestions, store_links};
 pub use organize::{organize, organize_analyze};
-pub use repository::{detect_links, doctor_check, init_repository, kb_status_tool, scan_repository};
+pub use repository::{
+    detect_links, doctor_check, init_repository, kb_status_tool, scan_repository,
+};
 pub use review::{
     answer_question, answer_questions, bulk_answer_questions, check_repository, generate_questions,
     get_deferred_items, get_review_queue, reset_deferred_questions,

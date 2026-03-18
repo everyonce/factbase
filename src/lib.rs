@@ -103,7 +103,7 @@ pub use answer_processor::{
     apply_all::{apply_all_review_answers, ApplyConfig, ApplyDocResult, ApplyResult, ApplyStatus},
     apply_changes_to_section, apply_confirmations, apply_source_citations, classify_answer,
     dedup_titles, identify_affected_section,
-    inbox::{apply_inbox_integration},
+    inbox::apply_inbox_integration,
     interpret_answer, remove_processed_questions, replace_section, stamp_citation_accepted,
     stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers, stamp_sequential_by_text,
     stamp_sequential_lines, uncheck_deferred_questions, AnswerType, ChangeInstruction,
@@ -148,14 +148,13 @@ pub use models::{
 pub use ollama::create_http_client;
 #[deprecated(note = "use factbase::organize::*")]
 pub use organize::{
-    assess_staleness, cosine_similarity, detect_duplicate_entries,
-    detect_ghost_files, detect_merge_candidates, detect_misplaced, detect_split_candidates,
-    discover_entities, execute_merge, execute_move, execute_split, extract_sections,
-    has_orphans, load_orphan_entries, plan_merge, plan_split,
-    process_orphan_answers, verify_merge, verify_split, DuplicateEntry, EntryLocation,
-    GhostFile, MergeCandidate, MergePlan, MergeResult, MisplacedCandidate, MoveResult,
-    SplitCandidate, SplitPlan, SplitResult, SplitSection, StaleDuplicate, SuggestedEntity,
-    TemporalIssue, VerificationResult,
+    assess_staleness, cosine_similarity, detect_duplicate_entries, detect_ghost_files,
+    detect_merge_candidates, detect_misplaced, detect_split_candidates, discover_entities,
+    execute_merge, execute_move, execute_split, extract_sections, has_orphans, load_orphan_entries,
+    plan_merge, plan_split, process_orphan_answers, verify_merge, verify_split, DuplicateEntry,
+    EntryLocation, GhostFile, MergeCandidate, MergePlan, MergeResult, MisplacedCandidate,
+    MoveResult, SplitCandidate, SplitPlan, SplitResult, SplitSection, StaleDuplicate,
+    SuggestedEntity, TemporalIssue, VerificationResult,
 };
 #[deprecated(note = "use factbase::output::*")]
 pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, should_highlight};
@@ -170,11 +169,11 @@ pub use processor::{
     append_links_to_content, append_referenced_by_to_content,
     append_referenced_by_to_content_styled, append_review_questions, build_document_header,
     calculate_fact_stats, calculate_recency_boost, chunk_document, content_hash,
-    count_facts_with_sources,
-    extract_extra_frontmatter, extract_wikilink_names, format_link, format_references_line,
-    is_callout_review, is_citation_specific, merge_duplicate_review_sections, merge_path_tags,
-    normalize_conflict_desc, normalize_review_section, overlaps_point, overlaps_range,
-    parse_links_block, parse_referenced_by_block, parse_review_queue, parse_source_definitions,
+    count_facts_with_sources, extract_extra_frontmatter, extract_wikilink_names, format_link,
+    format_references_line, is_callout_review, is_citation_specific,
+    merge_duplicate_review_sections, merge_path_tags, normalize_conflict_desc,
+    normalize_review_section, overlaps_point, overlaps_range, parse_links_block,
+    parse_referenced_by_block, parse_review_queue, parse_source_definitions,
     parse_source_references, parse_temporal_tags, prune_stale_questions, strip_answered_questions,
     tags_from_path, unwrap_review_callout, update_frontmatter_type, validate_temporal_tags,
     wikilink_path, wrap_review_callout, DocumentProcessor,

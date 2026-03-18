@@ -809,7 +809,11 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body").unwrap();
+        fs::write(
+            &file,
+            "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body",
+        )
+        .unwrap();
 
         let doc = Document {
             id: "abc123".into(),
@@ -857,7 +861,11 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body").unwrap();
+        fs::write(
+            &file,
+            "---\nfactbase_id: abc123\n---\n# Old Title\n\nOld body",
+        )
+        .unwrap();
 
         let doc = Document {
             id: "abc123".into(),
@@ -2056,7 +2064,10 @@ mod tests {
             "footnote must not be smashed onto review header: {on_disk}"
         );
         // Review section must still be intact
-        assert!(on_disk.contains("## Review Queue"), "review section present");
+        assert!(
+            on_disk.contains("## Review Queue"),
+            "review section present"
+        );
         assert!(on_disk.contains("@q[temporal]"), "question preserved");
     }
 }

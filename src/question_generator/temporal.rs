@@ -550,7 +550,8 @@ mod tests {
     #[test]
     fn test_frontmatter_block_tags_not_temporal_questions() {
         // Block-style YAML array items inside frontmatter must not generate questions
-        let content = "---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Title\n\n- Real fact\n";
+        let content =
+            "---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Title\n\n- Real fact\n";
         let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 1);
         assert!(questions[0].description.contains("Real fact"));

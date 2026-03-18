@@ -55,21 +55,20 @@ impl DocumentProcessor {
 
         // Check for legacy HTML comment header: <!-- factbase:abc123 -->
         // If found, consume it and then check for frontmatter below.
-        let comment_id =
-            if let Some(rest) = first_line.trim().strip_prefix("<!-- factbase:") {
-                if let Some(id) = rest.strip_suffix(" -->") {
-                    if crate::patterns::DOC_ID_REGEX.is_match(id) {
-                        lines.next(); // consume the comment line
-                        Some(id.to_string())
-                    } else {
-                        None
-                    }
+        let comment_id = if let Some(rest) = first_line.trim().strip_prefix("<!-- factbase:") {
+            if let Some(id) = rest.strip_suffix(" -->") {
+                if crate::patterns::DOC_ID_REGEX.is_match(id) {
+                    lines.next(); // consume the comment line
+                    Some(id.to_string())
                 } else {
                     None
                 }
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // Skip blank lines between comment header and frontmatter
         while lines.peek().map(|l| l.trim().is_empty()).unwrap_or(false) {
@@ -617,7 +616,8 @@ mod tests {
         // When both are present, frontmatter ID takes priority.
         // This is the core fix: files with a stale comment header but valid
         // frontmatter should use the frontmatter ID (which matches the DB).
-        let content = "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\ntype: person\n---\n# Title";
+        let content =
+            "<!-- factbase:aaa111 -->\n---\nfactbase_id: bbb222\ntype: person\n---\n# Title";
         assert_eq!(
             DocumentProcessor::extract_id_static(content),
             Some("bbb222".to_string())

@@ -631,6 +631,9 @@ mod tests {
             .as_array()
             .unwrap();
         let op_strs: Vec<&str> = ops.iter().filter_map(|v| v.as_str()).collect();
-        assert!(op_strs.contains(&"doctor"), "doctor should be a factbase op");
+        assert!(
+            op_strs.contains(&"doctor"),
+            "doctor should be a factbase op"
+        );
     }
 }

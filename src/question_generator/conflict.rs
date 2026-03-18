@@ -683,7 +683,7 @@ fn strip_temporal_markup(text: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '@' {
             // Skip @X[...] tag: consume the tag letter and bracketed content
-            if chars.peek().map_or(false, |c| c.is_alphabetic()) {
+            if chars.peek().is_some_and(|c| c.is_alphabetic()) {
                 chars.next(); // tag letter
                 if chars.peek() == Some(&'[') {
                     chars.next(); // '['
@@ -2121,7 +2121,10 @@ mod tests {
             "Bill Evans was the pianist"
         ));
         // Too short predicate after stripping names → not attribution conflict
-        assert!(!is_attribution_conflict("Miles Davis led", "Bill Evans led"));
+        assert!(!is_attribution_conflict(
+            "Miles Davis led",
+            "Bill Evans led"
+        ));
     }
 
     #[test]

@@ -762,7 +762,11 @@ mod tests {
 
         // Create a file on disk
         let file_path = tmp.path().join("doc.md");
-        std::fs::write(&file_path, "---\nfactbase_id: aaa111\n---\n# Test\n\nContent").unwrap();
+        std::fs::write(
+            &file_path,
+            "---\nfactbase_id: aaa111\n---\n# Test\n\nContent",
+        )
+        .unwrap();
 
         let mut doc = crate::models::Document::test_default();
         doc.id = "aaa111".to_string();
@@ -821,7 +825,8 @@ mod tests {
         ref_doc.id = "ref001".to_string();
         ref_doc.title = "Ref".to_string();
         ref_doc.content =
-            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[old/target|Target]] for details.".to_string();
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[old/target|Target]] for details."
+                .to_string();
         ref_doc.file_path = "ref.md".to_string();
         ref_doc.repo_id = "test".to_string();
         db.upsert_document(&ref_doc).unwrap();
@@ -880,7 +885,8 @@ mod tests {
         let mut other = crate::models::Document::test_default();
         other.id = "oth001".to_string();
         other.title = "Other".to_string();
-        other.content = "---\nfactbase_id: oth001\n---\n# Other\n\nSee [[old-name|Entity]].".to_string();
+        other.content =
+            "---\nfactbase_id: oth001\n---\n# Other\n\nSee [[old-name|Entity]].".to_string();
         other.file_path = "other.md".to_string();
         other.repo_id = "test".to_string();
         db.upsert_document(&other).unwrap();
@@ -929,7 +935,8 @@ mod tests {
         let mut ref_doc = crate::models::Document::test_default();
         ref_doc.id = "ref001".to_string();
         ref_doc.title = "Ref".to_string();
-        ref_doc.content = "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[entity|Old Name]].".to_string();
+        ref_doc.content =
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[entity|Old Name]].".to_string();
         ref_doc.file_path = "ref.md".to_string();
         ref_doc.repo_id = "test".to_string();
         db.upsert_document(&ref_doc).unwrap();
@@ -1041,7 +1048,8 @@ mod tests {
         let mut tgt = crate::models::Document::test_default();
         tgt.id = "tgt001".to_string();
         tgt.title = "Target Doc".to_string();
-        tgt.content = "---\nfactbase_id: tgt001\n---\n# Target Doc\n\n- Target fact X\n".to_string();
+        tgt.content =
+            "---\nfactbase_id: tgt001\n---\n# Target Doc\n\n- Target fact X\n".to_string();
         tgt.file_path = "target.md".to_string();
         tgt.repo_id = "test".to_string();
         db.upsert_document(&tgt).unwrap();
@@ -1089,7 +1097,8 @@ mod tests {
         let mut a = crate::models::Document::test_default();
         a.id = "aaa001".to_string();
         a.title = "Doc A".to_string();
-        a.content = "---\nfactbase_id: aaa001\n---\n# Doc A\n\n- Shared fact\n- Unique A\n".to_string();
+        a.content =
+            "---\nfactbase_id: aaa001\n---\n# Doc A\n\n- Shared fact\n- Unique A\n".to_string();
         a.file_path = "a.md".to_string();
         a.repo_id = "test".to_string();
         db.upsert_document(&a).unwrap();
@@ -1097,7 +1106,8 @@ mod tests {
         let mut b = crate::models::Document::test_default();
         b.id = "bbb001".to_string();
         b.title = "Doc B".to_string();
-        b.content = "---\nfactbase_id: bbb001\n---\n# Doc B\n\n- Shared fact\n- Unique B\n".to_string();
+        b.content =
+            "---\nfactbase_id: bbb001\n---\n# Doc B\n\n- Shared fact\n- Unique B\n".to_string();
         b.file_path = "b.md".to_string();
         b.repo_id = "test".to_string();
         db.upsert_document(&b).unwrap();
@@ -1127,7 +1137,8 @@ mod tests {
         let mut r = crate::models::Document::test_default();
         r.id = "ref001".to_string();
         r.title = "Ref".to_string();
-        r.content = "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[src001]] for details.".to_string();
+        r.content =
+            "---\nfactbase_id: ref001\n---\n# Ref\n\nSee [[src001]] for details.".to_string();
         r.file_path = "ref.md".to_string();
         r.repo_id = "test".to_string();
         db.upsert_document(&r).unwrap();
@@ -1369,7 +1380,8 @@ mod tests {
         fs::write(
             ent_dir.join("beta.md"),
             "---\nfactbase_id: bbb001\n---\n# Beta\n\n- Related to [[entities/alpha|Alpha]].\n",
-        ).unwrap();
+        )
+        .unwrap();
         // gamma references alpha and beta
         fs::write(
             ent_dir.join("gamma.md"),
@@ -1392,9 +1404,12 @@ mod tests {
             "---\nfactbase_id: aaa001\n---\n# Alpha\n\n- See [[entities/beta|Beta]] for details.\n- Also see [[entities/gamma|Gamma]].\n",
         )).unwrap();
         db.upsert_document(&make_doc(
-            "bbb001", "Beta", "entities/beta.md",
+            "bbb001",
+            "Beta",
+            "entities/beta.md",
             "---\nfactbase_id: bbb001\n---\n# Beta\n\n- Related to [[entities/alpha|Alpha]].\n",
-        )).unwrap();
+        ))
+        .unwrap();
         db.upsert_document(&make_doc(
             "ccc001", "Gamma", "entities/gamma.md",
             "---\nfactbase_id: ccc001\n---\n# Gamma\n\n- Linked to [[entities/alpha|Alpha]] and [[entities/beta|Beta]].\n",
@@ -1402,32 +1417,59 @@ mod tests {
 
         // --- Step 2: store suggestions via update_document ---
         // alpha: suggested_move to "archive/"
-        let r = update_document(&db, &serde_json::json!({
-            "id": "aaa001",
-            "suggested_move": "archive/",
-        })).unwrap();
-        assert!(r["suggestions_stored"].as_array().unwrap().contains(&serde_json::json!("move")));
+        let r = update_document(
+            &db,
+            &serde_json::json!({
+                "id": "aaa001",
+                "suggested_move": "archive/",
+            }),
+        )
+        .unwrap();
+        assert!(r["suggestions_stored"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("move")));
 
         // beta: suggested_rename to "beta-renamed.md"
-        let r = update_document(&db, &serde_json::json!({
-            "id": "bbb001",
-            "suggested_rename": "beta-renamed.md",
-        })).unwrap();
-        assert!(r["suggestions_stored"].as_array().unwrap().contains(&serde_json::json!("rename")));
+        let r = update_document(
+            &db,
+            &serde_json::json!({
+                "id": "bbb001",
+                "suggested_rename": "beta-renamed.md",
+            }),
+        )
+        .unwrap();
+        assert!(r["suggestions_stored"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("rename")));
 
         // gamma: suggested_title to "Gamma Prime"
-        let r = update_document(&db, &serde_json::json!({
-            "id": "ccc001",
-            "suggested_title": "Gamma Prime",
-        })).unwrap();
-        assert!(r["suggestions_stored"].as_array().unwrap().contains(&serde_json::json!("title")));
+        let r = update_document(
+            &db,
+            &serde_json::json!({
+                "id": "ccc001",
+                "suggested_title": "Gamma Prime",
+            }),
+        )
+        .unwrap();
+        assert!(r["suggestions_stored"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!("title")));
 
         // --- Step 3: verify suggestions stored in DB ---
         let suggestions = db.list_suggestions(Some("test")).unwrap();
         assert_eq!(suggestions.len(), 3, "expected 3 pending suggestions");
-        assert!(suggestions.iter().any(|s| s.doc_id == "aaa001" && s.suggestion_type == "move"));
-        assert!(suggestions.iter().any(|s| s.doc_id == "bbb001" && s.suggestion_type == "rename"));
-        assert!(suggestions.iter().any(|s| s.doc_id == "ccc001" && s.suggestion_type == "title"));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.doc_id == "aaa001" && s.suggestion_type == "move"));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.doc_id == "bbb001" && s.suggestion_type == "rename"));
+        assert!(suggestions
+            .iter()
+            .any(|s| s.doc_id == "ccc001" && s.suggestion_type == "title"));
 
         // --- Step 4: execute suggestions ---
         let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
@@ -1455,33 +1497,63 @@ mod tests {
         assert_eq!(title_changes[0]["old_title"], "Gamma");
         assert_eq!(title_changes[0]["new_title"], "Gamma Prime");
 
-        assert!(result["errors"].as_array().unwrap().is_empty(), "no errors expected");
+        assert!(
+            result["errors"].as_array().unwrap().is_empty(),
+            "no errors expected"
+        );
 
         // File system checks
         assert!(!ent_dir.join("alpha.md").exists(), "alpha should be moved");
-        assert!(tmp.path().join("archive/alpha.md").exists(), "alpha at new location");
+        assert!(
+            tmp.path().join("archive/alpha.md").exists(),
+            "alpha at new location"
+        );
         assert!(!ent_dir.join("beta.md").exists(), "beta should be renamed");
         assert!(ent_dir.join("beta-renamed.md").exists(), "beta at new name");
         assert!(ent_dir.join("gamma.md").exists(), "gamma file unchanged");
 
         // Wikilink cascade: beta and gamma should reference archive/alpha now
         let beta_content = fs::read_to_string(ent_dir.join("beta-renamed.md")).unwrap();
-        assert!(beta_content.contains("[[archive/alpha|Alpha]]"), "beta wikilink updated: {beta_content}");
-        assert!(!beta_content.contains("[[entities/alpha"), "old alpha link gone: {beta_content}");
+        assert!(
+            beta_content.contains("[[archive/alpha|Alpha]]"),
+            "beta wikilink updated: {beta_content}"
+        );
+        assert!(
+            !beta_content.contains("[[entities/alpha"),
+            "old alpha link gone: {beta_content}"
+        );
 
         let gamma_content = fs::read_to_string(ent_dir.join("gamma.md")).unwrap();
-        assert!(gamma_content.contains("[[archive/alpha|Alpha]]"), "gamma alpha link updated: {gamma_content}");
-        assert!(!gamma_content.contains("[[entities/alpha"), "old alpha link gone: {gamma_content}");
+        assert!(
+            gamma_content.contains("[[archive/alpha|Alpha]]"),
+            "gamma alpha link updated: {gamma_content}"
+        );
+        assert!(
+            !gamma_content.contains("[[entities/alpha"),
+            "old alpha link gone: {gamma_content}"
+        );
         // gamma's beta link should also be updated (beta was renamed)
-        assert!(gamma_content.contains("[[entities/beta-renamed|Beta]]"), "gamma beta link updated: {gamma_content}");
-        assert!(!gamma_content.contains("[[entities/beta|Beta]]"), "old beta link gone: {gamma_content}");
+        assert!(
+            gamma_content.contains("[[entities/beta-renamed|Beta]]"),
+            "gamma beta link updated: {gamma_content}"
+        );
+        assert!(
+            !gamma_content.contains("[[entities/beta|Beta]]"),
+            "old beta link gone: {gamma_content}"
+        );
 
         // Title cascade: gamma's wikilink display for gamma itself is updated in alpha
         // (alpha was moved, its content is now at archive/alpha.md)
         let alpha_content = fs::read_to_string(tmp.path().join("archive/alpha.md")).unwrap();
         // alpha's link to gamma should now show "Gamma Prime"
-        assert!(alpha_content.contains("[[entities/gamma|Gamma Prime]]"), "alpha gamma link updated: {alpha_content}");
-        assert!(!alpha_content.contains("[[entities/gamma|Gamma]]"), "old gamma display gone: {alpha_content}");
+        assert!(
+            alpha_content.contains("[[entities/gamma|Gamma Prime]]"),
+            "alpha gamma link updated: {alpha_content}"
+        );
+        assert!(
+            !alpha_content.contains("[[entities/gamma|Gamma]]"),
+            "old gamma display gone: {alpha_content}"
+        );
 
         // DB checks
         let alpha_db = db.get_document("aaa001").unwrap().unwrap();
@@ -1494,7 +1566,10 @@ mod tests {
         assert_eq!(gamma_db.title, "Gamma Prime");
 
         // Suggestions consumed
-        assert!(db.list_suggestions(None).unwrap().is_empty(), "all suggestions consumed");
+        assert!(
+            db.list_suggestions(None).unwrap().is_empty(),
+            "all suggestions consumed"
+        );
     }
 
     /// Edge case: move destination already exists → auto-merge.
@@ -1516,18 +1591,22 @@ mod tests {
         fs::write(
             src_dir.join("report.md"),
             "---\nfactbase_id: src001\n---\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n",
-        ).unwrap();
+        )
+        .unwrap();
         // Destination entity (same filename, different folder)
         fs::write(
             dst_dir.join("report.md"),
             "---\nfactbase_id: dst001\n---\n# Final Report\n\n- Final fact X\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let mut src = crate::models::Document::test_default();
         src.id = "src001".to_string();
         src.title = "Draft Report".to_string();
         src.file_path = "drafts/report.md".to_string();
-        src.content = "---\nfactbase_id: src001\n---\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n".to_string();
+        src.content =
+            "---\nfactbase_id: src001\n---\n# Draft Report\n\n- Draft fact A\n- Draft fact B\n"
+                .to_string();
         src.repo_id = "test".to_string();
         db.upsert_document(&src).unwrap();
 
@@ -1535,15 +1614,20 @@ mod tests {
         dst.id = "dst001".to_string();
         dst.title = "Final Report".to_string();
         dst.file_path = "final/report.md".to_string();
-        dst.content = "---\nfactbase_id: dst001\n---\n# Final Report\n\n- Final fact X\n".to_string();
+        dst.content =
+            "---\nfactbase_id: dst001\n---\n# Final Report\n\n- Final fact X\n".to_string();
         dst.repo_id = "test".to_string();
         db.upsert_document(&dst).unwrap();
 
         // Store move suggestion via update_document
-        update_document(&db, &serde_json::json!({
-            "id": "src001",
-            "suggested_move": "final/",
-        })).unwrap();
+        update_document(
+            &db,
+            &serde_json::json!({
+                "id": "src001",
+                "suggested_move": "final/",
+            }),
+        )
+        .unwrap();
 
         // Execute — destination exists, should auto-merge
         let args = serde_json::json!({"action": "execute_suggestions", "repo": "test"});
@@ -1553,14 +1637,24 @@ mod tests {
         let moves = result["moves"].as_array().unwrap();
         assert_eq!(moves.len(), 1, "one move action");
         assert!(
-            moves[0]["new_path"].as_str().unwrap().contains("merged into"),
+            moves[0]["new_path"]
+                .as_str()
+                .unwrap()
+                .contains("merged into"),
             "should indicate merge: {}",
             moves[0]["new_path"]
         );
-        assert!(result["errors"].as_array().unwrap().is_empty(), "no errors: {:?}", result["errors"]);
+        assert!(
+            result["errors"].as_array().unwrap().is_empty(),
+            "no errors: {:?}",
+            result["errors"]
+        );
 
         // Source file deleted
-        assert!(!src_dir.join("report.md").exists(), "source deleted after merge");
+        assert!(
+            !src_dir.join("report.md").exists(),
+            "source deleted after merge"
+        );
 
         // Destination file has merged content
         let merged = fs::read_to_string(dst_dir.join("report.md")).unwrap();
@@ -1570,6 +1664,9 @@ mod tests {
         assert!(merged.contains("Merged from"), "merge header present");
 
         // Suggestions consumed
-        assert!(db.list_suggestions(None).unwrap().is_empty(), "suggestion consumed");
+        assert!(
+            db.list_suggestions(None).unwrap().is_empty(),
+            "suggestion consumed"
+        );
     }
 }

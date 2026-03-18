@@ -678,15 +678,30 @@ mod tests {
         db.update_links(
             "d1",
             &[
-                DetectedLink { target_id: "d2".into(), target_title: "Doc 2".into(), mention_text: "Doc 2".into(), context: "".into() },
-                DetectedLink { target_id: "d3".into(), target_title: "Doc 3".into(), mention_text: "Doc 3".into(), context: "".into() },
+                DetectedLink {
+                    target_id: "d2".into(),
+                    target_title: "Doc 2".into(),
+                    mention_text: "Doc 2".into(),
+                    context: "".into(),
+                },
+                DetectedLink {
+                    target_id: "d3".into(),
+                    target_title: "Doc 3".into(),
+                    mention_text: "Doc 3".into(),
+                    context: "".into(),
+                },
             ],
         )
         .unwrap();
         // d2 -> d3
         db.update_links(
             "d2",
-            &[DetectedLink { target_id: "d3".into(), target_title: "Doc 3".into(), mention_text: "Doc 3".into(), context: "".into() }],
+            &[DetectedLink {
+                target_id: "d3".into(),
+                target_title: "Doc 3".into(),
+                mention_text: "Doc 3".into(),
+                context: "".into(),
+            }],
         )
         .unwrap();
 

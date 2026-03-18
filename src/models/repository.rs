@@ -401,7 +401,10 @@ mod tests {
         let patterns = p.citation_patterns.unwrap();
         assert_eq!(patterns.len(), 1);
         assert_eq!(patterns[0].name, "catalog_number");
-        assert_eq!(patterns[0].description.as_deref(), Some("Record label catalog numbers"));
+        assert_eq!(
+            patterns[0].description.as_deref(),
+            Some("Record label catalog numbers")
+        );
     }
 
     #[test]

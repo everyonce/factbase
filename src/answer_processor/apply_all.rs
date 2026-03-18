@@ -12,7 +12,8 @@ use crate::{
     apply_changes_to_section, apply_confirmations, apply_source_citations, dedup_titles,
     identify_affected_section, interpret_answer, remove_processed_questions, replace_section,
     stamp_citation_accepted, stamp_reviewed_by_text, stamp_reviewed_lines, stamp_reviewed_markers,
-    stamp_sequential_by_text, stamp_sequential_lines, uncheck_deferred_questions, InterpretedAnswer,
+    stamp_sequential_by_text, stamp_sequential_lines, uncheck_deferred_questions,
+    InterpretedAnswer,
 };
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
