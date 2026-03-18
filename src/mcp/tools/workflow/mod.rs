@@ -2031,6 +2031,27 @@ mod tests {
     }
 
     #[test]
+    fn test_ingest_step1_dedup_searches_all_doc_types() {
+        let step = ingest_step(1, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        // Must not scope the list call to a single doc_type
+        assert!(
+            !instruction.contains("doc_type=") && !instruction.contains("doc_type='"),
+            "ingest step 1 dedup search must not filter by a specific doc_type"
+        );
+        // Must explicitly tell agent to search without a doc_type filter
+        assert!(
+            instruction.contains("WITHOUT a doc_type filter") || instruction.contains("ALL document types"),
+            "ingest step 1 must instruct agent to search across all doc types"
+        );
+        // Must check all results before creating
+        assert!(
+            instruction.contains("before creating"),
+            "ingest step 1 must instruct agent to check results before creating new documents"
+        );
+    }
+
+    #[test]
     fn test_ingest_create_has_required_next() {
         let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
