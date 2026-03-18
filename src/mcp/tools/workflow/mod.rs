@@ -589,6 +589,11 @@ fn maintain_step(
                     if is_vague_maintain_request(&msg) {
                         let doc_count =
                             db.get_all_document_ids().ok().map(|ids| ids.len()).unwrap_or(0);
+                        let open_questions = db
+                            .count_review_questions_by_status(repo_id)
+                            .ok()
+                            .map(|(_, unanswered, _)| unanswered)
+                            .unwrap_or(0);
                         let est_mins =
                             ((doc_count as f64 * 2.0) / 60.0).ceil().max(1.0) as usize;
                         let est_display = if est_mins >= 2 {
@@ -600,11 +605,13 @@ fn maintain_step(
                             "workflow": "maintain",
                             "step": 1, "total_steps": total,
                             "requires_scope_confirm": true,
+                            "doc_count": doc_count,
+                            "open_questions": open_questions,
                             "instruction": format!(
                                 "STOP — ask the user before proceeding.\n\n\
-                                 Say: \"That will run a full KB maintenance cycle \
-                                 ({est_display}, {doc_count} docs). Want me to proceed, \
-                                 or did you have something specific in mind?\"\n\n\
+                                 Say: \"This will process {doc_count} documents and \
+                                 {open_questions} open review questions ({est_display}). \
+                                 Want me to proceed, or did you have something specific in mind?\"\n\n\
                                  Wait for the user's response:\n\
                                  - If they confirm → call workflow(workflow='maintain', step=1, confirmed=true)\n\
                                  - If they want something specific → use the appropriate focused command instead"
@@ -6930,7 +6937,52 @@ mod tests {
                 result.get("next_tool").is_none(),
                 "scope-confirm gate should not include next_tool"
             );
+            // doc_count and open_questions must be present
+            assert!(result.get("doc_count").is_some(), "gate response must include doc_count");
+            assert!(result.get("open_questions").is_some(), "gate response must include open_questions");
         }
+    }
+
+    #[test]
+    fn test_scope_confirm_gate_includes_doc_and_question_counts() {
+        use crate::models::ReviewQuestion;
+        use crate::models::QuestionType;
+        use crate::database::tests::{test_doc_with_repo, test_repo_with_id};
+
+        let (db, _tmp) = test_db();
+        let wf = WorkflowsConfig::default();
+
+        // Seed 2 docs and 3 open questions
+        let repo = test_repo_with_id("r1");
+        db.upsert_repository(&repo).unwrap();
+        let doc1 = test_doc_with_repo("d1", "r1", "Doc 1");
+        let doc2 = test_doc_with_repo("d2", "r1", "Doc 2");
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+        let qs = vec![
+            ReviewQuestion::new(QuestionType::Temporal, None, "Q1".to_string()),
+            ReviewQuestion::new(QuestionType::Missing, None, "Q2".to_string()),
+            ReviewQuestion::new(QuestionType::Ambiguous, None, "Q3".to_string()),
+        ];
+        db.sync_review_questions("d1", &qs).unwrap();
+
+        let result = maintain_step(
+            1,
+            &serde_json::json!({"user_message": "clean up the KB"}),
+            &None,
+            0,
+            &db,
+            &wf,
+            None,
+        );
+
+        assert_eq!(result["requires_scope_confirm"], true);
+        assert_eq!(result["doc_count"], 2);
+        assert_eq!(result["open_questions"], 3);
+
+        let instr = result["instruction"].as_str().unwrap_or("");
+        assert!(instr.contains("2 documents"), "instruction should mention doc count: {instr}");
+        assert!(instr.contains("3 open review questions"), "instruction should mention question count: {instr}");
     }
 
     #[test]
