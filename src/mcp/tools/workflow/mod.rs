@@ -1956,6 +1956,82 @@ mod tests {
     }
 
     #[test]
+    fn test_ingest_step1_has_contradiction_check() {
+        let step = ingest_step(1, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("CONTRADICTION CHECK"),
+            "ingest step 1 must have contradiction check"
+        );
+        assert!(
+            instruction.contains("DO NOT proceed to step 2"),
+            "contradiction check must halt at step 2"
+        );
+        assert!(
+            instruction.contains("I see two contradictory values"),
+            "contradiction check must provide the exact halt message"
+        );
+        assert!(
+            instruction.contains("Wait for the user to clarify"),
+            "contradiction check must instruct agent to wait for clarification"
+        );
+    }
+
+    #[test]
+    fn test_ingest_step1_contradiction_check_runs_first() {
+        let step = ingest_step(1, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        let contradiction_pos = instruction.find("CONTRADICTION CHECK").unwrap();
+        let search_pos = instruction.find("Search factbase").unwrap();
+        assert!(
+            contradiction_pos < search_pos,
+            "contradiction check must appear before the search instruction"
+        );
+    }
+
+    #[test]
+    fn test_ingest_step1_contradiction_check_domain_agnostic() {
+        let step = ingest_step(1, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap().to_lowercase();
+        for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
+            assert!(
+                !instruction.contains(term),
+                "ingest step 1 contradiction check should not contain domain term: {term}"
+            );
+        }
+        // Must use generic examples
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("founded in"), "should use generic founding-date example");
+        assert!(instr.contains("Two different dates"), "should describe the date conflict pattern");
+    }
+
+    #[test]
+    fn test_ingest_step1_contradiction_check_not_on_other_steps() {
+        // Only step 1 should have the contradiction check
+        for s in 2..=5 {
+            let step = ingest_step(s, &serde_json::json!({}), &None, &wf());
+            let instruction = step["instruction"].as_str().unwrap_or("");
+            assert!(
+                !instruction.contains("CONTRADICTION CHECK"),
+                "ingest step {s} should not have contradiction check"
+            );
+        }
+    }
+
+    #[test]
+    fn test_ingest_step1_contradiction_check_consistent_with_correct() {
+        // Both correct step 1 and ingest step 1 should share the same halt message pattern
+        let correct = correct_step(1, &serde_json::json!({"correction": "test"}), &wf());
+        let ingest = ingest_step(1, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let correct_instr = correct["instruction"].as_str().unwrap();
+        let ingest_instr = ingest["instruction"].as_str().unwrap();
+        assert!(correct_instr.contains("CONTRADICTION CHECK"));
+        assert!(ingest_instr.contains("CONTRADICTION CHECK"));
+        assert!(correct_instr.contains("I see two contradictory values"));
+        assert!(ingest_instr.contains("I see two contradictory values"));
+    }
+
+    #[test]
     fn test_ingest_create_has_required_next() {
         let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap();
