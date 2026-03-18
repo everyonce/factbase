@@ -1001,7 +1001,8 @@ mod tests {
         let doc = Document {
             id: "ttt".to_string(),
             title: "Test".to_string(),
-            content: "---\nfactbase_id: ttt\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ttt\n---\n# Test\n\n- Fact without temporal tag\n"
+                .to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "test-repo".to_string(),
             ..Document::test_default()
@@ -1101,7 +1102,8 @@ mod tests {
         let doc = Document {
             id: "ddd".to_string(),
             title: "Test".to_string(),
-            content: "---\nfactbase_id: ddd\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ddd\n---\n# Test\n\n- Fact without temporal tag\n"
+                .to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "test-repo".to_string(),
             ..Document::test_default()
@@ -1398,7 +1400,8 @@ mod tests {
         let doc = Document {
             id: "ooo".to_string(),
             title: "Test".to_string(),
-            content: "---\nfactbase_id: ooo\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ooo\n---\n# Test\n\n- Fact without temporal tag\n"
+                .to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "obs-repo".to_string(),
             ..Document::test_default()
@@ -1455,7 +1458,8 @@ mod tests {
         let doc = Document {
             id: "ppp".to_string(),
             title: "Test".to_string(),
-            content: "---\nfactbase_id: ppp\n---\n# Test\n\n- Fact without temporal tag\n".to_string(),
+            content: "---\nfactbase_id: ppp\n---\n# Test\n\n- Fact without temporal tag\n"
+                .to_string(),
             file_path: "test-doc.md".to_string(),
             repo_id: "plain-repo".to_string(),
             ..Document::test_default()

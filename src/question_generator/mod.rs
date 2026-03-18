@@ -88,23 +88,25 @@ pub(crate) fn iter_fact_lines(content: &str) -> impl Iterator<Item = (usize, &st
     let body = &content[..end];
     // Skip YAML frontmatter lines (metadata, not facts)
     let fm_lines = crate::patterns::frontmatter_line_count(body);
-    body.lines().enumerate().filter_map(move |(line_idx, line)| {
-        if line_idx < fm_lines {
-            return None;
-        }
-        if !FACT_LINE_REGEX.is_match(line) {
-            return None;
-        }
-        // Skip LLM meta-commentary artifacts (not factual claims)
-        if META_COMMENTARY_REGEX.is_match(line) {
-            return None;
-        }
-        let fact_text = extract_fact_text(line);
-        if fact_text.is_empty() {
-            return None;
-        }
-        Some((line_idx + 1, line, fact_text))
-    })
+    body.lines()
+        .enumerate()
+        .filter_map(move |(line_idx, line)| {
+            if line_idx < fm_lines {
+                return None;
+            }
+            if !FACT_LINE_REGEX.is_match(line) {
+                return None;
+            }
+            // Skip LLM meta-commentary artifacts (not factual claims)
+            if META_COMMENTARY_REGEX.is_match(line) {
+                return None;
+            }
+            let fact_text = extract_fact_text(line);
+            if fact_text.is_empty() {
+                return None;
+            }
+            Some((line_idx + 1, line, fact_text))
+        })
 }
 
 /// Extract the fact text from a list item line, removing the list marker.

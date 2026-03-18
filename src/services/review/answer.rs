@@ -151,7 +151,11 @@ pub fn answer_question(
     db.update_document_content(&params.doc_id, &new_content, &new_hash)?;
     // Sync review question status to DB
     let db_status = if defer {
-        if answer_text.starts_with("believed: ") { "believed" } else { "deferred" }
+        if answer_text.starts_with("believed: ") {
+            "believed"
+        } else {
+            "deferred"
+        }
     } else {
         "verified"
     };
@@ -427,7 +431,10 @@ fn stamp_weak_source_footnote(
         return content.to_string();
     }
     let lower = answer_text.trim().to_lowercase();
-    if !lower.starts_with("valid") && !lower.starts_with("dismiss") && !lower.starts_with("resolve_question") {
+    if !lower.starts_with("valid")
+        && !lower.starts_with("dismiss")
+        && !lower.starts_with("resolve_question")
+    {
         return content.to_string();
     }
     let Some(num) = extract_footnote_num_from_desc(&question.description) else {
@@ -474,7 +481,8 @@ mod tests {
         std::fs::create_dir_all(&repo_dir).unwrap();
         let doc_file = repo_dir.join("test.md");
         // Document has NO inline review section
-        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact [^1]\n\n---\n[^1]: Some source\n";
+        let content =
+            "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact [^1]\n\n---\n[^1]: Some source\n";
         std::fs::write(&doc_file, content).unwrap();
 
         let db_path = dir.path().join("test.db");
@@ -526,7 +534,10 @@ mod tests {
 
         // The question should now be inline in the file
         let disk = std::fs::read_to_string(&doc_file).unwrap();
-        assert!(disk.contains("@q[weak-source]"), "question should be injected inline: {disk}");
+        assert!(
+            disk.contains("@q[weak-source]"),
+            "question should be injected inline: {disk}"
+        );
     }
 
     #[test]
@@ -712,7 +723,10 @@ mod tests {
         assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
     }
 
-    fn make_weak_source_doc(dir: &std::path::Path, footnote_num: u32) -> (crate::database::Database, String) {
+    fn make_weak_source_doc(
+        dir: &std::path::Path,
+        footnote_num: u32,
+    ) -> (crate::database::Database, String) {
         let repo_dir = dir.join("repo");
         std::fs::create_dir_all(&repo_dir).unwrap();
         let content = format!(
@@ -722,15 +736,22 @@ mod tests {
         let db_path = dir.join("test.db");
         let db = crate::database::Database::new(&db_path).unwrap();
         let repo = crate::models::Repository {
-            id: "r1".into(), name: "r1".into(), path: repo_dir,
-            perspective: None, created_at: chrono::Utc::now(),
-            last_indexed_at: None, last_lint_at: None,
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
-            id: "ws001".into(), repo_id: "r1".into(),
-            file_path: "test.md".into(), title: "Test".into(),
-            content: content.clone(), ..crate::models::Document::test_default()
+            id: "ws001".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test".into(),
+            content: content.clone(),
+            ..crate::models::Document::test_default()
         };
         db.upsert_document(&doc).unwrap();
         (db, content)
@@ -740,51 +761,91 @@ mod tests {
     fn test_weak_source_valid_answer_stamps_footnote() {
         let dir = tempfile::tempdir().unwrap();
         let (db, _) = make_weak_source_doc(dir.path(), 1);
-        let result = answer_question(&db, &AnswerQuestionParams {
-            doc_id: "ws001".into(), question_index: 0,
-            answer: "VALID: sufficient per policy".into(), confidence: None,
-        }).unwrap();
+        let result = answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "ws001".into(),
+                question_index: 0,
+                answer: "VALID: sufficient per policy".into(),
+                confidence: None,
+            },
+        )
+        .unwrap();
         assert_eq!(result["success"], true);
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
-        assert!(disk.contains("[^1]: Some source <!-- ✓ -->"), "footnote should be stamped: {disk}");
+        assert!(
+            disk.contains("[^1]: Some source <!-- ✓ -->"),
+            "footnote should be stamped: {disk}"
+        );
     }
 
     #[test]
     fn test_weak_source_dismiss_answer_stamps_footnote() {
         let dir = tempfile::tempdir().unwrap();
         let (db, _) = make_weak_source_doc(dir.path(), 2);
-        answer_question(&db, &AnswerQuestionParams {
-            doc_id: "ws001".into(), question_index: 0,
-            answer: "dismiss: internal source".into(), confidence: None,
-        }).unwrap();
+        answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "ws001".into(),
+                question_index: 0,
+                answer: "dismiss: internal source".into(),
+                confidence: None,
+            },
+        )
+        .unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
-        assert!(disk.contains("[^2]: Some source <!-- ✓ -->"), "footnote should be stamped: {disk}");
+        assert!(
+            disk.contains("[^2]: Some source <!-- ✓ -->"),
+            "footnote should be stamped: {disk}"
+        );
     }
 
     #[test]
     fn test_weak_source_resolve_question_answer_stamps_footnote() {
         let dir = tempfile::tempdir().unwrap();
         let (db, _) = make_weak_source_doc(dir.path(), 2);
-        answer_question(&db, &AnswerQuestionParams {
-            doc_id: "ws001".into(), question_index: 0,
-            answer: "resolve_question: VALID — citation satisfies internal_sources policy".into(), confidence: Some("verified".into()),
-        }).unwrap();
+        answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "ws001".into(),
+                question_index: 0,
+                answer: "resolve_question: VALID — citation satisfies internal_sources policy"
+                    .into(),
+                confidence: Some("verified".into()),
+            },
+        )
+        .unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
-        assert!(disk.contains("[^2]: Some source <!-- ✓ -->"), "footnote should be stamped with resolve_question: {disk}");
+        assert!(
+            disk.contains("[^2]: Some source <!-- ✓ -->"),
+            "footnote should be stamped with resolve_question: {disk}"
+        );
         // Citation text must still be present — resolve_question does not remove it
-        assert!(disk.contains("[^2]: Some source"), "citation text must remain after resolve_question: {disk}");
+        assert!(
+            disk.contains("[^2]: Some source"),
+            "citation text must remain after resolve_question: {disk}"
+        );
     }
 
     #[test]
     fn test_weak_source_believed_answer_does_not_stamp() {
         let dir = tempfile::tempdir().unwrap();
         let (db, _) = make_weak_source_doc(dir.path(), 3);
-        answer_question(&db, &AnswerQuestionParams {
-            doc_id: "ws001".into(), question_index: 0,
-            answer: "probably ok".into(), confidence: Some("believed".into()),
-        }).unwrap();
+        answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "ws001".into(),
+                question_index: 0,
+                answer: "probably ok".into(),
+                confidence: Some("believed".into()),
+            },
+        )
+        .unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
-        assert!(!disk.contains("<!-- ✓ -->"), "footnote should NOT be stamped for believed: {disk}");
+        assert!(
+            !disk.contains("<!-- ✓ -->"),
+            "footnote should NOT be stamped for believed: {disk}"
+        );
     }
 
     #[test]
@@ -797,23 +858,39 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let db = crate::database::Database::new(&db_path).unwrap();
         let repo = crate::models::Repository {
-            id: "r1".into(), name: "r1".into(), path: repo_dir,
-            perspective: None, created_at: chrono::Utc::now(),
-            last_indexed_at: None, last_lint_at: None,
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
-            id: "ns001".into(), repo_id: "r1".into(),
-            file_path: "test.md".into(), title: "Test".into(),
-            content: content.into(), ..crate::models::Document::test_default()
+            id: "ns001".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
         };
         db.upsert_document(&doc).unwrap();
-        answer_question(&db, &AnswerQuestionParams {
-            doc_id: "ns001".into(), question_index: 0,
-            answer: "dismiss".into(), confidence: None,
-        }).unwrap();
+        answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "ns001".into(),
+                question_index: 0,
+                answer: "dismiss".into(),
+                confidence: None,
+            },
+        )
+        .unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
-        assert!(!disk.contains("<!-- ✓ -->"), "non-weak-source should NOT stamp: {disk}");
+        assert!(
+            !disk.contains("<!-- ✓ -->"),
+            "non-weak-source should NOT stamp: {disk}"
+        );
     }
 
     #[test]
@@ -826,22 +903,39 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let db = crate::database::Database::new(&db_path).unwrap();
         let repo = crate::models::Repository {
-            id: "r1".into(), name: "r1".into(), path: repo_dir,
-            perspective: None, created_at: chrono::Utc::now(),
-            last_indexed_at: None, last_lint_at: None,
+            id: "r1".into(),
+            name: "r1".into(),
+            path: repo_dir,
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
         };
         db.upsert_repository(&repo).unwrap();
         let doc = crate::models::Document {
-            id: "dup001".into(), repo_id: "r1".into(),
-            file_path: "test.md".into(), title: "Test".into(),
-            content: content.into(), ..crate::models::Document::test_default()
+            id: "dup001".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Test".into(),
+            content: content.into(),
+            ..crate::models::Document::test_default()
         };
         db.upsert_document(&doc).unwrap();
-        answer_question(&db, &AnswerQuestionParams {
-            doc_id: "dup001".into(), question_index: 0,
-            answer: "VALID: already accepted".into(), confidence: None,
-        }).unwrap();
+        answer_question(
+            &db,
+            &AnswerQuestionParams {
+                doc_id: "dup001".into(),
+                question_index: 0,
+                answer: "VALID: already accepted".into(),
+                confidence: None,
+            },
+        )
+        .unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
-        assert_eq!(disk.matches("<!-- ✓ -->").count(), 1, "should not duplicate marker: {disk}");
+        assert_eq!(
+            disk.matches("<!-- ✓ -->").count(),
+            1,
+            "should not duplicate marker: {disk}"
+        );
     }
 }

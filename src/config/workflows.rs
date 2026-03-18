@@ -199,11 +199,20 @@ pub fn known_workflows() -> HashMap<&'static str, &'static [&'static str]> {
         ("transition.search", &["nomenclature", "change"]),
         (
             "transition.apply",
-            &["change", "nomenclature", "effective_date", "source_note", "source_footnote"],
+            &[
+                "change",
+                "nomenclature",
+                "effective_date",
+                "source_note",
+                "source_footnote",
+            ],
         ),
         ("transition.organize", &[] as &[&str]),
         ("transition.maintain", &[] as &[&str]),
-        ("transition.report", &["change", "effective_date", "source", "nomenclature"]),
+        (
+            "transition.report",
+            &["change", "effective_date", "source", "nomenclature"],
+        ),
     ])
 }
 

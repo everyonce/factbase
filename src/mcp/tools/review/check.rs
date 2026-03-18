@@ -121,7 +121,7 @@ async fn check_questions(
     let citation_patterns = perspective
         .as_ref()
         .and_then(|p| p.citation_patterns.as_deref())
-        .map(|ps| crate::processor::compile_citation_patterns(ps))
+        .map(crate::processor::compile_citation_patterns)
         .unwrap_or_default();
 
     let all_docs = load_docs(db, repo_id)?;
@@ -271,7 +271,7 @@ async fn check_batch(
     let citation_patterns = perspective
         .as_ref()
         .and_then(|p| p.citation_patterns.as_deref())
-        .map(|ps| crate::processor::compile_citation_patterns(ps))
+        .map(crate::processor::compile_citation_patterns)
         .unwrap_or_default();
 
     progress.phase("Checking selected documents");

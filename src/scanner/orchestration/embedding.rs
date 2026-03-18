@@ -159,7 +159,8 @@ pub async fn run_embedding_phase(
                 input.db.upsert_document(&document)?;
                 // Sync review questions to DB for fast indexed access
                 if crate::patterns::has_review_section(&document.content) {
-                    if let Some(questions) = crate::processor::parse_review_queue(&document.content) {
+                    if let Some(questions) = crate::processor::parse_review_queue(&document.content)
+                    {
                         let _ = input.db.sync_review_questions(&document.id, &questions);
                     }
                 }

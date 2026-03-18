@@ -30,7 +30,7 @@ impl Database {
         let word_count = crate::models::word_count(&doc.content) as i64;
         let has_review_queue = crate::patterns::has_review_section(&doc.content);
         let review_section_hash = crate::patterns::extract_review_queue_section(&doc.content)
-            .map(|s| crate::processor::content_hash(s));
+            .map(crate::processor::content_hash);
 
         // Remove any stale document at the same path with a different ID.
         // This handles the case where a file's factbase ID was regenerated.
@@ -364,7 +364,10 @@ impl Database {
         }
         conn.execute("DELETE FROM fact_metadata WHERE document_id = ?1", [id])?;
         conn.execute("DELETE FROM review_questions WHERE doc_id = ?1", [id])?;
-        conn.execute("DELETE FROM organization_suggestions WHERE doc_id = ?1", [id])?;
+        conn.execute(
+            "DELETE FROM organization_suggestions WHERE doc_id = ?1",
+            [id],
+        )?;
         conn.execute("DELETE FROM documents WHERE id = ?1", [id])?;
         if let Some(rid) = repo_id {
             self.invalidate_stats_cache(&rid);
@@ -598,7 +601,8 @@ mod tests {
         // Add review_questions and organization_suggestions for the old doc
         use crate::models::{QuestionType, ReviewQuestion};
         let q = ReviewQuestion::new(QuestionType::Temporal, None, "When?".to_string());
-        db.sync_review_questions("old_id", &[q]).expect("sync review questions");
+        db.sync_review_questions("old_id", &[q])
+            .expect("sync review questions");
         db.insert_suggestion("old_id", "move", "archive/", "update")
             .expect("insert suggestion");
 
@@ -650,7 +654,8 @@ mod tests {
         db.mark_deleted("abc123").expect("mark deleted");
 
         // Must not fail with FOREIGN KEY constraint failed
-        let purged = db.purge_deleted_documents("repo1")
+        let purged = db
+            .purge_deleted_documents("repo1")
             .expect("purge should clean up organization_suggestions");
         assert_eq!(purged, 1);
     }
@@ -712,7 +717,9 @@ mod tests {
         db.upsert_document(&doc2).expect("Failed to upsert");
         db.mark_deleted("def456").expect("Failed to mark deleted");
 
-        let purged = db.purge_deleted_documents("repo1").expect("Failed to purge");
+        let purged = db
+            .purge_deleted_documents("repo1")
+            .expect("Failed to purge");
         assert_eq!(purged, 1);
 
         // Active doc still present
@@ -731,7 +738,9 @@ mod tests {
         db.upsert_document(&doc).expect("Failed to upsert");
 
         // No deleted docs — purge returns 0
-        let purged = db.purge_deleted_documents("repo1").expect("Failed to purge");
+        let purged = db
+            .purge_deleted_documents("repo1")
+            .expect("Failed to purge");
         assert_eq!(purged, 0);
         assert!(db.get_document("abc123").unwrap().is_some());
     }

@@ -193,7 +193,10 @@ mod tests {
         let content = "# Doc\n\nSome fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
         let result = wrap_review_callout(content);
         assert!(result.contains("> [!review]- Review Queue"));
-        assert!(!result.contains("> <!-- factbase:review -->"), "Marker should not appear inside callout");
+        assert!(
+            !result.contains("> <!-- factbase:review -->"),
+            "Marker should not appear inside callout"
+        );
         assert!(result.contains("> - [ ] `@q[temporal]` When?"));
         assert!(!result.contains("---\n\n## Review Queue"));
     }
@@ -382,7 +385,10 @@ mod tests {
         // New format: callout header only, no HTML comment inside
         let content = "# Doc\n\nSome fact\n\n> [!review]- Review Queue\n> - [ ] `@q[temporal]` When was this true?\n>   > \n";
         // Should be detected as callout
-        assert!(is_callout_review(content), "Should detect callout by header");
+        assert!(
+            is_callout_review(content),
+            "Should detect callout by header"
+        );
         // Should parse questions correctly
         let questions = parse_review_queue(content).unwrap();
         assert_eq!(questions.len(), 1);
@@ -390,11 +396,17 @@ mod tests {
         // Unwrap should inject marker for inner processing
         let (unwrapped, was_callout) = unwrap_review_callout(content);
         assert!(was_callout);
-        assert!(unwrapped.contains("<!-- factbase:review -->"), "Unwrap should inject marker");
+        assert!(
+            unwrapped.contains("<!-- factbase:review -->"),
+            "Unwrap should inject marker"
+        );
         // Re-wrap should produce new format (no marker inside)
         let rewrapped = wrap_review_callout(&unwrapped);
         assert!(rewrapped.contains("> [!review]- Review Queue"));
-        assert!(!rewrapped.contains("> <!-- factbase:review -->"), "New format should not have marker inside");
+        assert!(
+            !rewrapped.contains("> <!-- factbase:review -->"),
+            "New format should not have marker inside"
+        );
     }
 
     #[test]

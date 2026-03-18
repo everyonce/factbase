@@ -126,7 +126,15 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             workflow_name.as_str(),
         )),
         "update" => Ok(rebrand_step(
-            maintain_step(step, args, &perspective, deferred(), db, &wf_config, repo_resolved.as_deref()),
+            maintain_step(
+                step,
+                args,
+                &perspective,
+                deferred(),
+                db,
+                &wf_config,
+                repo_resolved.as_deref(),
+            ),
             "maintain",
             "update",
         )),
@@ -457,7 +465,8 @@ fn resolve_step(
 
             // Cost gate: confirm before resolving a large queue (>20 questions) unless already confirmed
             const RESOLVE_GATE_THRESHOLD: usize = 20;
-            if total_unanswered > RESOLVE_GATE_THRESHOLD && !get_bool_arg(args, "confirmed", false) {
+            if total_unanswered > RESOLVE_GATE_THRESHOLD && !get_bool_arg(args, "confirmed", false)
+            {
                 return serde_json::json!({
                     "workflow": "resolve",
                     "step": 1, "total_steps": total,
@@ -554,14 +563,24 @@ fn is_vague_maintain_request(msg: &str) -> bool {
     let msg = msg.to_lowercase();
     // Specific operation keywords indicate the user knows what they want — no gate needed
     let specific = [
-        "scan", "link", "check", "conflict", "question", "review",
-        "detect", "suggest", "maintenance", "maintain",
+        "scan",
+        "link",
+        "check",
+        "conflict",
+        "question",
+        "review",
+        "detect",
+        "suggest",
+        "maintenance",
+        "maintain",
     ];
     if specific.iter().any(|k| msg.contains(k)) {
         return false;
     }
     // Vague improvement/cleanup keywords trigger the scope-confirm gate
-    let vague = ["clean", "fix", "improve", "tidy", "better", "organize", "sort", "help"];
+    let vague = [
+        "clean", "fix", "improve", "tidy", "better", "organize", "sort", "help",
+    ];
     vague.iter().any(|k| msg.contains(k))
 }
 
@@ -586,16 +605,18 @@ fn maintain_step(
             // Precise commands ("run a scan", "suggest links") bypass this gate.
             if !is_targeted && !confirmed {
                 if let Some(msg) = get_str_arg(args, "user_message") {
-                    if is_vague_maintain_request(&msg) {
-                        let doc_count =
-                            db.get_all_document_ids().ok().map(|ids| ids.len()).unwrap_or(0);
+                    if is_vague_maintain_request(msg) {
+                        let doc_count = db
+                            .get_all_document_ids()
+                            .ok()
+                            .map(|ids| ids.len())
+                            .unwrap_or(0);
                         let open_questions = db
                             .count_review_questions_by_status(repo_id)
                             .ok()
                             .map(|(_, unanswered, _)| unanswered)
                             .unwrap_or(0);
-                        let est_mins =
-                            ((doc_count as f64 * 2.0) / 60.0).ceil().max(1.0) as usize;
+                        let est_mins = ((doc_count as f64 * 2.0) / 60.0).ceil().max(1.0) as usize;
                         let est_display = if est_mins >= 2 {
                             format!("~{est_mins} minutes")
                         } else {
@@ -625,7 +646,11 @@ fn maintain_step(
             // - targeted at a specific document (doc_id set), or
             // - caller already confirmed (confirmed=true)
             if !is_targeted && !confirmed {
-                let doc_count = db.get_all_document_ids().ok().map(|ids| ids.len()).unwrap_or(0);
+                let doc_count = db
+                    .get_all_document_ids()
+                    .ok()
+                    .map(|ids| ids.len())
+                    .unwrap_or(0);
                 let est_mins = ((doc_count as f64 * 2.0) / 60.0).ceil() as usize;
                 let est_display = if est_mins >= 2 {
                     format!("~{est_mins} minutes")
@@ -890,12 +915,16 @@ fn resolve_step2_batch(
     // Only fires when question_type=weak-source is explicitly requested.
     // When triage_results are provided, apply VALID dismissals and attach hints to INVALID/WEAK.
     // When no triage_results yet, return a triage batch for the agent to label.
-    let triage_results = args.get("triage_results")
+    let triage_results = args
+        .get("triage_results")
         .and_then(|v| v.as_array())
         .cloned();
 
     let is_weak_source_filter = get_str_arg(args, "question_type")
-        .map(|s| s.split(',').any(|t| t.trim().eq_ignore_ascii_case("weak-source")))
+        .map(|s| {
+            s.split(',')
+                .any(|t| t.trim().eq_ignore_ascii_case("weak-source"))
+        })
         .unwrap_or(false);
 
     if is_weak_source_filter {
@@ -906,7 +935,9 @@ fn resolve_step2_batch(
             for doc in &docs {
                 if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
                     for (idx, q) in questions.iter().enumerate() {
-                        if !q.answered && !q.is_deferred() && !q.is_believed()
+                        if !q.answered
+                            && !q.is_deferred()
+                            && !q.is_believed()
                             && q.question_type == QuestionType::WeakSource
                         {
                             weak_source_questions.push((doc.id.clone(), idx));
@@ -915,7 +946,8 @@ fn resolve_step2_batch(
                 }
             }
             for (i, (doc_id, q_idx)) in weak_source_questions.iter().enumerate() {
-                let verdict = results.iter()
+                let verdict = results
+                    .iter()
                     .find(|r| r.get("index").and_then(|v| v.as_u64()) == Some(i as u64 + 1))
                     .and_then(|r| r.get("verdict"))
                     .and_then(|v| v.as_str())
@@ -923,7 +955,8 @@ fn resolve_step2_batch(
                 if verdict.eq_ignore_ascii_case("VALID") {
                     let _ = auto_dismiss_question(db, doc_id, *q_idx);
                 } else if !verdict.is_empty() {
-                    let suggestion = results.iter()
+                    let suggestion = results
+                        .iter()
                         .find(|r| r.get("index").and_then(|v| v.as_u64()) == Some(i as u64 + 1))
                         .and_then(|r| r.get("suggestion"))
                         .and_then(|v| v.as_str())
@@ -936,11 +969,15 @@ fn resolve_step2_batch(
                                 let queue_content = &after[marker.len()..];
                                 let hint_answer = format!("hint: {suggestion}");
                                 if let Some(modified) = super::review::modify_question_in_queue(
-                                    queue_content, *q_idx, &hint_answer, false,
+                                    queue_content,
+                                    *q_idx,
+                                    &hint_answer,
+                                    false,
                                 ) {
                                     let new_content = format!("{before}{marker}{modified}");
                                     let new_hash = crate::processor::content_hash(&new_content);
-                                    let _ = db.update_document_content(doc_id, &new_content, &new_hash);
+                                    let _ =
+                                        db.update_document_content(doc_id, &new_content, &new_hash);
                                 }
                             }
                         }
@@ -954,11 +991,17 @@ fn resolve_step2_batch(
             let mut weak_source_batch: Vec<serde_json::Value> = Vec::new();
             let triage_batch_size = 200usize;
             for doc in &docs {
-                if weak_source_batch.len() >= triage_batch_size { break; }
+                if weak_source_batch.len() >= triage_batch_size {
+                    break;
+                }
                 if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
                     for (idx, q) in questions.iter().enumerate() {
-                        if weak_source_batch.len() >= triage_batch_size { break; }
-                        if !q.answered && !q.is_deferred() && !q.is_believed()
+                        if weak_source_batch.len() >= triage_batch_size {
+                            break;
+                        }
+                        if !q.answered
+                            && !q.is_deferred()
+                            && !q.is_believed()
                             && q.question_type == QuestionType::WeakSource
                             && !q.answer.as_deref().unwrap_or("").starts_with("hint:")
                         {
@@ -984,7 +1027,10 @@ fn resolve_step2_batch(
                      - Fabrication risk (does this source actually exist?)\n\
                      Respond: VALID|INVALID|WEAK — reason — suggestion with specific replacement if applicable\n\n",
                 );
-                if let Some(policy) = perspective.as_ref().and_then(|p| p.internal_sources.as_deref()) {
+                if let Some(policy) = perspective
+                    .as_ref()
+                    .and_then(|p| p.internal_sources.as_deref())
+                {
                     triage_prompt.push_str(&format!(
                         "This KB has the following internal source policy:\n{policy}\nUse this to judge whether internal citations are sufficient.\n\n"
                     ));
@@ -1999,7 +2045,15 @@ mod tests {
     fn test_ingest_step1_contradiction_check_domain_agnostic() {
         let step = ingest_step(1, &serde_json::json!({"topic": "test"}), &None, &wf());
         let instruction = step["instruction"].as_str().unwrap().to_lowercase();
-        for term in &["employee", "career", "company", "person", "people", "hire", "promotion"] {
+        for term in &[
+            "employee",
+            "career",
+            "company",
+            "person",
+            "people",
+            "hire",
+            "promotion",
+        ] {
             assert!(
                 !instruction.contains(term),
                 "ingest step 1 contradiction check should not contain domain term: {term}"
@@ -2007,8 +2061,14 @@ mod tests {
         }
         // Must use generic examples
         let instr = step["instruction"].as_str().unwrap();
-        assert!(instr.contains("founded in"), "should use generic founding-date example");
-        assert!(instr.contains("Two different dates"), "should describe the date conflict pattern");
+        assert!(
+            instr.contains("founded in"),
+            "should use generic founding-date example"
+        );
+        assert!(
+            instr.contains("Two different dates"),
+            "should describe the date conflict pattern"
+        );
     }
 
     #[test]
@@ -2048,7 +2108,8 @@ mod tests {
         );
         // Must explicitly tell agent to search without a doc_type filter
         assert!(
-            instruction.contains("WITHOUT a doc_type filter") || instruction.contains("ALL document types"),
+            instruction.contains("WITHOUT a doc_type filter")
+                || instruction.contains("ALL document types"),
             "ingest step 1 must instruct agent to search across all doc types"
         );
         // Must check all results before creating
@@ -2672,7 +2733,10 @@ mod tests {
         assert_eq!(step["step_name"], "scan");
         assert_eq!(step["next_tool"], "factbase");
         assert_eq!(step["suggested_op"], "scan");
-        assert!(step["instruction"].as_str().unwrap().contains("factbase(op='scan')"));
+        assert!(step["instruction"]
+            .as_str()
+            .unwrap()
+            .contains("factbase(op='scan')"));
     }
 
     #[test]
@@ -2920,9 +2984,14 @@ mod tests {
         assert_eq!(step["next_tool"], "factbase");
         assert_eq!(step["suggested_op"], "scan");
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("factbase(op='scan')"), "enrich step 4 must call scan");
-        assert!(step.get("complete").is_none() || !step["complete"].as_bool().unwrap_or(false),
-            "scan step should not be the final step");
+        assert!(
+            instruction.contains("factbase(op='scan')"),
+            "enrich step 4 must call scan"
+        );
+        assert!(
+            step.get("complete").is_none() || !step["complete"].as_bool().unwrap_or(false),
+            "scan step should not be the final step"
+        );
     }
 
     #[test]
@@ -2931,7 +3000,10 @@ mod tests {
         let step = enrich_step(5, &serde_json::json!({}), &None, &db, None, &wf());
         assert_eq!(step["step"], 5);
         assert_eq!(step["total_steps"], 5);
-        assert!(step["complete"].as_bool().unwrap(), "step 5 should be complete");
+        assert!(
+            step["complete"].as_bool().unwrap(),
+            "step 5 should be complete"
+        );
     }
 
     #[test]
@@ -2941,7 +3013,10 @@ mod tests {
         assert_eq!(step["step_name"], "scan");
         assert_eq!(step["suggested_op"], "scan");
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("factbase(op='scan')"), "improve scan step must call scan");
+        assert!(
+            instruction.contains("factbase(op='scan')"),
+            "improve scan step must call scan"
+        );
     }
 
     // --- setup workflow tests ---
@@ -3018,7 +3093,10 @@ mod tests {
         assert_eq!(step["step"], 5);
         assert_eq!(step["next_tool"], "factbase");
         let instruction = step["instruction"].as_str().unwrap();
-        assert!(instruction.contains("factbase(op='init_repository')"), "scan step must call init_repository first");
+        assert!(
+            instruction.contains("factbase(op='init_repository')"),
+            "scan step must call init_repository first"
+        );
         assert!(instruction.contains("factbase(op='scan')"));
         assert!(instruction.contains("factbase(op='check')"));
     }
@@ -4129,7 +4207,11 @@ mod tests {
     #[test]
     fn test_update_step1_full_rebuild_dimension_mismatch() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "aaa111", "---\nfactbase_id: aaa111\n---\n# Test\n\n- Fact");
+        insert_test_doc(
+            &db,
+            "aaa111",
+            "---\nfactbase_id: aaa111\n---\n# Test\n\n- Fact",
+        );
         // Store embedding info with a different dimension than default config
         // (no actual embedding needed — dimension check fires first)
         let config = crate::Config::load(None).unwrap_or_default();
@@ -4150,7 +4232,11 @@ mod tests {
     #[test]
     fn test_update_step1_full_rebuild_model_change() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "bbb222", "---\nfactbase_id: bbb222\n---\n# Test\n\n- Fact");
+        insert_test_doc(
+            &db,
+            "bbb222",
+            "---\nfactbase_id: bbb222\n---\n# Test\n\n- Fact",
+        );
         let config = crate::Config::load(None).unwrap_or_default();
         // Matching dimension but different model
         db.set_embedding_info("old-model-that-doesnt-match", config.embedding.dimension)
@@ -4167,7 +4253,11 @@ mod tests {
     #[test]
     fn test_update_step1_full_rebuild_empty_embeddings() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "ccc333", "---\nfactbase_id: ccc333\n---\n# Test\n\n- Fact");
+        insert_test_doc(
+            &db,
+            "ccc333",
+            "---\nfactbase_id: ccc333\n---\n# Test\n\n- Fact",
+        );
         // No embeddings stored, no embedding info set
 
         let step = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
@@ -4182,7 +4272,11 @@ mod tests {
     #[test]
     fn test_update_step1_no_confirmation_for_incremental() {
         let (db, _tmp) = test_db();
-        insert_test_doc(&db, "ddd444", "---\nfactbase_id: ddd444\n---\n# Test\n\n- Fact");
+        insert_test_doc(
+            &db,
+            "ddd444",
+            "---\nfactbase_id: ddd444\n---\n# Test\n\n- Fact",
+        );
         let config = crate::Config::load(None).unwrap_or_default();
         db.set_embedding_info(&config.embedding.model, config.embedding.dimension)
             .unwrap();
@@ -4819,7 +4913,8 @@ mod tests {
         test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
         db.upsert_document(&Document {
             id: "gls002".to_string(),
-            content: "---\nfactbase_id: gls002\n---\n# Glossary\n\n- **HCLS**: Healthcare\n".to_string(),
+            content: "---\nfactbase_id: gls002\n---\n# Glossary\n\n- **HCLS**: Healthcare\n"
+                .to_string(),
             title: "Glossary".to_string(),
             file_path: "definitions/glossary.md".to_string(),
             doc_type: Some("definition".to_string()),
@@ -5013,9 +5108,16 @@ mod tests {
             &db,
             &wf(),
         );
-        assert_eq!(triage_step["triage_pre_step"], true, "should return triage pre-step");
+        assert_eq!(
+            triage_step["triage_pre_step"], true,
+            "should return triage pre-step"
+        );
         let citations = triage_step["citations"].as_array().unwrap();
-        assert_eq!(citations.len(), 2, "should find 2 weak-source questions from disk");
+        assert_eq!(
+            citations.len(),
+            2,
+            "should find 2 weak-source questions from disk"
+        );
 
         // Second call with triage_results (all INVALID) → normal batch
         let triage_results = serde_json::json!([
@@ -5521,7 +5623,15 @@ mod tests {
     fn test_maintain_step1_scan() {
         let (db, _tmp) = test_db();
         // Must pass confirmed=true to bypass the cost gate
-        let step = maintain_step(1, &serde_json::json!({"confirmed": true}), &None, 0, &db, &wf(), None);
+        let step = maintain_step(
+            1,
+            &serde_json::json!({"confirmed": true}),
+            &None,
+            0,
+            &db,
+            &wf(),
+            None,
+        );
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 1);
         assert_eq!(step["total_steps"], 7);
@@ -5639,7 +5749,15 @@ mod tests {
             ..Default::default()
         });
         // Step 7 is the final report step
-        let step = maintain_step(7, &serde_json::json!({}), &obsidian_perspective, 0, &db, &wf(), None);
+        let step = maintain_step(
+            7,
+            &serde_json::json!({}),
+            &obsidian_perspective,
+            0,
+            &db,
+            &wf(),
+            None,
+        );
         let tip = step["tip"]
             .as_str()
             .expect("tip should be present for obsidian format");
@@ -5669,23 +5787,38 @@ mod tests {
         let conflict_desc = "\"fact A\" @t[2020..2022] overlaps with \"fact B\" @t[2021..2023] - were both true simultaneously? (line:5) [pattern:same_entity_transition]";
         db.sync_review_questions(
             "doc1",
-            &[ReviewQuestion::new(QuestionType::Conflict, None, conflict_desc.to_string())],
+            &[ReviewQuestion::new(
+                QuestionType::Conflict,
+                None,
+                conflict_desc.to_string(),
+            )],
         )
         .unwrap();
 
         let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf(), None);
-        let hints = step["conflict_hints"].as_array().expect("conflict_hints should be present");
+        let hints = step["conflict_hints"]
+            .as_array()
+            .expect("conflict_hints should be present");
         assert_eq!(hints.len(), 1);
         assert_eq!(hints[0]["doc_id"], "doc1");
-        assert!(hints[0]["conflict"].as_str().unwrap().contains("same_entity_transition"));
-        assert!(hints[0]["suggested_action"].as_str().unwrap().contains("workflow(workflow='correct'"));
+        assert!(hints[0]["conflict"]
+            .as_str()
+            .unwrap()
+            .contains("same_entity_transition"));
+        assert!(hints[0]["suggested_action"]
+            .as_str()
+            .unwrap()
+            .contains("workflow(workflow='correct'"));
     }
 
     #[test]
     fn test_maintain_step7_no_conflict_hints_when_none() {
         let (db, _tmp) = test_db();
         let step = maintain_step(7, &serde_json::json!({}), &None, 0, &db, &wf(), None);
-        assert!(step.get("conflict_hints").is_none(), "no conflict_hints when none exist");
+        assert!(
+            step.get("conflict_hints").is_none(),
+            "no conflict_hints when none exist"
+        );
     }
 
     #[test]
@@ -5705,7 +5838,14 @@ mod tests {
         let content = "<!-- factbase:ws001 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Citation [^1] \"Phonetool lookup\" is not specific enough (line 4)\n";
         insert_test_doc(&db, "ws001", content);
         // Call with question_type=weak-source and no triage_results → triage pre-step
-        let step = resolve_step(2, &serde_json::json!({"question_type": "weak-source"}), &None, 0, &db, &wf());
+        let step = resolve_step(
+            2,
+            &serde_json::json!({"question_type": "weak-source"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
         assert_eq!(step["triage_pre_step"], true);
         assert!(step["citations"].is_array());
         assert!(step["triage_prompt"].as_str().unwrap().contains("VALID"));
@@ -5718,8 +5858,16 @@ mod tests {
         let content = "<!-- factbase:ws002 -->\n# Test\n\n- Fact\n\n<!-- factbase:review -->\n- [ ] `@q[weak-source]` Citation [^1] \"https://example.com\" is not specific (line 4)\n";
         insert_test_doc(&db, "ws002", content);
         // Apply triage with VALID verdict
-        let triage_results = serde_json::json!([{"index": 1, "verdict": "VALID", "suggestion": ""}]);
-        let step = resolve_step(2, &serde_json::json!({"question_type": "weak-source", "triage_results": triage_results}), &None, 0, &db, &wf());
+        let triage_results =
+            serde_json::json!([{"index": 1, "verdict": "VALID", "suggestion": ""}]);
+        let step = resolve_step(
+            2,
+            &serde_json::json!({"question_type": "weak-source", "triage_results": triage_results}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
         // After VALID dismissal, no more weak-source questions → normal batch (all_resolved)
         assert!(step.get("triage_pre_step").is_none());
     }
@@ -5732,7 +5880,10 @@ mod tests {
         insert_test_doc(&db, "ws003", content);
         // Without question_type=weak-source, no triage pre-step
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
-        assert!(step.get("triage_pre_step").is_none(), "triage should not fire without weak-source filter");
+        assert!(
+            step.get("triage_pre_step").is_none(),
+            "triage should not fire without weak-source filter"
+        );
     }
 
     #[test]
@@ -5923,13 +6074,20 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf_tool["description"].as_str().unwrap();
-        assert!(desc.contains("refresh"), "schema desc should mention refresh routing");
         assert!(
-            desc.contains("recent") || desc.contains("what's new") || desc.contains("check for updates"),
+            desc.contains("refresh"),
+            "schema desc should mention refresh routing"
+        );
+        assert!(
+            desc.contains("recent")
+                || desc.contains("what's new")
+                || desc.contains("check for updates"),
             "schema desc should include refresh trigger phrases"
         );
         assert!(
-            desc.contains("add=") || desc.contains("add vs refresh") || desc.contains("add=research"),
+            desc.contains("add=")
+                || desc.contains("add vs refresh")
+                || desc.contains("add=research"),
             "schema desc should distinguish add from refresh"
         );
     }
@@ -5965,7 +6123,9 @@ mod tests {
         let refresh = workflows.iter().find(|w| w["name"] == "refresh").unwrap();
         let desc = refresh["description"].as_str().unwrap();
         assert!(
-            desc.contains("recent") || desc.contains("what's new") || desc.contains("check for updates"),
+            desc.contains("recent")
+                || desc.contains("what's new")
+                || desc.contains("check for updates"),
             "refresh list description should include trigger phrases"
         );
         assert!(
@@ -6853,7 +7013,10 @@ mod tests {
             "maintain step 1 should require confirmation by default"
         );
         assert!(
-            result["instruction"].as_str().unwrap_or("").contains("confirm"),
+            result["instruction"]
+                .as_str()
+                .unwrap_or("")
+                .contains("confirm"),
             "instruction should tell agent to ask for confirmation"
         );
         assert!(
@@ -6861,7 +7024,10 @@ mod tests {
             "cost gate should not include next_tool"
         );
         assert!(
-            result["when_confirmed"].as_str().unwrap_or("").contains("confirmed=true"),
+            result["when_confirmed"]
+                .as_str()
+                .unwrap_or("")
+                .contains("confirmed=true"),
             "when_confirmed should tell agent to pass confirmed=true"
         );
     }
@@ -6914,7 +7080,12 @@ mod tests {
     fn test_scope_confirm_gate_triggers_for_vague_message() {
         let (db, _tmp) = test_db();
         let wf = WorkflowsConfig::default();
-        for msg in &["clean up the KB", "fix everything", "improve the KB", "tidy it up"] {
+        for msg in &[
+            "clean up the KB",
+            "fix everything",
+            "improve the KB",
+            "tidy it up",
+        ] {
             let result = maintain_step(
                 1,
                 &serde_json::json!({"user_message": msg}),
@@ -6938,16 +7109,22 @@ mod tests {
                 "scope-confirm gate should not include next_tool"
             );
             // doc_count and open_questions must be present
-            assert!(result.get("doc_count").is_some(), "gate response must include doc_count");
-            assert!(result.get("open_questions").is_some(), "gate response must include open_questions");
+            assert!(
+                result.get("doc_count").is_some(),
+                "gate response must include doc_count"
+            );
+            assert!(
+                result.get("open_questions").is_some(),
+                "gate response must include open_questions"
+            );
         }
     }
 
     #[test]
     fn test_scope_confirm_gate_includes_doc_and_question_counts() {
-        use crate::models::ReviewQuestion;
-        use crate::models::QuestionType;
         use crate::database::tests::{test_doc_with_repo, test_repo_with_id};
+        use crate::models::QuestionType;
+        use crate::models::ReviewQuestion;
 
         let (db, _tmp) = test_db();
         let wf = WorkflowsConfig::default();
@@ -6981,15 +7158,26 @@ mod tests {
         assert_eq!(result["open_questions"], 3);
 
         let instr = result["instruction"].as_str().unwrap_or("");
-        assert!(instr.contains("2 documents"), "instruction should mention doc count: {instr}");
-        assert!(instr.contains("3 open review questions"), "instruction should mention question count: {instr}");
+        assert!(
+            instr.contains("2 documents"),
+            "instruction should mention doc count: {instr}"
+        );
+        assert!(
+            instr.contains("3 open review questions"),
+            "instruction should mention question count: {instr}"
+        );
     }
 
     #[test]
     fn test_scope_confirm_gate_bypassed_for_specific_message() {
         let (db, _tmp) = test_db();
         let wf = WorkflowsConfig::default();
-        for msg in &["run a scan", "suggest links", "check for conflicts", "run maintenance"] {
+        for msg in &[
+            "run a scan",
+            "suggest links",
+            "check for conflicts",
+            "run maintenance",
+        ] {
             let result = maintain_step(
                 1,
                 &serde_json::json!({"user_message": msg, "confirmed": true}),
@@ -7023,7 +7211,10 @@ mod tests {
             result.get("requires_scope_confirm").is_none(),
             "confirmed=true should bypass scope-confirm gate even for vague message"
         );
-        assert_eq!(result["next_tool"], "factbase", "confirmed maintain should proceed to scan");
+        assert_eq!(
+            result["next_tool"], "factbase",
+            "confirmed maintain should proceed to scan"
+        );
     }
 
     #[test]

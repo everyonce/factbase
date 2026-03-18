@@ -62,12 +62,7 @@ pub fn reset_deferred_questions(
         )
     });
     if !file_errors.is_empty() {
-        result["file_errors"] = Value::Array(
-            file_errors
-                .into_iter()
-                .map(Value::String)
-                .collect(),
-        );
+        result["file_errors"] = Value::Array(file_errors.into_iter().map(Value::String).collect());
     }
     Ok(result)
 }

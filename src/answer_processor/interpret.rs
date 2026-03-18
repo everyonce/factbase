@@ -318,8 +318,14 @@ mod tests {
         assert_eq!(classify_answer("DISMISS"), AnswerType::Dismissal);
         assert_eq!(classify_answer("  Ignore  "), AnswerType::Dismissal);
         assert_eq!(classify_answer("not a conflict"), AnswerType::Dismissal);
-        assert_eq!(classify_answer("resolve_question: VALID — citation is fine"), AnswerType::Dismissal);
-        assert_eq!(classify_answer("resolve_question: VALID — per internal policy"), AnswerType::Dismissal);
+        assert_eq!(
+            classify_answer("resolve_question: VALID — citation is fine"),
+            AnswerType::Dismissal
+        );
+        assert_eq!(
+            classify_answer("resolve_question: VALID — per internal policy"),
+            AnswerType::Dismissal
+        );
         assert_eq!(
             classify_answer("Not a conflict. Promotion from Director to Senior Director"),
             AnswerType::Dismissal

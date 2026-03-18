@@ -73,8 +73,7 @@ pub(super) fn pre_read_files(files: Vec<PathBuf>) -> Vec<PreReadFile> {
             let content = fs::read_to_string(&path).map_err(|e| e.to_string());
             let (hash, review_section_hash, existing_id) = if let Ok(ref c) = content {
                 let h = content_hash(c);
-                let rh = crate::patterns::extract_review_queue_section(c)
-                    .map(|s| content_hash(s));
+                let rh = crate::patterns::extract_review_queue_section(c).map(content_hash);
                 let id = DocumentProcessor::extract_id_static(c);
                 (Some(h), rh, id)
             } else {
@@ -349,10 +348,8 @@ pub async fn full_scan(
             // In this case we skip re-embedding and only re-sync review questions.
             let is_review_only_change = is_modified && !is_new && !ctx.opts.dry_run && {
                 let db_doc = known.get(&id).unwrap();
-                let new_body_hash =
-                    content_hash(crate::patterns::content_body(&content));
-                let stored_body_hash =
-                    content_hash(crate::patterns::content_body(&db_doc.content));
+                let new_body_hash = content_hash(crate::patterns::content_body(&content));
+                let stored_body_hash = content_hash(crate::patterns::content_body(&db_doc.content));
                 new_body_hash == stored_body_hash
             };
 
@@ -537,7 +534,9 @@ pub async fn full_scan(
                     db.upsert_document(&document)?;
                     // Sync review questions to DB
                     if crate::patterns::has_review_section(&document.content) {
-                        if let Some(questions) = crate::processor::parse_review_queue(&document.content) {
+                        if let Some(questions) =
+                            crate::processor::parse_review_queue(&document.content)
+                        {
                             let _ = db.sync_review_questions(&document.id, &questions);
                         }
                     }
@@ -631,7 +630,7 @@ pub async fn full_scan(
             let mut to_invalidate: HashSet<String> = HashSet::new();
             let ids_ref: Vec<&str> = changed_ids.iter().map(String::as_str).collect();
             if let Ok(links_map) = db.get_links_for_documents(&ids_ref) {
-                for (_, (_, incoming)) in &links_map {
+                for (_, incoming) in links_map.values() {
                     for link in incoming {
                         if !changed_ids.contains(&link.source_id) {
                             to_invalidate.insert(link.source_id.clone());
@@ -684,9 +683,7 @@ pub async fn full_scan(
             let mut synced_questions = 0usize;
             for (id, doc) in &known {
                 if crate::patterns::has_review_section(&doc.content) {
-                    if let Some(questions) =
-                        crate::processor::parse_review_queue(&doc.content)
-                    {
+                    if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
                         synced_questions += questions.len();
                         let _ = db.sync_review_questions(id, &questions);
                     }
@@ -1740,7 +1737,10 @@ mod tests {
         // First scan: doc is new, review questions synced during scan
         full_scan(&repo, &db, &ctx).await.unwrap();
         let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
-        assert!(unanswered > 0, "review questions should be indexed after first scan");
+        assert!(
+            unanswered > 0,
+            "review questions should be indexed after first scan"
+        );
     }
 
     #[tokio::test]
@@ -1758,8 +1758,18 @@ mod tests {
         let progress = ProgressReporter::Silent;
 
         // First scan: indexes the doc
-        let opts = ScanOptions { skip_links: true, ..Default::default() };
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
         full_scan(&repo, &db, &ctx).await.unwrap();
 
         // Manually clear review_questions to simulate migration scenario
@@ -1771,12 +1781,26 @@ mod tests {
         assert_eq!(unanswered, 0, "table should be empty after manual clear");
 
         // Second scan with reindex_reviews=true: doc is unchanged but questions re-synced
-        let opts2 = ScanOptions { skip_links: true, reindex_reviews: true, ..Default::default() };
-        let ctx2 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts2, &progress);
+        let opts2 = ScanOptions {
+            skip_links: true,
+            reindex_reviews: true,
+            ..Default::default()
+        };
+        let ctx2 = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts2,
+            &progress,
+        );
         full_scan(&repo, &db, &ctx2).await.unwrap();
 
         let (_, unanswered2, _) = db.count_review_questions_by_status(Some("test")).unwrap();
-        assert!(unanswered2 > 0, "review questions should be re-synced with reindex_reviews");
+        assert!(
+            unanswered2 > 0,
+            "review questions should be re-synced with reindex_reviews"
+        );
     }
 
     #[tokio::test]
@@ -1799,8 +1823,18 @@ mod tests {
         let progress = ProgressReporter::Silent;
 
         // First scan: all docs indexed, review questions synced
-        let opts = ScanOptions { skip_links: true, ..Default::default() };
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
         full_scan(&repo, &db, &ctx).await.unwrap();
 
         // Manually clear review_questions to simulate underpopulated table
@@ -1813,7 +1847,10 @@ mod tests {
         full_scan(&repo, &db, &ctx).await.unwrap();
 
         let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
-        assert!(unanswered > 0, "auto-migration should populate review questions");
+        assert!(
+            unanswered > 0,
+            "auto-migration should populate review questions"
+        );
     }
 
     #[tokio::test]
@@ -1876,9 +1913,19 @@ mod tests {
         let processor = DocumentProcessor::new();
         let embedding = MockEmbedding::new(1024);
         let link_detector = LinkDetector::new();
-        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         // First scan: doc added
         full_scan(&repo, &db, &ctx).await.unwrap();
@@ -1914,22 +1961,37 @@ mod tests {
         let progress = ProgressReporter::Silent;
 
         // First scan: all docs indexed
-        let opts = ScanOptions { skip_links: true, ..Default::default() };
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
         full_scan(&repo, &db, &ctx).await.unwrap();
 
         // Clear review_questions for 2 of 3 docs to simulate partial sync (< 80%)
         {
             let conn = db.get_conn().unwrap();
-            conn.execute("DELETE FROM review_questions WHERE doc_id = 'rr0000'", []).unwrap();
-            conn.execute("DELETE FROM review_questions WHERE doc_id = 'rr0001'", []).unwrap();
+            conn.execute("DELETE FROM review_questions WHERE doc_id = 'rr0000'", [])
+                .unwrap();
+            conn.execute("DELETE FROM review_questions WHERE doc_id = 'rr0001'", [])
+                .unwrap();
         }
 
         // Second scan: should detect < 80% synced and re-sync all
         full_scan(&repo, &db, &ctx).await.unwrap();
 
         let (_, unanswered, _) = db.count_review_questions_by_status(Some("test")).unwrap();
-        assert_eq!(unanswered, 3, "all 3 docs should have review questions synced");
+        assert_eq!(
+            unanswered, 3,
+            "all 3 docs should have review questions synced"
+        );
     }
 
     /// Review-only change: editing the review section without changing the body
@@ -1942,9 +2004,19 @@ mod tests {
         let link_detector = LinkDetector::new();
         let scanner = crate::scanner::Scanner::new(Default::default());
         let processor = DocumentProcessor::new();
-        let opts = ScanOptions { skip_links: true, ..Default::default() };
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
         let progress = ProgressReporter::Silent;
-        let ctx = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts, &progress);
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
 
         // Initial content: body + review section with one open question
         let initial_content = "---\nfactbase_id: ab0001\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n";
@@ -1964,7 +2036,10 @@ mod tests {
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
 
         // Doc should be counted as unchanged (no re-embedding)
-        assert_eq!(result.unchanged, 1, "review-only change should count as unchanged");
+        assert_eq!(
+            result.unchanged, 1,
+            "review-only change should count as unchanged"
+        );
 
         // But review questions should be re-synced (deferred question now)
         let (_, unanswered2, deferred) = db.count_review_questions_by_status(Some("test")).unwrap();
@@ -1981,7 +2056,10 @@ mod tests {
         std::fs::write(&p, content).unwrap();
 
         let results = pre_read_files(vec![p]);
-        assert!(results[0].review_section_hash.is_some(), "should compute review section hash");
+        assert!(
+            results[0].review_section_hash.is_some(),
+            "should compute review section hash"
+        );
 
         // Hash should differ from full content hash
         let full_hash = results[0].hash.as_ref().unwrap();
@@ -1997,6 +2075,9 @@ mod tests {
         std::fs::write(&p, "# Doc\n\nJust a fact.\n").unwrap();
 
         let results = pre_read_files(vec![p]);
-        assert!(results[0].review_section_hash.is_none(), "no review section → no hash");
+        assert!(
+            results[0].review_section_hash.is_none(),
+            "no review section → no hash"
+        );
     }
 }

@@ -111,7 +111,8 @@ pub fn execute_split(
 
         // Inject factbase ID into content via frontmatter
         let fmt = crate::models::format::ResolvedFormat::default();
-        let content_with_header = processor.inject_id_with_format(&proposed.content, &new_id, &fmt, None);
+        let content_with_header =
+            processor.inject_id_with_format(&proposed.content, &new_id, &fmt, None);
 
         // Write the new file
         write_file(&new_path, &content_with_header)?;

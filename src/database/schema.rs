@@ -631,9 +631,7 @@ impl Database {
             )
             .unwrap_or(false);
         if !exists {
-            conn.execute_batch(
-                "ALTER TABLE documents ADD COLUMN review_section_hash TEXT;",
-            )?;
+            conn.execute_batch("ALTER TABLE documents ADD COLUMN review_section_hash TEXT;")?;
         }
         Ok(())
     }
@@ -861,7 +859,10 @@ mod tests {
             )
             .expect("query column");
 
-        assert!(column_exists, "last_lint_at column should exist in repositories table");
+        assert!(
+            column_exists,
+            "last_lint_at column should exist in repositories table"
+        );
     }
 
     #[test]
@@ -888,10 +889,8 @@ mod tests {
             .expect("create table");
             // Simulate the broken state: last_lint_at was added via ALTER TABLE
             // while last_check_at still exists.
-            conn.execute_batch(
-                "ALTER TABLE repositories ADD COLUMN last_lint_at TIMESTAMP;",
-            )
-            .expect("add duplicate column");
+            conn.execute_batch("ALTER TABLE repositories ADD COLUMN last_lint_at TIMESTAMP;")
+                .expect("add duplicate column");
         }
 
         // Opening the database must succeed (not panic or return an error).
@@ -952,6 +951,9 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("query column");
-        assert!(!has_check_at, "last_check_at should not exist after migration v17");
+        assert!(
+            !has_check_at,
+            "last_check_at should not exist after migration v17"
+        );
     }
 }

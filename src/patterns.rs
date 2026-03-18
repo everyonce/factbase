@@ -679,9 +679,13 @@ mod tests {
         // Legacy HTML marker
         assert!(has_review_section("# Doc\n\n<!-- factbase:review -->\n"));
         // Callout header (new primary format)
-        assert!(has_review_section("# Doc\n\n> [!review]- Review Queue\n> - [ ] q\n"));
+        assert!(has_review_section(
+            "# Doc\n\n> [!review]- Review Queue\n> - [ ] q\n"
+        ));
         // Legacy callout header
-        assert!(has_review_section("# Doc\n\n> [!info]- Review Queue\n> - [ ] q\n"));
+        assert!(has_review_section(
+            "# Doc\n\n> [!info]- Review Queue\n> - [ ] q\n"
+        ));
         // No review section
         assert!(!has_review_section("# Doc\n\n- Just a fact\n"));
     }

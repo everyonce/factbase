@@ -145,8 +145,8 @@ pub fn reset_deferred_questions(
     args: &Value,
     progress: &crate::ProgressReporter,
 ) -> Result<Value, FactbaseError> {
-    let question_type = crate::mcp::tools::get_str_arg(args, "question_type")
-        .unwrap_or("weak-source");
+    let question_type =
+        crate::mcp::tools::get_str_arg(args, "question_type").unwrap_or("weak-source");
     let repo = crate::mcp::tools::get_str_arg(args, "repo").map(String::from);
     services::reset_deferred_questions(db, question_type, repo.as_deref(), progress)
 }

@@ -158,7 +158,8 @@ mod tests {
         let repo = test_repo();
         db.upsert_repository(&repo).unwrap();
 
-        let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact one\n- Fact two\n- Fact three\n";
+        let content =
+            "---\nfactbase_id: abc123\n---\n# Test\n\n- Fact one\n- Fact two\n- Fact three\n";
         db.upsert_document(&make_doc("abc123", content)).unwrap();
 
         let embedding = MockEmbedding::new(1024);

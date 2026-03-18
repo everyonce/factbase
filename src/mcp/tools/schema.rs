@@ -475,8 +475,7 @@ mod tests {
             "workflow description should have OPERATING PRINCIPLE at top level"
         );
         assert!(
-            desc.starts_with("Guided multi-step workflows")
-                && desc.contains("OPERATING PRINCIPLE"),
+            desc.starts_with("Guided multi-step workflows") && desc.contains("OPERATING PRINCIPLE"),
             "OPERATING PRINCIPLE should appear near the top of the description"
         );
         assert!(
@@ -695,7 +694,6 @@ mod tests {
             "factbase scan op description should note workflow(maintain) preference"
         );
     }
-
 
     #[test]
     fn test_schema_override_no_repo_path() {
