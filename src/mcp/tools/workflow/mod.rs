@@ -3279,6 +3279,59 @@ mod tests {
     }
 
     #[test]
+    fn test_setup_total_steps_is_7() {
+        let step = setup_step(1, &serde_json::json!({}), &wf());
+        assert_eq!(step["total_steps"], 7, "setup workflow must have 7 total steps");
+    }
+
+    #[test]
+    fn test_setup_step4_is_source_discovery() {
+        let step = setup_step(4, &serde_json::json!({"path": "/tmp/test"}), &wf());
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["total_steps"], 7);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("data_sources"),
+            "step 4 must be source discovery (mentions data_sources)"
+        );
+        // Must NOT be the create step
+        assert!(
+            !instruction.contains("factbase(op='create')"),
+            "step 4 must not be the create step"
+        );
+    }
+
+    #[test]
+    fn test_setup_step5_is_create() {
+        let step = setup_step(5, &serde_json::json!({}), &wf());
+        assert_eq!(step["step"], 5);
+        assert_eq!(step["total_steps"], 7);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("factbase(op='create')") || instruction.contains("authoring_guide"),
+            "step 5 must be the create documents step"
+        );
+    }
+
+    #[test]
+    fn test_setup_source_discovery_instruction_has_classification() {
+        let step = setup_step(4, &serde_json::json!({"path": "/tmp/test"}), &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("public") || instruction.contains("Public"),
+            "source discovery instruction must mention public classification"
+        );
+        assert!(
+            instruction.contains("private") || instruction.contains("Private"),
+            "source discovery instruction must mention private classification"
+        );
+        assert!(
+            instruction.contains("mixed") || instruction.contains("Mixed"),
+            "source discovery instruction must mention mixed classification"
+        );
+    }
+
+    #[test]
     fn test_setup_step_source_discovery() {
         // New step 4: source discovery
         let step = setup_step(4, &serde_json::json!({"path": "/tmp/test"}), &wf());
