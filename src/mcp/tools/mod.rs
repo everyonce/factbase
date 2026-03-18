@@ -967,6 +967,10 @@ mod tests {
         use crate::embedding::test_helpers::MockEmbedding;
         use tempfile::TempDir;
 
+        // Ensure no stale write lock from a previous test (can happen if a
+        // concurrent non-serial test acquired the guard and panicked).
+        crate::write_guard::WriteGuard::force_release();
+
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
@@ -992,7 +996,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
         let reporter = crate::ProgressReporter::Mcp { sender: Some(tx) };
 
-        let args = serde_json::json!({"mode": "questions"});
+        let args = serde_json::json!({"mode": "questions", "dry_run": true});
         check_repository(&db, &embedding, &args, &reporter)
             .await
             .unwrap();

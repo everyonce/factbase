@@ -29,6 +29,13 @@ impl WriteGuard {
         }
         Ok(Self)
     }
+
+    /// Force-release the write lock. Only for use in tests where a prior
+    /// test may have leaked the lock due to a panic or async cancellation.
+    #[cfg(test)]
+    pub fn force_release() {
+        WRITE_LOCK.store(false, Ordering::SeqCst);
+    }
 }
 
 impl Drop for WriteGuard {
