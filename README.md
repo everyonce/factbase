@@ -25,7 +25,8 @@ Then talk to your agent. Six workflows cover the full lifecycle:
 
 | What you say | What happens |
 |---|---|
-| "Build me a knowledge base about Pacific Northwest mushrooms" | `create` — designs structure, creates docs, scans |
+| "Build me a knowledge base about Pacific Northwest mushrooms, sourcing from the web" | `create` — asks where data lives, designs structure, creates docs, scans |
+| "Build me a KB to track my customer accounts, sourcing from files in ~/work/accounts/" | `create` — same flow, but uses your local files as the content source |
 | "Research chanterelle harvesting seasons and add it" | `add` — researches topic, creates entities, links |
 | "Run maintenance on the KB" | `maintain` — scan, quality check, resolve questions |
 | "Check for new species classifications this year" | `refresh` — searches live sources, updates stale facts |
