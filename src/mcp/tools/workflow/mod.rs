@@ -3281,7 +3281,10 @@ mod tests {
     #[test]
     fn test_setup_total_steps_is_7() {
         let step = setup_step(1, &serde_json::json!({}), &wf());
-        assert_eq!(step["total_steps"], 7, "setup workflow must have 7 total steps");
+        assert_eq!(
+            step["total_steps"], 7,
+            "setup workflow must have 7 total steps"
+        );
     }
 
     #[test]
@@ -3308,7 +3311,8 @@ mod tests {
         assert_eq!(step["total_steps"], 7);
         let instruction = step["instruction"].as_str().unwrap();
         assert!(
-            instruction.contains("factbase(op='create')") || instruction.contains("authoring_guide"),
+            instruction.contains("factbase(op='create')")
+                || instruction.contains("authoring_guide"),
             "step 5 must be the create documents step"
         );
     }
@@ -3356,7 +3360,10 @@ mod tests {
             "source discovery must route to step 5"
         );
         let when_done = step["when_done"].as_str().unwrap();
-        assert!(when_done.contains("step=5"), "when_done must route to step 5");
+        assert!(
+            when_done.contains("step=5"),
+            "when_done must route to step 5"
+        );
     }
 
     #[test]
