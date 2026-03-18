@@ -55,6 +55,10 @@ pub struct Perspective {
     /// Free-text description of internal source policy, injected into tier-2 citation triage.
     #[serde(default)]
     pub internal_sources: Option<String>,
+    /// Data sources for private/mixed domains (written by agent during setup source discovery).
+    /// Distinct from `internal_sources` (which controls citation validation, not data discovery).
+    #[serde(default)]
+    pub data_sources: Option<serde_json::Value>,
 }
 
 /// Default perspective.yaml template created by init commands.
@@ -147,6 +151,7 @@ pub fn load_perspective_from_file(repo_root: &Path) -> Option<Perspective> {
                 || p.link_match_mode.is_some()
                 || p.citation_patterns.is_some()
                 || p.internal_sources.is_some()
+                || p.data_sources.is_some()
             {
                 Some(p)
             } else {
