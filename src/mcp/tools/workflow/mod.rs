@@ -1588,12 +1588,11 @@ fn correct_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
     } else {
         String::new()
     };
-    let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    let temporal_hint = format!(
-        " @t[=<date>] using the correction date. If no temporal context was identified in step 1:\
-\n   - If the existing fact already has a temporal tag (e.g. @t[1955..1960]) — especially one backed by a source footnote — PRESERVE it. Do NOT overwrite a sourced historical date with today's date.\
-\n   - Only fall back to today's date (@t[={today}]) if the fact has NO existing temporal tag at all."
-    );
+    let temporal_hint =
+        " @t[=<date>] using the date from the correction or temporal context identified in step 1.\
+\n   - If the existing fact already has a temporal tag (e.g. @t[1955..1960]) — PRESERVE it. Do NOT overwrite an existing temporal tag.\
+\n   - If NO date is available from the correction or step 1 context, and the fact has no existing temporal tag → ask the user: \"What date should I use for this correction?\" Do NOT infer or assume a date."
+        .to_string();
     let total = 4;
     match step {
         1 => serde_json::json!({
@@ -6146,18 +6145,18 @@ mod tests {
         let result = correct_step(3, &args, &wf);
         let instr = result["instruction"].as_str().unwrap();
         assert!(
-            instr.contains("correction date"),
-            "fix should prefer correction date for @t tag"
+            instr.contains("correction"),
+            "fix should reference the correction for date context"
         );
         assert!(
             instr.contains("temporal context"),
             "fix should reference temporal context from step 1"
         );
-        // Today's date is still the last-resort fallback (only when no existing tag)
+        // Today's date must NOT appear as a fallback
         let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
         assert!(
-            instr.contains(&today),
-            "fix fallback should still contain today's date as last resort"
+            !instr.contains(&today),
+            "fix must not use today's date as a fallback"
         );
     }
 
@@ -6169,15 +6168,15 @@ mod tests {
         let instr = result["instruction"].as_str().unwrap();
         assert!(
             instr.contains("PRESERVE"),
-            "fix should instruct agent to preserve existing sourced temporal tags"
+            "fix should instruct agent to preserve existing temporal tags"
         );
         assert!(
-            instr.contains("NO existing temporal tag"),
-            "fix should only fall back to today when fact has no existing temporal tag"
+            instr.contains("ask the user"),
+            "fix should ask the user when no date is available"
         );
         assert!(
-            !instr.contains("fall back to today's date: @t[="),
-            "fix must not unconditionally fall back to today's date"
+            !instr.contains("today's date"),
+            "fix must not fall back to today's date"
         );
     }
 
