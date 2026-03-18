@@ -192,24 +192,24 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
 
 fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
     let path = get_str_arg(args, "path").unwrap_or("the target directory");
-    let total = 6;
+    let total = 7;
     match step {
         1 => serde_json::json!({
             "workflow": "setup",
             "step": 1, "total_steps": total,
-            "title": "Step 1 of 6: Set Up Repository Directory",
+            "title": "Step 1 of 7: Set Up Repository Directory",
             "instruction": resolve(wf, "setup.init", DEFAULT_SETUP_INIT_INSTRUCTION, &[("path", path)]),
             "next_tool": "filesystem",
             "suggested_args": {"path": path},
-            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 6"
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=2) to continue to Step 2 of 7"
         }),
         2 => serde_json::json!({
             "workflow": "setup",
             "step": 2, "total_steps": total,
-            "title": "Step 2 of 6: Configure Perspective",
+            "title": "Step 2 of 7: Configure Perspective",
             "instruction": resolve(wf, "setup.perspective", DEFAULT_SETUP_PERSPECTIVE_INSTRUCTION, &[("path", path)]),
             "note": "Write perspective.yaml as YAML to the repository root directory. Do NOT create perspective.md — factbase only reads perspective.yaml.",
-            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=3) to continue to Step 3 of 6"
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=3) to continue to Step 3 of 7"
         }),
         3 => {
             // Validate perspective.yaml was written correctly
@@ -243,12 +243,12 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             serde_json::json!({
                 "workflow": "setup",
                 "step": 3, "total_steps": total,
-                "title": "Step 3 of 6: Validate Perspective",
+                "title": "Step 3 of 7: Validate Perspective",
                 "perspective_status": status,
                 "perspective_parsed": detail,
                 "instruction": instruction,
                 "when_done": if status == "ok" {
-                    "⚠️ REQUIRED: Call workflow(workflow='setup', step=4) to continue to Step 4 of 6"
+                    "⚠️ REQUIRED: Call workflow(workflow='setup', step=4) to continue to Step 4 of 7"
                 } else {
                     "⚠️ REQUIRED: Fix perspective.yaml, then call workflow(workflow='setup', step=3) again"
                 }
@@ -257,25 +257,34 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
         4 => serde_json::json!({
             "workflow": "setup",
             "step": 4, "total_steps": total,
-            "title": "Step 4 of 6: Create Documents",
-            "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES)]),
-            "next_tool": "factbase", "suggested_op": "authoring_guide",
-            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=5) to continue to Step 5 of 6"
+            "title": "Step 4 of 7: Source Discovery",
+            "instruction": resolve(wf, "setup.sources", DEFAULT_SETUP_SOURCES_INSTRUCTION, &[]),
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=5) to continue to Step 5 of 7"
         }),
-        5 => serde_json::json!({
+        5 => {
+            serde_json::json!({
+                "workflow": "setup",
+                "step": 5, "total_steps": total,
+                "title": "Step 5 of 7: Create Documents",
+                "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES), ("data_sources_note", "")]),
+                "next_tool": "factbase", "suggested_op": "authoring_guide",
+                "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 7"
+            })
+        }
+        6 => serde_json::json!({
             "workflow": "setup",
-            "step": 5, "total_steps": total,
-            "title": "Step 5 of 6: Scan & Verify",
+            "step": 6, "total_steps": total,
+            "title": "Step 6 of 7: Scan & Verify",
             "instruction": resolve(wf, "setup.scan", DEFAULT_SETUP_SCAN_INSTRUCTION, &[("path", path)]),
             "next_tool": "factbase", "suggested_op": "init_repository",
-            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 6"
+            "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=7) to continue to Step 7 of 7"
         }),
-        6 => {
+        7 => {
             let path = get_str_arg(args, "path").unwrap_or("the target directory");
             let mut resp = serde_json::json!({
                 "workflow": "setup",
-                "step": 6, "total_steps": total,
-                "title": "Step 6 of 6: Complete",
+                "step": 7, "total_steps": total,
+                "title": "Step 7 of 7: Complete",
                 "instruction": resolve(wf, "setup.complete", DEFAULT_SETUP_COMPLETE_INSTRUCTION, &[]),
                 "complete": true
             });
@@ -318,7 +327,7 @@ pub fn bootstrap(args: &Value) -> Result<Value, FactbaseError> {
 
 fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
     let domain = get_str_arg(args, "domain");
-    let total = if domain.is_some() { 7 } else { 6 };
+    let total = if domain.is_some() { 8 } else { 7 };
 
     // Step 1 with domain: bootstrap. Without domain: init.
     if domain.is_some() {
@@ -348,7 +357,7 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 }
             }
             s => {
-                // Steps 2-7 map to setup steps 1-6
+                // Steps 2-8 map to setup steps 1-7
                 let mut v = setup_step(s - 1, args, wf);
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("workflow".into(), Value::String("create".into()));
@@ -362,8 +371,9 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                                 2 => "Initialize Repository",
                                 3 => "Configure Perspective",
                                 4 => "Validate Perspective",
-                                5 => "Create Documents",
-                                6 => "Scan & Verify",
+                                5 => "Source Discovery",
+                                6 => "Create Documents",
+                                7 => "Scan & Verify",
                                 _ => "Complete",
                             }
                         )),
@@ -404,9 +414,9 @@ fn create_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             }
         }
     } else {
-        // No domain: steps 1-6 map directly to setup steps 1-6
+        // No domain: steps 1-6 map directly to setup steps 1-6, step 7 is final
         match step {
-            s @ 1..=5 => {
+            s @ 1..=6 => {
                 let mut v = setup_step(s, args, wf);
                 if let Some(obj) = v.as_object_mut() {
                     obj.insert("workflow".into(), Value::String("create".into()));
@@ -1948,6 +1958,7 @@ mod tests {
             link_match_mode: None,
             citation_patterns: None,
             internal_sources: None,
+            data_sources: None,
         })
     }
 
@@ -3026,7 +3037,7 @@ mod tests {
         let step = setup_step(1, &serde_json::json!({"path": "/tmp/mushrooms"}), &wf());
         assert_eq!(step["workflow"], "setup");
         assert_eq!(step["step"], 1);
-        assert_eq!(step["total_steps"], 6);
+        assert_eq!(step["total_steps"], 7);
         assert!(step["instruction"]
             .as_str()
             .unwrap()
@@ -3077,8 +3088,8 @@ mod tests {
 
     #[test]
     fn test_setup_step4_create_documents() {
-        let step = setup_step(4, &serde_json::json!({}), &wf());
-        assert_eq!(step["step"], 4);
+        let step = setup_step(5, &serde_json::json!({}), &wf());
+        assert_eq!(step["step"], 5);
         assert_eq!(step["next_tool"], "factbase");
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("factbase(op='create')"));
@@ -3089,8 +3100,8 @@ mod tests {
 
     #[test]
     fn test_setup_step5_scan_and_verify() {
-        let step = setup_step(5, &serde_json::json!({}), &wf());
-        assert_eq!(step["step"], 5);
+        let step = setup_step(6, &serde_json::json!({}), &wf());
+        assert_eq!(step["step"], 6);
         assert_eq!(step["next_tool"], "factbase");
         let instruction = step["instruction"].as_str().unwrap();
         assert!(
@@ -3103,9 +3114,9 @@ mod tests {
 
     #[test]
     fn test_format_rules_inlined_in_document_creation_steps() {
-        // Setup step 4, ingest step 3, and enrich step 3 should all inline format rules
+        // Setup step 5, ingest step 3, and enrich step 3 should all inline format rules
         // so weaker models don't need a separate get_authoring_guide call.
-        let setup = setup_step(4, &serde_json::json!({}), &wf());
+        let setup = setup_step(5, &serde_json::json!({}), &wf());
         let ingest = ingest_step(3, &serde_json::json!({}), &None, &wf());
         let (db, _tmp) = test_db();
         let enrich = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
@@ -3129,8 +3140,8 @@ mod tests {
 
     #[test]
     fn test_setup_step6_next_steps() {
-        let step = setup_step(6, &serde_json::json!({}), &wf());
-        assert_eq!(step["step"], 6);
+        let step = setup_step(7, &serde_json::json!({}), &wf());
+        assert_eq!(step["step"], 7);
         assert!(step["complete"].as_bool().unwrap());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(instruction.contains("ingest"));
@@ -3149,7 +3160,7 @@ mod tests {
             "focus: Test\nformat:\n  preset: obsidian\n",
         )
         .unwrap();
-        let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
+        let step = setup_step(7, &serde_json::json!({"path": path}), &wf());
         assert!(step["complete"].as_bool().unwrap());
         let git_setup = &step["obsidian_git_setup"];
         assert!(
@@ -3181,8 +3192,8 @@ mod tests {
             "focus: Test\nformat:\n  preset: obsidian\n",
         )
         .unwrap();
-        // No domain → step 6 is the final step
-        let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
+        // No domain → step 7 is the final step
+        let step = setup_step(7, &serde_json::json!({"path": path}), &wf());
         assert!(step["complete"].as_bool().unwrap());
         assert!(
             step["obsidian_git_setup"].is_object(),
@@ -3212,8 +3223,8 @@ mod tests {
             "focus: Test\nformat:\n  preset: obsidian\n",
         )
         .unwrap();
-        // create_step without domain: step 6 falls to _ => branch
-        let step = create_step(6, &serde_json::json!({"path": path}), &wf());
+        // create_step without domain: step 7 falls to _ => branch
+        let step = create_step(7, &serde_json::json!({"path": path}), &wf());
         assert_eq!(step["workflow"], "create");
         assert!(step["complete"].as_bool().unwrap());
         assert!(
@@ -3240,7 +3251,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
         std::fs::write(tmp.path().join("perspective.yaml"), "focus: Test\n").unwrap();
-        let step = create_step(6, &serde_json::json!({"path": path}), &wf());
+        let step = create_step(7, &serde_json::json!({"path": path}), &wf());
         assert!(step["complete"].as_bool().unwrap());
         assert!(
             step.get("obsidian_git_setup").is_none(),
@@ -3257,7 +3268,7 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let path = tmp.path().to_string_lossy().to_string();
         std::fs::write(tmp.path().join("perspective.yaml"), "focus: Test\n").unwrap();
-        let step = setup_step(6, &serde_json::json!({"path": path}), &wf());
+        let step = setup_step(7, &serde_json::json!({"path": path}), &wf());
         assert!(step.get("obsidian_git_setup").is_none());
     }
 
@@ -3265,6 +3276,77 @@ mod tests {
     fn test_setup_past_last_step() {
         let step = setup_step(99, &serde_json::json!({}), &wf());
         assert!(step["complete"].as_bool().unwrap());
+    }
+
+    #[test]
+    fn test_setup_step_source_discovery() {
+        // New step 4: source discovery
+        let step = setup_step(4, &serde_json::json!({"path": "/tmp/test"}), &wf());
+        assert_eq!(step["workflow"], "setup");
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["total_steps"], 7);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("data_sources"),
+            "source discovery step must mention data_sources"
+        );
+        assert!(
+            instruction.contains("public") || instruction.contains("Public"),
+            "source discovery must classify public domains"
+        );
+        assert!(
+            instruction.contains("private") || instruction.contains("Private"),
+            "source discovery must classify private domains"
+        );
+        assert!(
+            instruction.contains("step=5"),
+            "source discovery must route to step 5"
+        );
+        let when_done = step["when_done"].as_str().unwrap();
+        assert!(when_done.contains("step=5"), "when_done must route to step 5");
+    }
+
+    #[test]
+    fn test_setup_create_uses_data_sources() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        // Write perspective with data_sources
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: SA Portfolio\nallowed_types:\n  - account\n  - person\ndata_sources:\n  - type: local_files\n    path: /docs\n    description: Account plans\n",
+        )
+        .unwrap();
+        let step = setup_step(5, &serde_json::json!({"path": path}), &wf());
+        assert_eq!(step["step"], 5);
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("data_sources"),
+            "create step should mention data_sources when configured"
+        );
+        assert!(
+            instruction.contains("perspective.yaml"),
+            "create step should reference perspective.yaml for sources"
+        );
+    }
+
+    #[test]
+    fn test_setup_create_no_data_sources_note_for_public_domain() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        // Write perspective without data_sources (public domain)
+        std::fs::write(
+            tmp.path().join("perspective.yaml"),
+            "focus: Mycology\nallowed_types:\n  - species\n",
+        )
+        .unwrap();
+        let step = setup_step(5, &serde_json::json!({"path": path}), &wf());
+        assert_eq!(step["step"], 5);
+        let instruction = step["instruction"].as_str().unwrap();
+        // Should not have the data_sources note for public domains
+        assert!(
+            !instruction.contains("Data sources configured"),
+            "create step should not show data_sources note for public domain"
+        );
     }
 
     // --- bootstrap workflow tests ---
@@ -4010,7 +4092,7 @@ mod tests {
     #[test]
     fn test_check_repository_workflow_texts_mention_resume_token() {
         // Only scan_repository workflow text should mention resume tokens now
-        let setup = setup_step(5, &serde_json::json!({}), &wf());
+        let setup = setup_step(6, &serde_json::json!({}), &wf());
         let setup_instr = setup["instruction"].as_str().unwrap();
         assert!(
             setup_instr.contains("resume"),
@@ -4072,7 +4154,7 @@ mod tests {
     #[test]
     fn test_workflow_texts_mention_time_budget_secs() {
         let (db, _tmp) = test_db();
-        let setup = setup_step(5, &serde_json::json!({}), &wf());
+        let setup = setup_step(6, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
 
         let setup_instr = setup["instruction"].as_str().unwrap();
@@ -4096,7 +4178,7 @@ mod tests {
     fn test_paging_instructions_use_mandatory_language() {
         let (db, _tmp) = test_db();
         // Only scan steps should have paging language
-        let setup = setup_step(5, &serde_json::json!({}), &wf());
+        let setup = setup_step(6, &serde_json::json!({}), &wf());
         let update_scan = update_step(1, &serde_json::json!({}), &None, &wf(), &db);
 
         for (name, instr) in [
@@ -5965,7 +6047,7 @@ mod tests {
         let result = workflow(&db, &args).unwrap();
         assert_eq!(result["workflow"], "create");
         assert_eq!(result["step"], 1);
-        assert_eq!(result["total_steps"], 7);
+        assert_eq!(result["total_steps"], 8);
         assert!(result["instruction"].is_string());
         assert!(result["instruction"].as_str().unwrap().contains("mycology"));
     }
@@ -5977,14 +6059,14 @@ mod tests {
         let result = workflow(&db, &args).unwrap();
         assert_eq!(result["workflow"], "create");
         assert_eq!(result["step"], 1);
-        assert_eq!(result["total_steps"], 6);
+        assert_eq!(result["total_steps"], 7);
         assert!(result["instruction"].as_str().unwrap().contains("init"));
     }
 
     #[test]
     fn test_create_complete_mentions_new_workflows() {
         let (db, _tmp) = test_db();
-        let args = serde_json::json!({"workflow": "create", "step": 6, "path": "/tmp/test"});
+        let args = serde_json::json!({"workflow": "create", "step": 7, "path": "/tmp/test"});
         let result = workflow(&db, &args).unwrap();
         assert_eq!(result["workflow"], "create");
         assert_eq!(result["complete"], true);
