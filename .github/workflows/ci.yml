@@ -63,3 +63,15 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.VIKUNJA_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "{\"title\": \"[factbase] Fix CI failure: Tests — ${{ github.sha }}\", \"description\": \"CI tests failed on commit [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})\\n\\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"bucket_id\": 4}"
+
+  notify-success:
+    name: Notify Discord
+    needs: [fmt, clippy, test]
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Post success to Discord
+        run: |
+          curl -s -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"content\": \"✅ **CI passed** — [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}) by ${{ github.actor }}\"}"
