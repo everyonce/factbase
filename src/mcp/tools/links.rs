@@ -94,6 +94,10 @@ pub async fn get_link_suggestions<E: EmbeddingProvider>(
                     .get(sid)
                     .map(|s| s.to_lowercase())
                     .unwrap_or_default();
+                // Skip same-type candidates — cross-type links are almost always more meaningful
+                if type_map.get(sid).map(|t| t == doc_type).unwrap_or(false) {
+                    return false;
+                }
                 if !include_types.is_empty() && !include_types.contains(&candidate_type) {
                     return false;
                 }
@@ -598,6 +602,61 @@ mod tests {
         let content = std::fs::read_to_string(&file_path).unwrap();
         assert!(content.contains("[[abc123]]"));
         assert!(content.contains("[[def456]]"));
+    }
+
+    #[test]
+    fn test_link_suggestions_excludes_same_type_candidates() {
+        // Simulate the filter logic used in get_link_suggestions:
+        // same-type candidates must be excluded; cross-type must pass.
+        let doc_type = "widget".to_string();
+        let type_map: HashMap<String, String> = [
+            ("same1".to_string(), "widget".to_string()),
+            ("same2".to_string(), "widget".to_string()),
+            ("cross1".to_string(), "gadget".to_string()),
+            ("cross2".to_string(), "".to_string()),
+        ]
+        .into_iter()
+        .collect();
+
+        let similar: Vec<(String, String, f32)> = vec![
+            ("same1".to_string(), "Same Type A".to_string(), 0.9),
+            ("same2".to_string(), "Same Type B".to_string(), 0.85),
+            ("cross1".to_string(), "Cross Type".to_string(), 0.8),
+            ("cross2".to_string(), "No Type".to_string(), 0.75),
+        ];
+
+        let existing_links: HashSet<String> = HashSet::new();
+        let include_types: Vec<String> = vec![];
+        let exclude_types: Vec<String> = vec![];
+
+        let filtered: Vec<&str> = similar
+            .iter()
+            .filter(|(sid, _, _)| {
+                if existing_links.contains(sid) {
+                    return false;
+                }
+                let candidate_type = type_map
+                    .get(sid)
+                    .map(|s| s.to_lowercase())
+                    .unwrap_or_default();
+                if type_map.get(sid).map(|t| t == &doc_type).unwrap_or(false) {
+                    return false;
+                }
+                if !include_types.is_empty() && !include_types.contains(&candidate_type) {
+                    return false;
+                }
+                if !exclude_types.is_empty() && exclude_types.contains(&candidate_type) {
+                    return false;
+                }
+                true
+            })
+            .map(|(id, _, _)| id.as_str())
+            .collect();
+
+        assert!(!filtered.contains(&"same1"), "same-type doc should be excluded");
+        assert!(!filtered.contains(&"same2"), "same-type doc should be excluded");
+        assert!(filtered.contains(&"cross1"), "cross-type doc should be included");
+        assert!(filtered.contains(&"cross2"), "no-type doc should be included");
     }
 
     #[test]
