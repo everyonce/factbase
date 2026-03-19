@@ -539,7 +539,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_detect_links_no_repo() {
+        crate::write_guard::WriteGuard::force_release();
         let (db, _db_dir) = test_db();
         let result = detect_links(&db, &json!({}), &crate::ProgressReporter::Silent).await;
         assert!(
@@ -549,7 +551,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_detect_links_empty_repo() {
+        crate::write_guard::WriteGuard::force_release();
         let tmp = TempDir::new().unwrap();
         let (db, _db_dir) = test_db();
         init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
@@ -562,7 +566,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_detect_links_idempotent() {
+        crate::write_guard::WriteGuard::force_release();
         let tmp = TempDir::new().unwrap();
         let (db, _db_dir) = test_db();
         init_repository(&db, &json!({"path": tmp.path().to_string_lossy()})).unwrap();
