@@ -57,6 +57,7 @@ async fn setup_indexed_repo() -> (TempDir, Database, OllamaEmbedding, Repository
             review: None,
             format: None,
             link_match_mode: None,
+            ..Default::default()
         }),
         created_at: Utc::now(),
         last_indexed_at: None,

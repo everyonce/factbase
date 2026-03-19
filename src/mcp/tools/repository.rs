@@ -484,6 +484,7 @@ mod tests {
     use super::*;
     use crate::database::tests::test_db;
     use serde_json::json;
+    use serial_test::serial;
     use tempfile::TempDir;
 
     #[test]

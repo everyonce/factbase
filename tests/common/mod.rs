@@ -1,6 +1,7 @@
 //! Shared test utilities for integration tests.
 
 pub mod fixtures;
+pub mod ollama_helpers;
 
 use chrono::Utc;
 use factbase::{
@@ -299,6 +300,7 @@ impl TestServer {
                 review: None,
                 format: None,
                 link_match_mode: None,
+                ..Default::default()
             }),
             created_at: Utc::now(),
             last_indexed_at: None,

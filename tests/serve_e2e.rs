@@ -302,6 +302,7 @@ async fn test_agent_workflow_via_mcp() {
             review: None,
             format: None,
             link_match_mode: None,
+            ..Default::default()
         }),
         created_at: Utc::now(),
         last_indexed_at: None,
