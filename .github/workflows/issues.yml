@@ -1,0 +1,17 @@
+name: Sync Issues to Vikunja
+
+on:
+  issues:
+    types: [opened, reopened]
+
+jobs:
+  create-task:
+    name: Create Vikunja task
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create task in Vikunja
+        run: |
+          curl -s -X PUT "${{ secrets.VIKUNJA_URL }}/api/v1/projects/${{ secrets.VIKUNJA_PROJECT_ID }}/tasks" \
+            -H "Authorization: Bearer ${{ secrets.VIKUNJA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\": \"[factbase] GitHub Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}\", \"description\": \"${{ github.event.issue.body }}\\n\\nIssue: ${{ github.event.issue.html_url }}\", \"bucket_id\": 4}"
