@@ -86,7 +86,30 @@ pub fn count_queue_questions(
     }
 }
 
+/// Returns true if a believed answer contains a source citation.
+///
+/// A valid believed answer must include one of:
+/// - A URL (`http://` or `https://`)
+/// - A `per ` prefix or ` per ` phrase
+/// - A ` says `, ` states `, or ` confirms ` verb phrase
+/// - An em-dash separator ` — ` or ` -- `
+/// - A factbase doc reference (`fb:`)
+fn believed_has_citation(answer: &str) -> bool {
+    let lower = answer.to_lowercase();
+    lower.contains("http://")
+        || lower.contains("https://")
+        || lower.starts_with("per ")
+        || lower.contains(" per ")
+        || lower.contains(" says ")
+        || lower.contains(" states ")
+        || lower.contains(" confirms ")
+        || lower.contains(" \u{2014} ")
+        || lower.contains(" -- ")
+        || lower.contains("fb:")
+}
+
 /// Resolve confidence from args: "believed" answers are stored as deferred.
+/// Believed answers without a source citation are downgraded to plain deferred.
 pub fn resolve_confidence(
     answer: &str,
     confidence: Option<&str>,
@@ -103,7 +126,19 @@ pub fn resolve_confidence(
         return Ok((true, note.to_string()));
     }
     match confidence {
-        Some("believed") => Ok((true, format!("believed: {answer}"))),
+        Some("believed") => {
+            if believed_has_citation(answer) {
+                Ok((true, format!("believed: {answer}")))
+            } else {
+                Ok((
+                    true,
+                    format!(
+                        "believed answer rejected — no source citation provided. \
+                         Original answer: {answer}"
+                    ),
+                ))
+            }
+        }
         Some("author") => Ok((false, format!("author: {answer}"))),
         _ => Ok((false, answer.to_string())),
     }
@@ -208,10 +243,45 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_confidence_believed() {
+    fn test_resolve_confidence_believed_no_citation_downgraded() {
+        // "Still accurate" has no citation — should be downgraded to plain deferred
         let (defer, text) = resolve_confidence("Still accurate", Some("believed")).unwrap();
         assert!(defer);
-        assert!(text.starts_with("believed:"));
+        assert!(
+            !text.starts_with("believed:"),
+            "uncited believed should not start with 'believed:': {text}"
+        );
+        assert!(
+            text.contains("no source citation"),
+            "should explain rejection: {text}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_confidence_believed_with_url_accepted() {
+        let answer =
+            "per AWS docs (https://aws.amazon.com/qldb/, checked 2026-03-19), QLDB reached EOL";
+        let (defer, text) = resolve_confidence(answer, Some("believed")).unwrap();
+        assert!(defer);
+        assert!(
+            text.starts_with("believed:"),
+            "cited believed should start with 'believed:': {text}"
+        );
+    }
+
+    #[test]
+    fn test_resolve_confidence_believed_with_per_accepted() {
+        let answer = "per internal wiki page, this is still accurate";
+        let (defer, text) = resolve_confidence(answer, Some("believed")).unwrap();
+        assert!(defer);
+        assert!(text.starts_with("believed:"), "per-prefixed believed should be accepted: {text}");
+    }
+
+    #[test]
+    fn test_resolve_confidence_believed_still_current_rejected() {
+        let (defer, text) = resolve_confidence("still current", Some("believed")).unwrap();
+        assert!(defer);
+        assert!(!text.starts_with("believed:"), "bare 'still current' should be rejected: {text}");
     }
 
     #[test]
