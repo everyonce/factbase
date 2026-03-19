@@ -141,6 +141,30 @@ pub struct ScanContext<'a> {
     pub progress: &'a ProgressReporter,
 }
 
+/// Pre-populate `seen` with IDs of files that are already on disk at the given paths.
+/// Used during resume scans to prevent the delete phase from removing documents that
+/// were processed in earlier batches of the same scan session.
+fn seed_seen_from_paths(
+    seen: &mut HashSet<String>,
+    paths: &[PathBuf],
+    repo_path: &std::path::Path,
+    known: &std::collections::HashMap<String, Document>,
+) {
+    let path_to_id: std::collections::HashMap<&str, &str> = known
+        .values()
+        .map(|d| (d.file_path.as_str(), d.id.as_str()))
+        .collect();
+    for path in paths {
+        let rel = path
+            .strip_prefix(repo_path)
+            .unwrap_or(path)
+            .to_string_lossy();
+        if let Some(&id) = path_to_id.get(rel.as_ref()) {
+            seen.insert(id.to_string());
+        }
+    }
+}
+
 /// Perform a full scan of a repository
 #[tracing::instrument(
     name = "full_scan",
@@ -208,9 +232,16 @@ pub async fn full_scan(
     let (files, total_files) = if ctx.opts.file_offset > 0 && ctx.opts.file_offset < files.len() {
         let remaining = files.split_off(ctx.opts.file_offset);
         let total = ctx.opts.file_offset + remaining.len();
+        // Pre-populate `seen` with IDs of files already processed in previous batches.
+        // Without this, the delete phase would incorrectly remove documents that were
+        // added/updated in earlier resume batches but not seen in this batch.
+        seed_seen_from_paths(&mut seen, &files, &repo.path, &known);
         (remaining, total)
     } else if ctx.opts.file_offset > 0 && ctx.opts.file_offset >= files.len() {
-        // All files already processed in a previous call — skip file loop entirely
+        // All files already processed in a previous call — skip file loop entirely.
+        // Pre-populate `seen` with IDs of all current disk files so the delete phase
+        // only removes truly absent files.
+        seed_seen_from_paths(&mut seen, &files, &repo.path, &known);
         (Vec::new(), files.len())
     } else {
         let total = files.len();
@@ -1387,6 +1418,55 @@ mod tests {
         let result = full_scan(&repo, &db, &ctx).await.unwrap();
         // With offset 3, only 2 of 5 files should be processed
         assert_eq!(result.added, 2);
+    }
+
+    /// Regression test: resume scan must not delete documents added in earlier batches.
+    ///
+    /// Scenario: 5 files are indexed in batch 1. Batch 2 resumes with offset=3,
+    /// processing only files 3-4. The delete phase in batch 2 must NOT delete
+    /// the 3 documents that were processed in batch 1 (files 0-2).
+    #[tokio::test]
+    async fn test_resume_scan_does_not_delete_prior_batch_docs() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        for i in 0..5 {
+            std::fs::write(
+                tmp.path().join(format!("doc{i}.md")),
+                format!("# Doc {i}\n\nContent {i}."),
+            )
+            .unwrap();
+        }
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        // Batch 1: full scan, adds all 5 files
+        let opts1 = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let ctx1 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts1, &progress);
+        let r1 = full_scan(&repo, &db, &ctx1).await.unwrap();
+        assert_eq!(r1.added, 5);
+
+        // Batch 2 (resume): offset=3, processes only files 3-4.
+        // Without the fix, the delete phase would delete docs 0-2 because they
+        // are in `known` but not in `seen` (only files 3-4 are processed here).
+        let opts2 = ScanOptions {
+            skip_links: true,
+            file_offset: 3,
+            ..Default::default()
+        };
+        let ctx2 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts2, &progress);
+        let r2 = full_scan(&repo, &db, &ctx2).await.unwrap();
+        assert_eq!(r2.deleted, 0, "batch 2 must not delete docs from batch 1");
+
+        // All 5 docs must survive
+        let docs = db.get_documents_for_repo(&repo.id).unwrap();
+        assert_eq!(docs.len(), 5, "all 5 documents must be present after resume");
     }
 
     #[tokio::test]
