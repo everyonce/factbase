@@ -380,8 +380,7 @@ impl Database {
     ///
     /// Call this after marking documents deleted during a scan to keep the DB lean.
     pub fn purge_deleted_documents(&self, repo_id: &str) -> Result<usize, FactbaseError> {
-        let conn = self.get_conn()?;
-        // Collect IDs to purge
+        let mut conn = self.get_conn()?;
         let ids: Vec<String> = conn
             .prepare_cached("SELECT id FROM documents WHERE repo_id = ?1 AND is_deleted = TRUE")?
             .query_map([repo_id], |r| r.get(0))?
@@ -393,17 +392,17 @@ impl Database {
         let placeholders: String = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let params: Vec<&dyn rusqlite::ToSql> =
             ids.iter().map(|s| s as &dyn rusqlite::ToSql).collect();
-        conn.execute_batch("BEGIN")?;
+        let tx = conn.transaction()?;
         // Delete embeddings via subquery through embedding_chunks (avoids LIKE per-row)
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM document_embeddings WHERE id IN (SELECT id FROM embedding_chunks WHERE document_id IN ({placeholders}))"),
             params.as_slice(),
         )?;
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM embedding_chunks WHERE document_id IN ({placeholders})"),
             params.as_slice(),
         )?;
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM document_links WHERE source_id IN ({placeholders}) OR target_id IN ({placeholders})"),
             // params used twice for source_id and target_id
             {
@@ -412,28 +411,28 @@ impl Database {
                 p
             }.as_slice(),
         )?;
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM review_questions WHERE doc_id IN ({placeholders})"),
             params.as_slice(),
         )?;
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM organization_suggestions WHERE doc_id IN ({placeholders})"),
             params.as_slice(),
         )?;
         // fact_embeddings via subquery through fact_metadata
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM fact_embeddings WHERE id IN (SELECT id FROM fact_metadata WHERE document_id IN ({placeholders}))"),
             params.as_slice(),
         )?;
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM fact_metadata WHERE document_id IN ({placeholders})"),
             params.as_slice(),
         )?;
-        conn.execute(
+        tx.execute(
             &format!("DELETE FROM documents WHERE id IN ({placeholders})"),
             params.as_slice(),
         )?;
-        conn.execute_batch("COMMIT")?;
+        tx.commit()?;
         self.invalidate_stats_cache(repo_id);
         Ok(ids.len())
     }
