@@ -1508,12 +1508,14 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_scan_completed_returns_no_continue() {
         // When scan completes all work, response should NOT have continue=true
         use crate::database::tests::{test_db, test_repo_in_db};
         use crate::embedding::test_helpers::MockEmbedding;
         use tempfile::TempDir;
 
+        crate::write_guard::WriteGuard::force_release();
         let (db, _tmp) = test_db();
         let repo_dir = TempDir::new().unwrap();
         let repo_path = repo_dir.path();
