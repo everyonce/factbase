@@ -459,7 +459,7 @@ mod tests {
         // coverage = 1/3 ≈ 0.333
         assert!((result.temporal_coverage - 0.333).abs() < 0.01);
         assert!(result.in_typed_folder);
-        assert_eq!(result.doc_type, "project");
+        assert_eq!(result.doc_type, "projects");
     }
 
     #[test]
