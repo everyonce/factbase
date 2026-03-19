@@ -16,6 +16,7 @@ fn test_context_with_perspective() {
         review: None,
         format: None,
         link_match_mode: None,
+        ..Default::default()
     };
 
     let ctx = TestContext::with_perspective("test-repo", perspective);
@@ -47,6 +48,7 @@ fn test_context_with_files_and_perspective() {
         review: None,
         format: None,
         link_match_mode: None,
+        ..Default::default()
     };
 
     let files = &[
@@ -109,6 +111,7 @@ fn test_context_with_review_perspective() {
         review: Some(review),
         format: None,
         link_match_mode: None,
+        ..Default::default()
     };
 
     let ctx = TestContext::with_perspective("test-repo", perspective);
