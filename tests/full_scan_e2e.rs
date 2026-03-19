@@ -168,7 +168,7 @@ async fn test_link_detection_accuracy() {
     // Check that project documents have links to people (team members)
     let projects: Vec<_> = docs
         .values()
-        .filter(|d| d.doc_type.as_deref() == Some("project"))
+        .filter(|d| d.doc_type.as_deref() == Some("projects"))
         .collect();
 
     let mut projects_with_links = 0;

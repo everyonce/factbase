@@ -209,11 +209,11 @@ impl DocumentProcessor {
             .to_string()
     }
 
-    /// Derive the document type from the parent folder name (e.g., "people/" → "person").
+    /// Derive the document type from the parent folder name (e.g., "people/" → "people").
     ///
     /// Structural/organizational folder names are skipped in favour of the grandparent:
-    /// - `people/archive/john.md` → skips "archive" → type "people" → "person"
-    /// - `services/deprecated/old-api.md` → skips "deprecated" → type "services" → "service"
+    /// - `people/archive/john.md` → skips "archive" → type "people"
+    /// - `services/deprecated/old-api.md` → skips "deprecated" → type "services"
     pub fn derive_type(&self, path: &Path, repo_root: &Path) -> String {
         let relative = path.strip_prefix(repo_root).unwrap_or(path);
         let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
@@ -258,14 +258,9 @@ impl DocumentProcessor {
     }
 }
 
-/// Normalize a type name: lowercase and strip trailing 's' (naive singularization).
+/// Normalize a type name: lowercase only. The folder name is the type — no singularization.
 pub(crate) fn normalize_type(word: &str) -> String {
-    let lower = word.to_lowercase();
-    if lower.ends_with('s') && lower.len() > 1 {
-        lower[..lower.len() - 1].to_string()
-    } else {
-        lower
-    }
+    word.to_lowercase()
 }
 
 impl Default for DocumentProcessor {
@@ -363,7 +358,8 @@ mod tests {
         let processor = DocumentProcessor::new();
         let path = PathBuf::from("/repo/projects/alpha.md");
         let repo_root = PathBuf::from("/repo");
-        assert_eq!(processor.derive_type(&path, &repo_root), "project");
+        // Folder name is kept as-is (no singularization)
+        assert_eq!(processor.derive_type(&path, &repo_root), "projects");
     }
 
     #[test]
@@ -377,10 +373,10 @@ mod tests {
     #[test]
     fn test_derive_type_entity_folder_convention() {
         let processor = DocumentProcessor::new();
-        // projects/alpha/alpha.md → type "project" (grandparent, singularized)
+        // projects/alpha/alpha.md → type "projects" (grandparent, no singularization)
         let path = PathBuf::from("/repo/projects/alpha/alpha.md");
         let repo_root = PathBuf::from("/repo");
-        assert_eq!(processor.derive_type(&path, &repo_root), "project");
+        assert_eq!(processor.derive_type(&path, &repo_root), "projects");
     }
 
     #[test]
@@ -389,7 +385,7 @@ mod tests {
         // projects/Alpha/alpha.md → still matches
         let path = PathBuf::from("/repo/projects/Alpha/alpha.md");
         let repo_root = PathBuf::from("/repo");
-        assert_eq!(processor.derive_type(&path, &repo_root), "project");
+        assert_eq!(processor.derive_type(&path, &repo_root), "projects");
     }
 
     #[test]
@@ -431,7 +427,7 @@ mod tests {
         let processor = DocumentProcessor::new();
         let path = PathBuf::from("/repo/services/deprecated/old-api.md");
         let repo_root = PathBuf::from("/repo");
-        assert_eq!(processor.derive_type(&path, &repo_root), "service");
+        assert_eq!(processor.derive_type(&path, &repo_root), "services");
     }
 
     #[test]
@@ -439,7 +435,7 @@ mod tests {
         let processor = DocumentProcessor::new();
         let path = PathBuf::from("/repo/customers/inactive/acme.md");
         let repo_root = PathBuf::from("/repo");
-        assert_eq!(processor.derive_type(&path, &repo_root), "customer");
+        assert_eq!(processor.derive_type(&path, &repo_root), "customers");
     }
 
     #[test]
@@ -458,6 +454,24 @@ mod tests {
         let path = PathBuf::from("/repo/customers/acme/people/archive/john-smith.md");
         let repo_root = PathBuf::from("/repo");
         assert_eq!(processor.derive_type(&path, &repo_root), "people");
+    }
+
+    #[test]
+    fn test_derive_type_no_singularization() {
+        let processor = DocumentProcessor::new();
+        // Folder names are kept as-is — no plural-to-singular conversion
+        let cases = [
+            ("/repo/employees/jane.md", "employees"),
+            ("/repo/accounts/acme.md", "accounts"),
+            ("/repo/people/john.md", "people"),
+        ];
+        for (path, expected) in cases {
+            assert_eq!(
+                processor.derive_type(&PathBuf::from(path), &PathBuf::from("/repo")),
+                expected,
+                "path: {path}"
+            );
+        }
     }
 
     #[test]
