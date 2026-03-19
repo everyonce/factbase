@@ -103,6 +103,29 @@ src/
         └── review.rs
 ```
 
+## Pre-Commit Checklist (MANDATORY)
+
+Before every commit, run:
+1. `cargo fmt --all` — always, no exceptions. CI will fail if skipped.
+2. `cargo clippy --lib -- -D warnings` — fix all warnings before committing.
+3. `cargo test --lib` — all tests must pass locally before pushing.
+
+**Never commit without running `cargo fmt` first.**
+
+## Concurrency in Tests
+
+Any test that writes to a shared resource (database, filesystem, global state) MUST be annotated with `#[serial]` from the `serial_test` crate to prevent flaky failures when tests run in parallel:
+
+```rust
+use serial_test::serial;
+
+#[test]
+#[serial]
+fn test_that_writes_shared_state() { ... }
+```
+
+Tests that only read are safe to run in parallel without `#[serial]`.
+
 ## Testing Patterns
 
 ### Unit Tests
