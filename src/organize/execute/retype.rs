@@ -129,9 +129,9 @@ mod tests {
     #[test]
     fn test_normalize_type() {
         assert_eq!(normalize_type("Person"), "person");
-        assert_eq!(normalize_type("PROJECTS"), "project");
-        assert_eq!(normalize_type("notes"), "note");
-        assert_eq!(normalize_type("s"), "s"); // Don't singularize single 's'
+        assert_eq!(normalize_type("PROJECTS"), "projects");
+        assert_eq!(normalize_type("notes"), "notes");
+        assert_eq!(normalize_type("s"), "s");
     }
 
     #[test]
@@ -236,6 +236,6 @@ mod tests {
         db.upsert_document(&doc).unwrap();
 
         let result = execute_retype("abc123", "PERSONS", &db, false, None).unwrap();
-        assert_eq!(result.new_type, "person");
+        assert_eq!(result.new_type, "persons");
     }
 }

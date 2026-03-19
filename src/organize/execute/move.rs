@@ -115,13 +115,13 @@ mod tests {
             old_path: "people/john.md".to_string(),
             new_path: "projects/john.md".to_string(),
             old_type: Some("person".to_string()),
-            new_type: "project".to_string(),
+            new_type: "projects".to_string(),
         };
         assert_eq!(result.doc_id, "abc123");
         assert_eq!(result.old_path, "people/john.md");
         assert_eq!(result.new_path, "projects/john.md");
         assert_eq!(result.old_type, Some("person".to_string()));
-        assert_eq!(result.new_type, "project");
+        assert_eq!(result.new_type, "projects");
     }
 
     #[test]
@@ -199,7 +199,7 @@ mod tests {
         assert_eq!(result.old_path, "people/john.md");
         assert_eq!(result.new_path, "projects/john.md");
         assert_eq!(result.old_type, Some("person".to_string()));
-        assert_eq!(result.new_type, "project");
+        assert_eq!(result.new_type, "projects");
 
         // Verify file moved
         assert!(!source_path.exists());
@@ -214,7 +214,7 @@ mod tests {
         // Verify database updated
         let updated_doc = db.get_document("abc123").unwrap().unwrap();
         assert_eq!(updated_doc.file_path, "projects/john.md");
-        assert_eq!(updated_doc.doc_type, Some("project".to_string()));
+        assert_eq!(updated_doc.doc_type, Some("projects".to_string()));
     }
 
     #[test]
@@ -261,9 +261,9 @@ mod tests {
         let result = execute_move("abc123", Path::new("People/test.md"), &db, temp.path()).unwrap();
         assert_eq!(result.new_type, "people");
 
-        // Move to "persons" folder (singularizes to "person")
+        // Move to "persons" folder (kept as-is, no singularization)
         let result2 =
             execute_move("abc123", Path::new("persons/test.md"), &db, temp.path()).unwrap();
-        assert_eq!(result2.new_type, "person");
+        assert_eq!(result2.new_type, "persons");
     }
 }
