@@ -326,23 +326,24 @@ pub(crate) fn frontmatter_line_count(content: &str) -> usize {
 
     // Determine the first meaningful line, skipping an optional HTML comment
     // header (`<!-- factbase:... -->`) and any blank lines that follow it.
-    let first_meaningful = if first.trim().starts_with("<!-- factbase:") && first.trim().ends_with("-->") {
-        // Consume blank lines between the comment and the frontmatter delimiter
-        loop {
-            match lines.next() {
-                Some(l) if l.trim().is_empty() => {
-                    count += 1;
+    let first_meaningful =
+        if first.trim().starts_with("<!-- factbase:") && first.trim().ends_with("-->") {
+            // Consume blank lines between the comment and the frontmatter delimiter
+            loop {
+                match lines.next() {
+                    Some(l) if l.trim().is_empty() => {
+                        count += 1;
+                    }
+                    Some(l) => {
+                        count += 1;
+                        break l;
+                    }
+                    None => return 0,
                 }
-                Some(l) => {
-                    count += 1;
-                    break l;
-                }
-                None => return 0,
             }
-        }
-    } else {
-        first
-    };
+        } else {
+            first
+        };
 
     if first_meaningful.trim() != "---" {
         return 0;
