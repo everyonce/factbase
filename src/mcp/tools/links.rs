@@ -653,10 +653,22 @@ mod tests {
             .map(|(id, _, _)| id.as_str())
             .collect();
 
-        assert!(!filtered.contains(&"same1"), "same-type doc should be excluded");
-        assert!(!filtered.contains(&"same2"), "same-type doc should be excluded");
-        assert!(filtered.contains(&"cross1"), "cross-type doc should be included");
-        assert!(filtered.contains(&"cross2"), "no-type doc should be included");
+        assert!(
+            !filtered.contains(&"same1"),
+            "same-type doc should be excluded"
+        );
+        assert!(
+            !filtered.contains(&"same2"),
+            "same-type doc should be excluded"
+        );
+        assert!(
+            filtered.contains(&"cross1"),
+            "cross-type doc should be included"
+        );
+        assert!(
+            filtered.contains(&"cross2"),
+            "no-type doc should be included"
+        );
     }
 
     #[test]
