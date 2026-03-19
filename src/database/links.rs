@@ -108,7 +108,8 @@ impl Database {
         let now = Utc::now().to_rfc3339();
         for link in links {
             conn.execute(
-                "INSERT OR IGNORE INTO document_links (source_id, target_id, context, created_at) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR IGNORE INTO document_links (source_id, target_id, context, created_at)
+                 SELECT ?1, ?2, ?3, ?4 WHERE EXISTS (SELECT 1 FROM documents WHERE id = ?2)",
                 rusqlite::params![source_id, link.target_id, link.context, now],
             )?;
         }
@@ -712,6 +713,29 @@ mod tests {
         assert_eq!(counts["d2"], (1, 1));
         // d3: 0 outgoing, 2 incoming (from d1 and d2)
         assert_eq!(counts["d3"], (0, 2));
+    }
+
+    #[test]
+    fn test_update_links_ignores_missing_target() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        db.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+
+        // target_id "ghost" does not exist in documents
+        let links = vec![DetectedLink {
+            target_id: "ghost".to_string(),
+            target_title: "Ghost".to_string(),
+            mention_text: "Ghost".to_string(),
+            context: "".to_string(),
+        }];
+        // Must not error (no FK violation)
+        db.update_links("doc1", &links)
+            .expect("update_links with missing target should not error");
+
+        // No row should have been inserted
+        let from_links = db.get_links_from("doc1").unwrap();
+        assert!(from_links.is_empty());
     }
 
     #[test]
