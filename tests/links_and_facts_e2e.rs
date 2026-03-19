@@ -78,27 +78,27 @@ fn setup_space_docs() -> TestContext {
         "space",
         &[
             (
-                "earth.md",
+                "planets/earth.md",
                 "---\nfactbase_id: ea0001\n---\n# Earth\n\nEarth is the third planet from the Sun. @t[?]\n\n- Diameter: 12,742 km @t[?]\n- One natural satellite: the Moon @t[?]\n",
             ),
             (
-                "jupiter.md",
+                "planets/jupiter.md",
                 "---\nfactbase_id: ab0002\n---\n# Jupiter\n\nJupiter is the largest planet in the Solar System. @t[?]\n\n- Diameter: 139,820 km @t[?]\n- Jupiter has at least 95 known moons @t[~2024]\n",
             ),
             (
-                "saturn.md",
+                "planets/saturn.md",
                 "---\nfactbase_id: ca0003\n---\n# Saturn\n\nSaturn is the sixth planet from the Sun, known for its ring system. @t[?]\n\n- Diameter: 116,460 km @t[?]\n- Saturn has at least 146 known moons @t[~2024]\n",
             ),
             (
-                "the-moon.md",
+                "moons/the-moon.md",
                 "---\nfactbase_id: de0004\n---\n# The Moon\n\nThe Moon is Earth's only natural satellite. @t[?]\n\n- Diameter: 3,474 km @t[?]\n- Distance from Earth: 384,400 km @t[?]\n",
             ),
             (
-                "europa.md",
+                "moons/europa.md",
                 "---\nfactbase_id: ef0005\n---\n# Europa\n\nEuropa is one of Jupiter's Galilean moons. @t[?]\n\n- Diameter: 3,121 km @t[?]\n- Europa has a subsurface ocean @t[~2024]\n",
             ),
             (
-                "titan.md",
+                "moons/titan.md",
                 "---\nfactbase_id: fa0006\n---\n# Titan\n\nTitan is the largest moon of Saturn. @t[?]\n\n- Diameter: 5,149 km @t[?]\n- Titan has lakes of liquid methane @t[~2024]\n",
             ),
         ],
@@ -209,8 +209,8 @@ async fn test_store_links_writes_to_files_and_db() {
     );
 
     // Verify References: block was added to at least one file
-    let moon_content = std::fs::read_to_string(ctx.repo_path.join("the-moon.md")).unwrap();
-    let titan_content = std::fs::read_to_string(ctx.repo_path.join("titan.md")).unwrap();
+    let moon_content = std::fs::read_to_string(ctx.repo_path.join("moons/the-moon.md")).unwrap();
+    let titan_content = std::fs::read_to_string(ctx.repo_path.join("moons/titan.md")).unwrap();
     let has_links = moon_content.contains("References:") || titan_content.contains("References:");
     assert!(
         has_links,
