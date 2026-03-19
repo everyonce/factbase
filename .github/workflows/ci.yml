@@ -19,6 +19,13 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+      - name: Report CI failure to Vikunja
+        if: failure()
+        run: |
+          curl -s -X PUT "${{ secrets.VIKUNJA_URL }}/api/v1/projects/${{ secrets.VIKUNJA_PROJECT_ID }}/tasks" \
+            -H "Authorization: Bearer ${{ secrets.VIKUNJA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\": \"[factbase] Fix CI failure: Format check — ${{ github.sha }}\", \"description\": \"CI format check failed on commit [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})\\n\\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"bucket_id\": 4}"
 
   clippy:
     name: Clippy
@@ -30,6 +37,13 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --lib -- -D warnings
+      - name: Report CI failure to Vikunja
+        if: failure()
+        run: |
+          curl -s -X PUT "${{ secrets.VIKUNJA_URL }}/api/v1/projects/${{ secrets.VIKUNJA_PROJECT_ID }}/tasks" \
+            -H "Authorization: Bearer ${{ secrets.VIKUNJA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\": \"[factbase] Fix CI failure: Clippy — ${{ github.sha }}\", \"description\": \"CI clippy check failed on commit [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})\\n\\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"bucket_id\": 4}"
 
   test:
     name: Tests
@@ -42,3 +56,10 @@ jobs:
       - run: cargo test --bin factbase
       # Integration tests require a live Ollama instance — skipped in CI
       # Run locally with: cargo test --tests
+      - name: Report CI failure to Vikunja
+        if: failure()
+        run: |
+          curl -s -X PUT "${{ secrets.VIKUNJA_URL }}/api/v1/projects/${{ secrets.VIKUNJA_PROJECT_ID }}/tasks" \
+            -H "Authorization: Bearer ${{ secrets.VIKUNJA_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\": \"[factbase] Fix CI failure: Tests — ${{ github.sha }}\", \"description\": \"CI tests failed on commit [${{ github.sha }}](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})\\n\\nRun: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"bucket_id\": 4}"
