@@ -13,9 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 use tracing::instrument;
 
-use super::helpers::{
-    count_queue_questions, modify_question_in_queue, resolve_confidence, resolve_doc_path,
-};
+use super::helpers::{modify_question_in_queue, resolve_confidence, resolve_doc_path};
 
 /// Recover inline review questions from the DB `review_questions` table when
 /// the document's inline `@q[]` markers are missing.
@@ -150,15 +148,7 @@ pub fn answer_question(
     let new_hash = content_hash(&new_content);
     db.update_document_content(&params.doc_id, &new_content, &new_hash)?;
     // Sync review question status to DB
-    let db_status = if defer {
-        if answer_text.starts_with("believed: ") {
-            "believed"
-        } else {
-            "deferred"
-        }
-    } else {
-        "verified"
-    };
+    let db_status = if defer { "deferred" } else { "verified" };
     let _ = db.update_review_question_status(
         &params.doc_id,
         params.question_index,
@@ -168,21 +158,16 @@ pub fn answer_question(
 
     let type_str = question.question_type.as_str();
     if defer {
-        let believed = answer_text.starts_with("believed: ");
-        let message = if believed {
-            "Answer recorded as 'believed' (unverified). It stays in the review queue for human confirmation."
-        } else {
-            "Question deferred with note. It remains in the review queue for future resolution."
-        };
         Ok(serde_json::json!({
             "success": true, "doc_id": params.doc_id, "question_index": params.question_index,
             "question_type": type_str, "description": question.description,
-            "deferred": true, "believed": believed, "note": answer_text, "message": message
+            "deferred": true, "note": answer_text,
+            "message": "Question deferred with note. It remains in the review queue for future resolution."
         }))
     } else {
         let self_attested = answer_text.starts_with("author: ");
         let message = if self_attested {
-            "Question answered as self-attested (KB owner is the authoritative source). Use update_document to apply changes."
+            "Question answered as author-confirmed (KB owner is the authoritative source). Use update_document to apply changes."
         } else {
             "Question answered. Use update_document to apply changes to the document."
         };
@@ -375,19 +360,20 @@ pub fn bulk_answer_questions(
     // Count remaining
     let mut remaining_unanswered = 0usize;
     let mut total_deferred = 0usize;
-    let mut total_believed = 0usize;
     let written_ids: std::collections::HashSet<&str> = pending_writes
         .iter()
         .map(|(id, _, _)| id.as_str())
         .collect();
     for (_, _, content) in &pending_writes {
         if let Some(questions) = parse_review_queue(content) {
-            count_queue_questions(
-                &questions,
-                &mut remaining_unanswered,
-                &mut total_deferred,
-                &mut total_believed,
-            );
+            for q in &questions {
+                if q.answered {
+                } else if q.is_deferred() {
+                    total_deferred += 1;
+                } else {
+                    remaining_unanswered += 1;
+                }
+            }
         }
     }
     let docs_with_queues = db.get_documents_with_review_queue(None).unwrap_or_default();
@@ -396,12 +382,14 @@ pub fn bulk_answer_questions(
             continue;
         }
         if let Some(questions) = parse_review_queue(&doc.content) {
-            count_queue_questions(
-                &questions,
-                &mut remaining_unanswered,
-                &mut total_deferred,
-                &mut total_believed,
-            );
+            for q in &questions {
+                if q.answered {
+                } else if q.is_deferred() {
+                    total_deferred += 1;
+                } else {
+                    remaining_unanswered += 1;
+                }
+            }
         }
     }
 
@@ -412,7 +400,6 @@ pub fn bulk_answer_questions(
     Ok(serde_json::json!({
         "success": true, "answered": answered, "skipped": skipped, "results": results,
         "remaining_unanswered": remaining_unanswered, "remaining_deferred": total_deferred,
-        "remaining_believed": total_believed,
         "message": format!("Answered {} question(s), skipped {} already-answered. {} unanswered remain. Run `factbase review --apply` to process.", answered, skipped, remaining_unanswered)
     }))
 }
@@ -668,7 +655,8 @@ mod tests {
     }
 
     #[test]
-    fn test_answer_question_with_confidence() {
+    fn test_answer_question_with_confidence_believed_treated_as_deferred() {
+        // confidence='believed' is backward compat — treated as deferred
         use tempfile::TempDir;
         let dir = TempDir::new().unwrap();
         let repo_dir = dir.path().join("myrepo");
@@ -708,6 +696,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["success"], true);
+        // believed → deferred
+        assert_eq!(result["deferred"], true);
     }
 
     #[test]
@@ -828,7 +818,8 @@ mod tests {
     }
 
     #[test]
-    fn test_weak_source_believed_answer_does_not_stamp() {
+    fn test_weak_source_deferred_answer_does_not_stamp() {
+        // deferred answers (including legacy believed) should not stamp the footnote
         let dir = tempfile::tempdir().unwrap();
         let (db, _) = make_weak_source_doc(dir.path(), 3);
         answer_question(
@@ -837,14 +828,14 @@ mod tests {
                 doc_id: "ws001".into(),
                 question_index: 0,
                 answer: "probably ok".into(),
-                confidence: Some("believed".into()),
+                confidence: Some("deferred".into()),
             },
         )
         .unwrap();
         let disk = std::fs::read_to_string(dir.path().join("repo/test.md")).unwrap();
         assert!(
             !disk.contains("<!-- ✓ -->"),
-            "footnote should NOT be stamped for believed: {disk}"
+            "footnote should NOT be stamped for deferred: {disk}"
         );
     }
 
