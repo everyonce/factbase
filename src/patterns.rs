@@ -307,6 +307,10 @@ pub fn content_body(content: &str) -> &str {
 /// Returns 0 when there is no frontmatter.  The count includes the opening
 /// `---`, all field lines, and the closing `---`.
 ///
+/// Also handles the legacy format where a `<!-- factbase:... -->` comment
+/// (and optional blank lines) precedes the `---` delimiter — those lines are
+/// included in the count so they are also skipped by `iter_fact_lines`.
+///
 /// Used by `iter_fact_lines` to skip frontmatter lines so that YAML metadata
 /// fields (e.g. `type: services`, block-style `tags:` lists) are never treated
 /// as document facts.
@@ -320,7 +324,27 @@ pub(crate) fn frontmatter_line_count(content: &str) -> usize {
     };
     count += 1;
 
-    if first.trim() != "---" {
+    // Determine the first meaningful line, skipping an optional HTML comment
+    // header (`<!-- factbase:... -->`) and any blank lines that follow it.
+    let first_meaningful = if first.trim().starts_with("<!-- factbase:") && first.trim().ends_with("-->") {
+        // Consume blank lines between the comment and the frontmatter delimiter
+        loop {
+            match lines.next() {
+                Some(l) if l.trim().is_empty() => {
+                    count += 1;
+                }
+                Some(l) => {
+                    count += 1;
+                    break l;
+                }
+                None => return 0,
+            }
+        }
+    } else {
+        first
+    };
+
+    if first_meaningful.trim() != "---" {
         return 0;
     }
 
@@ -785,6 +809,29 @@ mod tests {
     fn test_frontmatter_line_count_no_closing_delimiter() {
         // Unclosed frontmatter — not valid, return 0
         let content = "---\ntype: services\n# Title\n";
+        assert_eq!(frontmatter_line_count(content), 0);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_with_legacy_comment_header() {
+        // Legacy format: HTML comment before YAML frontmatter
+        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags:\n  - amazon\n  - employees\n---\n# Title\n\n- Fact\n";
+        // Lines: comment(1) + ---(2) + type(3) + tags(4) + amazon(5) + employees(6) + ---(7) = 7
+        assert_eq!(frontmatter_line_count(content), 7);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_with_legacy_comment_and_blank_lines() {
+        // Legacy format with blank lines between comment and frontmatter
+        let content = "<!-- factbase:abc123 -->\n\n---\ntype: services\n---\n# Title\n";
+        // Lines: comment(1) + blank(2) + ---(3) + type(4) + ---(5) = 5
+        assert_eq!(frontmatter_line_count(content), 5);
+    }
+
+    #[test]
+    fn test_frontmatter_line_count_comment_only_no_frontmatter() {
+        // HTML comment but no YAML frontmatter after it — return 0
+        let content = "<!-- factbase:abc123 -->\n# Title\n\n- Fact\n";
         assert_eq!(frontmatter_line_count(content), 0);
     }
 
