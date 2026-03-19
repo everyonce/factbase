@@ -3,7 +3,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A knowledge base that lives in your filesystem. Markdown in, semantic search out. Managed by your AI agent via MCP.
+Turn scattered sources into a knowledge base your AI can actually use.
 
 ## Quick Start
 
@@ -23,15 +23,15 @@ Add factbase to your agent's MCP config:
 
 Then talk to your agent. Six workflows cover the full lifecycle:
 
-| What you say | What happens |
-|---|---|
-| "Build me a knowledge base about Pacific Northwest mushrooms, sourcing from the web" | `create` — asks where data lives, designs structure, creates docs, scans |
-| "Build me a KB to track my customer accounts, sourcing from files in ~/work/accounts/" | `create` — same flow, but uses your local files as the content source |
-| "Research chanterelle harvesting seasons and add it" | `add` — researches topic, creates entities, links |
-| "Run maintenance on the KB" | `maintain` — scan, quality check, resolve questions |
-| "Check for new species classifications this year" | `refresh` — searches live sources, updates stale facts |
-| "Amanita muscaria is toxic but rarely fatal, not deadly" | `correct` — finds and fixes the false claim everywhere |
-| "The genus Agaricus was reclassified under the new taxonomy as of 2025" | `transition` — asks how to rename, applies it with history |
+| Workflow | What happens | Example instruction |
+|---|---|---|
+| **`create`** | Asks where your data lives, designs structure, creates example docs, scans | "Build me a KB about Pacific Northwest mushrooms, sourcing from the web" |
+| **`create`** | Same flow, but pulls content from your local files or other private sources | "Build me a KB to track my customer accounts, sourcing from files in ~/work/accounts/" |
+| **`add`** | Researches a topic, creates new entities, links to existing docs | "Research chanterelle harvesting seasons and add it" |
+| **`maintain`** | Scans for changes, runs quality checks, resolves open questions | "Run maintenance on the KB" |
+| **`refresh`** | Searches live sources for updates, patches stale facts | "Check for new species classifications this year" |
+| **`correct`** | Finds a false claim everywhere it appears and fixes it | "Amanita muscaria is toxic but rarely fatal, not deadly" |
+| **`transition`** | Renames or reclassifies an entity, applies the change with history | "The genus Agaricus was reclassified under the new taxonomy as of 2025" |
 
 That's it. Your agent handles scanning, indexing, and search automatically. Everything below is optional depth.
 
