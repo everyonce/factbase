@@ -184,12 +184,8 @@ async fn test_init_scan_search_workflow() {
         path: repo_path,
         perspective: Some(Perspective {
             type_name: "personal".into(),
-            organization: None,
             focus: Some("knowledge management".into()),
-            allowed_types: None,
-            review: None,
-            format: None,
-            link_match_mode: None,
+            ..Default::default()
         }),
         created_at: Utc::now(),
         last_indexed_at: None,

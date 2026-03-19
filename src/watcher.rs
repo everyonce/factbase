@@ -51,6 +51,12 @@ impl FileWatcher {
         Ok(())
     }
 
+    pub fn unwatch_directory(&mut self, path: &Path) -> Result<(), FactbaseError> {
+        self.watcher.unwatch(path)?;
+        info!("Unwatching directory: {}", path.display());
+        Ok(())
+    }
+
     pub fn try_recv(&self) -> Option<Vec<PathBuf>> {
         match self.receiver.try_recv() {
             Ok(paths) => {
