@@ -1448,7 +1448,14 @@ mod tests {
             skip_links: true,
             ..Default::default()
         };
-        let ctx1 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts1, &progress);
+        let ctx1 = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts1,
+            &progress,
+        );
         let r1 = full_scan(&repo, &db, &ctx1).await.unwrap();
         assert_eq!(r1.added, 5);
 
@@ -1460,13 +1467,24 @@ mod tests {
             file_offset: 3,
             ..Default::default()
         };
-        let ctx2 = scan_ctx(&scanner, &processor, &embedding, &link_detector, &opts2, &progress);
+        let ctx2 = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts2,
+            &progress,
+        );
         let r2 = full_scan(&repo, &db, &ctx2).await.unwrap();
         assert_eq!(r2.deleted, 0, "batch 2 must not delete docs from batch 1");
 
         // All 5 docs must survive
         let docs = db.get_documents_for_repo(&repo.id).unwrap();
-        assert_eq!(docs.len(), 5, "all 5 documents must be present after resume");
+        assert_eq!(
+            docs.len(),
+            5,
+            "all 5 documents must be present after resume"
+        );
     }
 
     #[tokio::test]
