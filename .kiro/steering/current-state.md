@@ -2,10 +2,10 @@
 
 ## Project Status
 
-**Phases 1-50 complete**. Releases: v0.1.0, v0.2.0, v0.3.0, v0.4.0, v0.4.1, v0.4.2, v0.4.3. Current Cargo.toml version: v53.0.0.
+**Version**: v2026.3.44 (date-based versioning since early 2026). All work is tracked via Vikunja tasks and shipped via automated kiro pipeline.
 
 ### Active Work
-- No active phases. All work through Phase 50 is complete.
+- Tasks filed and in queue via Vikunja. Check there for current status.
 
 ## Current Configuration
 
