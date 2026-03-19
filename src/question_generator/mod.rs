@@ -324,6 +324,15 @@ mod tests {
     }
 
     #[test]
+    fn test_iter_fact_lines_skips_frontmatter_legacy_comment_before_yaml() {
+        // Legacy format: HTML comment header followed by YAML frontmatter with block tags
+        let content = "<!-- factbase:abc123 -->\n---\ntype: services\ntags:\n  - amazon\n  - employees\n---\n# Title\n\n- Real fact\n";
+        let results: Vec<_> = iter_fact_lines(content).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].2, "Real fact");
+    }
+
+    #[test]
     fn test_iter_fact_lines_line_numbers_correct_with_frontmatter() {
         // Line numbers must account for frontmatter lines
         let content = "---\ntype: services\n---\n# Title\n\n- Fact one\n- Fact two\n";
