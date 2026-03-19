@@ -38,14 +38,15 @@ pub fn format_question_json(q: &ReviewQuestion, doc_context: Option<(&str, &str)
     json
 }
 
-/// Counts unanswered question types and believed questions across documents.
+/// Counts unanswered question types across documents (excludes deferred).
+/// Returns (type_counts, deferred_count).
 pub fn count_question_types(
     docs: &[crate::models::Document],
 ) -> (std::collections::HashMap<QuestionType, usize>, usize) {
     use crate::processor::parse_review_queue;
     let mut counts: std::collections::HashMap<QuestionType, usize> =
         std::collections::HashMap::new();
-    let mut believed = 0usize;
+    let mut deferred = 0usize;
     for doc in docs {
         if let Some(questions) = parse_review_queue(&doc.content) {
             for q in &questions {
@@ -53,32 +54,26 @@ pub fn count_question_types(
                     continue;
                 }
                 if q.is_deferred() {
-                    if q.is_believed() {
-                        believed += 1;
-                    }
+                    deferred += 1;
                     continue;
                 }
                 *counts.entry(q.question_type).or_insert(0) += 1;
             }
         }
     }
-    (counts, believed)
+    (counts, deferred)
 }
 
-/// Counts review queue questions into unanswered/deferred/believed buckets.
+/// Counts review queue questions into unanswered/deferred buckets.
 pub fn count_queue_questions(
     questions: &[ReviewQuestion],
     unanswered: &mut usize,
     deferred: &mut usize,
-    believed: &mut usize,
 ) {
     for q in questions {
         if q.answered {
             // skip — already applied
         } else if q.is_deferred() {
-            if q.is_believed() {
-                *believed += 1;
-            }
             *deferred += 1;
         } else {
             *unanswered += 1;
@@ -86,30 +81,13 @@ pub fn count_queue_questions(
     }
 }
 
-/// Returns true if a believed answer contains a source citation.
+/// Resolve confidence from args.
 ///
-/// A valid believed answer must include one of:
-/// - A URL (`http://` or `https://`)
-/// - A `per ` prefix or ` per ` phrase
-/// - A ` says `, ` states `, or ` confirms ` verb phrase
-/// - An em-dash separator ` — ` or ` -- `
-/// - A factbase doc reference (`fb:`)
-fn believed_has_citation(answer: &str) -> bool {
-    let lower = answer.to_lowercase();
-    lower.contains("http://")
-        || lower.contains("https://")
-        || lower.starts_with("per ")
-        || lower.contains(" per ")
-        || lower.contains(" says ")
-        || lower.contains(" states ")
-        || lower.contains(" confirms ")
-        || lower.contains(" \u{2014} ")
-        || lower.contains(" -- ")
-        || lower.contains("fb:")
-}
-
-/// Resolve confidence from args: "believed" answers are stored as deferred.
-/// Believed answers without a source citation are downgraded to plain deferred.
+/// - `confidence='author'` → resolved (not deferred), prefixed with `author: `
+/// - `confidence='believed'` → treated as `deferred` (backward compat, not an error)
+/// - `confidence='verified'` or omitted → resolved (not deferred), answer as-is
+/// - `answer` starting with `defer:` → deferred with the note after the prefix
+/// - `answer` starting with `believed:` → deferred (backward compat for existing docs)
 pub fn resolve_confidence(
     answer: &str,
     confidence: Option<&str>,
@@ -125,20 +103,13 @@ pub fn resolve_confidence(
         }
         return Ok((true, note.to_string()));
     }
+    // Backward compat: answer text starting with "believed:" → deferred
+    if lower.starts_with("believed: ") {
+        return Ok((true, answer["believed: ".len()..].to_string()));
+    }
     match confidence {
-        Some("believed") => {
-            if believed_has_citation(answer) {
-                Ok((true, format!("believed: {answer}")))
-            } else {
-                Ok((
-                    true,
-                    format!(
-                        "believed answer rejected — no source citation provided. \
-                         Original answer: {answer}"
-                    ),
-                ))
-            }
-        }
+        // Backward compat: confidence='believed' → deferred (not an error)
+        Some("believed") => Ok((true, answer.to_string())),
         Some("author") => Ok((false, format!("author: {answer}"))),
         _ => Ok((false, answer.to_string())),
     }
@@ -243,45 +214,20 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_confidence_believed_no_citation_downgraded() {
-        // "Still accurate" has no citation — should be downgraded to plain deferred
+    fn test_resolve_confidence_believed_compat_treated_as_deferred() {
+        // confidence='believed' is backward compat — treated as deferred, not an error
         let (defer, text) = resolve_confidence("Still accurate", Some("believed")).unwrap();
         assert!(defer);
-        assert!(
-            !text.starts_with("believed:"),
-            "uncited believed should not start with 'believed:': {text}"
-        );
-        assert!(
-            text.contains("no source citation"),
-            "should explain rejection: {text}"
-        );
+        assert_eq!(text, "Still accurate");
     }
 
     #[test]
-    fn test_resolve_confidence_believed_with_url_accepted() {
-        let answer =
-            "per AWS docs (https://aws.amazon.com/qldb/, checked 2026-03-19), QLDB reached EOL";
-        let (defer, text) = resolve_confidence(answer, Some("believed")).unwrap();
+    fn test_resolve_confidence_answer_with_believed_prefix_treated_as_deferred() {
+        // answer text starting with "believed: " → deferred (backward compat for existing docs)
+        let (defer, text) =
+            resolve_confidence("believed: per AWS docs (https://example.com)", None).unwrap();
         assert!(defer);
-        assert!(
-            text.starts_with("believed:"),
-            "cited believed should start with 'believed:': {text}"
-        );
-    }
-
-    #[test]
-    fn test_resolve_confidence_believed_with_per_accepted() {
-        let answer = "per internal wiki page, this is still accurate";
-        let (defer, text) = resolve_confidence(answer, Some("believed")).unwrap();
-        assert!(defer);
-        assert!(text.starts_with("believed:"), "per-prefixed believed should be accepted: {text}");
-    }
-
-    #[test]
-    fn test_resolve_confidence_believed_still_current_rejected() {
-        let (defer, text) = resolve_confidence("still current", Some("believed")).unwrap();
-        assert!(defer);
-        assert!(!text.starts_with("believed:"), "bare 'still current' should be rejected: {text}");
+        assert_eq!(text, "per AWS docs (https://example.com)");
     }
 
     #[test]

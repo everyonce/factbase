@@ -947,7 +947,6 @@ fn resolve_step2_batch(
                     for (idx, q) in questions.iter().enumerate() {
                         if !q.answered
                             && !q.is_deferred()
-                            && !q.is_believed()
                             && q.question_type == QuestionType::WeakSource
                         {
                             weak_source_questions.push((doc.id.clone(), idx));
@@ -1011,7 +1010,6 @@ fn resolve_step2_batch(
                         }
                         if !q.answered
                             && !q.is_deferred()
-                            && !q.is_believed()
                             && q.question_type == QuestionType::WeakSource
                             && !q.answer.as_deref().unwrap_or("").starts_with("hint:")
                         {
@@ -1084,7 +1082,6 @@ fn resolve_step2_batch(
     let docs = load_review_docs_from_disk(db);
     let mut unanswered: Vec<Value> = Vec::new();
     let mut resolved_verified: usize = 0;
-    let mut resolved_believed: usize = 0;
     let mut resolved_deferred: usize = 0;
     let mut type_distribution: HashMap<QuestionType, usize> = HashMap::new();
 
@@ -1107,8 +1104,6 @@ fn resolve_step2_batch(
             for (idx, q) in questions.iter().enumerate() {
                 if q.answered {
                     resolved_verified += 1;
-                } else if q.is_believed() {
-                    resolved_believed += 1;
                 } else if q.is_deferred() {
                     resolved_deferred += 1;
                 } else {
@@ -1157,8 +1152,7 @@ fn resolve_step2_batch(
         }
     }
 
-    let resolved_so_far =
-        resolved_verified + resolved_believed + resolved_deferred + glossary_auto_resolved;
+    let resolved_so_far = resolved_verified + resolved_deferred + glossary_auto_resolved;
 
     // Sort: group by document, then by type priority within each doc
     unanswered.sort_by(|a, b| {
@@ -1209,7 +1203,6 @@ fn resolve_step2_batch(
                 "total_batches_estimate": 0,
                 "resolved_so_far": resolved_so_far,
                 "resolved_verified": resolved_verified,
-                "resolved_believed": resolved_believed,
                 "resolved_deferred": resolved_deferred,
                 "questions_remaining": 0
             },
@@ -1283,7 +1276,6 @@ fn resolve_step2_batch(
             "total_batches_estimate": total_batches_estimate,
             "resolved_so_far": resolved_so_far,
             "resolved_verified": resolved_verified,
-            "resolved_believed": resolved_believed,
             "resolved_deferred": resolved_deferred,
             "questions_remaining": remaining
         })
@@ -1294,7 +1286,6 @@ fn resolve_step2_batch(
             "total_batches_estimate": total_batches_estimate,
             "resolved_so_far": resolved_so_far,
             "resolved_verified": resolved_verified,
-            "resolved_believed": resolved_believed,
             "resolved_deferred": resolved_deferred,
             "questions_remaining": remaining
         })
@@ -2415,8 +2406,8 @@ mod tests {
             "resolve intro must document the author confidence path"
         );
         assert!(
-            intro.contains("self-attested"),
-            "resolve intro must note author answers are self-attested"
+            intro.contains("author-confirmed") || intro.contains("NEVER self-authorize"),
+            "resolve intro must note author answers require explicit human instruction"
         );
         assert!(
             intro.contains("KB owner"),
@@ -4455,8 +4446,8 @@ mod tests {
             "intro must mention verified confidence"
         );
         assert!(
-            intro.contains("believed"),
-            "intro must mention believed confidence"
+            intro.contains("author"),
+            "intro must mention author confidence"
         );
         assert!(
             intro.contains("defer"),
@@ -4517,14 +4508,14 @@ mod tests {
     #[test]
     fn test_resolve_step2_progress_includes_breakdown() {
         let (db, _tmp) = test_db();
-        // One verified (answered), one believed (deferred with "believed:"), one deferred, one unanswered
-        let content = "<!-- factbase:brk001 -->\n# Breakdown\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[stale]` Believed (line 5)\n  > believed: still accurate per source\n- [ ] `@q[missing]` Deferred (line 6)\n  > defer: could not find source\n- [ ] `@q[conflict]` Unanswered (line 7)\n";
+        // One verified (answered), one legacy believed (deferred with "believed:" prefix), one deferred, one unanswered
+        let content = "<!-- factbase:brk001 -->\n# Breakdown\n\n- Fact\n\n<!-- factbase:review -->\n- [x] `@q[temporal]` Answered (line 4)\n  > @t[2024]\n- [ ] `@q[stale]` Legacy believed (line 5)\n  > believed: still accurate per source\n- [ ] `@q[missing]` Deferred (line 6)\n  > defer: could not find source\n- [ ] `@q[conflict]` Unanswered (line 7)\n";
         insert_test_doc(&db, "brk001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
         assert_eq!(batch["resolved_verified"], 1);
-        assert_eq!(batch["resolved_believed"], 1);
-        assert_eq!(batch["resolved_deferred"], 1);
+        // legacy believed + deferred both count as resolved_deferred
+        assert_eq!(batch["resolved_deferred"], 2);
         assert_eq!(batch["resolved_so_far"], 3);
         assert_eq!(batch["questions_remaining"], 1);
     }
@@ -4535,15 +4526,14 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
         assert_eq!(batch["resolved_verified"], 0);
-        assert_eq!(batch["resolved_believed"], 0);
         assert_eq!(batch["resolved_deferred"], 0);
     }
 
     #[test]
-    fn test_resolve_step2_excludes_believed_from_batch() {
+    fn test_resolve_step2_excludes_deferred_from_batch() {
         let (db, _tmp) = test_db();
-        // Insert a doc with one believed answer and one unanswered question
-        let content = "---\nfactbase_id: bel001\n---\n# Believed Test\n\n- Fact\n\n\
+        // Insert a doc with one legacy believed answer and one unanswered question
+        let content = "---\nfactbase_id: bel001\n---\n# Deferred Test\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Old fact is stale\n\
             > believed: Still accurate per Wikipedia\n\
@@ -4551,8 +4541,8 @@ mod tests {
         insert_test_doc(&db, "bel001", content);
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         let batch = &step["batch"];
-        // Believed question should be counted but not in the batch
-        assert_eq!(batch["resolved_believed"], 1);
+        // Legacy believed question should be counted as deferred, not in the batch
+        assert_eq!(batch["resolved_deferred"], 1);
         assert_eq!(batch["questions_remaining"], 1);
         let questions = batch["questions"].as_array().unwrap();
         assert_eq!(
@@ -4566,7 +4556,7 @@ mod tests {
     #[test]
     fn test_resolve_step2_all_resolved_when_only_believed_remain() {
         let (db, _tmp) = test_db();
-        // All questions are believed — none truly unanswered
+        // All questions are legacy believed (deferred with "believed:" prefix) — none truly unanswered
         let content = "---\nfactbase_id: bonly1\n---\n# Only Believed\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Stale fact\n\
@@ -4577,17 +4567,18 @@ mod tests {
         let step = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(
             step["all_resolved"], true,
-            "should be all_resolved when only believed remain"
+            "should be all_resolved when only deferred (legacy believed) remain"
         );
         assert_eq!(step["continue"], false);
-        assert_eq!(step["batch"]["resolved_believed"], 2);
+        // legacy believed counts as resolved_deferred
+        assert_eq!(step["batch"]["resolved_deferred"], 2);
         assert_eq!(step["batch"]["questions_remaining"], 0);
     }
 
     #[test]
     fn test_resolve_step2_believed_not_re_served_across_batches() {
         let (db, _tmp) = test_db();
-        // Simulate: one believed + one unanswered
+        // Simulate: one legacy believed + one unanswered
         let content = "---\nfactbase_id: cyc01\n---\n# Cycle Test\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Already believed\n\
@@ -4603,7 +4594,7 @@ mod tests {
         assert_eq!(qs.len(), 1);
         assert_eq!(qs[0]["type"], "temporal");
 
-        // Simulate answering with believed — update DB content
+        // Simulate answering with legacy believed — update DB content
         let updated = "---\nfactbase_id: cyc01\n---\n# Cycle Test\n\n- Fact\n\n\
             <!-- factbase:review -->\n\
             - [ ] `@q[stale]` Already believed\n\
@@ -4613,13 +4604,13 @@ mod tests {
         db.update_document_content("cyc01", updated, "hash2")
             .unwrap();
 
-        // Second batch: both are now believed, should be all_resolved
+        // Second batch: both are now deferred (legacy believed), should be all_resolved
         let step2 = resolve_step(2, &serde_json::json!({}), &None, 0, &db, &wf());
         assert_eq!(
             step2["all_resolved"], true,
-            "no infinite loop: believed answers not re-served"
+            "no infinite loop: deferred answers not re-served"
         );
-        assert_eq!(step2["batch"]["resolved_believed"], 2);
+        assert_eq!(step2["batch"]["resolved_deferred"], 2);
         assert_eq!(step2["batch"]["questions_remaining"], 0);
     }
 

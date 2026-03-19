@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 19;
+pub(super) const SCHEMA_VERSION: i32 = 20;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -204,6 +204,12 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         19,
         "Add review_section_hash to documents",
         "", // handled in post-migration hook (idempotent column add)
+    ),
+    // Version 20: Reset legacy 'believed' status → 'open' (confidence level removed)
+    (
+        20,
+        "Reset believed review questions to open",
+        "UPDATE review_questions SET status = 'open', answer = NULL WHERE status = 'believed';",
     ),
 ];
 
@@ -475,6 +481,18 @@ impl Database {
                 if *version == 18 {
                     Self::add_review_section_hash_column(conn)?;
                 }
+                if *version == 20 {
+                    // Log how many believed questions were reset
+                    let count: i64 = conn
+                        .query_row("SELECT changes()", [], |row| row.get(0))
+                        .unwrap_or(0);
+                    if count > 0 {
+                        tracing::info!(
+                            "Migration v20: reset {} 'believed' question(s) to 'open' — they are back in the review queue",
+                            count
+                        );
+                    }
+                }
 
                 Self::set_schema_version(conn, *version)?;
                 tracing::info!("Migration {} complete", version);
@@ -567,9 +585,8 @@ impl Database {
                 for (idx, q) in questions.iter().enumerate() {
                     let status = if q.answered {
                         "verified"
-                    } else if q.is_believed() {
-                        "believed"
                     } else if q.is_deferred() {
+                        // is_believed() is a subset of is_deferred(); both map to "deferred"
                         "deferred"
                     } else {
                         "open"

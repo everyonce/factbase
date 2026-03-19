@@ -117,8 +117,10 @@ impl ReviewQuestion {
         !self.answered && self.answer.is_some()
     }
 
-    /// Returns true if this question has a believed answer (confidence=believed).
+    /// Returns true if this question has a legacy believed answer.
     /// Believed answers are stored as deferred with a "believed: " prefix.
+    /// This confidence level is removed; this method exists for backward compat
+    /// with existing documents that may still have "believed: " prefixed answers.
     pub fn is_believed(&self) -> bool {
         self.is_deferred()
             && self

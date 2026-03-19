@@ -8,8 +8,7 @@ mod queue;
 
 pub use answer::{answer_question, bulk_answer_questions, AnswerQuestionParams, BulkAnswerItem};
 pub use helpers::{
-    count_question_types, count_queue_questions, format_question_json, modify_question_in_queue,
-    resolve_confidence,
+    count_question_types, format_question_json, modify_question_in_queue, resolve_confidence,
 };
 pub use queue::{get_deferred_items, get_review_queue, ReviewQueueParams};
 

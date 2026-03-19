@@ -51,9 +51,8 @@ impl Database {
                 "dismissed"
             } else if q.answered {
                 "verified"
-            } else if q.is_believed() {
-                "believed"
             } else if q.is_deferred() {
+                // is_believed() is a subset of is_deferred(); both map to "deferred"
                 "deferred"
             } else {
                 "open"

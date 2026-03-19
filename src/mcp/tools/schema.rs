@@ -223,7 +223,7 @@ fn factbase_schema(repo_path: Option<&Path>) -> Value {
                 "status": { "type": "string", "description": "Question status filter" },
                 "question_index": { "type": "integer", "description": "0-based question index" },
                 "answer": { "type": "string", "description": "Answer text" },
-                "confidence": { "type": "string", "enum": ["verified", "believed"], "description": "Answer confidence" },
+                "confidence": { "type": "string", "enum": ["verified", "author", "deferred"], "description": "Answer confidence" },
                 "answers": { "type": "array", "description": "Bulk answers array", "items": { "type": "object" } },
                 // Organize
                 "action": { "type": "string", "description": "Sub-action: analyze/merge/split/delete/move/retype/apply/execute_suggestions (organize), suggest/store (links), export/import/status (embeddings)" },
