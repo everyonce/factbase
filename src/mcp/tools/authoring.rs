@@ -102,6 +102,13 @@ pub fn get_authoring_guide() -> Value {
         "sources": {
             "description": "Cite sources with markdown footnotes for fact verification. Every source MUST be traceable — include enough detail to locate the original data.",
             "format": "Add [^N] after the fact, define [^N]: at the bottom after a --- separator",
+            "date_required": "Every citation must include a date. If you read something today, today is the date. Use 'accessed YYYY-MM-DD' for web sources. Use 'email from YYYY-MM-DD' for emails. Use 'Slack #channel, YYYY-MM-DD' for Slack. There is never a valid reason to omit a date — if you accessed the source, you know today's date.",
+            "date_examples": {
+                "web": "[^1]: AWS documentation, https://docs.aws.amazon.com/..., accessed 2026-03-20",
+                "email": "[^2]: Email from alice@example.com, 2026-02-14, subject: Q4 results",
+                "slack": "[^3]: Slack #engineering, @bob, 2026-01-10",
+                "book": "[^4]: Holland, Persian Fire, pp. 255-280, 2005"
+            },
             "types": "Journal article, Database record, Official report, News article, Book, Website, Field observation, Author knowledge (human-only), Archival document, Personal communication, Inferred, Unverified",
             "traceability": "A source name alone is NEVER sufficient. Always include dates, URLs, page numbers, or other identifiers. BAD: 'Wikipedia'. GOOD: 'Wikipedia \"Amanita muscaria\", accessed 2024-01-15, https://en.wikipedia.org/wiki/Amanita_muscaria'",
             "author_knowledge": "Facts known firsthand by the knowledge base owner belong in dedicated author-knowledge/ documents. Cite as: 'Author knowledge, see [[author-knowledge-doc-name]]'. Agents must NEVER create author knowledge files or use 'Author knowledge' as a source — always cite the actual data source instead.",

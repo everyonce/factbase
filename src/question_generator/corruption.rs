@@ -41,6 +41,7 @@ pub fn generate_corruption_questions(content: &str) -> Vec<ReviewQuestion> {
     check_duplicate_footnote_defs(content, &mut questions);
     check_orphaned_footnote_defs(content, &mut questions);
     check_duplicate_fact_lines(content, &mut questions);
+    check_undated_url_citations(content, &mut questions);
 
     questions
 }
@@ -168,6 +169,35 @@ fn check_duplicate_fact_lines(content: &str, questions: &mut Vec<ReviewQuestion>
             ));
         } else {
             seen.insert(normalized, line_idx + 1);
+        }
+    }
+}
+
+/// Detect footnote definitions that contain a URL but no date (YYYY-MM-DD).
+/// Web citations without an access date cannot contribute to temporal coverage.
+fn check_undated_url_citations(content: &str, questions: &mut Vec<ReviewQuestion>) {
+    for (line_idx, line) in content.lines().enumerate() {
+        if let Some(cap) = SOURCE_DEF_REGEX.captures(line) {
+            let def_text = &cap[2];
+            // Only flag footnotes that contain a URL
+            if !def_text.contains("http://") && !def_text.contains("https://") {
+                continue;
+            }
+            // Check for any YYYY-MM-DD date pattern
+            let has_date = def_text
+                .as_bytes()
+                .windows(10)
+                .any(|w| matches!(w, [b'0'..=b'9', b'0'..=b'9', b'0'..=b'9', b'0'..=b'9', b'-', b'0'..=b'9', b'0'..=b'9', b'-', b'0'..=b'9', b'0'..=b'9']));
+            if !has_date {
+                let num = &cap[1];
+                questions.push(ReviewQuestion::new(
+                    QuestionType::Corruption,
+                    Some(line_idx + 1),
+                    format!(
+                        "Footnote [^{num}] has a URL but no date — add 'accessed YYYY-MM-DD'"
+                    ),
+                ));
+            }
         }
     }
 }
@@ -374,5 +404,45 @@ mod tests {
         assert!(questions
             .iter()
             .any(|q| q.description.contains("Duplicate fact line")));
+    }
+
+    #[test]
+    fn test_undated_url_citation_flagged() {
+        let content = "- Fact [^1]\n\n[^1]: https://docs.aws.amazon.com/some/page — confirms feature exists\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Should flag URL citation without date: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_dated_url_citation_not_flagged() {
+        let content = "- Fact [^1]\n\n[^1]: https://docs.aws.amazon.com/some/page, accessed 2026-03-20\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Should not flag URL citation with date: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_non_url_citation_without_date_not_flagged() {
+        // Non-URL citations (books, etc.) are not required to have YYYY-MM-DD
+        let content = "- Fact [^1]\n\n[^1]: Herodotus, Histories, Book VII\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Should not flag non-URL citation: {:?}",
+            questions
+        );
     }
 }
