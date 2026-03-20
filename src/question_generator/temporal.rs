@@ -627,7 +627,10 @@ mod tests {
             .iter()
             .filter(|q| q.description.contains("services") || q.description.contains("aws"))
             .collect();
-        assert!(frontmatter_items.is_empty(), "frontmatter items must not generate questions");
+        assert!(
+            frontmatter_items.is_empty(),
+            "frontmatter items must not generate questions"
+        );
     }
 
     #[test]
@@ -638,7 +641,10 @@ mod tests {
             .iter()
             .filter(|q| q.description.contains("services") || q.description.contains("abc123"))
             .collect();
-        assert!(frontmatter_items.is_empty(), "frontmatter items must not generate questions");
+        assert!(
+            frontmatter_items.is_empty(),
+            "frontmatter items must not generate questions"
+        );
     }
 
     #[test]
