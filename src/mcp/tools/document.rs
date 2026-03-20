@@ -15,15 +15,25 @@ use tracing::instrument;
 const MAX_TITLE_LENGTH: usize = 200;
 const MAX_CONTENT_SIZE: usize = 1_048_576; // 1MB
 
-/// Analyze content for temporal tag and source footnote coverage on fact lines.
-/// Returns a warning string if coverage is below 50%, or None if adequate.
-fn content_coverage_warning(content: &str) -> Option<String> {
+/// Count fact lines and their temporal/source coverage in content.
+/// Skips review queue items (lines starting with `- [ ]` or `- [x]`) and
+/// horizontal rules (`---`).
+fn fact_coverage_counts(content: &str) -> (u32, u32, u32) {
     let mut facts = 0u32;
     let mut temporal = 0u32;
     let mut sourced = 0u32;
     for line in content.lines() {
         let trimmed = line.trim_start();
-        if trimmed.starts_with('-') {
+        if let Some(after_dash) = trimmed.strip_prefix('-') {
+            // Skip horizontal rules (--- or more dashes)
+            if after_dash.trim_matches('-').is_empty() {
+                continue;
+            }
+            // Skip review queue items (- [ ] or - [x])
+            let rest = after_dash.trim_start();
+            if rest.starts_with("[ ]") || rest.starts_with("[x]") || rest.starts_with("[X]") {
+                continue;
+            }
             facts += 1;
             if trimmed.contains("@t[") {
                 temporal += 1;
@@ -33,6 +43,28 @@ fn content_coverage_warning(content: &str) -> Option<String> {
             }
         }
     }
+    (facts, temporal, sourced)
+}
+
+/// Hard enforcement: returns an error when fact lines exist but have zero temporal tags
+/// AND zero source citations. This is the "completely bare" case with no documentation attempt.
+fn content_coverage_error(content: &str) -> Option<FactbaseError> {
+    let (facts, temporal, sourced) = fact_coverage_counts(content);
+    if facts > 0 && temporal == 0 && sourced == 0 {
+        Some(FactbaseError::parse(format!(
+            "Content has {facts} fact lines with no temporal tags or source citations. \
+             Add @t[...] temporal tags and [^N] source footnotes before writing. \
+             Call factbase(op='authoring_guide') for format requirements."
+        )))
+    } else {
+        None
+    }
+}
+
+/// Analyze content for temporal tag and source footnote coverage on fact lines.
+/// Returns a warning string if coverage is below 50%, or None if adequate.
+fn content_coverage_warning(content: &str) -> Option<String> {
+    let (facts, temporal, sourced) = fact_coverage_counts(content);
     if facts == 0 {
         return None;
     }
@@ -218,6 +250,11 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     validate_title(&title)?;
     validate_content(content)?;
 
+    // Enforce: fact lines must have at least one temporal tag or source citation
+    if let Some(err) = content_coverage_error(content) {
+        return Err(err);
+    }
+
     let processor = DocumentProcessor::new();
     let id = processor.generate_unique_id(db);
 
@@ -320,6 +357,10 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     }
     if let Some(c) = new_content {
         validate_content(c)?;
+        // Enforce: fact lines must have at least one temporal tag or source citation
+        if let Some(err) = content_coverage_error(c) {
+            return Err(err);
+        }
     }
 
     let doc = db.require_document(&id)?;
@@ -581,6 +622,14 @@ pub fn bulk_create_documents(
             continue;
         }
 
+        if let Some(err) = content_coverage_error(content) {
+            errors.push(serde_json::json!({
+                "index": i,
+                "error": err.to_string()
+            }));
+            continue;
+        }
+
         let file_path: PathBuf = repo.path.join(path);
         if file_path.exists() {
             errors.push(serde_json::json!({
@@ -704,6 +753,47 @@ mod tests {
         let content = "  - indented fact\n    - nested fact";
         let w = content_coverage_warning(content).unwrap();
         assert!(w.contains("0/2 facts have temporal tags"));
+    }
+
+    // --- content_coverage_error tests ---
+
+    #[test]
+    fn test_coverage_error_no_facts() {
+        // No fact lines → no error
+        assert!(content_coverage_error("Just a paragraph").is_none());
+        assert!(content_coverage_error("").is_none());
+    }
+
+    #[test]
+    fn test_coverage_error_all_bare_facts() {
+        // Facts with no temporal AND no sources → hard error
+        let content = "- fact one\n- fact two";
+        let err = content_coverage_error(content);
+        assert!(err.is_some());
+        assert!(err
+            .unwrap()
+            .to_string()
+            .contains("no temporal tags or source citations"));
+    }
+
+    #[test]
+    fn test_coverage_error_has_temporal_no_error() {
+        // At least one temporal tag → no hard error (only warning)
+        let content = "- fact @t[2024]\n- bare fact";
+        assert!(content_coverage_error(content).is_none());
+    }
+
+    #[test]
+    fn test_coverage_error_has_source_no_error() {
+        // At least one source citation → no hard error (only warning)
+        let content = "- fact [^1]\n- bare fact";
+        assert!(content_coverage_error(content).is_none());
+    }
+
+    #[test]
+    fn test_coverage_error_fully_covered_no_error() {
+        let content = "- fact @t[2024] [^1]\n- another @t[2023] [^2]";
+        assert!(content_coverage_error(content).is_none());
     }
 
     #[test]
@@ -1159,18 +1249,20 @@ mod tests {
         };
         db.upsert_repository(&repo).unwrap();
 
+        // Completely bare facts (no temporal, no sources) → hard error
         let args = serde_json::json!({
             "repo": "r1",
             "path": "test.md",
             "title": "Test",
             "content": "- bare fact\n- another bare fact"
         });
-        let result = create_document(&db, &args).unwrap();
-        assert!(result.get("warning").is_some());
-        assert!(result["warning"]
-            .as_str()
-            .unwrap()
-            .contains("0/2 facts have temporal tags"));
+        let result = create_document(&db, &args);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no temporal tags or source citations"),
+            "error should mention missing tags: {err}"
+        );
     }
 
     #[test]
@@ -1203,7 +1295,8 @@ mod tests {
     }
 
     #[test]
-    fn test_bulk_create_documents_warns_per_document() {
+    fn test_create_document_warns_partial_coverage() {
+        // Has temporal but no sources → warning (not error)
         use crate::database::tests::test_db;
         use crate::models::Repository;
         use tempfile::TempDir;
@@ -1223,15 +1316,55 @@ mod tests {
 
         let args = serde_json::json!({
             "repo": "r1",
+            "path": "test.md",
+            "title": "Test",
+            "content": "- fact @t[2024]\n- bare fact"
+        });
+        let result = create_document(&db, &args).unwrap();
+        // Partial coverage → warning but write succeeds
+        assert!(result.get("warning").is_some());
+    }
+
+    #[test]
+    fn test_bulk_create_documents_warns_per_document() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // Bare fact (no temporal, no sources) → validation error; well-covered → ok
+        let args = serde_json::json!({
+            "repo": "r1",
             "documents": [
                 {"path": "a.md", "title": "A", "content": "- bare fact"},
                 {"path": "b.md", "title": "B", "content": "- fact @t[2024] [^1]"}
             ]
         });
         let result = bulk_create_documents(&db, &args, &ProgressReporter::Silent).unwrap();
-        let created = result["created"].as_array().unwrap();
-        assert!(created[0].get("warning").is_some());
-        assert!(created[1].get("warning").is_none());
+        // Validation fails for document 0 → all-or-nothing: no documents created
+        assert_eq!(result["success"], false);
+        let errors = result["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["index"], 0);
+        assert!(
+            errors[0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("no temporal tags or source citations"),
+            "error should mention missing tags"
+        );
     }
 
     #[test]
@@ -1320,7 +1453,7 @@ mod tests {
 
         let args = serde_json::json!({
             "id": "abc123",
-            "content": "- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site\n- DR (Disaster Recovery) budget"
+            "content": "- DR (Disaster Recovery) plan @t[2024] [^1]\n- DR (Disaster Recovery) site\n- DR (Disaster Recovery) budget"
         });
         update_document(&db, &args).unwrap();
 
@@ -1386,7 +1519,7 @@ mod tests {
 
         let args = serde_json::json!({
             "id": "abc123",
-            "content": "- SLA (Service Level Agreement) defined\n- DR (Disaster Recovery) plan"
+            "content": "- SLA (Service Level Agreement) defined @t[2024] [^1]\n- DR (Disaster Recovery) plan"
         });
         update_document(&db, &args).unwrap();
 
@@ -1425,7 +1558,7 @@ mod tests {
             "repo": "r1",
             "path": "test.md",
             "title": "Test",
-            "content": "- DR (Disaster Recovery) plan\n- DR (Disaster Recovery) site"
+            "content": "- DR (Disaster Recovery) plan @t[2024] [^1]\n- DR (Disaster Recovery) site"
         });
         create_document(&db, &args).unwrap();
 
@@ -1491,7 +1624,7 @@ mod tests {
             "repo": "r1",
             "path": "people/john.md",
             "title": "John Doe",
-            "content": "- Works at Acme Corp"
+            "content": "- Works at Acme Corp @t[2024..] [^1]"
         });
         let result = create_document(&db, &args).unwrap();
         assert!(result["id"].is_string());
@@ -1549,7 +1682,7 @@ mod tests {
             "repo": "r1",
             "path": "customers/acme/people/alice-chen.md",
             "title": "Alice Chen",
-            "content": "- Some fact"
+            "content": "- Some fact @t[2024] [^1]"
         });
         create_document(&db, &args).unwrap();
 
@@ -1591,7 +1724,7 @@ mod tests {
             "repo": "r1",
             "path": "services/amazon-aurora.md",
             "title": "Amazon Aurora",
-            "content": "- Some fact"
+            "content": "- Some fact @t[2024] [^1]"
         });
         create_document(&db, &args).unwrap();
 
@@ -1646,7 +1779,7 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        let args = serde_json::json!({"id": "abc123", "content": "- New fact"});
+        let args = serde_json::json!({"id": "abc123", "content": "- New fact @t[2024] [^1]"});
         update_document(&db, &args).unwrap();
 
         let on_disk = fs::read_to_string(&file).unwrap();
@@ -1680,7 +1813,7 @@ mod tests {
             "repo": "r1",
             "path": "services/aurora.md",
             "title": "Aurora",
-            "content": "- fact"
+            "content": "- fact @t[2024] [^1]"
         });
         create_document(&db, &args).unwrap();
 
@@ -1715,7 +1848,7 @@ mod tests {
             "repo": "r1",
             "path": "notes/test.md",
             "title": "Test Note",
-            "content": "- A fact"
+            "content": "- A fact @t[2024] [^1]"
         });
         create_document(&db, &args).unwrap();
 
@@ -1774,7 +1907,7 @@ mod tests {
 
         let args = serde_json::json!({
             "id": "abc123",
-            "content": "- New fact\n- Another fact"
+            "content": "- New fact @t[2024] [^1]\n- Another fact @t[2023] [^2]"
         });
         update_document(&db, &args).unwrap();
 
@@ -1845,7 +1978,7 @@ mod tests {
 
         let args = serde_json::json!({
             "id": "abc123",
-            "content": "- Updated fact"
+            "content": "- Updated fact @t[2024] [^1]"
         });
         update_document(&db, &args).unwrap();
 
@@ -2108,12 +2241,18 @@ mod tests {
         };
         db.upsert_document(&doc).unwrap();
 
-        // Content with facts but no temporal tags or citations → should warn
-        let args = serde_json::json!({"id": "abc123", "content": "- bare fact one\n- bare fact two"});
-        let result = update_document(&db, &args).unwrap();
+        // Completely bare facts (no temporal, no sources) → hard error
+        let args =
+            serde_json::json!({"id": "abc123", "content": "- bare fact one\n- bare fact two"});
+        let result = update_document(&db, &args);
         assert!(
-            result.get("warning").is_some(),
-            "should warn on low-coverage update: {result}"
+            result.is_err(),
+            "should error on completely bare facts: {result:?}"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no temporal tags or source citations"),
+            "error should mention missing tags: {err}"
         );
 
         // Content with full coverage → no warning
