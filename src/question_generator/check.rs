@@ -581,9 +581,10 @@ mod tests {
     async fn test_lint_reports_existing_unanswered() {
         let (db, _tmp) = test_db();
         let embedding = MockEmbedding::new(4);
-        // Use the exact description format the temporal generator produces
-        let content = "- Fact one\n\n<!-- factbase:review -->\n## Review Queue\n\n\
-                       - [ ] `@q[temporal]` \"Fact one\" - when was this true?\n  > \n";
+        // Use a cited fact so the temporal generator still produces the question,
+        // and the existing question in the review queue matches → kept (not pruned).
+        let content = "- Fact one [^1]\n\n[^1]: Some source\n\n<!-- factbase:review -->\n## Review Queue\n\n\
+                       - [ ] `@q[temporal]` \"Fact one [^1]\" - when was this true?\n  > \n";
         let docs = vec![make_doc("aaa", "Test", content)];
         let config = CheckConfig {
             stale_days: 365,

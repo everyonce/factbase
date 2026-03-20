@@ -54,7 +54,13 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
                 // Has a malformed tag — find_malformed_tags will flag it below
                 continue;
             }
-            // No temporal tag at all
+            // Only ask "when was this true?" if the line has a source citation.
+            // Lines with neither a temporal tag nor a citation have no date context
+            // to anchor the question — they are treated as static facts.
+            if !SOURCE_REF_DETECT_REGEX.is_match(line) {
+                continue;
+            }
+            // Has a citation but no temporal tag
             let mut q = ReviewQuestion::new(
                 QuestionType::Temporal,
                 Some(line_number),
@@ -63,7 +69,7 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
             // Provide confidence signals for the agent
             if is_definition_type {
                 q = q.with_confidence("low", "fact in definition/glossary document");
-            } else if SOURCE_REF_DETECT_REGEX.is_match(line) {
+            } else {
                 q = q.with_confidence(
                     "low",
                     "fact has source citation — may be an evergreen description",
@@ -182,11 +188,19 @@ mod tests {
 
     #[test]
     fn test_generate_temporal_questions_fact_without_tag() {
+        // No citation and no tag → static fact, no question generated
         let content = "# Person\n\n- Works at Acme Corp";
+        let questions = generate_temporal_questions(content, None);
+        assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_generate_temporal_questions_fact_with_citation_without_tag() {
+        // Has citation but no tag → should generate "when was this true?"
+        let content = "# Person\n\n- Works at Acme Corp [^1]\n\n---\n[^1]: LinkedIn";
         let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].question_type, QuestionType::Temporal);
-        assert_eq!(questions[0].line_ref, Some(3));
         assert!(questions[0].description.contains("Works at Acme Corp"));
         assert!(questions[0].description.contains("when was this true?"));
     }
@@ -204,14 +218,15 @@ mod tests {
 
     #[test]
     fn test_generate_temporal_questions_multiple_facts() {
+        // Facts without citations are suppressed; only cited facts generate questions
         let content = "# Person\n\n- Fact one\n- Fact two @t[2024]\n- Fact three";
         let questions = generate_temporal_questions(content, None);
-        // Should have questions for facts without tags (line 3 and 5)
+        // No citations → no "when was this true?" questions; @t[2024] is not stale ongoing
         let without_tag: Vec<_> = questions
             .iter()
             .filter(|q| q.description.contains("when was this true?"))
             .collect();
-        assert_eq!(without_tag.len(), 2);
+        assert_eq!(without_tag.len(), 0);
     }
 
     #[test]
@@ -240,11 +255,10 @@ mod tests {
 
     #[test]
     fn test_generate_temporal_questions_line_numbers() {
+        // Facts without citations generate no questions
         let content = "# Title\n\nParagraph\n\n- Fact one\n- Fact two";
         let questions = generate_temporal_questions(content, None);
-        assert_eq!(questions.len(), 2);
-        assert_eq!(questions[0].line_ref, Some(5));
-        assert_eq!(questions[1].line_ref, Some(6));
+        assert_eq!(questions.len(), 0);
     }
 
     #[test]
@@ -367,7 +381,8 @@ mod tests {
 
     #[test]
     fn test_old_reviewed_marker_still_generates_temporal() {
-        let content = "# Person\n\n- Works at Acme Corp <!-- reviewed:2020-01-01 -->";
+        // Old reviewed marker + citation → should still generate question
+        let content = "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:2020-01-01 -->\n\n---\n[^1]: LinkedIn";
         let questions = generate_temporal_questions(content, None);
         assert_eq!(
             questions.len(),
@@ -456,11 +471,10 @@ mod tests {
 
     #[test]
     fn test_confidence_none_by_default() {
+        // No citation → no question generated
         let content = "# Doc\n\n- Unsourced fact without temporal tag";
         let questions = generate_temporal_questions(content, None);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].confidence.is_none());
-        assert!(questions[0].confidence_reason.is_none());
+        assert_eq!(questions.len(), 0);
     }
 
     #[test]
@@ -478,7 +492,16 @@ mod tests {
 
     #[test]
     fn test_confidence_low_for_definition_doc_type() {
+        // No citation → no question even for definition doc type
         let content = "# Glossary\n\n- Term means something";
+        let questions = generate_temporal_questions(content, Some("definition"));
+        assert_eq!(questions.len(), 0);
+    }
+
+    #[test]
+    fn test_confidence_low_for_definition_doc_type_with_citation() {
+        // Citation present in definition doc → low confidence with definition reason
+        let content = "# Glossary\n\n- Term means something [^1]\n\n---\n[^1]: Docs";
         let questions = generate_temporal_questions(content, Some("definition"));
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].confidence.as_deref(), Some("low"));
@@ -491,18 +514,18 @@ mod tests {
 
     #[test]
     fn test_confidence_low_for_glossary_doc_type() {
+        // No citation → no question
         let content = "# Terms\n\n- Another term";
         let questions = generate_temporal_questions(content, Some("glossary"));
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+        assert_eq!(questions.len(), 0);
     }
 
     #[test]
     fn test_confidence_low_for_reference_doc_type() {
+        // No citation → no question
         let content = "# Ref\n\n- Reference fact";
         let questions = generate_temporal_questions(content, Some("reference"));
-        assert_eq!(questions.len(), 1);
-        assert_eq!(questions[0].confidence.as_deref(), Some("low"));
+        assert_eq!(questions.len(), 0);
     }
 
     #[test]
@@ -538,13 +561,59 @@ mod tests {
 
     #[test]
     fn test_confidence_none_for_regular_doc_type() {
+        // No citation → no question regardless of doc type
         let content = "# Person\n\n- Some fact without tag";
         let questions = generate_temporal_questions(content, Some("person"));
-        assert_eq!(questions.len(), 1);
-        assert!(
-            questions[0].confidence.is_none(),
-            "regular doc types should not get low confidence"
-        );
+        assert_eq!(questions.len(), 0);
+    }
+
+    #[test]
+    fn test_static_facts_without_citation_suppressed() {
+        // Lines with no @t[] and no [^N] are treated as static facts — no question
+        let cases = [
+            "- Interests: family, hiking, sports",
+            "- Education: Amherst College, Kellogg School of Management MBA",
+            "- Bar Raiser, AWS Certified Solutions Architect-Associate",
+            "- AWS+Salesforce Winners Circle, AWS Private Pricing APEX Champion",
+            "- Hobbies: reading, cooking",
+        ];
+        for case in cases {
+            let content = format!("# Doc\n\n{case}");
+            let questions = generate_temporal_questions(&content, None);
+            let temporal: Vec<_> = questions
+                .iter()
+                .filter(|q| q.description.contains("when was this true?"))
+                .collect();
+            assert!(
+                temporal.is_empty(),
+                "Static fact without citation should not generate temporal question: {case}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cited_fact_without_tag_generates_question() {
+        // A fact with a citation but no @t[] should still generate a question
+        let content = "# Doc\n\n- Joined Acme Corp [^1]\n\n---\n[^1]: LinkedIn";
+        let questions = generate_temporal_questions(content, None);
+        let temporal: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("when was this true?"))
+            .collect();
+        assert_eq!(temporal.len(), 1);
+        assert!(temporal[0].description.contains("Joined Acme Corp"));
+    }
+
+    #[test]
+    fn test_line_with_citation_and_tag_no_missing_temporal_question() {
+        // Has both citation and @t[] tag → no "when was this true?" (tag present)
+        let content = "# Doc\n\n- Joined Acme Corp @t[2020] [^1]\n\n---\n[^1]: LinkedIn";
+        let questions = generate_temporal_questions(content, None);
+        let missing: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("when was this true?"))
+            .collect();
+        assert!(missing.is_empty());
     }
 
     #[test]
@@ -553,32 +622,38 @@ mod tests {
         let content =
             "---\ntype: services\ntags:\n  - services\n  - aws\n---\n# Title\n\n- Real fact\n";
         let questions = generate_temporal_questions(content, None);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("Real fact"));
+        // "Real fact" has no citation → no temporal question
+        let frontmatter_items: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("services") || q.description.contains("aws"))
+            .collect();
+        assert!(frontmatter_items.is_empty(), "frontmatter items must not generate questions");
     }
 
     #[test]
     fn test_frontmatter_with_comment_header_not_temporal_questions() {
         let content = "---\nfactbase_id: abc123\ntype: services\ntags:\n  - services\n---\n# Title\n\n- Real fact\n";
         let questions = generate_temporal_questions(content, None);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("Real fact"));
+        let frontmatter_items: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("services") || q.description.contains("abc123"))
+            .collect();
+        assert!(frontmatter_items.is_empty(), "frontmatter items must not generate questions");
     }
 
     #[test]
     fn test_body_type_colon_still_generates_temporal() {
-        // "type:" in body text (not frontmatter) should still generate questions
+        // "type:" in body text without citation → no question (static fact)
         let content = "# Title\n\n- type: services\n";
         let questions = generate_temporal_questions(content, None);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("type: services"));
+        assert_eq!(questions.len(), 0);
     }
 
     #[test]
     fn test_content_after_frontmatter_checked_normally() {
+        // No citation → no question
         let content = "---\ntype: services\n---\n# Title\n\n- Fact after frontmatter\n";
         let questions = generate_temporal_questions(content, None);
-        assert_eq!(questions.len(), 1);
-        assert!(questions[0].description.contains("Fact after frontmatter"));
+        assert_eq!(questions.len(), 0);
     }
 }
