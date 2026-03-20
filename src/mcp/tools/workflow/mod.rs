@@ -2225,6 +2225,96 @@ mod tests {
     }
 
     #[test]
+    fn test_ingest_create_has_source_material_rules() {
+        let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("SOURCE MATERIAL RULES"),
+            "ingest create must have source material rules section"
+        );
+        assert!(
+            instruction.contains("EVERY fact from the source material"),
+            "must require all facts to be included"
+        );
+        assert!(
+            instruction.contains("hallucination"),
+            "must warn against hallucination from training knowledge"
+        );
+        assert!(
+            instruction.contains("@t[]"),
+            "must require temporal tags on time-bounded facts"
+        );
+        assert!(
+            instruction.contains("source type"),
+            "must require source type in citation"
+        );
+    }
+
+    #[test]
+    fn test_ingest_create_source_material_no_skip_approximate() {
+        let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        // Must explicitly say not to skip approximate/uncertain facts
+        assert!(
+            instruction.contains("approximate"),
+            "must say not to skip approximate facts"
+        );
+        assert!(
+            instruction.contains("jargon"),
+            "must say not to skip jargon/technical facts"
+        );
+    }
+
+    #[test]
+    fn test_ingest_create_source_material_citation_includes_source_type_and_date() {
+        let step = ingest_step(3, &serde_json::json!({}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        // Citation for source material must include source type, author, date
+        assert!(
+            instruction.contains("source type"),
+            "citation must include source type"
+        );
+        assert!(
+            instruction.contains("author"),
+            "citation must include author"
+        );
+        assert!(
+            instruction.contains("approximate date"),
+            "citation must include approximate date"
+        );
+    }
+
+    #[test]
+    fn test_ingest_research_has_source_material_check() {
+        let step = ingest_step(2, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        assert!(
+            instruction.contains("SOURCE MATERIAL CHECK"),
+            "research step must detect user-provided source material"
+        );
+        assert!(
+            instruction.contains("skip web research"),
+            "must tell agent to skip web research for source material"
+        );
+        assert!(
+            instruction.contains("training knowledge"),
+            "must warn against adding facts from training knowledge"
+        );
+    }
+
+    #[test]
+    fn test_ingest_research_source_material_check_runs_first() {
+        let step = ingest_step(2, &serde_json::json!({"topic": "test"}), &None, &wf());
+        let instruction = step["instruction"].as_str().unwrap();
+        let check_pos = instruction.find("SOURCE MATERIAL CHECK").unwrap();
+        let research_pos = instruction.find("Research '").unwrap();
+        assert!(
+            check_pos < research_pos,
+            "source material check must appear before the research instruction"
+        );
+    }
+
+    #[test]
     fn test_enrich_research_has_source_requirement() {
         let (db, _tmp) = test_db();
         let step = enrich_step(3, &serde_json::json!({}), &None, &db, None, &wf());
