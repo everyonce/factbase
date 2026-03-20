@@ -229,6 +229,27 @@ impl Database {
         Ok(())
     }
 
+    /// Update file_path and doc_type for a pure file move (content and embeddings unchanged).
+    ///
+    /// Used by the scanner when `is_moved && !is_modified` to avoid re-embedding.
+    pub fn update_document_path_and_type(
+        &self,
+        id: &str,
+        new_path: &str,
+        new_type: &str,
+    ) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        let repo_id = repo_id_for_doc(&conn, id);
+        conn.execute(
+            "UPDATE documents SET file_path = ?1, doc_type = ?2 WHERE id = ?3 AND is_deleted = FALSE",
+            rusqlite::params![new_path, new_type, id],
+        )?;
+        if let Some(repo) = repo_id {
+            self.invalidate_stats_cache(&repo);
+        }
+        Ok(())
+    }
+
     /// Update only the document type (used by organize retype)
     pub fn update_document_type(&self, id: &str, new_type: &str) -> Result<(), FactbaseError> {
         let conn = self.get_conn()?;

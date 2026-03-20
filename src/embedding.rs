@@ -388,7 +388,41 @@ pub mod test_helpers {
         v[(index + 1) % 1024] = offset;
         v
     }
-}
+
+    /// Mock embedding that counts how many times `generate` was called.
+    /// Useful for asserting that re-embedding was (or was not) triggered.
+    pub struct CountingEmbedding {
+        dim: usize,
+        count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl CountingEmbedding {
+        pub fn new(dim: usize) -> Self {
+            Self {
+                dim,
+                count: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            }
+        }
+
+        pub fn call_count(&self) -> usize {
+            self.count.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl EmbeddingProvider for CountingEmbedding {
+        fn generate<'a>(
+            &'a self,
+            _text: &'a str,
+        ) -> BoxFuture<'a, Result<Vec<f32>, FactbaseError>> {
+            self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async move { Ok(vec![0.1; self.dim]) })
+        }
+
+        fn dimension(&self) -> usize {
+            self.dim
+        }
+    }
+} // end test_helpers
 
 #[cfg(test)]
 mod tests {
