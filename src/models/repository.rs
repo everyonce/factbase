@@ -104,9 +104,9 @@ pub const PERSPECTIVE_TEMPLATE: &str = "\
 #   - name: catalog_number\n\
 #     pattern: '[A-Z]{1,3}[- ]?\\d+'\n\
 #     description: Record label catalog numbers (e.g., CL 1355, SD 1361)\n\
-#   - name: verse_reference\n\
+#   - name: section_ref\n\
 #     pattern: '\\w+ \\d+:\\d+'\n\
-#     description: Scripture verse references (e.g., Genesis 1:1)\n";
+#     description: Named section references in Word N:N format (e.g., Code 12:5, Title 42:1983)\n";
 
 /// Load and parse `perspective.yaml` from a repository root directory.
 ///
