@@ -7037,12 +7037,14 @@ mod tests {
             "bootstrap prompt should mention citation_patterns"
         );
         assert!(
-            prompt.contains("verse_reference"),
-            "bootstrap prompt should give verse_reference as a bible example"
+            prompt.contains("section_ref"),
+            "bootstrap prompt should give section_ref as a structured text example"
         );
         assert!(
-            prompt.contains("Genesis 1:1") || prompt.contains("John 3:16"),
-            "bootstrap prompt should show verse reference examples"
+            prompt.contains("Code 12:5")
+                || prompt.contains("Title 42:1983")
+                || prompt.contains("Section 4:7"),
+            "bootstrap prompt should show neutral section reference examples"
         );
     }
 

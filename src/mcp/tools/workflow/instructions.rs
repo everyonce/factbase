@@ -107,9 +107,9 @@ Good citation_patterns — domain-specific identifiers that make a source findab
   - name: catalog_number, pattern: [A-Z]{1,3}[- ]?\d+, description: Record label catalog numbers (CL 1355, SD 1361)
     WHY: Any music library or archive can locate an LP by catalog number.
 
-✅ Bible KB:
-  - name: verse_reference, pattern: \w+ \d+:\d+, description: Scripture verse references (Genesis 1:1, John 3:16)
-    WHY: Universally standardized reference system. Anyone with a Bible can find it.
+✅ Structured text KB (legal, classical, religious):
+  - name: section_ref, pattern: \w+ \d+:\d+, description: Named section references in Word N:N format (Code 12:5, Title 42:1983, Section 4:7)
+    WHY: Universally standardized reference format for structured documents.
 
 ✅ Legal KB:
   - name: statute_citation, pattern: \d+\s+U\.S\.C\.\s+§\s+\d+, description: US Code citations (42 U.S.C. § 1983)

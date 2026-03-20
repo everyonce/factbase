@@ -48,9 +48,9 @@ static NAMED_PERSON_REGEX: LazyLock<Regex> = LazyLock::new(|| {
         .expect("named person regex")
 });
 
-/// Scripture: book + chapter:verse (e.g. "Genesis 1:1", "John 3:16")
-static SCRIPTURE_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b[A-Z][a-z]+\s+\d+:\d+").expect("scripture regex"));
+/// Named section reference in the format Word N:N (e.g. legal codes, classical texts, structured documents)
+static SECTION_REF_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)\b[A-Z][a-z]+\s+\d+:\d+").expect("section ref regex"));
 
 /// Academic: author + year + venue (e.g. "Smith 2024, Nature 612:45" or "Smith et al. 2024")
 /// Matches: single capitalized word (non-month) + year, or "et al." pattern.
@@ -145,8 +145,8 @@ pub enum CitationType {
     SystemOrDb,
     /// Standards body document (RFC, ISO, IEEE) — body + number required.
     Standard,
-    /// Scripture reference — book + chapter:verse required.
-    Scripture,
+    /// Named section reference in the format Word N:N (e.g. legal codes, classical texts, structured documents).
+    SectionRef,
     /// Academic paper — author + venue + year required.
     Academic,
     /// Meeting, call, or conversation — participants + date required.
@@ -195,7 +195,7 @@ pub fn detect_citation_type(text: &str) -> CitationType {
     if CONVERSATION_REGEX.is_match(text) {
         return CitationType::Conversation;
     }
-    // Check ACADEMIC before SCRIPTURE to avoid "Nature 612:45" matching as scripture
+    // Check ACADEMIC before SECTION_REF to avoid "Nature 612:45" matching as section ref
     if ACADEMIC_REGEX.is_match(text) {
         // Exclude month-name + year patterns (e.g. "January 2026")
         let is_month_year = MONTH_NAMES.iter().any(|m| {
@@ -206,8 +206,8 @@ pub fn detect_citation_type(text: &str) -> CitationType {
             return CitationType::Academic;
         }
     }
-    if SCRIPTURE_REGEX.is_match(text) {
-        return CitationType::Scripture;
+    if SECTION_REF_REGEX.is_match(text) {
+        return CitationType::SectionRef;
     }
     if BOOK_REGEX.is_match(text) {
         return CitationType::Book;
@@ -263,8 +263,8 @@ pub fn validate_citation(ct: &CitationType, text: &str) -> bool {
             STANDARD_NUMBER_REGEX.is_match(text) || IDENTIFIER_REGEX.is_match(text)
         }
 
-        // Scripture: require book + chapter:verse
-        CitationType::Scripture => SCRIPTURE_REGEX.is_match(text),
+        // SectionRef: require Word N:N pattern
+        CitationType::SectionRef => SECTION_REF_REGEX.is_match(text),
 
         // Academic: require author + year (venue is optional for tier 1)
         CitationType::Academic => ACADEMIC_REGEX.is_match(text),
@@ -319,7 +319,7 @@ pub fn citation_failure_reason(ct: &CitationType) -> &'static str {
         CitationType::Email => "email source missing sender or date",
         CitationType::SystemOrDb => "system/DB source missing record ID (e.g. PROJ-678)",
         CitationType::Standard => "standard body present but no document number (e.g. RFC 7231)",
-        CitationType::Scripture => "scripture reference missing chapter:verse",
+        CitationType::SectionRef => "section reference missing part:section number",
         CitationType::Academic => "academic source missing author + year",
         CitationType::Conversation => "meeting/call source missing participants or date",
         CitationType::Unknown => {
@@ -450,8 +450,8 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_scripture() {
-        assert_eq!(detect_citation_type("Genesis 1:1"), CitationType::Scripture);
+    fn test_detect_section_ref() {
+        assert_eq!(detect_citation_type("Code 12:5"), CitationType::SectionRef);
     }
 
     #[test]
@@ -598,9 +598,9 @@ mod tests {
     }
 
     #[test]
-    fn test_scripture_with_verse_passes() {
-        let ct = CitationType::Scripture;
-        assert!(validate_citation(&ct, "Genesis 1:1"));
+    fn test_section_ref_with_number_passes() {
+        let ct = CitationType::SectionRef;
+        assert!(validate_citation(&ct, "Title 42:1983"));
     }
 
     #[test]
@@ -811,14 +811,19 @@ mod tests {
     }
 
     #[test]
-    fn test_genesis_verse_is_specific() {
-        assert!(is_citation_specific("Genesis 1:1"));
+    fn test_section_ref_is_specific() {
+        assert!(is_citation_specific("Title 42:1983"));
     }
 
     #[test]
-    fn test_genesis_alone_is_vague() {
-        // "Genesis" alone doesn't have chapter:verse
-        assert!(!is_citation_specific("Genesis"));
+    fn test_section_ref_legal_code_is_specific() {
+        assert!(is_citation_specific("Code 12:5"));
+    }
+
+    #[test]
+    fn test_section_ref_alone_is_vague() {
+        // "Section" alone doesn't have part:section number
+        assert!(!is_citation_specific("Section"));
     }
 
     #[test]
