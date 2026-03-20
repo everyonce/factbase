@@ -46,18 +46,30 @@ fn fact_coverage_counts(content: &str) -> (u32, u32, u32) {
     (facts, temporal, sourced)
 }
 
-/// Hard enforcement: returns an error when fact lines exist but have zero temporal tags
-/// AND zero source citations. This is the "completely bare" case with no documentation attempt.
+/// Hard enforcement: returns an error when fact lines exist but are missing temporal tags
+/// OR source citations. Both are required — facts must be dated and sourced.
 fn content_coverage_error(content: &str) -> Option<FactbaseError> {
     let (facts, temporal, sourced) = fact_coverage_counts(content);
-    if facts > 0 && temporal == 0 && sourced == 0 {
-        Some(FactbaseError::parse(format!(
+    if facts == 0 {
+        return None;
+    }
+    match (temporal == 0, sourced == 0) {
+        (true, true) => Some(FactbaseError::parse(format!(
             "Content has {facts} fact lines with no temporal tags or source citations. \
              Add @t[...] temporal tags and [^N] source footnotes before writing. \
              Call factbase(op='authoring_guide') for format requirements."
-        )))
-    } else {
-        None
+        ))),
+        (true, false) => Some(FactbaseError::parse(format!(
+            "Content has {facts} fact lines with no temporal tags. \
+             Add @t[...] tags before writing (e.g. @t[2024], @t[2020..2024], @t[?]). \
+             Call factbase(op='authoring_guide') for format requirements."
+        ))),
+        (false, true) => Some(FactbaseError::parse(format!(
+            "Content has {facts} fact lines with no source citations. \
+             Add [^N] footnotes before writing (e.g. [^1] inline, then [^1]: Source at bottom). \
+             Call factbase(op='authoring_guide') for format requirements."
+        ))),
+        (false, false) => None,
     }
 }
 
@@ -777,17 +789,27 @@ mod tests {
     }
 
     #[test]
-    fn test_coverage_error_has_temporal_no_error() {
-        // At least one temporal tag → no hard error (only warning)
+    fn test_coverage_error_has_temporal_no_source_errors() {
+        // Temporal tag present but no source citations → hard error (both required)
         let content = "- fact @t[2024]\n- bare fact";
-        assert!(content_coverage_error(content).is_none());
+        let err = content_coverage_error(content);
+        assert!(err.is_some());
+        assert!(
+            err.unwrap().to_string().contains("no source citations"),
+            "error should mention missing sources"
+        );
     }
 
     #[test]
-    fn test_coverage_error_has_source_no_error() {
-        // At least one source citation → no hard error (only warning)
+    fn test_coverage_error_has_source_no_temporal_errors() {
+        // Source citation present but no temporal tags → hard error (both required)
         let content = "- fact [^1]\n- bare fact";
-        assert!(content_coverage_error(content).is_none());
+        let err = content_coverage_error(content);
+        assert!(err.is_some());
+        assert!(
+            err.unwrap().to_string().contains("no temporal tags"),
+            "error should mention missing temporal tags"
+        );
     }
 
     #[test]
@@ -1295,8 +1317,8 @@ mod tests {
     }
 
     #[test]
-    fn test_create_document_warns_partial_coverage() {
-        // Has temporal but no sources → warning (not error)
+    fn test_create_document_errors_on_temporal_only_content() {
+        // Has temporal but no sources → hard error (both required)
         use crate::database::tests::test_db;
         use crate::models::Repository;
         use tempfile::TempDir;
@@ -1320,9 +1342,13 @@ mod tests {
             "title": "Test",
             "content": "- fact @t[2024]\n- bare fact"
         });
-        let result = create_document(&db, &args).unwrap();
-        // Partial coverage → warning but write succeeds
-        assert!(result.get("warning").is_some());
+        let result = create_document(&db, &args);
+        assert!(result.is_err(), "temporal-only content should error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("no source citations"),
+            "error should mention missing sources: {err}"
+        );
     }
 
     #[test]
