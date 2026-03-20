@@ -4,6 +4,7 @@
 //! per-fact embeddings for cross-document validation.
 
 use std::collections::HashSet;
+use std::time::Instant;
 
 use sha2::{Digest, Sha256};
 use tracing::debug;
@@ -11,6 +12,13 @@ use tracing::debug;
 use crate::progress::ProgressReporter;
 use crate::question_generator::facts::extract_all_facts;
 use crate::{Database, EmbeddingProvider};
+
+/// Minimum number of documents before emitting interval progress messages.
+const PROGRESS_THRESHOLD: usize = 50;
+/// Emit a progress line every N documents processed.
+const PROGRESS_INTERVAL_DOCS: usize = 10;
+/// Also emit a progress line if this many seconds have elapsed since the last one.
+const PROGRESS_INTERVAL_SECS: u64 = 5;
 
 /// Input for the fact embedding phase.
 pub struct FactEmbeddingInput<'a> {
@@ -34,6 +42,8 @@ pub struct FactEmbeddingOutput {
 /// For each changed document, extracts facts, skips those with unchanged
 /// hashes, and generates embeddings for new/modified facts.
 /// Respects an optional deadline — returns early if time runs out.
+///
+/// Emits granular progress via `input.progress` for repos with ≥50 documents.
 pub async fn run_fact_embedding_phase(
     input: &FactEmbeddingInput<'_>,
 ) -> anyhow::Result<FactEmbeddingOutput> {
@@ -44,13 +54,24 @@ pub async fn run_fact_embedding_phase(
         });
     }
 
+    let total_docs = input.changed_ids.len();
+    let start = Instant::now();
+    let large_repo = total_docs >= PROGRESS_THRESHOLD;
+
+    if large_repo {
+        input.progress.log(&format!(
+            "Generating fact embeddings for {total_docs} documents..."
+        ));
+    }
+
     let mut total_generated = 0usize;
     let mut docs_processed = 0usize;
+    let mut last_progress = Instant::now();
 
     for doc_id in input.changed_ids {
         // Check deadline before processing each document
         if let Some(dl) = input.deadline {
-            if std::time::Instant::now() > dl {
+            if Instant::now() > dl {
                 break;
             }
         }
@@ -65,6 +86,7 @@ pub async fn run_fact_embedding_phase(
 
         let facts = extract_all_facts(&doc.content);
         if facts.is_empty() {
+            docs_processed += 1;
             continue;
         }
 
@@ -115,12 +137,28 @@ pub async fn run_fact_embedding_phase(
         );
 
         docs_processed += 1;
+
+        // Emit interval progress for large repos
+        if large_repo {
+            let since_last = last_progress.elapsed().as_secs();
+            if docs_processed.is_multiple_of(PROGRESS_INTERVAL_DOCS)
+                || since_last >= PROGRESS_INTERVAL_SECS
+            {
+                input.progress.report(
+                    docs_processed,
+                    total_docs,
+                    &format!("fact embeddings ({total_generated} facts embedded)"),
+                );
+                last_progress = Instant::now();
+            }
+        }
     }
 
+    let elapsed_secs = start.elapsed().as_secs();
     if total_generated > 0 {
-        input
-            .progress
-            .log(&format!("{total_generated} fact embeddings generated"));
+        input.progress.log(&format!(
+            "Fact embeddings complete: {docs_processed} documents, {total_generated} facts in {elapsed_secs}s"
+        ));
     }
 
     Ok(FactEmbeddingOutput {
@@ -307,5 +345,121 @@ mod tests {
                 docs_processed: 0
             }
         );
+    }
+
+    /// Small repos (<50 docs) should not emit start/interval progress messages.
+    #[tokio::test]
+    async fn test_small_repo_no_interval_progress() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let progress = ProgressReporter::Mcp { sender: Some(tx) };
+        let embedding = MockEmbedding::new(1024);
+
+        // Insert 5 docs (below PROGRESS_THRESHOLD)
+        let mut changed = HashSet::new();
+        for i in 0..5 {
+            let id = format!("sm{i:04}");
+            let content = format!("---\nfactbase_id: {id}\n---\n# Doc {i}\n\n- Fact {i}\n");
+            db.upsert_document(&make_doc(&id, &content)).unwrap();
+            changed.insert(id);
+        }
+
+        run_fact_embedding_phase(&FactEmbeddingInput {
+            changed_ids: &changed,
+            embedding: &embedding,
+            db: &db,
+            embedding_batch_size: 10,
+            progress: &progress,
+            deadline: None,
+        })
+        .await
+        .unwrap();
+
+        // Collect all messages
+        let mut messages: Vec<serde_json::Value> = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            messages.push(msg);
+        }
+
+        // No "progress" (interval) messages for small repos
+        let has_interval = messages.iter().any(|m| m.get("progress").is_some());
+        assert!(
+            !has_interval,
+            "small repos should not emit interval progress"
+        );
+
+        // Completion log should still appear (total_generated > 0)
+        let has_completion = messages.iter().any(|m| {
+            m.get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.contains("Fact embeddings complete"))
+                .unwrap_or(false)
+        });
+        assert!(
+            has_completion,
+            "completion log should always appear when facts were generated"
+        );
+    }
+
+    /// Large repos (≥50 docs) should emit start log and interval progress messages.
+    #[tokio::test]
+    async fn test_large_repo_emits_progress() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let progress = ProgressReporter::Mcp { sender: Some(tx) };
+        let embedding = MockEmbedding::new(1024);
+
+        // Insert PROGRESS_THRESHOLD docs (exactly at threshold)
+        let mut changed = HashSet::new();
+        for i in 0..PROGRESS_THRESHOLD {
+            let id = format!("lg{i:04}");
+            let content = format!("---\nfactbase_id: {id}\n---\n# Doc {i}\n\n- Fact {i}\n");
+            db.upsert_document(&make_doc(&id, &content)).unwrap();
+            changed.insert(id);
+        }
+
+        run_fact_embedding_phase(&FactEmbeddingInput {
+            changed_ids: &changed,
+            embedding: &embedding,
+            db: &db,
+            embedding_batch_size: 10,
+            progress: &progress,
+            deadline: None,
+        })
+        .await
+        .unwrap();
+
+        let mut messages: Vec<serde_json::Value> = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            messages.push(msg);
+        }
+
+        // Start message should appear
+        let has_start = messages.iter().any(|m| {
+            m.get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.contains("Generating fact embeddings for"))
+                .unwrap_or(false)
+        });
+        assert!(has_start, "large repos should emit start message");
+
+        // At least one interval progress message should appear
+        let has_interval = messages.iter().any(|m| m.get("progress").is_some());
+        assert!(has_interval, "large repos should emit interval progress");
+
+        // Completion log should appear
+        let has_completion = messages.iter().any(|m| {
+            m.get("message")
+                .and_then(|v| v.as_str())
+                .map(|s| s.contains("Fact embeddings complete"))
+                .unwrap_or(false)
+        });
+        assert!(has_completion, "large repos should emit completion log");
     }
 }
