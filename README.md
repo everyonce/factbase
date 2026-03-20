@@ -53,10 +53,11 @@ Optional power features (plain markdown works without these):
 
 ## Prerequisites
 
-- Rust 1.70+
-- No other dependencies needed — local CPU embeddings work out of the box
-- Optional: AWS credentials for [Amazon Bedrock](docs/inference-providers.md) (higher quality embeddings)
-- Optional: [Ollama](https://ollama.ai) for self-hosted inference (see [docs/inference-providers.md](docs/inference-providers.md))
+No setup required. Install via `npx` or download a pre-built binary and you're done.
+
+**Embeddings:** Factbase uses CPU-based embeddings by default — no configuration needed. For faster embedding generation on large knowledge bases, you can optionally configure [Ollama](https://ollama.ai) (local) or AWS Bedrock (cloud). See [docs/inference-providers.md](docs/inference-providers.md) for details.
+
+> **Note:** Rust is only required if you are building from source. If you are using factbase via npm or a pre-built binary, no Rust installation is needed.
 
 ## Installation
 
