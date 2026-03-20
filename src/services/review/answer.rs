@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn test_answer_question_with_confidence_believed_treated_as_deferred() {
-        // confidence='believed' is backward compat — treated as deferred
+        // confidence='believed' is a legacy alias — treated as deferred, never stored as 'believed'
         use tempfile::TempDir;
         let dir = TempDir::new().unwrap();
         let repo_dir = dir.path().join("myrepo");
@@ -684,6 +684,16 @@ mod tests {
             ..crate::models::Document::test_default()
         };
         db.upsert_document(&doc).unwrap();
+        // Pre-sync the question so the DB row exists for status verification
+        db.sync_review_questions(
+            "abc123",
+            &[crate::models::ReviewQuestion::new(
+                crate::models::QuestionType::Temporal,
+                Some(4),
+                "Line 4: When?".to_string(),
+            )],
+        )
+        .unwrap();
 
         let result = answer_question(
             &db,
@@ -696,8 +706,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["success"], true);
-        // believed → deferred
+        // believed → deferred (response)
         assert_eq!(result["deferred"], true);
+        // believed must NOT be stored as 'believed' in the DB — only 'deferred' is valid
+        let params = crate::database::ReviewQueueDbParams {
+            doc_id: Some("abc123".to_string()),
+            limit: 10,
+            status_filter: "deferred".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, deferred) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(
+            deferred, 1,
+            "question should be stored as deferred, not believed"
+        );
+        assert!(
+            qs.iter().all(|q| q["status"] != "believed"),
+            "status must never be 'believed' in DB: {qs:?}"
+        );
     }
 
     #[test]

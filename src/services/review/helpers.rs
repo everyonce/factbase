@@ -84,10 +84,10 @@ pub fn count_queue_questions(
 /// Resolve confidence from args.
 ///
 /// - `confidence='author'` → resolved (not deferred), prefixed with `author: `
-/// - `confidence='believed'` → treated as `deferred` (backward compat, not an error)
+/// - `confidence='believed'` → legacy alias for `deferred` (read compat only; new writes must use 'defer')
 /// - `confidence='verified'` or omitted → resolved (not deferred), answer as-is
 /// - `answer` starting with `defer:` → deferred with the note after the prefix
-/// - `answer` starting with `believed:` → deferred (backward compat for existing docs)
+/// - `answer` starting with `believed:` → deferred (legacy read compat for existing docs)
 pub fn resolve_confidence(
     answer: &str,
     confidence: Option<&str>,
@@ -108,7 +108,7 @@ pub fn resolve_confidence(
         return Ok((true, answer["believed: ".len()..].to_string()));
     }
     match confidence {
-        // Backward compat: confidence='believed' → deferred (not an error)
+        // Legacy alias: confidence='believed' → deferred (never written as 'believed' to DB)
         Some("believed") => Ok((true, answer.to_string())),
         Some("author") => Ok((false, format!("author: {answer}"))),
         _ => Ok((false, answer.to_string())),
@@ -214,8 +214,8 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_confidence_believed_compat_treated_as_deferred() {
-        // confidence='believed' is backward compat — treated as deferred, not an error
+    fn test_resolve_confidence_believed_legacy_alias_treated_as_deferred() {
+        // confidence='believed' is a legacy alias — treated as deferred, never stored as 'believed'
         let (defer, text) = resolve_confidence("Still accurate", Some("believed")).unwrap();
         assert!(defer);
         assert_eq!(text, "Still accurate");
