@@ -693,7 +693,7 @@ mod tests {
                 "name": "update_document",
                 "arguments": {
                     "id": "def456",
-                    "content": "---\nfactbase_id: def456\n---\n# Fixed Name\n\n- cleaned fact"
+                    "content": "---\nfactbase_id: def456\n---\n# Fixed Name\n\n- cleaned fact @t[2024] [^1]"
                 }
             }
         })
