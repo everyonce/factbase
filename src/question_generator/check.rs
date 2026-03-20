@@ -583,7 +583,8 @@ mod tests {
         let embedding = MockEmbedding::new(4);
         // Use a cited fact so the temporal generator still produces the question,
         // and the existing question in the review queue matches → kept (not pruned).
-        let content = "- Fact one [^1]\n\n[^1]: Some source\n\n<!-- factbase:review -->\n## Review Queue\n\n\
+        let content =
+            "- Fact one [^1]\n\n[^1]: Some source\n\n<!-- factbase:review -->\n## Review Queue\n\n\
                        - [ ] `@q[temporal]` \"Fact one [^1]\" - when was this true?\n  > \n";
         let docs = vec![make_doc("aaa", "Test", content)];
         let config = CheckConfig {

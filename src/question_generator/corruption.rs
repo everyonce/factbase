@@ -184,18 +184,29 @@ fn check_undated_url_citations(content: &str, questions: &mut Vec<ReviewQuestion
                 continue;
             }
             // Check for any YYYY-MM-DD date pattern
-            let has_date = def_text
-                .as_bytes()
-                .windows(10)
-                .any(|w| matches!(w, [b'0'..=b'9', b'0'..=b'9', b'0'..=b'9', b'0'..=b'9', b'-', b'0'..=b'9', b'0'..=b'9', b'-', b'0'..=b'9', b'0'..=b'9']));
+            let has_date = def_text.as_bytes().windows(10).any(|w| {
+                matches!(
+                    w,
+                    [
+                        b'0'..=b'9',
+                        b'0'..=b'9',
+                        b'0'..=b'9',
+                        b'0'..=b'9',
+                        b'-',
+                        b'0'..=b'9',
+                        b'0'..=b'9',
+                        b'-',
+                        b'0'..=b'9',
+                        b'0'..=b'9'
+                    ]
+                )
+            });
             if !has_date {
                 let num = &cap[1];
                 questions.push(ReviewQuestion::new(
                     QuestionType::Corruption,
                     Some(line_idx + 1),
-                    format!(
-                        "Footnote [^{num}] has a URL but no date — add 'accessed YYYY-MM-DD'"
-                    ),
+                    format!("Footnote [^{num}] has a URL but no date — add 'accessed YYYY-MM-DD'"),
                 ));
             }
         }
@@ -421,7 +432,8 @@ mod tests {
 
     #[test]
     fn test_dated_url_citation_not_flagged() {
-        let content = "- Fact [^1]\n\n[^1]: https://docs.aws.amazon.com/some/page, accessed 2026-03-20\n";
+        let content =
+            "- Fact [^1]\n\n[^1]: https://docs.aws.amazon.com/some/page, accessed 2026-03-20\n";
         let questions = generate_corruption_questions(content);
         assert!(
             !questions
