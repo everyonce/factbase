@@ -416,7 +416,11 @@ pub async fn full_scan(
             // When force_reindex is set, treat unchanged docs as needing reindex
             let is_reindex = ctx.opts.force_reindex && !is_new && !is_modified && !is_moved;
 
-            changed_ids.insert(id.clone());
+            // Pure move (content unchanged): embeddings and links are still valid — don't
+            // add to changed_ids so link detection and fact re-embedding are also skipped.
+            if !is_moved || is_modified {
+                changed_ids.insert(id.clone());
+            }
 
             let title = ctx.processor.extract_title(&content, &pre.path);
 
@@ -474,6 +478,13 @@ pub async fn full_scan(
                         fs::write(&pre.path, &updated)?;
                     }
                 }
+            }
+
+            // Pure move: update path/type in DB and skip re-embedding.
+            // Content and embeddings (keyed by doc_id) are still valid.
+            if is_moved && !is_modified {
+                db.update_document_path_and_type(&id, &relative, &doc_type)?;
+                continue;
             }
             // Validate type against allowed_types if configured
             if let Some(ref perspective) = repo.perspective {
@@ -2176,6 +2187,116 @@ mod tests {
         assert!(
             results[0].review_section_hash.is_none(),
             "no review section → no hash"
+        );
+    }
+
+    /// Pure move (content unchanged): scan should update file_path in DB without re-embedding.
+    #[tokio::test]
+    async fn test_full_scan_pure_move_skips_reembedding() {
+        use crate::embedding::test_helpers::CountingEmbedding;
+
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        // Pre-assign a valid hex ID so the first scan doesn't re-embed due to ID injection
+        let content = "---\nfactbase_id: ab0011\n---\n# Doc\n\nContent.\n";
+        let path = tmp.path().join("original.md");
+        std::fs::write(&path, content).unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let link_detector = LinkDetector::new();
+        let embedding = CountingEmbedding::new(1024);
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+
+        // First scan: doc is new, gets embedded
+        let r1 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r1.added, 1);
+        let calls_after_first = embedding.call_count();
+        assert!(calls_after_first > 0, "should embed on first scan");
+
+        // Move the file (same content, different path)
+        let subdir = tmp.path().join("subdir");
+        std::fs::create_dir(&subdir).unwrap();
+        let new_path = subdir.join("moved.md");
+        std::fs::rename(&path, &new_path).unwrap();
+
+        // Second scan: pure move — must NOT re-embed
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.moved, 1, "should count as moved");
+        assert_eq!(r2.updated, 0, "should not count as updated");
+        assert_eq!(
+            embedding.call_count(),
+            calls_after_first,
+            "no new embedding calls for pure move"
+        );
+
+        // DB file_path must be updated
+        let doc = db.get_document("ab0011").unwrap().unwrap();
+        assert_eq!(doc.file_path, "subdir/moved.md");
+    }
+
+    /// Move + modify: scan should re-embed because content changed.
+    #[tokio::test]
+    async fn test_full_scan_move_and_modify_reembeds() {
+        use crate::embedding::test_helpers::CountingEmbedding;
+
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        let content = "---\nfactbase_id: ab0022\n---\n# Doc\n\nOriginal content.\n";
+        let path = tmp.path().join("original.md");
+        std::fs::write(&path, content).unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let link_detector = LinkDetector::new();
+        let embedding = CountingEmbedding::new(1024);
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+
+        // First scan
+        let r1 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r1.added, 1);
+        let calls_after_first = embedding.call_count();
+
+        // Move AND modify the file
+        let subdir = tmp.path().join("subdir");
+        std::fs::create_dir(&subdir).unwrap();
+        let new_path = subdir.join("moved.md");
+        let modified = content.replace("Original content.", "Modified content.");
+        std::fs::write(&new_path, &modified).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        // Second scan: move + modify — must re-embed
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r2.updated, 1, "move+modify should count as updated");
+        assert!(
+            embedding.call_count() > calls_after_first,
+            "should re-embed when content changed"
         );
     }
 }
