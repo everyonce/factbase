@@ -2415,6 +2415,42 @@ mod tests {
         );
     }
 
+    // Scenario 5: agent self-authorizes from document context (conflict/self-consistent)
+    #[test]
+    fn test_resolve_intro_bans_author_in_automated_context() {
+        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        assert!(
+            intro.contains("PROHIBITED in automated"),
+            "resolve intro must explicitly ban author: in automated/non-interactive runs"
+        );
+        assert!(
+            intro.contains("document-internal"),
+            "resolve intro must show document-internal as the correct alternative for self-consistent facts"
+        );
+        assert!(
+            intro.contains("Reasoning from document context does NOT qualify"),
+            "resolve intro must state that reasoning from doc context does not authorize author:"
+        );
+    }
+
+    // Scenario 6: agent self-authorizes for terminology (precision question)
+    #[test]
+    fn test_resolve_answer_instruction_bans_author_in_automated_context() {
+        let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
+        assert!(
+            instr.contains("PROHIBITED in automated"),
+            "resolve answer instruction must explicitly ban author: in automated runs"
+        );
+        assert!(
+            instr.contains("document-internal"),
+            "resolve answer instruction must show document-internal as alternative"
+        );
+        assert!(
+            instr.contains("Being confident") || instr.contains("reasoning from document context"),
+            "resolve answer instruction must state confidence alone does not authorize author:"
+        );
+    }
+
     #[test]
     fn test_resolve_stale_days_in_instructions() {
         let p = mock_perspective();
