@@ -445,6 +445,11 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
     if !stored_suggestions.is_empty() {
         response["suggestions_stored"] = serde_json::json!(stored_suggestions);
     }
+    if let Some(c) = new_content {
+        if let Some(warning) = content_coverage_warning(c) {
+            response["warning"] = Value::String(warning);
+        }
+    }
 
     Ok(response)
 }
@@ -2069,5 +2074,54 @@ mod tests {
             "review section present"
         );
         assert!(on_disk.contains("@q[temporal]"), "question preserved");
+    }
+
+    #[test]
+    fn test_update_document_coverage_warning_on_low_coverage_content() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "---\nfactbase_id: abc123\n---\n# Title\n\nOld body").unwrap();
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: "---\nfactbase_id: abc123\n---\n# Title\n\nOld body".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Content with facts but no temporal tags or citations → should warn
+        let args = serde_json::json!({"id": "abc123", "content": "- bare fact one\n- bare fact two"});
+        let result = update_document(&db, &args).unwrap();
+        assert!(
+            result.get("warning").is_some(),
+            "should warn on low-coverage update: {result}"
+        );
+
+        // Content with full coverage → no warning
+        let args = serde_json::json!({"id": "abc123", "content": "- fact @t[2024] [^1]\n- fact @t[2023] [^2]"});
+        let result = update_document(&db, &args).unwrap();
+        assert!(
+            result.get("warning").is_none(),
+            "should not warn on well-covered update: {result}"
+        );
     }
 }
