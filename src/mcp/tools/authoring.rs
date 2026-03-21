@@ -175,6 +175,13 @@ pub fn get_authoring_guide() -> Value {
             "rename_workflow": "If you rename a file in Obsidian, Obsidian auto-updates its own wikilinks. However, the factbase database still holds the old path. Run factbase(op=scan) after renaming to sync the database with the new path. The document's factbase ID (in the frontmatter or HTML comment) is stable across renames — no data is lost.",
             "adding_content": "Content added or edited in Obsidian is picked up automatically on the next scan or get_entity call. No special steps needed.",
             "tip": "If you alternate between Obsidian and an agent, run factbase(op=scan) at the start of each agent session to ensure the database reflects any file renames or moves made in Obsidian."
+        },
+        "git_versioning": {
+            "description": "Git versioning is strongly recommended for any factbase KB. The filesystem is the source of truth — git gives you rollback, audit trail, and multi-agent safety.",
+            "tip": "The setup workflow automatically initializes git and creates an initial commit. Commit after each session:\n  `git commit -am 'maintain: YYYY-MM-DD'`",
+            "database_recovery": "The `.factbase/factbase.db` database is excluded from git (it's regenerable). If you lose it, run `factbase scan` to rebuild from your committed markdown files.",
+            "what_to_commit": "Commit your markdown files, perspective.yaml, and .factbase/instructions/. Do NOT commit .factbase/factbase.db or .fastembed_cache/ — these are regenerable and large.",
+            "gitignore": "The setup workflow writes a .gitignore that excludes regenerable artifacts (.factbase/factbase.db, .fastembed_cache/) and OS/editor noise (.DS_Store, .vscode/, etc.)."
         }
     })
 }
@@ -347,6 +354,22 @@ mod tests {
         assert!(obs["rename_workflow"].as_str().unwrap().contains("scan"));
         assert!(obs["compatibility"].is_array());
         assert!(obs["tip"].is_string());
+    }
+
+    #[test]
+    fn test_authoring_guide_has_git_versioning_section() {
+        let guide = get_authoring_guide();
+        let git = &guide["git_versioning"];
+        assert!(git["description"].is_string());
+        assert!(git["tip"].as_str().unwrap().contains("git commit"));
+        assert!(git["database_recovery"]
+            .as_str()
+            .unwrap()
+            .contains("factbase scan"));
+        assert!(git["gitignore"]
+            .as_str()
+            .unwrap()
+            .contains(".factbase/factbase.db"));
     }
 
     #[test]
