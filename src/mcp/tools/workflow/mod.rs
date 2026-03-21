@@ -295,6 +295,9 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             if let Some(obsidian) = apply_obsidian_files(path) {
                 resp["obsidian_git_setup"] = obsidian;
             }
+            if path != "the target directory" {
+                resp["git_setup"] = apply_git_init(path);
+            }
             resp
         }
         _ => serde_json::json!({
@@ -3393,6 +3396,37 @@ mod tests {
         std::fs::write(tmp.path().join("perspective.yaml"), "focus: Test\n").unwrap();
         let step = setup_step(7, &serde_json::json!({"path": path}), &wf());
         assert!(step.get("obsidian_git_setup").is_none());
+    }
+
+    #[test]
+    fn test_setup_step7_git_setup_included() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        std::fs::write(tmp.path().join("perspective.yaml"), "focus: Test\n").unwrap();
+        let step = setup_step(7, &serde_json::json!({"path": path}), &wf());
+        assert!(step["complete"].as_bool().unwrap());
+        // git_setup should be present when a real path is given
+        assert!(
+            step.get("git_setup").is_some(),
+            "git_setup should be present for real path"
+        );
+        let git_setup = &step["git_setup"];
+        assert!(git_setup["status"].is_string());
+        // .gitignore should be written
+        assert!(
+            tmp.path().join(".gitignore").exists(),
+            ".gitignore should be created"
+        );
+    }
+
+    #[test]
+    fn test_setup_step7_no_git_setup_for_default_path() {
+        let step = setup_step(7, &serde_json::json!({}), &wf());
+        assert!(step["complete"].as_bool().unwrap());
+        assert!(
+            step.get("git_setup").is_none(),
+            "git_setup should not be present for default path"
+        );
     }
 
     #[test]
