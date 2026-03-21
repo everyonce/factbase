@@ -78,6 +78,14 @@ fn content_coverage_error(content: &str) -> Option<FactbaseError> {
 fn content_coverage_warning(content: &str) -> Option<String> {
     let (facts, temporal, sourced) = fact_coverage_counts(content);
     if facts == 0 {
+        // Warn if content is non-trivial but has no bullet-point facts
+        if content.len() > 100 {
+            return Some(
+                "⚠️ 0 facts indexed — facts must be bullet-point list items starting with `- `. \
+                 Prose paragraphs are ignored. Call get_authoring_guide for format requirements."
+                    .to_string(),
+            );
+        }
         return None;
     }
     let temporal_pct = temporal as f64 / facts as f64;
@@ -728,7 +736,24 @@ mod tests {
 
     #[test]
     fn test_coverage_warning_no_facts() {
+        // Short content (≤100 chars) with no facts → no warning
         assert!(content_coverage_warning("Just a paragraph").is_none());
+    }
+
+    #[test]
+    fn test_coverage_warning_no_facts_trivial_content() {
+        // Short stub → no warning
+        assert!(content_coverage_warning("Short.").is_none());
+    }
+
+    #[test]
+    fn test_coverage_warning_no_facts_nontrivial_content() {
+        // Non-trivial prose (>100 chars) with no bullet facts → warn about bullet format
+        let content = "This is a long prose paragraph that describes many things about the subject but does not use bullet points at all.";
+        assert!(content.len() > 100);
+        let w = content_coverage_warning(content).unwrap();
+        assert!(w.contains("0 facts indexed"));
+        assert!(w.contains("bullet-point list items"));
     }
 
     #[test]

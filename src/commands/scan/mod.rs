@@ -314,6 +314,15 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
             }
         }
         if let Some(ref temporal) = result.temporal_stats {
+            if temporal.docs_with_no_facts > 0 {
+                eprintln!(
+                    "{}",
+                    factbase::error::format_warning(&format!(
+                        "{} document(s) have content but 0 indexed facts — are facts written as bullet-point list items starting with `- `?",
+                        temporal.docs_with_no_facts
+                    ))
+                );
+            }
             if temporal.total_facts > 0 {
                 let warn_icon = if temporal.below_threshold_docs > 0 {
                     "⚠ "

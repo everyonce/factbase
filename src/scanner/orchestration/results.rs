@@ -71,6 +71,7 @@ pub(super) fn build_interrupted_result(params: InterruptedResultParams) -> ScanR
             below_threshold_docs: params.below_threshold_docs,
             facts_with_sources: params.facts_with_sources,
             source_coverage,
+            docs_with_no_facts: 0,
         }),
         interrupted: true,
         embeddings_skipped: false,

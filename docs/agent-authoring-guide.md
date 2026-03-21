@@ -67,6 +67,26 @@ More content...
 
 ---
 
+## ⚠️ Facts Must Be Bullet-Point List Items
+
+**Factbase only indexes lines starting with `- ` as facts.** Prose paragraphs are ignored — they are embedded for semantic search but produce 0 indexed facts, no temporal coverage, and no review questions.
+
+✅ Correct:
+```markdown
+- The Lambda function supports up to 10GB memory @t[2023-11] [^1]
+- Deployed to us-east-1 and eu-west-1 @t[2024-Q1]
+```
+
+❌ Wrong (will be silently ignored as facts):
+```
+Lambda functions support up to 10GB memory (as of November 2023).
+Deployed to us-east-1 and eu-west-1 as of Q1 2024.
+```
+
+Every section that contains factual claims must use bullet-point list items. Prose is fine for introductory summaries, but the facts themselves must be `- ` list items.
+
+---
+
 ## Temporal Tags (Critical)
 
 **Every dynamic fact MUST include a temporal tag.** Facts without dates become unreliable and unsearchable by time.
