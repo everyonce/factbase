@@ -27,8 +27,8 @@ pub struct Link {
 // Re-export all public items for backward compatibility
 pub use document::{word_count, Document};
 pub use format::{
-    ensure_obsidian_gitignore, write_obsidian_app_json, write_obsidian_css_snippet, FormatConfig,
-    IdPlacement, LinkStyle, ResolvedFormat,
+    ensure_kb_gitignore, ensure_obsidian_gitignore, write_obsidian_app_json,
+    write_obsidian_css_snippet, FormatConfig, IdPlacement, LinkStyle, ResolvedFormat,
 };
 pub use question::{QuestionType, ReviewQuestion};
 pub use repository::{

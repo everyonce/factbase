@@ -591,6 +591,81 @@ pub(super) fn build_continuation_guidance(
     }
 }
 
+/// Initialize git in the KB directory if not already a git repo.
+/// Writes `.gitignore`, then runs `git init && git add -A && git commit` if needed.
+/// Skips gracefully if git is not installed.
+/// Returns a JSON value describing what was done.
+pub(super) fn apply_git_init(path: &str) -> Value {
+    let repo_path = std::path::Path::new(path);
+    if !repo_path.exists() {
+        return serde_json::json!({"status": "skipped", "message": "path does not exist"});
+    }
+
+    // Write .gitignore
+    let gitignore_updated = match crate::models::ensure_kb_gitignore(repo_path) {
+        Ok(added) => added,
+        Err(e) => {
+            tracing::warn!("Failed to write .gitignore: {e}");
+            false
+        }
+    };
+
+    // Check if already a git repo
+    let is_git_repo = std::process::Command::new("git")
+        .args(["rev-parse", "--is-inside-work-tree"])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    const TIP: &str = "Your KB is git-tracked. Commit after each session to checkpoint your work:\n  `git commit -am 'maintain: YYYY-MM-DD'`\nIf you lose the database, run `factbase scan` to rebuild it from your files.";
+
+    if is_git_repo {
+        return serde_json::json!({
+            "status": "already_tracked",
+            "message": "KB is already git-tracked ✓",
+            "gitignore_updated": gitignore_updated,
+            "tip": TIP
+        });
+    }
+
+    // Try git init
+    let init_ok = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !init_ok {
+        return serde_json::json!({
+            "status": "skipped",
+            "message": "git not available or init failed — skipping git setup",
+            "gitignore_updated": gitignore_updated
+        });
+    }
+
+    let _ = std::process::Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(repo_path)
+        .output();
+
+    let commit_ok = std::process::Command::new("git")
+        .args(["commit", "-m", "init: factbase KB bootstrap"])
+        .current_dir(repo_path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    serde_json::json!({
+        "status": "initialized",
+        "message": "KB git repository initialized ✓",
+        "initial_commit": commit_ok,
+        "gitignore_updated": gitignore_updated,
+        "tip": TIP
+    })
+}
+
 /// Build quality stats JSON for a single entity by doc_id.
 pub(super) fn entity_quality(db: &Database, doc_id: &str) -> Option<Value> {
     let doc = db.get_document(doc_id).ok()??;
@@ -996,6 +1071,95 @@ mod tests {
         assert_eq!(steps[0].1, "cleanup");
         assert_eq!(steps[1].1, "enrich");
         assert_eq!(steps[2].1, "scan");
+    }
+
+    // --- apply_git_init ---
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn test_apply_git_init_new_repo() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        // Write a file so there's something to commit
+        std::fs::write(tmp.path().join("README.md"), "# Test KB\n").unwrap();
+
+        let result = apply_git_init(&path);
+        assert_eq!(result["status"], "initialized");
+        assert!(tmp.path().join(".git").exists(), ".git should be created");
+        assert!(
+            tmp.path().join(".gitignore").exists(),
+            ".gitignore should be created"
+        );
+        let gitignore = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(gitignore.contains(".factbase/factbase.db"));
+        assert_eq!(result["gitignore_updated"], true);
+        assert!(result["tip"].as_str().unwrap().contains("factbase scan"));
+    }
+
+    #[test]
+    fn test_apply_git_init_existing_repo() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        // Initialize git first
+        std::process::Command::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let result = apply_git_init(&path);
+        assert_eq!(result["status"], "already_tracked");
+        assert!(result["message"]
+            .as_str()
+            .unwrap()
+            .contains("already git-tracked"));
+        // .gitignore should still be written
+        assert!(
+            tmp.path().join(".gitignore").exists(),
+            ".gitignore should be created even for existing repos"
+        );
+    }
+
+    #[test]
+    fn test_apply_git_init_existing_repo_gitignore_already_present() {
+        if !git_available() {
+            return;
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+        // Pre-populate .gitignore with the key entry
+        std::fs::write(tmp.path().join(".gitignore"), ".factbase/factbase.db\n").unwrap();
+        std::process::Command::new("git")
+            .arg("init")
+            .current_dir(tmp.path())
+            .output()
+            .unwrap();
+
+        let result = apply_git_init(&path);
+        assert_eq!(result["status"], "already_tracked");
+        assert_eq!(
+            result["gitignore_updated"], false,
+            "should not modify existing gitignore"
+        );
+    }
+
+    #[test]
+    fn test_apply_git_init_nonexistent_path() {
+        let result = apply_git_init("/nonexistent/path/that/does/not/exist");
+        assert_eq!(result["status"], "skipped");
     }
 
     // --- recommended_resolve_order ---
