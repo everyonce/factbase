@@ -387,26 +387,6 @@ pub(crate) fn extract_review_queue_section(content: &str) -> Option<&str> {
     }
 }
 
-/// Merge a review queue from `db_content` into `disk_content` when the disk
-/// file is stale (lacks the review queue that the DB has).
-///
-/// Returns `Some(merged)` when the DB has a review queue and the disk does not.
-/// Returns `None` in all other cases (no merge needed).
-pub(crate) fn merge_review_queue(disk_content: &str, db_content: &str) -> Option<String> {
-    // If disk already has a review queue (marker or callout header), disk wins
-    if has_review_section(disk_content) {
-        return None;
-    }
-    // If DB doesn't have a review queue, nothing to preserve
-    let review_section = extract_review_queue_section(db_content)?;
-    let mut merged = disk_content.to_string();
-    if !merged.ends_with('\n') {
-        merged.push('\n');
-    }
-    merged.push_str(review_section);
-    Some(merged)
-}
-
 // =============================================================================
 // Orphan review patterns
 // =============================================================================
@@ -1188,39 +1168,8 @@ mod tests {
     }
 
     // =========================================================================
-    // merge_review_queue tests
+    // extract_heading_title tests
     // =========================================================================
-
-    #[test]
-    fn test_merge_review_queue_stale_disk_preserves_db_queue() {
-        let disk = "---\nfactbase_id: abc123\n---\n# Title\n\n- fact one\n";
-        let db = "---\nfactbase_id: abc123\n---\n# Title\n\n- fact one\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` When?\n  > \n";
-        let merged = merge_review_queue(disk, db).unwrap();
-        assert!(merged.contains("<!-- factbase:review -->"));
-        assert!(merged.contains("@q[temporal]"));
-        assert!(merged.contains("- fact one"));
-    }
-
-    #[test]
-    fn test_merge_review_queue_both_have_queue_disk_wins() {
-        let disk = "# Title\n\n- fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` New q\n  > \n";
-        let db = "# Title\n\n- fact\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` Old q\n  > \n";
-        assert!(merge_review_queue(disk, db).is_none());
-    }
-
-    #[test]
-    fn test_merge_review_queue_neither_has_queue() {
-        let disk = "# Title\n\n- fact\n";
-        let db = "# Title\n\n- old fact\n";
-        assert!(merge_review_queue(disk, db).is_none());
-    }
-
-    #[test]
-    fn test_merge_review_queue_disk_has_queue_db_does_not() {
-        let disk = "# Title\n\n<!-- factbase:review -->\n- [ ] q\n";
-        let db = "# Title\n\n- fact\n";
-        assert!(merge_review_queue(disk, db).is_none());
-    }
 
     #[test]
     fn test_extract_heading_title_found() {
