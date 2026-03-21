@@ -6,6 +6,7 @@
 use chrono::{NaiveDate, Utc};
 use std::collections::HashMap;
 
+use crate::models::repository::ReviewPerspective;
 use crate::models::{QuestionType, ReviewQuestion, TemporalTagType};
 use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, FACT_LINE_REGEX};
 use crate::processor::{parse_source_definitions, parse_source_references, parse_temporal_tags};
@@ -13,7 +14,8 @@ use crate::processor::{parse_source_definitions, parse_source_references, parse_
 use super::temporal::has_recent_verification;
 use super::{extract_fact_text, iter_fact_lines};
 
-/// Generate stale questions for a document.
+/// (source_type, date, def_line, type_tag)
+type DefMapEntry<'a> = (&'a str, Option<&'a str>, usize, Option<&'a str>);
 ///
 /// Detects facts that may be outdated based on:
 /// 1. Source footnote dates older than threshold (default: 365 days)
@@ -21,12 +23,25 @@ use super::{extract_fact_text, iter_fact_lines};
 ///
 /// Returns a list of `ReviewQuestion` with `question_type = Stale`.
 pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQuestion> {
+    generate_stale_questions_with_perspective(content, max_age_days, None, None)
+}
+
+/// Generate stale questions with per-source-type and per-doc-type staleness thresholds.
+///
+/// `perspective` provides `source_types` and `stale_days_by_type` overrides.
+/// `doc_type` is the document type for `stale_days_by_type` lookup.
+pub fn generate_stale_questions_with_perspective(
+    content: &str,
+    global_max_age_days: i64,
+    perspective: Option<&ReviewPerspective>,
+    doc_type: Option<&str>,
+) -> Vec<ReviewQuestion> {
     let mut questions = Vec::new();
     let today = Utc::now().date_naive();
 
     // Check frontmatter for document-level reviewed date (obsidian format)
     let fm_skip = extract_frontmatter_reviewed_date(content)
-        .is_some_and(|d| (today - d).num_days() <= max_age_days);
+        .is_some_and(|d| (today - d).num_days() <= global_max_age_days);
 
     // Truncate at review queue marker — review entries are not document facts
     let body = &content[..crate::patterns::body_end_offset(content)];
@@ -38,13 +53,18 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
     let refs = parse_source_references(body);
     let defs = parse_source_definitions(body);
 
-    // Build map of footnote number -> (source_type, date, def_line)
-    let def_map: HashMap<u32, (&str, Option<&str>, usize)> = defs
+    // Build map of footnote number -> (source_type, date, def_line, type_tag)
+    let def_map: HashMap<u32, DefMapEntry<'_>> = defs
         .iter()
         .map(|d| {
             (
                 d.number,
-                (d.source_type.as_str(), d.date.as_deref(), d.line_number),
+                (
+                    d.source_type.as_str(),
+                    d.date.as_deref(),
+                    d.line_number,
+                    d.type_tag.as_deref(),
+                ),
             )
         })
         .collect();
@@ -82,21 +102,40 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
 
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
-            || extract_reviewed_date(line).is_some_and(|d| (today - d).num_days() <= max_age_days)
+            || extract_reviewed_date(line)
+                .is_some_and(|d| (today - d).num_days() <= global_max_age_days)
         {
             continue;
         }
 
+        // Resolve effective max_age for this fact line using most-permissive rule:
+        // collect all type_tags from footnotes on this line, look up each in source_types,
+        // use the highest stale_days (most permissive). None means never stale.
+        let effective_max_age: Option<i64> = if let Some(persp) = perspective {
+            resolve_fact_max_age(&line_refs, &def_map, persp, doc_type, global_max_age_days)
+        } else {
+            Some(global_max_age_days)
+        };
+
         // Check if any source is stale
         for source_ref in &line_refs {
-            if let Some((source_type, Some(date_str), _)) = def_map.get(&source_ref.number) {
+            if let Some((source_type, Some(date_str), _, type_tag)) =
+                def_map.get(&source_ref.number)
+            {
                 if let Some(days_old) = days_since_date(date_str, today) {
-                    if days_old > max_age_days && !has_recent_verification(line, today) {
+                    let threshold = match effective_max_age {
+                        None => continue, // never stale
+                        Some(t) => t,
+                    };
+                    if days_old > threshold && !has_recent_verification(line, today) {
+                        let type_note = type_tag
+                            .map(|t| format!(" (source type: `{t}`, threshold: {threshold} days)"))
+                            .unwrap_or_default();
                         questions.push(ReviewQuestion::new(
                             QuestionType::Stale,
                             Some(line_number),
                             format!(
-                                "\"{fact_text}\" - {source_type} source from {date_str} may be outdated, is this still accurate?"
+                                "\"{fact_text}\" - {source_type} source from {date_str} may be outdated{type_note}, is this still accurate?"
                             ),
                         ));
                         break; // One question per fact line
@@ -112,7 +151,7 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
         if tag.tag_type == TemporalTagType::LastSeen {
             if let Some(ref date_str) = tag.start_date {
                 if let Some(days_old) = days_since_date(date_str, today) {
-                    if days_old > max_age_days && days_old > 180 {
+                    if days_old > global_max_age_days && days_old > 180 {
                         // Get the fact text from this line
                         if tag.line_number > 0 && tag.line_number <= lines.len() {
                             let line = lines[tag.line_number - 1];
@@ -120,7 +159,7 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
                             // Skip facts with a recent reviewed marker (inline or frontmatter)
                             if fm_skip
                                 || extract_reviewed_date(line)
-                                    .is_some_and(|d| (today - d).num_days() <= max_age_days)
+                                    .is_some_and(|d| (today - d).num_days() <= global_max_age_days)
                             {
                                 continue;
                             }
@@ -148,6 +187,53 @@ pub fn generate_stale_questions(content: &str, max_age_days: i64) -> Vec<ReviewQ
     }
 
     questions
+}
+
+/// Resolve the effective max_age_days for a fact line using the most-permissive rule.
+///
+/// Collects all `{type:x}` tags from footnotes on this line, looks each up in
+/// `perspective.source_types`, and returns the highest stale_days (most permissive).
+/// `None` means never stale (at least one source type is never-stale).
+fn resolve_fact_max_age(
+    line_refs: &[&crate::models::SourceReference],
+    def_map: &HashMap<u32, DefMapEntry<'_>>,
+    perspective: &ReviewPerspective,
+    doc_type: Option<&str>,
+    global_default: i64,
+) -> Option<i64> {
+    // Collect type_tags from all footnotes on this line
+    let type_tags: Vec<&str> = line_refs
+        .iter()
+        .filter_map(|r| def_map.get(&r.number))
+        .filter_map(|(_, _, _, tt)| *tt)
+        .collect();
+
+    if type_tags.is_empty() {
+        // No type tags — fall through to doc_type / global
+        return perspective.resolve_stale_days(None, doc_type, global_default);
+    }
+
+    // Most-permissive: highest stale_days wins; None (never) beats everything
+    let mut best: Option<i64> = Some(0); // start at 0, will be replaced
+    let mut found_any = false;
+    for tt in &type_tags {
+        let resolved = perspective.resolve_stale_days(Some(tt), doc_type, global_default);
+        match (best, resolved) {
+            (_, None) => return None, // never stale — short-circuit
+            (Some(b), Some(r)) => {
+                if !found_any || r > b {
+                    best = Some(r);
+                }
+                found_any = true;
+            }
+            (None, _) => unreachable!(),
+        }
+    }
+    if found_any {
+        best
+    } else {
+        perspective.resolve_stale_days(None, doc_type, global_default)
+    }
 }
 
 /// Calculate days since a date string (YYYY, YYYY-MM, or YYYY-MM-DD).
@@ -409,6 +495,131 @@ mod tests {
             generate_stale_questions(content, 365).len(),
             1,
             "H2 without temporal tag should override H1 context"
+        );
+    }
+
+    // --- source type staleness tests ---
+
+    fn make_perspective_with_source_types(
+        types: &[(&str, Option<u32>)],
+        global: Option<u32>,
+    ) -> ReviewPerspective {
+        use crate::models::repository::{ReviewPerspective, SourceTypeConfig};
+        let mut map = std::collections::HashMap::new();
+        for (k, v) in types {
+            map.insert(k.to_string(), SourceTypeConfig { stale_days: *v });
+        }
+        ReviewPerspective {
+            stale_days: global,
+            source_types: Some(map),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_source_type_never_suppresses_stale() {
+        // book type → never stale
+        let persp = make_perspective_with_source_types(&[("book", None)], Some(180));
+        let content = "# Entity\n\n- Old fact [^1]\n\n[^1]: Some Book, 2010-01-01 {type:book}";
+        let qs = generate_stale_questions_with_perspective(content, 180, Some(&persp), None);
+        assert!(qs.is_empty(), "book source should never be stale");
+    }
+
+    #[test]
+    fn test_source_type_threshold_applied() {
+        // web type → 90 days; fact is 120 days old → stale
+        let persp = make_perspective_with_source_types(&[("web", Some(90))], Some(365));
+        let today = chrono::Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(120);
+        let content = format!(
+            "# Entity\n\n- Old fact [^1]\n\n[^1]: Web page, accessed {} {{type:web}}",
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions_with_perspective(&content, 365, Some(&persp), None);
+        assert_eq!(qs.len(), 1, "web source should be stale after 90 days");
+        assert!(
+            qs[0].description.contains("web"),
+            "question should mention source type"
+        );
+        assert!(
+            qs[0].description.contains("90"),
+            "question should mention threshold"
+        );
+    }
+
+    #[test]
+    fn test_source_type_threshold_not_exceeded() {
+        // web type → 180 days; fact is 60 days old → not stale
+        let persp = make_perspective_with_source_types(&[("web", Some(180))], Some(365));
+        let today = chrono::Utc::now().date_naive();
+        let recent_date = today - chrono::Duration::days(60);
+        let content = format!(
+            "# Entity\n\n- Recent fact [^1]\n\n[^1]: Web page, accessed {} {{type:web}}",
+            recent_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions_with_perspective(&content, 365, Some(&persp), None);
+        assert!(
+            qs.is_empty(),
+            "web source within threshold should not be stale"
+        );
+    }
+
+    #[test]
+    fn test_most_permissive_multi_footnote_rule() {
+        // Fact has two footnotes: web (90 days) and book (never).
+        // Most permissive = never → no stale question.
+        let persp =
+            make_perspective_with_source_types(&[("web", Some(90)), ("book", None)], Some(365));
+        let today = chrono::Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(200);
+        let content = format!(
+            "# Entity\n\n- Old fact [^1][^2]\n\n[^1]: Web page, accessed {} {{type:web}}\n[^2]: Some Book, 2010-01-01 {{type:book}}",
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions_with_perspective(&content, 365, Some(&persp), None);
+        assert!(
+            qs.is_empty(),
+            "book (never) should make fact never-stale even with old web source"
+        );
+    }
+
+    #[test]
+    fn test_most_permissive_multi_footnote_uses_highest_days() {
+        // Fact has two footnotes: slack (90 days) and web (180 days).
+        // Most permissive = 180 days. Fact is 120 days old → not stale.
+        let persp = make_perspective_with_source_types(
+            &[("slack", Some(90)), ("web", Some(180))],
+            Some(365),
+        );
+        let today = chrono::Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(120);
+        let content = format!(
+            "# Entity\n\n- Fact [^1][^2]\n\n[^1]: Slack #ch, @user, {} {{type:slack}}\n[^2]: Web page, accessed {} {{type:web}}",
+            old_date.format("%Y-%m-%d"),
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions_with_perspective(&content, 365, Some(&persp), None);
+        assert!(
+            qs.is_empty(),
+            "most permissive (180 days) should apply; 120 days is within threshold"
+        );
+    }
+
+    #[test]
+    fn test_unknown_source_type_falls_back_to_global() {
+        // unknown-type not in source_types → falls back to global 180 days
+        let persp = make_perspective_with_source_types(&[("web", Some(90))], Some(180));
+        let today = chrono::Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(200);
+        let content = format!(
+            "# Entity\n\n- Old fact [^1]\n\n[^1]: Some source, {} {{type:unknown-type}}",
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions_with_perspective(&content, 180, Some(&persp), None);
+        assert_eq!(
+            qs.len(),
+            1,
+            "unknown type should fall back to global 180 days"
         );
     }
 }

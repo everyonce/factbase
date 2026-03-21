@@ -16,16 +16,119 @@ pub struct CitationPattern {
     pub description: Option<String>,
 }
 
+/// A stale_days value that supports `never`/`infinite`/`null`/`0` as "never stale".
+/// `None` means never stale; `Some(n)` means stale after n days.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StaleDaysEntry(pub Option<u32>);
+
+impl<'de> Deserialize<'de> for StaleDaysEntry {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        deserialize_stale_days_value(d).map(StaleDaysEntry)
+    }
+}
+
+impl Serialize for StaleDaysEntry {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self.0 {
+            None => s.serialize_none(),
+            Some(n) => s.serialize_u32(n),
+        }
+    }
+}
+
+/// Deserialize a stale_days value: number, null, "never", "infinite", or 0 → None (never stale).
+fn deserialize_stale_days_value<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Option<u32>, D::Error> {
+    use serde::de::Error;
+    let v = serde_json::Value::deserialize(d)?;
+    match &v {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(n) => {
+            let n = n
+                .as_u64()
+                .ok_or_else(|| Error::custom("stale_days must be non-negative"))?;
+            Ok(if n == 0 { None } else { Some(n as u32) })
+        }
+        serde_json::Value::String(s) => match s.as_str() {
+            "never" | "infinite" => Ok(None),
+            other => {
+                if let Ok(n) = other.parse::<u32>() {
+                    Ok(if n == 0 { None } else { Some(n) })
+                } else {
+                    Err(Error::custom(format!(
+                        "invalid stale_days value: {other:?}; expected a number, null, \"never\", or \"infinite\""
+                    )))
+                }
+            }
+        },
+        other => Err(Error::custom(format!(
+            "invalid stale_days value: {other}; expected a number, null, \"never\", or \"infinite\""
+        ))),
+    }
+}
+
+/// Per-source-type staleness configuration (from `source_types` in perspective.yaml).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SourceTypeConfig {
+    /// Staleness threshold for this source type. `None` means never stale.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_stale_days_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub stale_days: Option<u32>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ReviewPerspective {
     /// Override global stale_days threshold for this repository
     pub stale_days: Option<u32>,
+    /// Per-document-type stale_days overrides. `null`, `"never"`, or `"infinite"` means never stale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale_days_by_type: Option<HashMap<String, StaleDaysEntry>>,
+    /// Per-source-type staleness configuration (keyed by {type:x} tag value).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_types: Option<HashMap<String, SourceTypeConfig>>,
     /// Required fields per document type (e.g., person: [current_role, location])
     pub required_fields: Option<HashMap<String, Vec<String>>>,
     /// Glob patterns for files to skip during review
     pub ignore_patterns: Option<Vec<String>>,
     /// Document types to treat as glossary/definitions (default: ["definitions"])
     pub glossary_types: Option<Vec<String>>,
+}
+
+impl ReviewPerspective {
+    /// Resolve the effective stale_days for a given source type and document type.
+    ///
+    /// Priority (highest first):
+    /// 1. `source_types[source_type].stale_days` — per-source-type threshold
+    /// 2. `stale_days_by_type[doc_type]` — per-document-type threshold
+    /// 3. `stale_days` — repository-level override
+    /// 4. `global_default` — hardcoded default (passed by caller)
+    ///
+    /// Returns `None` if the fact should never be flagged stale.
+    pub fn resolve_stale_days(
+        &self,
+        source_type: Option<&str>,
+        doc_type: Option<&str>,
+        global_default: i64,
+    ) -> Option<i64> {
+        // 1. Source-type override
+        if let (Some(st_map), Some(st)) = (&self.source_types, source_type) {
+            if let Some(cfg) = st_map.get(st) {
+                return cfg.stale_days.map(|n| n as i64);
+            }
+        }
+        // 2. Doc-type override
+        if let (Some(by_type), Some(dt)) = (&self.stale_days_by_type, doc_type) {
+            if let Some(entry) = by_type.get(dt) {
+                return entry.0.map(|n| n as i64);
+            }
+        }
+        // 3. Repo-level override or global default
+        Some(self.stale_days.map(|n| n as i64).unwrap_or(global_default))
+    }
 }
 
 /// Repository perspective metadata loaded from `perspective.yaml`.
@@ -97,6 +200,12 @@ pub const PERSPECTIVE_TEMPLATE: &str = "\
 #     species: [classification, habitat, edibility]\n\
 #     civilization: [period, region, key_figures]\n\
 #     person: [current_role, location]\n\
+#   source_types:\n\
+#     web:      { stale_days: 180 }\n\
+#     book:     { stale_days: never }\n\
+#     rfc:      { stale_days: never }\n\
+#     slack:    { stale_days: 90 }\n\
+#     email:    { stale_days: 90 }\n\
 \n\
 # Domain-specific citation patterns (tier-1 validation)\n\
 # Citations matching any pattern pass without a weak-source question.\n\
@@ -447,5 +556,120 @@ mod tests {
         )
         .unwrap();
         assert!(load_perspective_from_file(tmp.path()).is_some());
+    }
+
+    // --- source_types deserialization ---
+
+    #[test]
+    fn test_source_types_numeric_stale_days() {
+        let p: ReviewPerspective = serde_yaml_ng::from_str(
+            "stale_days: 180\nsource_types:\n  web:\n    stale_days: 180\n  slack:\n    stale_days: 90\n",
+        )
+        .unwrap();
+        let st = p.source_types.as_ref().unwrap();
+        assert_eq!(st["web"].stale_days, Some(180));
+        assert_eq!(st["slack"].stale_days, Some(90));
+    }
+
+    #[test]
+    fn test_source_types_never_sentinel() {
+        let p: ReviewPerspective = serde_yaml_ng::from_str(
+            "source_types:\n  book:\n    stale_days: never\n  rfc:\n    stale_days: infinite\n  paper:\n    stale_days: null\n  static:\n    stale_days: 0\n",
+        )
+        .unwrap();
+        let st = p.source_types.as_ref().unwrap();
+        assert_eq!(st["book"].stale_days, None, "never → None");
+        assert_eq!(st["rfc"].stale_days, None, "infinite → None");
+        assert_eq!(st["paper"].stale_days, None, "null → None");
+        assert_eq!(st["static"].stale_days, None, "0 → None");
+    }
+
+    // --- ReviewPerspective::resolve_stale_days ---
+
+    #[test]
+    fn test_resolve_stale_days_source_type_wins() {
+        let r = ReviewPerspective {
+            stale_days: Some(180),
+            stale_days_by_type: None,
+            source_types: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "web".to_string(),
+                    SourceTypeConfig {
+                        stale_days: Some(90),
+                    },
+                );
+                m
+            }),
+            ..Default::default()
+        };
+        assert_eq!(r.resolve_stale_days(Some("web"), None, 365), Some(90));
+    }
+
+    #[test]
+    fn test_resolve_stale_days_source_type_never() {
+        let r = ReviewPerspective {
+            stale_days: Some(180),
+            source_types: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert("book".to_string(), SourceTypeConfig { stale_days: None });
+                m
+            }),
+            ..Default::default()
+        };
+        assert_eq!(r.resolve_stale_days(Some("book"), None, 365), None);
+    }
+
+    #[test]
+    fn test_resolve_stale_days_doc_type_fallback() {
+        let r = ReviewPerspective {
+            stale_days: Some(180),
+            stale_days_by_type: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert("encyclopedia".to_string(), StaleDaysEntry(Some(365)));
+                m
+            }),
+            source_types: None,
+            ..Default::default()
+        };
+        // No source type → falls through to doc type
+        assert_eq!(
+            r.resolve_stale_days(None, Some("encyclopedia"), 180),
+            Some(365)
+        );
+    }
+
+    #[test]
+    fn test_resolve_stale_days_global_fallback() {
+        let r = ReviewPerspective {
+            stale_days: None,
+            stale_days_by_type: None,
+            source_types: None,
+            ..Default::default()
+        };
+        assert_eq!(r.resolve_stale_days(None, None, 180), Some(180));
+    }
+
+    #[test]
+    fn test_resolve_stale_days_unknown_source_type_falls_through() {
+        let r = ReviewPerspective {
+            stale_days: Some(180),
+            source_types: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "web".to_string(),
+                    SourceTypeConfig {
+                        stale_days: Some(90),
+                    },
+                );
+                m
+            }),
+            ..Default::default()
+        };
+        // Unknown type → falls through to global
+        assert_eq!(
+            r.resolve_stale_days(Some("unknown-type"), None, 365),
+            Some(180)
+        );
     }
 }

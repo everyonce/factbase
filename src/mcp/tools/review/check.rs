@@ -123,6 +123,7 @@ async fn check_questions(
         .and_then(|p| p.citation_patterns.as_deref())
         .map(crate::processor::compile_citation_patterns)
         .unwrap_or_default();
+    let review_perspective = perspective.as_ref().and_then(|p| p.review.clone());
 
     let all_docs = load_docs(db, repo_id)?;
 
@@ -138,6 +139,7 @@ async fn check_questions(
         repo_id: repo_id.map(String::from),
         glossary_types,
         citation_patterns,
+        review_perspective,
     };
 
     let output = check_all_documents(&all_docs, db, embedding, &config, progress).await?;
@@ -272,6 +274,7 @@ async fn check_batch(
         .and_then(|p| p.citation_patterns.as_deref())
         .map(crate::processor::compile_citation_patterns)
         .unwrap_or_default();
+    let review_perspective = perspective.as_ref().and_then(|p| p.review.clone());
 
     progress.phase("Checking selected documents");
 
@@ -285,6 +288,7 @@ async fn check_batch(
         repo_id: repo_id.map(String::from),
         glossary_types,
         citation_patterns,
+        review_perspective,
     };
 
     let output = check_all_documents(&docs, db, embedding, &config, progress).await?;

@@ -103,16 +103,17 @@ pub fn get_authoring_guide() -> Value {
             "description": "Cite sources with markdown footnotes for fact verification. Every source MUST be traceable — include enough detail to locate the original data.",
             "format": "Add [^N] after the fact, define [^N]: at the bottom after a --- separator",
             "date_required": "Every citation must include a date. If you read something today, today is the date. Use 'accessed YYYY-MM-DD' for web sources. Use 'email from YYYY-MM-DD' for emails. Use 'Slack #channel, YYYY-MM-DD' for Slack. There is never a valid reason to omit a date — if you accessed the source, you know today's date.",
+            "source_type_tag": "Optionally append `{type:x}` at the END of a footnote definition to classify the source. This controls per-type staleness thresholds from perspective.yaml `source_types`. The tag is invisible in Obsidian preview. Use lowercase, no spaces around colon. Examples:\n  [^1]: AWS docs, https://docs.aws.amazon.com/lambda/..., accessed 2026-03-20 {type:web}\n  [^2]: Slack #sa-team, @jsmith, 2025-11-14 {type:slack}\n  [^3]: Johnson (2018) The Mushroom Handbook, p. 42 {type:book}\n  [^4]: RFC 9110, HTTP Semantics, 2022 {type:rfc}\nAdding {type:x} reduces future review noise — book and rfc sources never go stale; web sources use a shorter threshold. Check perspective.yaml source_types for available types. If no matching type exists, omit the tag.",
             "date_examples": {
-                "web": "[^1]: AWS documentation, https://docs.aws.amazon.com/..., accessed 2026-03-20",
-                "email": "[^2]: Email from alice@example.com, 2026-02-14, subject: Q4 results",
-                "slack": "[^3]: Slack #engineering, @bob, 2026-01-10",
-                "book": "[^4]: Holland, Persian Fire, pp. 255-280, 2005"
+                "web": "[^1]: AWS documentation, https://docs.aws.amazon.com/..., accessed 2026-03-20 {type:web}",
+                "email": "[^2]: Email from alice@example.com, 2026-02-14, subject: Q4 results {type:email}",
+                "slack": "[^3]: Slack #engineering, @bob, 2026-01-10 {type:slack}",
+                "book": "[^4]: Holland, Persian Fire, pp. 255-280, 2005 {type:book}"
             },
             "types": "Journal article, Database record, Official report, News article, Book, Website, Field observation, Author knowledge (human-only), Archival document, Personal communication, Inferred, Unverified",
             "traceability": "A source name alone is NEVER sufficient. Always include dates, URLs, page numbers, or other identifiers. BAD: 'Wikipedia'. GOOD: 'Wikipedia \"Amanita muscaria\", accessed 2024-01-15, https://en.wikipedia.org/wiki/Amanita_muscaria'",
             "author_knowledge": "Facts known firsthand by the knowledge base owner belong in dedicated author-knowledge/ documents. Cite as: 'Author knowledge, see [[author-knowledge-doc-name]]'. Agents must NEVER create author knowledge files or use 'Author knowledge' as a source — always cite the actual data source instead.",
-            "example": "- First described by Linnaeus @t[=1753] [^1][^2]\n\n---\n[^1]: Linnaeus, Species Plantarum, vol. 2, p. 1171, 1753\n[^2]: MycoBank record #120098, accessed 2024-01-10"
+            "example": "- First described by Linnaeus @t[=1753] [^1][^2]\n\n---\n[^1]: Linnaeus, Species Plantarum, vol. 2, p. 1171, 1753 {type:book}\n[^2]: MycoBank record #120098, accessed 2024-01-10 {type:web}"
         },
         "linking": {
             "description": "Factbase detects cross-entity links in TWO ways: (1) During scan, string matching finds mentions of other entity TITLES in each document's text — if your document text contains another entity's exact title, a link is created automatically. (2) Manual [[name]] syntax for explicit references, where 'name' is the target document's filename stem (e.g., [[alice-chen]] for alice-chen.md).",

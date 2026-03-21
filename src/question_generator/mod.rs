@@ -71,7 +71,7 @@ pub use duplicate::generate_duplicate_questions;
 pub use fields::{detect_document_fields, generate_required_field_questions};
 pub use missing::{generate_missing_questions, generate_source_quality_questions};
 pub use precision::generate_precision_questions;
-pub use stale::generate_stale_questions;
+pub use stale::{generate_stale_questions, generate_stale_questions_with_perspective};
 pub use temporal::generate_temporal_questions;
 
 /// Iterate over fact lines in content, yielding `(line_number, line, fact_text)`.
