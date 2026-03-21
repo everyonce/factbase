@@ -147,6 +147,9 @@ pub struct TemporalScanStats {
     pub facts_with_sources: usize,
     /// Source coverage percentage (0.0 to 1.0)
     pub source_coverage: f32,
+    /// Number of documents with non-trivial content (>100 chars) but 0 indexed facts
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub docs_with_no_facts: usize,
 }
 
 #[cfg(test)]
@@ -194,6 +197,7 @@ mod tests {
         assert_eq!(t.below_threshold_docs, 0);
         assert_eq!(t.facts_with_sources, 0);
         assert!((t.source_coverage - 0.0).abs() < f32::EPSILON);
+        assert_eq!(t.docs_with_no_facts, 0);
     }
 
     #[test]

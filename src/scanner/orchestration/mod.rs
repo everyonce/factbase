@@ -222,6 +222,7 @@ pub async fn full_scan(
     let mut facts_with_tags = 0usize;
     let mut facts_with_sources = 0usize;
     let mut below_threshold_docs = 0usize;
+    let mut docs_with_no_facts = 0usize;
 
     let file_discovery_ms = file_discovery_start.elapsed().as_millis() as u64;
 
@@ -506,6 +507,16 @@ pub async fn full_scan(
             total_facts += fact_stats.total_facts;
             facts_with_tags += fact_stats.facts_with_tags;
             facts_with_sources += count_facts_with_sources(&content);
+
+            // Warn when a document has non-trivial content but 0 indexed facts
+            if fact_stats.total_facts == 0 && content.len() > 100 {
+                docs_with_no_facts += 1;
+                if ctx.opts.verbose {
+                    println!(
+                        "  ⚠ 0 facts found — are facts written as bullet-point list items starting with `- `?"
+                    );
+                }
+            }
 
             // Check if below threshold and warn
             let is_below_threshold =
@@ -866,6 +877,7 @@ pub async fn full_scan(
         below_threshold_docs,
         facts_with_sources,
         source_coverage,
+        docs_with_no_facts,
     });
 
     Ok(result)
