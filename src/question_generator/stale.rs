@@ -688,8 +688,7 @@ mod tests {
     #[test]
     fn test_open_range_with_month_fires_stale() {
         // @t[2024-06..] — open range with month precision → stale question FIRES
-        let content =
-            "# Entity\n\n- Active project @t[2024-06..] [^1]\n\n[^1]: Jira, 2024-06-01";
+        let content = "# Entity\n\n- Active project @t[2024-06..] [^1]\n\n[^1]: Jira, 2024-06-01";
         assert_eq!(
             generate_stale_questions(content, 365).len(),
             1,
