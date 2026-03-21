@@ -85,7 +85,14 @@ pub fn run_generators_with_perspective(
     questions.extend(generate_missing_questions(body));
     if full {
         questions.extend(generate_source_quality_questions(body));
-        questions.extend(generate_weak_source_questions(body, citation_patterns));
+        let known_source_types: Option<std::collections::HashSet<String>> = perspective
+            .and_then(|p| p.source_types.as_ref())
+            .map(|st| st.keys().cloned().collect());
+        questions.extend(generate_weak_source_questions(
+            body,
+            citation_patterns,
+            known_source_types.as_ref(),
+        ));
     }
     questions.extend(generate_ambiguous_questions_with_type(
         body,

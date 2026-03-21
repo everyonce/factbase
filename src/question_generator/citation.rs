@@ -16,6 +16,7 @@ use crate::processor::{
 };
 use chrono::Utc;
 use regex::Regex;
+use std::collections::HashSet;
 
 /// Default number of days a reviewed marker suppresses question regeneration.
 const REVIEWED_SKIP_DAYS: i64 = 180;
@@ -31,9 +32,15 @@ pub const CITATION_ACCEPTED_MARKER: &str = "<!-- ✓ -->";
 /// For each citation that fails `validate_citation()` and no `extra_patterns` match,
 /// emits a `@q[weak-source]` question with the failure reason.
 /// Suppressed by a recent `reviewed:` marker (same 180-day window as other generators).
+///
+/// `known_source_types`: keys from `perspective.yaml source_types`. When `Some`, a
+/// `{type:x}` tag whose value is in the set is treated as valid and suppresses the
+/// question. When `None` (no `source_types` block in perspective), falls back to
+/// existing tier-1 behavior.
 pub fn generate_weak_source_questions(
     content: &str,
     extra_patterns: &[Regex],
+    known_source_types: Option<&HashSet<String>>,
 ) -> Vec<ReviewQuestion> {
     let today = Utc::now().date_naive();
     let fm_skip = extract_frontmatter_reviewed_date(content)
@@ -63,6 +70,15 @@ pub fn generate_weak_source_questions(
             true
         })
         .filter(|d| !is_citation_specific_with_patterns(&d.context, extra_patterns))
+        .filter(|d| {
+            // If {type:x} is present and x is in the known source types → skip (no question)
+            if let Some(known) = known_source_types {
+                if let Some(ref type_tag) = d.type_tag {
+                    return !known.contains(type_tag.as_str());
+                }
+            }
+            true
+        })
         .map(|d| {
             let ct = detect_citation_type(&d.context);
             let reason = citation_failure_reason(&ct);
@@ -94,7 +110,7 @@ mod tests {
     fn test_generate_weak_source_questions_bad_citation() {
         // Vague citation → generates a question
         let content = doc_with_source("AWS documentation, accessed 2026-03-07");
-        let qs = generate_weak_source_questions(&content, &[]);
+        let qs = generate_weak_source_questions(&content, &[], None);
         assert!(
             !qs.is_empty(),
             "vague citation should generate a weak-source question"
@@ -106,28 +122,28 @@ mod tests {
     fn test_generate_weak_source_questions_url_citation() {
         // URL citation passes tier 1 → no question
         let content = doc_with_source("https://docs.aws.amazon.com/page.html");
-        assert!(generate_weak_source_questions(&content, &[]).is_empty());
+        assert!(generate_weak_source_questions(&content, &[], None).is_empty());
     }
 
     #[test]
     fn test_generate_weak_source_questions_book_with_page() {
         // Book + page passes tier 1 → no question
         let content = doc_with_source("Peterson Field Guide, p.247");
-        assert!(generate_weak_source_questions(&content, &[]).is_empty());
+        assert!(generate_weak_source_questions(&content, &[], None).is_empty());
     }
 
     #[test]
     fn test_generate_weak_source_questions_book_with_publisher_year() {
         // Book + publisher + year passes tier 1 → no question
         let content = doc_with_source("Smith, John. The Art of Programming. MIT Press, 2019");
-        assert!(generate_weak_source_questions(&content, &[]).is_empty());
+        assert!(generate_weak_source_questions(&content, &[], None).is_empty());
     }
 
     #[test]
     fn test_generate_weak_source_questions_phonetool_no_url() {
         // Tool without URL → generates a question
         let content = doc_with_source("Phonetool lookup, 2026-02-10");
-        let qs = generate_weak_source_questions(&content, &[]);
+        let qs = generate_weak_source_questions(&content, &[], None);
         assert!(!qs.is_empty());
         assert!(qs[0].description.contains("[^1]"));
         assert!(qs[0].description.contains("Phonetool lookup"));
@@ -137,7 +153,7 @@ mod tests {
     fn test_generate_weak_source_questions_unreferenced_not_generated() {
         // Unreferenced footnote → no question
         let content = "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact without ref\n\n---\n[^1]: Wikipedia article on mushrooms\n";
-        assert!(generate_weak_source_questions(content, &[]).is_empty());
+        assert!(generate_weak_source_questions(content, &[], None).is_empty());
     }
 
     // --- QuestionType::WeakSource still parseable (for backward compat) ---
@@ -160,7 +176,7 @@ mod tests {
             description: None,
         }];
         let compiled = crate::processor::compile_citation_patterns(&patterns);
-        let qs = generate_weak_source_questions(&content, &compiled);
+        let qs = generate_weak_source_questions(&content, &compiled, None);
         assert!(
             qs.is_empty(),
             "perspective pattern should suppress weak-source question"
@@ -177,7 +193,7 @@ mod tests {
             description: None,
         }];
         let compiled = crate::processor::compile_citation_patterns(&patterns);
-        let qs = generate_weak_source_questions(&content, &compiled);
+        let qs = generate_weak_source_questions(&content, &compiled, None);
         assert!(
             !qs.is_empty(),
             "non-matching pattern should not suppress question"
@@ -191,10 +207,61 @@ mod tests {
             "---\nfactbase_id: abc123\n---\n# Test\n\n- Some fact [^1]\n\n---\n[^1]: Phonetool lookup, 2026-02-10 {}",
             CITATION_ACCEPTED_MARKER
         );
-        let qs = generate_weak_source_questions(&content, &[]);
+        let qs = generate_weak_source_questions(&content, &[], None);
         assert!(
             qs.is_empty(),
             "accepted marker should suppress weak-source question"
+        );
+    }
+
+    // --- known_source_types: {type:x} suppression ---
+
+    #[test]
+    fn test_known_source_type_suppresses_weak_source_question() {
+        // {type:aws-docs} is in known_source_types → no question
+        let content = doc_with_source(
+            "AWS Lambda docs, https://docs.aws.amazon.com/lambda/, accessed 2026-03-21 {type:aws-docs}",
+        );
+        let known: HashSet<String> = ["aws-docs".to_string()].into();
+        let qs = generate_weak_source_questions(&content, &[], Some(&known));
+        assert!(
+            qs.is_empty(),
+            "known source type should suppress weak-source question"
+        );
+    }
+
+    #[test]
+    fn test_unknown_source_type_with_source_types_block_generates_question() {
+        // {type:unknown-type} is NOT in known_source_types → question generated
+        let content = doc_with_source("Some internal doc {type:unknown-type}");
+        let known: HashSet<String> = ["aws-docs".to_string()].into();
+        let qs = generate_weak_source_questions(&content, &[], Some(&known));
+        assert!(
+            !qs.is_empty(),
+            "unrecognized type with source_types block should generate question"
+        );
+    }
+
+    #[test]
+    fn test_no_source_types_block_falls_back_to_existing_behavior() {
+        // No known_source_types (None) → existing tier-1 behavior, {type:x} not recognized
+        let content = doc_with_source("Some internal doc {type:aws-docs}");
+        let qs = generate_weak_source_questions(&content, &[], None);
+        assert!(
+            !qs.is_empty(),
+            "without source_types block, {{type:x}} should not suppress question"
+        );
+    }
+
+    #[test]
+    fn test_known_source_type_without_url_still_suppressed() {
+        // {type:phonetool} in known_source_types → suppressed even without URL
+        let content = doc_with_source("Phonetool lookup, 2026-02-10 {type:phonetool}");
+        let known: HashSet<String> = ["phonetool".to_string()].into();
+        let qs = generate_weak_source_questions(&content, &[], Some(&known));
+        assert!(
+            qs.is_empty(),
+            "known source type should suppress even without URL"
         );
     }
 }
