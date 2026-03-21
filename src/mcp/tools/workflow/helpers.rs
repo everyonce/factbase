@@ -889,6 +889,8 @@ mod tests {
         let p = Perspective {
             review: Some(crate::models::ReviewPerspective {
                 stale_days: Some(90),
+                stale_days_by_type: None,
+                source_types: None,
                 ignore_patterns: None,
                 required_fields: None,
                 glossary_types: None,
@@ -915,6 +917,8 @@ mod tests {
         let p = Perspective {
             review: Some(crate::models::ReviewPerspective {
                 stale_days: None,
+                stale_days_by_type: None,
+                source_types: None,
                 ignore_patterns: None,
                 required_fields: Some(fields),
                 glossary_types: None,

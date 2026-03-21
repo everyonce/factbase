@@ -91,8 +91,11 @@ pub fn parse_source_definitions(content: &str) -> Vec<SourceDefinition> {
                 }
             }
 
-            let (source_type, context) = parse_source_type(&full_text);
-            let date = extract_source_date(&full_text);
+            // Extract {type:x} tag from end of full_text (before other parsing)
+            let (type_tag, text_without_tag) = extract_type_tag(&full_text);
+
+            let (source_type, context) = parse_source_type(&text_without_tag);
+            let date = extract_source_date(&text_without_tag);
 
             defs.push(SourceDefinition {
                 number,
@@ -100,6 +103,7 @@ pub fn parse_source_definitions(content: &str) -> Vec<SourceDefinition> {
                 context,
                 date,
                 line_number,
+                type_tag,
             });
 
             i = j; // Skip past continuation lines
@@ -111,6 +115,32 @@ pub fn parse_source_definitions(content: &str) -> Vec<SourceDefinition> {
     // Sort by footnote number for consistent output
     defs.sort_by_key(|d| d.number);
     defs
+}
+
+/// Extract `{type:x}` tag from the end of a footnote definition text.
+/// Returns `(Some(type_value), text_without_tag)` or `(None, original_text)`.
+/// The tag must be at the end of the string (after optional whitespace).
+fn extract_type_tag(text: &str) -> (Option<String>, String) {
+    // Match {type:value} at end of string, value is lowercase word chars and hyphens
+    let trimmed = text.trim_end();
+    if let Some(brace_pos) = trimmed.rfind('{') {
+        let candidate = &trimmed[brace_pos..];
+        if let Some(rest) = candidate.strip_prefix("{type:") {
+            if let Some(end) = rest.find('}') {
+                let type_val = &rest[..end];
+                // Validate: non-empty, lowercase, no spaces
+                if !type_val.is_empty()
+                    && type_val
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c == '-' || c.is_ascii_digit())
+                {
+                    let without_tag = trimmed[..brace_pos].trim_end().to_string();
+                    return (Some(type_val.to_string()), without_tag);
+                }
+            }
+        }
+    }
+    (None, text.to_string())
 }
 
 /// Extract source type from definition text.
@@ -241,6 +271,7 @@ mod tests {
         let defs = parse_source_definitions("[^1]: LinkedIn profile, scraped 2024-01-15");
         assert_eq!(defs[0].source_type, "LinkedIn");
         assert_eq!(defs[0].date, Some("2024-01-15".to_string()));
+        assert_eq!(defs[0].type_tag, None);
 
         // Multiple, sorted
         let defs = parse_source_definitions("[^3]: Third\n[^1]: First\n[^2]: Second");
@@ -256,6 +287,49 @@ mod tests {
         // Empty / no defs
         assert!(parse_source_definitions("").is_empty());
         assert!(parse_source_definitions("Plain text").is_empty());
+    }
+
+    #[test]
+    fn test_type_tag_parsing() {
+        // Valid {type:x} at end
+        let defs = parse_source_definitions(
+            "[^1]: AWS docs, https://docs.aws.amazon.com/lambda/, accessed 2026-03-20 {type:web}",
+        );
+        assert_eq!(defs[0].type_tag, Some("web".to_string()));
+        // Tag stripped from context/date parsing
+        assert!(defs[0].context.contains("AWS docs"));
+        assert!(!defs[0].context.contains("{type:web}"));
+
+        // {type:slack}
+        let defs =
+            parse_source_definitions("[^2]: Slack #sa-team, @jsmith, 2025-11-14 {type:slack}");
+        assert_eq!(defs[0].type_tag, Some("slack".to_string()));
+
+        // {type:book}
+        let defs = parse_source_definitions(
+            "[^3]: Johnson (2018) The Mushroom Handbook, p. 42, ISBN 978-0-486-21861-7 {type:book}",
+        );
+        assert_eq!(defs[0].type_tag, Some("book".to_string()));
+
+        // No tag
+        let defs = parse_source_definitions("[^1]: LinkedIn profile, scraped 2024-01-15");
+        assert_eq!(defs[0].type_tag, None);
+
+        // Malformed: spaces around colon
+        let defs = parse_source_definitions("[^1]: Source 2024-01-15 {type: web}");
+        assert_eq!(defs[0].type_tag, None);
+
+        // Malformed: uppercase
+        let defs = parse_source_definitions("[^1]: Source 2024-01-15 {type:Web}");
+        assert_eq!(defs[0].type_tag, None);
+
+        // Hyphenated type value
+        let defs = parse_source_definitions("[^1]: AWS docs 2026-03-20 {type:aws-docs}");
+        assert_eq!(defs[0].type_tag, Some("aws-docs".to_string()));
+
+        // Empty type value
+        let defs = parse_source_definitions("[^1]: Source 2024-01-15 {type:}");
+        assert_eq!(defs[0].type_tag, None);
     }
 
     #[test]

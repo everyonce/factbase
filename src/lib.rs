@@ -41,6 +41,7 @@ pub mod output;
 pub mod patterns;
 pub mod processor;
 pub mod progress;
+pub(crate) mod prompts;
 pub mod question_generator;
 pub mod scanner;
 pub mod services;
