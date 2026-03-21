@@ -322,20 +322,20 @@ pub async fn full_scan(
             };
 
             // Strip answered [x] questions before computing hash
-            let (content, hash, questions_were_stripped) = if !ctx.opts.dry_run {
+            let (content, hash) = if !ctx.opts.dry_run {
                 let (pruned, count) = crate::processor::strip_answered_questions(&content);
                 if count > 0 {
                     fs::write(&pre.path, &pruned)?;
                     result.questions_pruned += count;
                     let new_hash = crate::processor::content_hash(&pruned);
-                    (pruned, new_hash, true)
+                    (pruned, new_hash)
                 } else {
                     let hash = pre.hash.expect("hash should exist when content is Ok");
-                    (content, hash, false)
+                    (content, hash)
                 }
             } else {
                 let hash = pre.hash.expect("hash should exist when content is Ok");
-                (content, hash, false)
+                (content, hash)
             };
 
             // Derive type once; reused for frontmatter injection and DB upsert.
@@ -546,27 +546,9 @@ pub async fn full_scan(
                 );
             }
 
-            // Preserve review queue from DB when disk file is stale.
-            // Skip when we just stripped answered questions — the review section
-            // was intentionally removed by scan, not accidentally lost by the user.
-            // Merging it back would cause an oscillation: check re-adds the same
-            // questions that the user already answered.
-            let content = if !is_new && !questions_were_stripped {
-                if let Some(db_doc) = known.get(&id) {
-                    crate::patterns::merge_review_queue(&content, &db_doc.content)
-                        .unwrap_or(content)
-                } else {
-                    content
-                }
-            } else {
-                content
-            };
-
-            // When all answered questions were stripped and the result has no review
-            // section, clear the DB review questions immediately so they don't persist
-            // as stale unanswered questions after the doc is re-indexed.
-            if questions_were_stripped && !crate::patterns::has_review_section(&content) && !is_new
-            {
+            // When an existing doc has no review section, clear any stale DB questions
+            // so they don't persist and cause oscillation on the next check run.
+            if !is_new && !crate::patterns::has_review_section(&content) {
                 let _ = db.sync_review_questions(&id, &[]);
             }
 
