@@ -107,8 +107,8 @@ pub fn check_folder_placement(
                         QuestionType::Ambiguous,
                         None,
                         format!(
-                            "Filed under '{}' but {} of {} entity links point to '{}'. Is this document filed correctly?",
-                            current_title, other_count, total, other_title
+                            "Filed under '{}' but most entity links point to '{}'. Is this document filed correctly?",
+                            current_title, other_title
                         ),
                     ),
                 );
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(qs.len(), 1);
         assert_eq!(qs[0].question_type, QuestionType::Ambiguous);
         assert!(qs[0].description.contains("Globex Inc"));
-        assert!(qs[0].description.contains("2 of 3"));
+        assert!(qs[0].description.contains("most entity links"));
     }
 
     #[test]
@@ -367,5 +367,72 @@ mod tests {
         assert!(!check_folder_placement(&docs, &db)
             .unwrap()
             .contains_key(&orphan.id));
+    }
+
+    #[test]
+    fn test_question_text_stable_when_link_count_changes() {
+        // Adding more links should not change the question text (no counts in text).
+        let (db, _tmp) = test_db();
+
+        let c_acme = make_doc("acme01", "Acme Corp", "acme/acme.md");
+        let c_globex = make_doc("globex1", "Globex Inc", "globex/globex.md");
+        let pa1 = make_doc("pa0001", "Alice", "acme/people/alice.md");
+        let pg1 = make_doc("pg0001", "Bob", "globex/people/bob.md");
+        let pg2 = make_doc("pg0002", "Carol", "globex/people/carol.md");
+        let pg3 = make_doc("pg0003", "Dave", "globex/people/dave.md");
+        // Filed under acme, but links mostly to globex
+        let doc = make_doc("doc001", "Some Doc", "acme/notes/some-doc.md");
+
+        for d in [&c_acme, &c_globex, &pa1, &pg1, &pg2, &pg3, &doc] {
+            db.upsert_document(d).unwrap();
+        }
+
+        // 3 links to globex, 1 to acme
+        set_links(
+            &db,
+            &doc.id,
+            &[
+                (&pa1.id, "mentions"),
+                (&pg1.id, "mentions"),
+                (&pg2.id, "mentions"),
+                (&pg3.id, "mentions"),
+            ],
+        );
+
+        let docs_v1 = vec![
+            c_acme.clone(),
+            c_globex.clone(),
+            pa1.clone(),
+            pg1.clone(),
+            pg2.clone(),
+            pg3.clone(),
+            doc.clone(),
+        ];
+        let result_v1 = check_folder_placement(&docs_v1, &db).unwrap();
+        let text_v1 = result_v1[&doc.id][0].description.clone();
+
+        // Add a 4th link to globex
+        let pg4 = make_doc("pg0004", "Eve", "globex/people/eve.md");
+        db.upsert_document(&pg4).unwrap();
+        set_links(
+            &db,
+            &doc.id,
+            &[
+                (&pa1.id, "mentions"),
+                (&pg1.id, "mentions"),
+                (&pg2.id, "mentions"),
+                (&pg3.id, "mentions"),
+                (&pg4.id, "mentions"),
+            ],
+        );
+
+        let docs_v2 = vec![
+            c_acme, c_globex, pa1, pg1, pg2, pg3, pg4, doc.clone(),
+        ];
+        let result_v2 = check_folder_placement(&docs_v2, &db).unwrap();
+        let text_v2 = result_v2[&doc.id][0].description.clone();
+
+        assert_eq!(text_v1, text_v2, "question text must not change when link count changes");
+        assert!(!text_v1.contains(char::is_numeric), "question text must not contain numbers");
     }
 }
