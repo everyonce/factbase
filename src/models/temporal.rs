@@ -54,6 +54,9 @@ pub struct SourceDefinition {
     pub date: Option<String>,
     /// Line number where definition appears (1-indexed)
     pub line_number: usize,
+    /// Explicit source type tag from `{type:x}` at end of definition line.
+    /// Matches keys in `perspective.yaml source_types`.
+    pub type_tag: Option<String>,
 }
 
 /// Statistics about facts and temporal tag coverage in a document

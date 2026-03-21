@@ -31,7 +31,7 @@ mod repository;
 mod review;
 mod schema;
 mod search;
-mod workflow;
+pub(crate) mod workflow;
 
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;

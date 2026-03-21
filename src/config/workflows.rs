@@ -129,6 +129,58 @@ impl WorkflowsConfig {
             None
         }
     }
+
+    /// Load user-level workflow instruction overrides from
+    /// `~/.config/factbase/instructions/{workflow}.toml`.
+    ///
+    /// Same TOML format as KB-level `.factbase/instructions/` overrides.
+    /// Priority: KB-level > user-level > compiled constants.
+    pub fn load_user_instruction_files() -> Option<WorkflowsConfig> {
+        let dir = dirs::config_dir()?.join("factbase").join("instructions");
+        let entries = std::fs::read_dir(&dir).ok()?;
+        let mut config = WorkflowsConfig::default();
+        let mut found_any = false;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") {
+                continue;
+            }
+            let workflow_name = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            if workflow_name.is_empty() {
+                continue;
+            }
+            let content = match std::fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!("Failed to read {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+            let table: toml::Table = match content.parse() {
+                Ok(t) => t,
+                Err(e) => {
+                    warn!("Failed to parse TOML {}: {}", path.display(), e);
+                    continue;
+                }
+            };
+            for (step_name, value) in &table {
+                if let Some(text) = value.as_str() {
+                    config
+                        .templates
+                        .insert(format!("{workflow_name}.{step_name}"), text.to_string());
+                    found_any = true;
+                }
+            }
+        }
+        if found_any {
+            Some(config)
+        } else {
+            None
+        }
+    }
 }
 
 /// Valid workflow keys and their allowed placeholder variables.

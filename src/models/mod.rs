@@ -6,7 +6,7 @@
 mod document;
 pub(crate) mod format;
 mod question;
-mod repository;
+pub(crate) mod repository;
 mod scan;
 mod search;
 mod stats;

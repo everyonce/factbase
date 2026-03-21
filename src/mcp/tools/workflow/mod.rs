@@ -8,7 +8,7 @@
 //! to the knowledge base's purpose and policies.
 
 pub(crate) mod helpers;
-mod instructions;
+pub(crate) mod instructions;
 mod variants;
 
 use crate::database::Database;
@@ -35,15 +35,19 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
     let perspective = load_perspective(db, repo_resolved.as_deref());
     let repo_path = resolve_repo_path(db, repo_resolved.as_deref());
 
-    // Build workflow config with priority: TOML files < config.yaml < prompts.yaml
+    // Build workflow config with priority: compiled < user-level TOML < config.yaml < KB TOML < prompts.yaml
     let mut wf_config = WorkflowsConfig::default();
+    // User-level overrides (~/.config/factbase/instructions/)
+    if let Some(user_overrides) = WorkflowsConfig::load_user_instruction_files() {
+        wf_config.merge(&user_overrides);
+    }
+    let global_config = crate::Config::load(None).unwrap_or_default().workflows;
+    wf_config.merge(&global_config);
     if let Some(ref rp) = repo_path {
         if let Some(toml_overrides) = WorkflowsConfig::load_instruction_files(rp) {
             wf_config.merge(&toml_overrides);
         }
     }
-    let global_config = crate::Config::load(None).unwrap_or_default().workflows;
-    wf_config.merge(&global_config);
     if let Some(ref rp) = repo_path {
         if let Some(repo_prompts) = WorkflowsConfig::load_repo_prompts(rp) {
             wf_config.merge(&repo_prompts);
@@ -1938,6 +1942,8 @@ mod tests {
             allowed_types: None,
             review: Some(ReviewPerspective {
                 stale_days: Some(180),
+                stale_days_by_type: None,
+                source_types: None,
                 required_fields: Some(HashMap::from([(
                     "person".into(),
                     vec!["current_role".into(), "location".into()],

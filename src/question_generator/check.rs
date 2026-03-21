@@ -2,6 +2,7 @@
 
 use crate::database::Database;
 use crate::embedding::EmbeddingProvider;
+use crate::models::repository::ReviewPerspective;
 use crate::models::{Document, QuestionType, ReviewQuestion};
 use crate::patterns::{
     extract_frontmatter_reviewed_date, extract_reviewed_date, has_corruption_artifacts,
@@ -16,8 +17,8 @@ use crate::question_generator::{
     generate_ambiguous_questions_with_type, generate_conflict_questions,
     generate_corruption_questions, generate_duplicate_entry_questions, generate_missing_questions,
     generate_precision_questions, generate_required_field_questions,
-    generate_source_quality_questions, generate_stale_questions, generate_temporal_questions,
-    generate_weak_source_questions,
+    generate_source_quality_questions, generate_stale_questions_with_perspective,
+    generate_temporal_questions, generate_weak_source_questions,
 };
 use chrono::Utc;
 use regex::Regex;
@@ -55,6 +56,27 @@ pub fn run_generators(
     full: bool,
     citation_patterns: &[Regex],
 ) -> Vec<ReviewQuestion> {
+    run_generators_with_perspective(
+        body,
+        doc_type,
+        defined_terms,
+        stale_days,
+        full,
+        citation_patterns,
+        None,
+    )
+}
+
+/// Like `run_generators` but uses per-source-type staleness from `perspective`.
+pub fn run_generators_with_perspective(
+    body: &str,
+    doc_type: Option<&str>,
+    defined_terms: &HashSet<String>,
+    stale_days: i64,
+    full: bool,
+    citation_patterns: &[Regex],
+    perspective: Option<&ReviewPerspective>,
+) -> Vec<ReviewQuestion> {
     let mut questions = generate_temporal_questions(body, doc_type);
     questions.extend(generate_conflict_questions(body));
     if full {
@@ -70,7 +92,12 @@ pub fn run_generators(
         doc_type,
         defined_terms,
     ));
-    questions.extend(generate_stale_questions(body, stale_days));
+    questions.extend(generate_stale_questions_with_perspective(
+        body,
+        stale_days,
+        perspective,
+        doc_type,
+    ));
     questions.extend(generate_precision_questions(body));
     if full {
         questions.extend(generate_corruption_questions(body));
@@ -98,6 +125,8 @@ pub struct CheckConfig {
     /// Compiled domain-specific citation patterns from perspective.yaml.
     /// Citations matching any pattern pass tier-1 without a weak-source question.
     pub citation_patterns: Vec<Regex>,
+    /// Review perspective for per-source-type and per-doc-type staleness thresholds.
+    pub review_perspective: Option<ReviewPerspective>,
 }
 
 /// Result of linting a single document.
@@ -270,7 +299,7 @@ pub async fn check_all_documents(
                     // treat review entries as document facts.
                     let body = crate::patterns::content_body(content);
 
-                    let mut questions = run_generators(body, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, true, citation_patterns_ref);
+                    let mut questions = run_generators_with_perspective(body, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, true, citation_patterns_ref, config.review_perspective.as_ref());
 
                     // Check for duplicate titles
                     if let Some(dupes) = title_map_ref.get(&doc.title.to_lowercase()) {
@@ -364,7 +393,7 @@ pub async fn check_all_documents(
                     // Count questions suppressed by reviewed markers.
                     // Strip reviewed markers from body and re-generate to measure the delta.
                     let stripped = crate::patterns::strip_reviewed_markers(body);
-                    let mut unrestricted = run_generators(&stripped, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, false, citation_patterns_ref);
+                    let mut unrestricted = run_generators_with_perspective(&stripped, doc.doc_type.as_deref(), defined_terms_ref, config.stale_days, false, citation_patterns_ref, config.review_perspective.as_ref());
                     filter_sequential_conflicts(&stripped, &mut unrestricted);
                     let suppressed_by_review = unrestricted.len().saturating_sub(questions.len());
 
@@ -597,6 +626,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -628,6 +658,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -660,6 +691,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -688,6 +720,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let results = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -728,6 +761,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -756,6 +790,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -797,6 +832,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -825,6 +861,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         // This should always succeed regardless of guard state
@@ -850,6 +887,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         }
     }
 
@@ -898,6 +936,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[glossary, regular], &db, &embedding, &config, &progress)
@@ -1020,6 +1059,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
@@ -1062,6 +1102,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&docs, &db, &embedding, &config, &progress)
@@ -1121,6 +1162,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1211,6 +1253,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1273,6 +1316,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1326,6 +1370,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
 
@@ -1420,6 +1465,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
@@ -1478,6 +1524,7 @@ mod tests {
             repo_id: None,
             glossary_types: None,
             citation_patterns: vec![],
+            review_perspective: None,
         };
         let progress = ProgressReporter::Silent;
         let output = check_all_documents(&[doc], &db, &embedding, &config, &progress)
