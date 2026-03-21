@@ -75,22 +75,16 @@ pub fn generate_stale_questions_with_perspective(
     // Check source dates for each fact line
     let lines: Vec<&str> = body.lines().collect();
     for (line_number, line, fact_text) in iter_fact_lines(content) {
-        // Skip facts with closed temporal ranges — old sources are expected for historical facts
-        let has_closed_range = tags.iter().any(|t| {
-            t.line_number == line_number
-                && matches!(
-                    t.tag_type,
-                    TemporalTagType::Range
-                        | TemporalTagType::PointInTime
-                        | TemporalTagType::Historical
-                )
-        }) || heading_tag_map.get(&line_number).is_some_and(|tt| {
+        // Skip facts under headings with closed temporal ranges — old sources are expected
+        // for historical sections. A @t[] tag directly on the fact line does NOT suppress
+        // stale: temporal and stale questions serve different purposes and are independent.
+        let under_closed_heading = heading_tag_map.get(&line_number).is_some_and(|tt| {
             matches!(
                 tt,
                 TemporalTagType::Range | TemporalTagType::PointInTime | TemporalTagType::Historical
             )
         });
-        if has_closed_range {
+        if under_closed_heading {
             continue;
         }
 
@@ -602,6 +596,35 @@ mod tests {
         assert!(
             qs.is_empty(),
             "most permissive (180 days) should apply; 120 days is within threshold"
+        );
+    }
+
+    #[test]
+    fn test_temporal_tag_on_fact_line_does_not_suppress_stale() {
+        // Fact with @t[=2023-11] AND old footnote with {type:web} (30-day threshold)
+        // should still generate a stale question — temporal and stale are independent.
+        let persp = make_perspective_with_source_types(&[("web", Some(30))], Some(365));
+        let content =
+            "# Entity\n\n- Some fact @t[=2023-11] [^1]\n\n[^1]: Web page, accessed 2023-11-01 {type:web}";
+        let qs = generate_stale_questions_with_perspective(content, 365, Some(&persp), None);
+        assert_eq!(
+            qs.len(),
+            1,
+            "stale question should fire even when @t[] is present on the fact line"
+        );
+        assert_eq!(qs[0].question_type, QuestionType::Stale);
+    }
+
+    #[test]
+    fn test_fact_line_range_tag_does_not_suppress_stale() {
+        // @t[2020..2022] on a fact line should not suppress stale
+        let content =
+            "# Entity\n\n- Some fact @t[2020..2022] [^1]\n\n[^1]: Web page, accessed 2020-01-01";
+        let qs = generate_stale_questions(content, 365);
+        assert_eq!(
+            qs.len(),
+            1,
+            "range tag on fact line should not suppress stale"
         );
     }
 

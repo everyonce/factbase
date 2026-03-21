@@ -1286,10 +1286,17 @@ mod tests {
         let repo_dir = tempfile::tempdir().unwrap();
         let md_path = repo_dir.path().join("test-doc.md");
 
+        // Use a recent source date so the stale generator produces nothing new,
+        // keeping this test focused on DB-question sync behaviour.
+        let recent_date = (chrono::Utc::now().date_naive() - chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+
         // Disk file: has review marker but NO questions.
-        // All facts have temporal tags + sources so generators produce nothing new.
-        let disk_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: https://example.com/source-a, accessed 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n";
-        std::fs::write(&md_path, disk_content).unwrap();
+        let disk_content = format!(
+            "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: https://example.com/source-a, accessed {recent_date}\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n"
+        );
+        std::fs::write(&md_path, &disk_content).unwrap();
 
         let repo = crate::models::Repository {
             id: "test-repo".to_string(),
@@ -1303,7 +1310,9 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         // DB content: has review marker WITH unanswered questions
-        let db_content = "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: https://example.com/source-a, accessed 2024-01-15\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Source [^1] was scraped over 180 days ago\n  > \n";
+        let db_content = format!(
+            "<!-- factbase:fff -->\n# Test\n\n- Fact one @t[=2024-01] [^1]\n\n---\n[^1]: https://example.com/source-a, accessed {recent_date}\n\n---\n\n## Review Queue\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Source [^1] was scraped over 180 days ago\n  > \n"
+        );
         let doc = Document {
             id: "fff".to_string(),
             title: "Test".to_string(),
