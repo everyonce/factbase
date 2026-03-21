@@ -322,20 +322,20 @@ pub async fn full_scan(
             };
 
             // Strip answered [x] questions before computing hash
-            let (content, hash) = if !ctx.opts.dry_run {
+            let (content, hash, questions_were_stripped) = if !ctx.opts.dry_run {
                 let (pruned, count) = crate::processor::strip_answered_questions(&content);
                 if count > 0 {
                     fs::write(&pre.path, &pruned)?;
                     result.questions_pruned += count;
                     let new_hash = crate::processor::content_hash(&pruned);
-                    (pruned, new_hash)
+                    (pruned, new_hash, true)
                 } else {
                     let hash = pre.hash.expect("hash should exist when content is Ok");
-                    (content, hash)
+                    (content, hash, false)
                 }
             } else {
                 let hash = pre.hash.expect("hash should exist when content is Ok");
-                (content, hash)
+                (content, hash, false)
             };
 
             // Derive type once; reused for frontmatter injection and DB upsert.
@@ -399,16 +399,22 @@ pub async fn full_scan(
                 if ctx.opts.verbose {
                     println!("  REVIEW-SYNC {relative}");
                 }
-                let new_review_hash = pre
-                    .review_section_hash
-                    .as_deref()
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                let _ = db.update_review_section_hash(&id, &new_review_hash, &hash);
                 if crate::patterns::has_review_section(&content) {
+                    let new_review_hash = pre
+                        .review_section_hash
+                        .as_deref()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    let _ = db.update_review_section_hash(&id, &new_review_hash, &hash);
                     if let Some(questions) = crate::processor::parse_review_queue(&content) {
                         let _ = db.sync_review_questions(&id, &questions);
                     }
+                } else {
+                    // All questions were stripped (all answered) — update DB content to
+                    // match disk so check doesn't see a stale DB review section and
+                    // re-add questions, causing an oscillation loop.
+                    let _ = db.update_document_content(&id, &content, &hash);
+                    let _ = db.sync_review_questions(&id, &[]);
                 }
                 result.unchanged += 1;
                 continue;
@@ -540,8 +546,12 @@ pub async fn full_scan(
                 );
             }
 
-            // Preserve review queue from DB when disk file is stale
-            let content = if !is_new {
+            // Preserve review queue from DB when disk file is stale.
+            // Skip when we just stripped answered questions — the review section
+            // was intentionally removed by scan, not accidentally lost by the user.
+            // Merging it back would cause an oscillation: check re-adds the same
+            // questions that the user already answered.
+            let content = if !is_new && !questions_were_stripped {
                 if let Some(db_doc) = known.get(&id) {
                     crate::patterns::merge_review_queue(&content, &db_doc.content)
                         .unwrap_or(content)
@@ -551,6 +561,14 @@ pub async fn full_scan(
             } else {
                 content
             };
+
+            // When all answered questions were stripped and the result has no review
+            // section, clear the DB review questions immediately so they don't persist
+            // as stale unanswered questions after the doc is re-indexed.
+            if questions_were_stripped && !crate::patterns::has_review_section(&content) && !is_new
+            {
+                let _ = db.sync_review_questions(&id, &[]);
+            }
 
             pending.push(PendingDoc {
                 id,
@@ -2309,6 +2327,89 @@ mod tests {
         assert!(
             embedding.call_count() > calls_after_first,
             "should re-embed when content changed"
+        );
+    }
+
+    /// Regression test: answering all review questions must not cause oscillation.
+    ///
+    /// Scenario:
+    /// 1. Doc has a review section with one unanswered question Q1.
+    /// 2. User marks Q1 as answered ([x]).
+    /// 3. Scan strips Q1[x] → disk has no review section.
+    ///    Scan must NOT merge the old DB review section back (oscillation fix).
+    /// 4. Check runs → must NOT re-add Q1 (oscillation would occur if DB still
+    ///    had the old unanswered Q1, causing disk_missing_marker = true).
+    #[tokio::test]
+    async fn test_scan_strips_all_answered_questions_updates_db_content() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        // Doc with one unanswered question in the review section.
+        // Use a valid 6-char hex ID (osc001 has 'o' which is not hex).
+        let initial_content = "---\nfactbase_id: abc001\n---\n# Doc\n\n- A fact @t[=2024-01]\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n  > \n";
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, initial_content).unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+
+        // First scan: indexes the doc with the review section
+        let r1 = full_scan(&repo, &db, &ctx).await.unwrap();
+        assert_eq!(r1.added, 1, "first scan should add the doc");
+
+        // Verify DB has the unanswered question
+        let (_, unanswered_before, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert_eq!(unanswered_before, 1, "should have 1 unanswered question");
+
+        // User answers the question (marks [x])
+        let answered_content = "---\nfactbase_id: abc001\n---\n# Doc\n\n- A fact @t[=2024-01]\n\n<!-- factbase:review -->\n- [x] `@q[stale]` Is this current? (line 3)\n  > confirmed\n";
+        std::fs::write(&path, answered_content).unwrap();
+
+        // Second scan: strips the answered question → disk has no review section
+        let r2 = full_scan(&repo, &db, &ctx).await.unwrap();
+        // The scan strips the answered question (content changed) → counted as updated
+        assert!(
+            r2.updated == 1 || r2.unchanged == 1,
+            "scan should process the doc after stripping answered questions, got: {:?}",
+            (r2.added, r2.updated, r2.unchanged, r2.deleted)
+        );
+
+        // Disk should have no review section after stripping
+        let disk_after_strip = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !crate::patterns::has_review_section(&disk_after_strip),
+            "disk should have no review section after stripping all answered questions"
+        );
+
+        // DB content must NOT have the old review section (no oscillation)
+        let db_doc = db.get_document("abc001").unwrap().unwrap();
+        assert!(
+            !crate::patterns::has_review_section(&db_doc.content),
+            "DB content must not have review section after scan strips all answered questions \
+             (oscillation fix); got:\n{}",
+            db_doc.content
+        );
+
+        // DB review_questions must be cleared
+        let (_, unanswered_after, _) = db.count_review_questions_by_status(Some("test")).unwrap();
+        assert_eq!(
+            unanswered_after, 0,
+            "DB review_questions must be cleared after all questions answered"
         );
     }
 }
