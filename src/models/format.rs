@@ -219,6 +219,59 @@ pub fn write_obsidian_app_json(repo_path: &std::path::Path) -> std::io::Result<(
     )
 }
 
+/// Factbase KB gitignore block — regenerable artifacts, OS noise, editor noise.
+const KB_GITIGNORE_BLOCK: &str = "\
+# factbase regenerable artifacts — do not commit
+.factbase/factbase.db
+.factbase/*.lock
+.fastembed_cache/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor artifacts
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temp / scratch files
+*.tmp
+*.bak
+";
+
+/// Ensure `.gitignore` contains the factbase KB entries.
+/// Creates the file if it doesn't exist, or appends the block if the key entry
+/// (`.factbase/factbase.db`) is not already present.
+/// Returns `true` if the file was created or modified.
+pub fn ensure_kb_gitignore(repo_root: &std::path::Path) -> std::io::Result<bool> {
+    let path = repo_root.join(".gitignore");
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    // Use the key entry as a sentinel — if it's present, the block is already there.
+    if existing
+        .lines()
+        .any(|l| l.trim() == ".factbase/factbase.db")
+    {
+        return Ok(false);
+    }
+    let mut content = String::new();
+    if !existing.is_empty() && !existing.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(KB_GITIGNORE_BLOCK);
+    if existing.is_empty() {
+        std::fs::write(&path, content)?;
+    } else {
+        use std::io::Write;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path)?;
+        f.write_all(content.as_bytes())?;
+    }
+    Ok(true)
+}
+
 /// Obsidian-specific gitignore entries: track snippets while ignoring the rest
 /// of `.obsidian/`.
 const OBSIDIAN_GITIGNORE_ENTRIES: &[&str] = &[
@@ -460,6 +513,51 @@ mod tests {
         write_obsidian_app_json(tmp.path()).unwrap();
         let app_path = tmp.path().join(".obsidian").join("app.json");
         assert!(app_path.exists());
+    }
+
+    #[test]
+    fn test_ensure_kb_gitignore_creates_file() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let added = ensure_kb_gitignore(tmp.path()).unwrap();
+        assert!(added, "should create .gitignore");
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.contains(".factbase/factbase.db"));
+        assert!(content.contains(".factbase/*.lock"));
+        assert!(content.contains(".fastembed_cache/"));
+        assert!(content.contains(".DS_Store"));
+        assert!(content.contains(".vscode/"));
+        assert!(content.contains("*.tmp"));
+    }
+
+    #[test]
+    fn test_ensure_kb_gitignore_idempotent() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        ensure_kb_gitignore(tmp.path()).unwrap();
+        let added = ensure_kb_gitignore(tmp.path()).unwrap();
+        assert!(!added, "second call should add nothing");
+    }
+
+    #[test]
+    fn test_ensure_kb_gitignore_appends_to_existing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(".gitignore"), "*.log\n").unwrap();
+        let added = ensure_kb_gitignore(tmp.path()).unwrap();
+        assert!(added);
+        let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
+        assert!(content.starts_with("*.log\n"));
+        assert!(content.contains(".factbase/factbase.db"));
+    }
+
+    #[test]
+    fn test_ensure_kb_gitignore_skips_if_entry_present() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(".gitignore"),
+            "*.log\n.factbase/factbase.db\n",
+        )
+        .unwrap();
+        let added = ensure_kb_gitignore(tmp.path()).unwrap();
+        assert!(!added, "should not add if key entry already present");
     }
 
     #[test]
