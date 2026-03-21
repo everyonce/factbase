@@ -723,4 +723,81 @@ mod tests {
             "unknown type should fall back to global 180 days"
         );
     }
+
+    #[test]
+    fn test_point_in_time_with_frontmatter_no_stale() {
+        // Document WITH frontmatter (5+ lines): @t[=date] on fact line must exempt from stale.
+        // This tests the coordinate system alignment between iter_fact_lines and parse_temporal_tags.
+        let today = Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(500);
+        let content = format!(
+            "---\nfactbase_id: abc123\ntype: news\ntags:\n  - news\n---\n# Title\n\n- AI Amplified Podcast launched @t[={}] [^5]\n\n[^5]: Source, {}",
+            old_date.format("%Y-%m-%d"),
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions(&content, 365);
+        assert!(
+            qs.is_empty(),
+            "@t[=date] with frontmatter should exempt fact from stale, got: {:?}",
+            qs.iter().map(|q| &q.description).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_point_in_time_without_frontmatter_no_stale_regression() {
+        // Same as above but without frontmatter — regression check.
+        let today = Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(500);
+        let content = format!(
+            "# Title\n\n- AI Amplified Podcast launched @t[={}] [^5]\n\n[^5]: Source, {}",
+            old_date.format("%Y-%m-%d"),
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions(&content, 365);
+        assert!(
+            qs.is_empty(),
+            "@t[=date] without frontmatter should exempt fact from stale"
+        );
+    }
+
+    #[test]
+    fn test_open_range_with_frontmatter_fires_stale() {
+        // @t[2023..] (open-ended) in a doc with frontmatter — MUST still generate stale.
+        let today = Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(500);
+        let content = format!(
+            "---\nfactbase_id: abc123\ntype: news\ntags:\n  - news\n---\n# Title\n\n- Currently active @t[2023..] [^1]\n\n[^1]: Source, {}",
+            old_date.format("%Y-%m-%d")
+        );
+        let qs = generate_stale_questions(&content, 365);
+        assert_eq!(
+            qs.len(),
+            1,
+            "@t[2023..] (open-ended) with frontmatter should still fire stale"
+        );
+    }
+
+    #[test]
+    fn test_point_in_time_with_large_frontmatter_no_stale() {
+        // Document with 20+ lines of frontmatter — coordinate system stress test.
+        // iter_fact_lines must return full-document line numbers matching parse_temporal_tags.
+        let today = Utc::now().date_naive();
+        let old_date = today - chrono::Duration::days(500);
+        let mut content = String::from("---\nfactbase_id: abc123\ntype: news\ntags:\n");
+        for i in 0..16 {
+            content.push_str(&format!("  - tag{i}\n"));
+        }
+        content.push_str("---\n# Title\n\n");
+        content.push_str(&format!(
+            "- Fact @t[={}] [^1]\n\n[^1]: Source, {}\n",
+            old_date.format("%Y-%m-%d"),
+            old_date.format("%Y-%m-%d")
+        ));
+        let qs = generate_stale_questions(&content, 365);
+        assert!(
+            qs.is_empty(),
+            "@t[=date] with 20-line frontmatter should exempt from stale, got: {:?}",
+            qs.iter().map(|q| &q.description).collect::<Vec<_>>()
+        );
+    }
 }
