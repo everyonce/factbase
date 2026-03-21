@@ -307,6 +307,83 @@ mod tests {
         assert_eq!(result_none["total"], 0);
     }
 
+    /// When questions are already in the DB, doc_id filter should return only
+    /// that document's questions without triggering the fallback sync path.
+    #[test]
+    fn test_get_review_queue_doc_id_filter() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        // Doc A: 2 questions — distinct file_path to avoid stale-cleanup collision
+        let mut doc_a = crate::models::Document::test_default();
+        doc_a.id = "doca01".to_string();
+        doc_a.repo_id = "test".to_string();
+        doc_a.file_path = "doca01.md".to_string();
+        doc_a.content = "---\nfactbase_id: doca01\n---\n# Doc A\n\nFact.\n".to_string();
+        db.upsert_document(&doc_a).unwrap();
+        db.sync_review_questions(
+            "doca01",
+            &[
+                make_question(QuestionType::Stale, "Is this current? (line 3)"),
+                make_question(QuestionType::Temporal, "When did this happen? (line 4)"),
+            ],
+        )
+        .unwrap();
+
+        // Doc B: 1 question
+        let mut doc_b = crate::models::Document::test_default();
+        doc_b.id = "docb02".to_string();
+        doc_b.repo_id = "test".to_string();
+        doc_b.file_path = "docb02.md".to_string();
+        doc_b.content = "---\nfactbase_id: docb02\n---\n# Doc B\n\nFact.\n".to_string();
+        db.upsert_document(&doc_b).unwrap();
+        db.sync_review_questions(
+            "docb02",
+            &[make_question(
+                QuestionType::Missing,
+                "What is the source? (line 3)",
+            )],
+        )
+        .unwrap();
+
+        // Filter by doc A — should return exactly 2 questions
+        let params_a = ReviewQueueParams {
+            doc_id: Some("doca01".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let result_a = get_review_queue(&db, &params_a, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result_a["unanswered"], 2, "doc A should have 2 questions");
+        assert_eq!(result_a["total"], 2);
+        let qs_a = result_a["questions"].as_array().unwrap();
+        assert_eq!(qs_a.len(), 2);
+        assert!(qs_a.iter().all(|q| q["doc_id"] == "doca01"));
+
+        // Filter by doc B — should return exactly 1 question
+        let params_b = ReviewQueueParams {
+            doc_id: Some("docb02".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let result_b = get_review_queue(&db, &params_b, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result_b["unanswered"], 1, "doc B should have 1 question");
+        assert_eq!(result_b["total"], 1);
+        let qs_b = result_b["questions"].as_array().unwrap();
+        assert_eq!(qs_b.len(), 1);
+        assert_eq!(qs_b[0]["doc_id"], "docb02");
+
+        // No filter — should return all 3 questions
+        let params_all = ReviewQueueParams {
+            limit: 10,
+            ..Default::default()
+        };
+        let result_all = get_review_queue(&db, &params_all, &ProgressReporter::Silent).unwrap();
+        assert_eq!(
+            result_all["unanswered"], 3,
+            "unfiltered should return all 3 questions"
+        );
+    }
+
     /// Fallback should not trigger when DB already has questions.
     #[test]
     fn test_get_review_queue_no_fallback_when_db_populated() {
