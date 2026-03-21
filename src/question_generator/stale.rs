@@ -76,8 +76,7 @@ pub fn generate_stale_questions_with_perspective(
     let lines: Vec<&str> = body.lines().collect();
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts under headings with closed temporal ranges — old sources are expected
-        // for historical sections. A @t[] tag directly on the fact line does NOT suppress
-        // stale: temporal and stale questions serve different purposes and are independent.
+        // for historical sections.
         let under_closed_heading = heading_tag_map.get(&line_number).is_some_and(|tt| {
             matches!(
                 tt,
@@ -85,6 +84,22 @@ pub fn generate_stale_questions_with_perspective(
             )
         });
         if under_closed_heading {
+            continue;
+        }
+
+        // Skip facts whose own temporal tag marks them as immutable (point-in-time, closed
+        // range, or historical). These facts cannot become stale — the period is over.
+        // Open-ended (@t[YYYY..], @t[~DATE]) and unknown (@t[?]) tags do NOT exempt.
+        let has_immutable_tag = tags.iter().any(|t| {
+            t.line_number == line_number
+                && matches!(
+                    t.tag_type,
+                    TemporalTagType::PointInTime
+                        | TemporalTagType::Range
+                        | TemporalTagType::Historical
+                )
+        });
+        if has_immutable_tag {
             continue;
         }
 
@@ -601,30 +616,94 @@ mod tests {
 
     #[test]
     fn test_temporal_tag_on_fact_line_does_not_suppress_stale() {
-        // Fact with @t[=2023-11] AND old footnote with {type:web} (30-day threshold)
-        // should still generate a stale question — temporal and stale are independent.
+        // Fact with @t[=2023-11] AND old footnote with {type:web} (30-day threshold).
+        // PointInTime tag on the fact line → immutable → NO stale question.
         let persp = make_perspective_with_source_types(&[("web", Some(30))], Some(365));
         let content =
             "# Entity\n\n- Some fact @t[=2023-11] [^1]\n\n[^1]: Web page, accessed 2023-11-01 {type:web}";
         let qs = generate_stale_questions_with_perspective(content, 365, Some(&persp), None);
-        assert_eq!(
-            qs.len(),
-            1,
-            "stale question should fire even when @t[] is present on the fact line"
+        assert!(
+            qs.is_empty(),
+            "point-in-time tag on fact line should exempt it from stale"
         );
-        assert_eq!(qs[0].question_type, QuestionType::Stale);
     }
 
     #[test]
     fn test_fact_line_range_tag_does_not_suppress_stale() {
-        // @t[2020..2022] on a fact line should not suppress stale
+        // @t[2020..2022] on a fact line → closed range → NO stale question.
         let content =
             "# Entity\n\n- Some fact @t[2020..2022] [^1]\n\n[^1]: Web page, accessed 2020-01-01";
         let qs = generate_stale_questions(content, 365);
+        assert!(
+            qs.is_empty(),
+            "closed range tag on fact line should exempt it from stale"
+        );
+    }
+
+    #[test]
+    fn test_point_in_time_fact_line_exempts_stale() {
+        // @t[=2024-04-30] — exact point-in-time → NO stale question
+        let content =
+            "# Entity\n\n- Signed contract @t[=2024-04-30] [^1]\n\n[^1]: Contract doc, 2024-04-30";
+        assert!(
+            generate_stale_questions(content, 365).is_empty(),
+            "@t[=2024-04-30] should exempt fact from stale"
+        );
+    }
+
+    #[test]
+    fn test_closed_range_fact_line_exempts_stale() {
+        // @t[2021..2023] — closed range → NO stale question
+        let content =
+            "# Entity\n\n- Held position @t[2021..2023] [^1]\n\n[^1]: Records, 2023-12-01";
+        assert!(
+            generate_stale_questions(content, 365).is_empty(),
+            "@t[2021..2023] should exempt fact from stale"
+        );
+    }
+
+    #[test]
+    fn test_open_range_fact_line_fires_stale() {
+        // @t[2023..] — open/ongoing range → stale question FIRES
+        let content =
+            "# Entity\n\n- Currently employed @t[2023..] [^1]\n\n[^1]: LinkedIn, scraped 2023-01-01";
         assert_eq!(
-            qs.len(),
+            generate_stale_questions(content, 365).len(),
             1,
-            "range tag on fact line should not suppress stale"
+            "@t[2023..] (open range) should still fire stale"
+        );
+    }
+
+    #[test]
+    fn test_approximate_tag_fact_line_fires_stale() {
+        // @t[~2023] — approximate/last-seen → stale question FIRES (via LastSeen loop)
+        let content = "# Entity\n\n- Lives in Berlin @t[~2023]";
+        assert_eq!(
+            generate_stale_questions(content, 365).len(),
+            1,
+            "@t[~2023] should still fire stale"
+        );
+    }
+
+    #[test]
+    fn test_open_range_with_month_fires_stale() {
+        // @t[2024-06..] — open range with month precision → stale question FIRES
+        let content =
+            "# Entity\n\n- Active project @t[2024-06..] [^1]\n\n[^1]: Jira, 2024-06-01";
+        assert_eq!(
+            generate_stale_questions(content, 365).len(),
+            1,
+            "@t[2024-06..] (open range) should still fire stale"
+        );
+    }
+
+    #[test]
+    fn test_heading_closed_range_suppresses_open_fact_tag() {
+        // Heading has closed range; fact has open @t[2023..] — heading suppression wins
+        let content = "# Entity\n\n## Q1 2023 @t[2023-01..2023-03]\n\n- Active then @t[2023..] [^1]\n\n[^1]: Notes, 2023-03-01";
+        assert!(
+            generate_stale_questions(content, 365).is_empty(),
+            "closed heading should suppress stale even when fact has open tag"
         );
     }
 
