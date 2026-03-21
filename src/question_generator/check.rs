@@ -1496,6 +1496,78 @@ mod tests {
         );
     }
 
+    /// When perspective has source_types, a footnote with {type:x} matching a known
+    /// source type must NOT generate a weak-source question.
+    /// Regression test for task #1060: known_source_types must be threaded through
+    /// run_generators_with_perspective → generate_weak_source_questions.
+    #[test]
+    fn test_known_source_type_suppresses_weak_source_via_run_generators() {
+        use crate::models::repository::{ReviewPerspective, SourceTypeConfig};
+        use std::collections::HashMap;
+
+        let content = "# Doc\n\n- Some fact [^1]\n\n---\n[^1]: AWS Lambda docs, https://docs.aws.amazon.com/lambda/, accessed 2026-03-21 {type:aws-docs}\n";
+        let body = crate::patterns::content_body(content);
+
+        let mut source_types = HashMap::new();
+        source_types.insert(
+            "aws-docs".to_string(),
+            SourceTypeConfig {
+                stale_days: Some(365),
+            },
+        );
+        let perspective = ReviewPerspective {
+            source_types: Some(source_types),
+            ..Default::default()
+        };
+
+        let defined_terms = std::collections::HashSet::new();
+        let questions = run_generators_with_perspective(
+            body,
+            None,
+            &defined_terms,
+            365,
+            true,
+            &[],
+            Some(&perspective),
+        );
+
+        // No weak-source question should be generated for the known type
+        let weak_source_qs: Vec<_> = questions
+            .iter()
+            .filter(|q| q.question_type == crate::models::QuestionType::WeakSource)
+            .collect();
+        assert!(
+            weak_source_qs.is_empty(),
+            "known source type should suppress weak-source question, got: {:?}",
+            weak_source_qs
+                .iter()
+                .map(|q| &q.description)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Without source_types in perspective, {type:x} tags do NOT suppress weak-source questions.
+    #[test]
+    fn test_unknown_source_type_generates_weak_source_without_perspective() {
+        // A citation that fails tier-1 (no URL) with {type:aws-docs} but no source_types block
+        let content = "# Doc\n\n- Some fact [^1]\n\n---\n[^1]: AWS Lambda docs, accessed 2026-03-21 {type:aws-docs}\n";
+        let body = crate::patterns::content_body(content);
+
+        let defined_terms = std::collections::HashSet::new();
+        // No perspective → None → existing tier-1 behavior, {type:x} not recognized
+        let questions =
+            run_generators_with_perspective(body, None, &defined_terms, 365, true, &[], None);
+
+        let weak_source_qs: Vec<_> = questions
+            .iter()
+            .filter(|q| q.question_type == crate::models::QuestionType::WeakSource)
+            .collect();
+        assert!(
+            !weak_source_qs.is_empty(),
+            "without source_types, vague citation should generate a weak-source question"
+        );
+    }
+
     #[tokio::test]
     async fn test_check_writes_plain_format_when_no_obsidian_config() {
         let (db, _tmp) = test_db();
