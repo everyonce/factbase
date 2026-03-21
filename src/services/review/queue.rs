@@ -53,11 +53,19 @@ pub fn get_review_queue(
     // Fallback: if DB index is empty but documents with review sections exist,
     // re-sync from stored content and re-query. This handles the case where
     // review edits were made externally and the scanner hasn't run yet.
-    if total == 0 && params.doc_id.is_none() {
-        let docs_with_reviews = db.get_documents_with_review_queue(repo_filter.as_deref())?;
-        if !docs_with_reviews.is_empty() {
+    if total == 0 {
+        let docs_to_sync: Vec<crate::models::Document> = if let Some(ref doc_id) = params.doc_id {
+            // Targeted fallback: only sync the requested document
+            db.get_document(doc_id)?
+                .into_iter()
+                .filter(|d| crate::patterns::has_review_section(&d.content))
+                .collect()
+        } else {
+            db.get_documents_with_review_queue(repo_filter.as_deref())?
+        };
+        if !docs_to_sync.is_empty() {
             progress.log("DB review index empty — re-syncing from stored content");
-            for doc in &docs_with_reviews {
+            for doc in &docs_to_sync {
                 if let Some(questions) = crate::processor::parse_review_queue(&doc.content) {
                     let _ = db.sync_review_questions(&doc.id, &questions);
                 }
@@ -250,6 +258,53 @@ mod tests {
             "fallback should surface the unanswered question"
         );
         assert_eq!(result["total"], 1);
+    }
+
+    /// When doc_id filter is provided and DB index is empty for that doc,
+    /// fallback should sync that specific document and return its questions.
+    #[test]
+    fn test_get_review_queue_fallback_with_doc_id_filter() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        crate::database::tests::test_repo_in_db(&db, "test", std::path::Path::new("/tmp/test"));
+
+        let mut doc = crate::models::Document::test_default();
+        doc.id = "fb0003".to_string();
+        doc.repo_id = "test".to_string();
+        doc.file_path = "fb0003.md".to_string();
+        doc.content = "---\nfactbase_id: fb0003\n---\n# Doc\n\nA fact.\n\n<!-- factbase:review -->\n- [ ] `@q[stale]` Is this current? (line 3)\n- [ ] `@q[temporal]` When did this happen? (line 4)\n".to_string();
+        db.upsert_document(&doc).unwrap();
+        // Intentionally do NOT call sync_review_questions — simulates stale DB index
+
+        // Also add a second doc with questions to ensure filtering works
+        let mut doc2 = crate::models::Document::test_default();
+        doc2.id = "fb0004".to_string();
+        doc2.repo_id = "test".to_string();
+        doc2.file_path = "fb0004.md".to_string();
+        doc2.content = "---\nfactbase_id: fb0004\n---\n# Doc2\n\nAnother fact.\n\n<!-- factbase:review -->\n- [ ] `@q[missing]` What is the source? (line 3)\n".to_string();
+        db.upsert_document(&doc2).unwrap();
+
+        // Query with doc_id filter — should only return questions for fb0003
+        let params = ReviewQueueParams {
+            doc_id: Some("fb0003".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let result = get_review_queue(&db, &params, &ProgressReporter::Silent).unwrap();
+        assert_eq!(
+            result["unanswered"], 2,
+            "fallback with doc_id should surface questions for that doc"
+        );
+        let questions = result["questions"].as_array().unwrap();
+        assert!(questions.iter().all(|q| q["doc_id"] == "fb0003"));
+
+        // Query for nonexistent doc_id — should return 0
+        let params_none = ReviewQueueParams {
+            doc_id: Some("ffffff".to_string()),
+            limit: 10,
+            ..Default::default()
+        };
+        let result_none = get_review_queue(&db, &params_none, &ProgressReporter::Silent).unwrap();
+        assert_eq!(result_none["total"], 0);
     }
 
     /// Fallback should not trigger when DB already has questions.
