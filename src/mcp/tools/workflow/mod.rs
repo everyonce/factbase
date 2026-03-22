@@ -270,7 +270,7 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 "workflow": "setup",
                 "step": 5, "total_steps": total,
                 "title": "Step 5 of 7: Create Documents",
-                "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES), ("data_sources_note", "")]),
+                "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES), ("data_sources_note", ""), ("authoring_guide_prelude", AUTHORING_GUIDE_PRELUDE), ("write_complete_rule", WRITE_COMPLETE_RULE)]),
                 "next_tool": "factbase", "suggested_op": "authoring_guide",
                 "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 7"
             })
@@ -1243,7 +1243,11 @@ fn resolve_step2_batch(
         wf,
         "resolve.answer",
         answer_default,
-        &[("stale", &stale.to_string()), ("ctx", &ctx)],
+        &[
+            ("stale", &stale.to_string()),
+            ("ctx", &ctx),
+            ("evidence_requirement", EVIDENCE_REQUIREMENT),
+        ],
     );
 
     let is_first_batch = resolved_so_far == 0;
@@ -1354,7 +1358,12 @@ fn resolve_step2_batch(
             wf,
             "resolve.answer_intro",
             intro_default,
-            &[("stale", &stale.to_string()), ("ctx", &ctx)],
+            &[
+                ("stale", &stale.to_string()),
+                ("ctx", &ctx),
+                ("applicability_check", APPLICABILITY_CHECK),
+                ("evidence_requirement", EVIDENCE_REQUIREMENT),
+            ],
         );
         let fanout_types: Vec<(String, usize)> = type_distribution
             .iter()
@@ -1412,7 +1421,7 @@ fn ingest_step(
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "ingest.create", DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES)]),
+            "instruction": resolve(wf, "ingest.create", DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES), ("authoring_guide_prelude", AUTHORING_GUIDE_PRELUDE), ("write_complete_rule", WRITE_COMPLETE_RULE), ("scan_after_write", SCAN_AFTER_WRITE)]),
             "next_tool": "factbase", "suggested_op": "bulk_create",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
@@ -1477,7 +1486,7 @@ fn enrich_step(
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "enrich.research", DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES)]),
+            "instruction": resolve(wf, "enrich.research", DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES), ("authoring_guide_prelude", AUTHORING_GUIDE_PRELUDE), ("write_complete_rule", WRITE_COMPLETE_RULE), ("scan_after_write", SCAN_AFTER_WRITE)]),
             "next_tool": "factbase", "suggested_op": "update",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
@@ -1576,7 +1585,7 @@ fn improve_step(
             "step_name": "resolve",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": resolve(wf, "improve.resolve", DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx)]),
+            "instruction": resolve(wf, "improve.resolve", DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx), ("applicability_check", APPLICABILITY_CHECK)]),
             "next_tool": "factbase", "suggested_op": "review_queue",
             "suggested_args": {"doc_id": doc_arg, "include_context": true},
             "policy": {"stale_days": stale},
@@ -1678,7 +1687,7 @@ fn correct_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "correct.fix", DEFAULT_CORRECT_FIX_INSTRUCTION,
                 &[("correction", correction), ("source_note", &source_note),
-                  ("source_footnote", &source_footnote), ("temporal_hint", &temporal_hint)]),
+                  ("source_footnote", &source_footnote), ("temporal_hint", &temporal_hint), ("scan_after_write", SCAN_AFTER_WRITE)]),
             "next_tool": "factbase", "suggested_op": "get_entity",
             "when_done": "Call workflow with workflow='correct', step=4"
         }),
@@ -1769,7 +1778,7 @@ fn transition_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 "instruction": resolve(wf, "transition.apply", DEFAULT_TRANSITION_APPLY_INSTRUCTION,
                     &[("change", change), ("nomenclature", nom),
                       ("effective_date", &effective_date), ("source_note", &source_note),
-                      ("source_footnote", &source_footnote)]),
+                      ("source_footnote", &source_footnote), ("scan_after_write", SCAN_AFTER_WRITE)]),
                 "next_tool": "factbase", "suggested_op": "get_entity",
                 "when_done": "Call workflow with workflow='transition', step=5"
             })
@@ -4620,7 +4629,19 @@ mod tests {
 
     #[test]
     fn test_resolve_intro_requires_evidence() {
-        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        // Test rendered output (constant uses {evidence_requirement} placeholder)
+        let wf = wf();
+        let intro = resolve(
+            &wf,
+            "resolve.answer_intro",
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
+            &[
+                ("stale", "180"),
+                ("ctx", ""),
+                ("applicability_check", APPLICABILITY_CHECK),
+                ("evidence_requirement", EVIDENCE_REQUIREMENT),
+            ],
+        );
         assert!(
             intro.contains("EVIDENCE REQUIREMENT"),
             "intro must mention evidence requirement"
@@ -4640,6 +4661,184 @@ mod tests {
         assert!(
             intro.contains("GOOD defer"),
             "intro must frame defer positively"
+        );
+    }
+
+    /// Verify that all shared chunks are correctly injected into rendered instructions.
+    #[test]
+    fn test_shared_chunks_render_in_instructions() {
+        let wf = wf();
+        let (db, _tmp) = test_db();
+
+        // resolve.answer_intro renders evidence_requirement and applicability_check
+        let intro = resolve(
+            &wf,
+            "resolve.answer_intro",
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
+            &[
+                ("stale", "180"),
+                ("ctx", ""),
+                ("applicability_check", APPLICABILITY_CHECK),
+                ("evidence_requirement", EVIDENCE_REQUIREMENT),
+            ],
+        );
+        assert!(
+            intro.contains("EVIDENCE REQUIREMENT"),
+            "resolve.answer_intro must contain EVIDENCE_REQUIREMENT"
+        );
+        assert!(
+            intro.contains("DATE REQUIRED"),
+            "resolve.answer_intro must contain DATE REQUIRED"
+        );
+        assert!(
+            intro.contains("APPLICABILITY CHECK"),
+            "resolve.answer_intro must contain APPLICABILITY_CHECK"
+        );
+
+        // resolve.answer renders evidence_requirement
+        let answer = resolve(
+            &wf,
+            "resolve.answer",
+            DEFAULT_RESOLVE_ANSWER_INSTRUCTION,
+            &[
+                ("stale", "180"),
+                ("ctx", ""),
+                ("evidence_requirement", EVIDENCE_REQUIREMENT),
+            ],
+        );
+        assert!(
+            answer.contains("EVIDENCE REQUIREMENT"),
+            "resolve.answer must contain EVIDENCE_REQUIREMENT"
+        );
+
+        // improve.resolve renders applicability_check
+        let improve_resolve = resolve(
+            &wf,
+            "improve.resolve",
+            DEFAULT_IMPROVE_RESOLVE_INSTRUCTION,
+            &[
+                ("doc_hint", ""),
+                ("stale", "180"),
+                ("ctx", ""),
+                ("applicability_check", APPLICABILITY_CHECK),
+            ],
+        );
+        assert!(
+            improve_resolve.contains("APPLICABILITY CHECK"),
+            "improve.resolve must contain APPLICABILITY_CHECK"
+        );
+
+        // setup.create renders authoring_guide_prelude and write_complete_rule
+        let setup_create = resolve(
+            &wf,
+            "setup.create",
+            DEFAULT_SETUP_CREATE_INSTRUCTION,
+            &[
+                ("format_rules", FORMAT_RULES),
+                ("doc_rules", DOCUMENT_AUTHORING_RULES),
+                ("data_sources_note", ""),
+                ("authoring_guide_prelude", AUTHORING_GUIDE_PRELUDE),
+                ("write_complete_rule", WRITE_COMPLETE_RULE),
+            ],
+        );
+        assert!(
+            setup_create.contains("authoring_guide"),
+            "setup.create must contain authoring_guide_prelude"
+        );
+        assert!(
+            setup_create.contains("WRITE COMPLETE FACTS"),
+            "setup.create must contain write_complete_rule"
+        );
+
+        // ingest.create renders all three create-related chunks
+        let ingest_create = resolve(
+            &wf,
+            "ingest.create",
+            DEFAULT_INGEST_CREATE_INSTRUCTION,
+            &[
+                ("fields", ""),
+                ("format_rules", FORMAT_RULES),
+                ("doc_rules", DOCUMENT_AUTHORING_RULES),
+                ("authoring_guide_prelude", AUTHORING_GUIDE_PRELUDE),
+                ("write_complete_rule", WRITE_COMPLETE_RULE),
+                ("scan_after_write", SCAN_AFTER_WRITE),
+            ],
+        );
+        assert!(
+            ingest_create.contains("authoring_guide"),
+            "ingest.create must contain authoring_guide_prelude"
+        );
+        assert!(
+            ingest_create.contains("WRITE COMPLETE FACTS"),
+            "ingest.create must contain write_complete_rule"
+        );
+        assert!(
+            ingest_create.contains("AFTER WRITING"),
+            "ingest.create must contain scan_after_write"
+        );
+
+        // enrich.research renders all three create-related chunks
+        let enrich_research = resolve(
+            &wf,
+            "enrich.research",
+            DEFAULT_ENRICH_RESEARCH_INSTRUCTION,
+            &[
+                ("ctx", ""),
+                ("format_rules", FORMAT_RULES),
+                ("doc_rules", DOCUMENT_AUTHORING_RULES),
+                ("authoring_guide_prelude", AUTHORING_GUIDE_PRELUDE),
+                ("write_complete_rule", WRITE_COMPLETE_RULE),
+                ("scan_after_write", SCAN_AFTER_WRITE),
+            ],
+        );
+        assert!(
+            enrich_research.contains("authoring_guide"),
+            "enrich.research must contain authoring_guide_prelude"
+        );
+        assert!(
+            enrich_research.contains("WRITE COMPLETE FACTS"),
+            "enrich.research must contain write_complete_rule"
+        );
+        assert!(
+            enrich_research.contains("AFTER WRITING"),
+            "enrich.research must contain scan_after_write"
+        );
+
+        // correct.fix renders scan_after_write
+        let correct_fix = resolve(
+            &wf,
+            "correct.fix",
+            DEFAULT_CORRECT_FIX_INSTRUCTION,
+            &[
+                ("correction", "test"),
+                ("source_note", ""),
+                ("source_footnote", ""),
+                ("temporal_hint", ""),
+                ("scan_after_write", SCAN_AFTER_WRITE),
+            ],
+        );
+        assert!(
+            correct_fix.contains("AFTER WRITING"),
+            "correct.fix must contain scan_after_write"
+        );
+
+        // transition.apply renders scan_after_write
+        let transition_apply = resolve(
+            &wf,
+            "transition.apply",
+            DEFAULT_TRANSITION_APPLY_INSTRUCTION,
+            &[
+                ("change", "test"),
+                ("nomenclature", "new"),
+                ("effective_date", "2026-01-01"),
+                ("source_note", ""),
+                ("source_footnote", ""),
+                ("scan_after_write", SCAN_AFTER_WRITE),
+            ],
+        );
+        assert!(
+            transition_apply.contains("AFTER WRITING"),
+            "transition.apply must contain scan_after_write"
         );
     }
 
