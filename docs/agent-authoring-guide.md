@@ -644,3 +644,25 @@ Stage corrections or new information for agent-assisted integration:
 ```
 
 The agent integrates inbox content into the document body via the `update_document` MCP operation, adding temporal tags and sources as appropriate. The inbox block is removed after successful integration.
+
+## Git Setup
+
+factbase writes a `.gitignore` automatically during setup. Here's what to commit and what to skip:
+
+**Commit these** (source of truth — always commit):
+- All `.md` documents — these are the knowledge base
+- `perspective.yaml` — KB configuration
+- `.gitignore` — so collaborators get the same exclusions
+- `.factbase/config.yaml` (if present) — factbase configuration
+
+**Never commit these** (regenerable artifacts):
+- `.factbase/factbase.db`, `.factbase/factbase.db-shm`, `.factbase/factbase.db-wal` — the SQLite database is rebuilt from markdown files by running `factbase(op='scan')`. Committing it adds binary churn with no benefit.
+- `.fastembed_cache/` — downloaded embedding model files (~100 MB). Re-downloaded automatically on first use.
+
+**Recommended commit cadence**: after each session:
+
+```bash
+git commit -am 'maintain: YYYY-MM-DD'
+```
+
+**Lost the database?** Run `factbase(op='scan')` to rebuild it from the markdown files. No data is lost — the markdown files are the source of truth.
