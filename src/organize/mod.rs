@@ -4,6 +4,7 @@
 //! (merge, split, move, retype) to ensure no data is silently lost.
 
 pub mod detect;
+pub mod entity_folder;
 pub mod execute;
 mod extract;
 pub(crate) mod fs_helpers;
@@ -27,6 +28,7 @@ pub use execute::{
 };
 pub use extract::extract_facts;
 pub use fs_helpers::clean_canonicalize;
+pub use entity_folder::is_entity_folder;
 pub use links::{redirect_database_links, redirect_file_links, redirect_links};
 pub use orphans::{write_orphans, OrphanOperation};
 pub use plan::{plan_merge, plan_split, MergePlan, ProposedDocument, SplitPlan};
