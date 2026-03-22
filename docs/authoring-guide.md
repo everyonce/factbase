@@ -516,3 +516,20 @@ Use inbox blocks to stage corrections or updates for agent-assisted integration:
 ```
 
 The agent integrates inbox content into the document body via the `update_document` MCP operation, adding temporal tags and source footnotes as appropriate. The inbox block is removed after successful integration.
+
+## Git Setup
+
+When you create a factbase KB, a `.gitignore` is written automatically during setup with factbase-specific entries.
+
+### What to commit
+- All `.md` documents — these are your source of truth
+- `perspective.yaml` — KB configuration
+- `.gitignore` — the ignore rules themselves
+- `.factbase/config.yaml` if present — user configuration
+
+### What NOT to commit
+- `.factbase/factbase.db`, `.factbase/factbase.db-shm`, `.factbase/factbase.db-wal` — the SQLite database is a regenerable index, not source of truth. Never commit it. If you lose it, run `factbase scan` to rebuild from your markdown files.
+- `.fastembed_cache/` — downloaded embedding model files (~100MB). Never commit. They are re-downloaded automatically.
+
+### If you accidentally committed the database
+Run: `git rm --cached .factbase/factbase.db .factbase/factbase.db-shm .factbase/factbase.db-wal` then commit. The database will be recreated on next scan.
