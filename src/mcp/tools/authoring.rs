@@ -49,6 +49,22 @@ pub fn get_authoring_guide() -> Value {
                 }
             ]
         },
+        "folder_structure": {
+            "title": "📁 Folder Structure = Document Type",
+            "rule": "The folder immediately containing your file determines its type — there is no other mechanism.",
+            "correct_examples": [
+                "people/alice/alice.md          → type: people",
+                "people/alice/notes.md          → type: alice  (companion — expected)",
+                "services/payments.md           → type: services",
+                "companies/acme/acme.md         → type: companies"
+            ],
+            "wrong_examples": [
+                "people/engineering/alice/alice.md    → type: engineering  (NOT people)",
+                "services/active/payments.md          → type: active  (NOT services)"
+            ],
+            "entity_subfolder_pattern": "For entities with multiple files, create `type/entity-name/entity-name.md` as the canonical doc. Companion files alongside it (notes.md, history.md, etc.) will have the entity folder name as their type — this is correct and expected.",
+            "warning": "Each top-level folder IS a document type. Do NOT add intermediate organizational subfolders. Top-level folders are your types. Entity subfolders group companion files only. Never add a third level of organizational folders."
+        },
         "structure": {
             "title": "First # Heading becomes the document title",
             "type": "Derived from parent folder: species/ → 'species', events/ → 'event', people/ → 'person'. Entity folder convention: if filename matches parent folder (e.g., species/amanita-muscaria/amanita-muscaria.md), type comes from grandparent ('species')",
@@ -189,6 +205,20 @@ pub fn get_authoring_guide() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_authoring_guide_has_folder_structure_section() {
+        let guide = get_authoring_guide();
+        let fs = &guide["folder_structure"];
+        assert!(fs["title"].as_str().unwrap().contains("Folder Structure"));
+        assert!(fs["rule"].is_string());
+        let correct = fs["correct_examples"].as_array().unwrap();
+        assert!(correct.iter().any(|e| e.as_str().unwrap().contains("people/alice/alice.md")));
+        assert!(correct.iter().any(|e| e.as_str().unwrap().contains("services/payments.md")));
+        let wrong = fs["wrong_examples"].as_array().unwrap();
+        assert!(wrong.iter().any(|e| e.as_str().unwrap().contains("engineering")));
+        assert!(fs["warning"].as_str().unwrap().contains("intermediate organizational subfolders"));
+    }
 
     #[test]
     fn test_get_authoring_guide_has_required_sections() {
