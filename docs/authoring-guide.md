@@ -359,6 +359,19 @@ This prevents temporal and stale questions from being generated for any document
 - **Optimal**: 500-5000 characters for best embedding quality
 - **Maximum**: No hard limit, but documents over 100K characters will be chunked for embedding
 
+## ⚠️ Write Complete Facts at Write Time
+
+**Rule: Complete every fact at write time.**
+
+When you write a fact line, you already know the source it came from, the temporal context (when it was true), and the precision of the claim. Do not defer this to a resolve pass. Complete each fact line — citation, temporal tag, and precise language — as you write it. A fact written incomplete will generate review questions that cost time and effort to resolve later, doing work you already had the context to do.
+
+This applies especially to:
+- **Canonical source imports** (scripture, RFCs, legal codes, CSV/TSV data files): the citation is the row/verse/section ID, known at write time
+- **Date-stamped sources** (news, papers, emails): the `@t[]` tag comes from the source date
+- **Structured data files**: every field has a row or record reference
+
+**The general rule:** if you know the citation or temporal data at write time, write it. Never leave a fact line incomplete when the source is in front of you.
+
 ## Temporal Tags (Required)
 
 > **Full specification:** See [fact-document-format.md](fact-document-format.md) for complete temporal tag syntax.
