@@ -270,7 +270,7 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig) -> Value {
                 "workflow": "setup",
                 "step": 5, "total_steps": total,
                 "title": "Step 5 of 7: Create Documents",
-                "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES), ("data_sources_note", "")]),
+                "instruction": resolve(wf, "setup.create", DEFAULT_SETUP_CREATE_INSTRUCTION, &[("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES), ("data_sources_note", "")]),
                 "next_tool": "factbase", "suggested_op": "authoring_guide",
                 "when_done": "⚠️ REQUIRED: Call workflow(workflow='setup', step=6) to continue to Step 6 of 7"
             })
@@ -1412,7 +1412,7 @@ fn ingest_step(
         3 => serde_json::json!({
             "workflow": "ingest",
             "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "ingest.create", DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES)]),
+            "instruction": resolve(wf, "ingest.create", DEFAULT_INGEST_CREATE_INSTRUCTION, &[("fields", &fields), ("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES)]),
             "next_tool": "factbase", "suggested_op": "bulk_create",
             "when_done": "Call workflow with workflow='ingest', step=4"
         }),
@@ -1477,7 +1477,7 @@ fn enrich_step(
         3 => serde_json::json!({
             "workflow": "enrich",
             "step": 3, "total_steps": total,
-            "instruction": resolve(wf, "enrich.research", DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
+            "instruction": resolve(wf, "enrich.research", DEFAULT_ENRICH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES), ("doc_rules", DOCUMENT_AUTHORING_RULES)]),
             "next_tool": "factbase", "suggested_op": "update",
             "when_done": "Call workflow with workflow='enrich', step=4"
         }),
@@ -3260,6 +3260,23 @@ mod tests {
             assert!(
                 instruction.contains("factbase(op='authoring_guide')"),
                 "{name} step should still mention get_authoring_guide"
+            );
+            // Shared authoring rules must be injected via DOCUMENT_AUTHORING_RULES
+            assert!(
+                instruction.contains("FOLDER RULE"),
+                "{name} step missing folder rule from DOCUMENT_AUTHORING_RULES"
+            );
+            assert!(
+                instruction.contains("GLOSSARY DISCIPLINE"),
+                "{name} step missing glossary discipline from DOCUMENT_AUTHORING_RULES"
+            );
+            assert!(
+                instruction.contains("SOURCE REQUIREMENT"),
+                "{name} step missing source requirement from DOCUMENT_AUTHORING_RULES"
+            );
+            assert!(
+                instruction.contains("Source type tags"),
+                "{name} step missing source type tags from DOCUMENT_AUTHORING_RULES"
             );
         }
     }
