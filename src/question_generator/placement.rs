@@ -402,10 +402,7 @@ mod tests {
         set_links(
             &db,
             &lore.id,
-            &[
-                (&mondstadt.id, "mentions"),
-                (&region_doc.id, "mentions"),
-            ],
+            &[(&mondstadt.id, "mentions"), (&region_doc.id, "mentions")],
         );
 
         let docs = vec![diluc, lore.clone(), teams.clone(), mondstadt, region_doc];
