@@ -8,6 +8,8 @@
 /// Contains: folder rule, glossary discipline, source requirement, and source type tags.
 /// Update here to keep all three instructions consistent automatically.
 pub(crate) const DOCUMENT_AUTHORING_RULES: &str = "\
+⚠️ SOURCE TOOL CHECK: Before gathering or writing any facts about a domain, verify you have at least one external research tool available (web search, browser, fetch, local files, etc.). If you have NO external source tools and NO local source documents for the domain, STOP and report: \"No source tools available — cannot create factual content without a verified source. Please provide source material or configure a research tool.\" Writing facts from training knowledge alone without any verified source produces a low-quality KB that will fail review.\n\
+\n\
 ⚠️ FOLDER RULE: Do NOT add intermediate organizational subfolders. The folder immediately containing your file IS its type. `people/alice/alice.md` → type: people ✅. `people/engineering/alice/alice.md` → type: engineering ❌.\n\
 \n\
 GLOSSARY DISCIPLINE: Before writing any abbreviation, acronym, or domain-specific term:\n\
