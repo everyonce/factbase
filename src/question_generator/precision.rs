@@ -112,6 +112,21 @@ static STRIP_ANNOTATIONS: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"@t\[[^\]]*\]|\[\^\d+\]|<!--\s*reviewed:[^>]*-->").expect("strip regex")
 });
 
+/// Strips wikilinks: `[[Entity Name]]` and `[[Entity Name|display]]`.
+static STRIP_WIKILINKS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\[\[[^\]]*\]\]").expect("wikilink regex")
+});
+
+/// Strips title-case proper noun phrases: 2+ consecutive words where each
+/// word starts with an uppercase letter, with lowercase prepositions/articles
+/// (of, the, a, an, in, on, at, for, to, by, with, and, or) allowed between
+/// capitalized words.
+static STRIP_PROPER_NOUNS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"[A-Z][A-Za-z'-]*(?:\s+(?:of|the|a|an|in|on|at|for|to|by|with|and|or)\s+[A-Z][A-Za-z'-]*|\s+[A-Z][A-Za-z'-]*)+"
+    ).expect("proper noun regex")
+});
+
 /// Build a word-boundary regex for a qualifier.
 fn qualifier_regex(word: &str) -> Regex {
     Regex::new(&format!(r"(?i)\b{}\b", regex::escape(word))).expect("qualifier regex")
@@ -139,6 +154,9 @@ pub fn generate_precision_questions(content: &str) -> Vec<ReviewQuestion> {
 
         // Strip annotations so we only match in the claim text itself
         let clean = STRIP_ANNOTATIONS.replace_all(line, "");
+        // Strip wikilinks and title-case proper noun phrases to avoid false positives
+        let clean = STRIP_WIKILINKS.replace_all(&clean, "");
+        let clean = STRIP_PROPER_NOUNS.replace_all(&clean, "");
 
         // Find the first vague qualifier match
         for &(word, question_frag) in VAGUE_QUALIFIERS {
@@ -324,5 +342,54 @@ mod tests {
         let content = "# Title\n\nParagraph\n\n- Precise fact\n- Resulted in heavy losses";
         let q = generate_precision_questions(content);
         assert_eq!(q[0].line_ref, Some(6));
+    }
+
+    #[test]
+    fn test_proper_noun_key_not_flagged() {
+        // "Key of Khaj-Nisut" is a proper noun — "key" should not fire
+        let content = "# Entity\n\n- Key of Khaj-Nisut provides HP scaling";
+        assert!(generate_precision_questions(content).is_empty());
+    }
+
+    #[test]
+    fn test_proper_noun_light_not_flagged() {
+        // "Light of Foliar Incision" is a proper noun — "light" should not fire
+        let content = "# Entity\n\n- Light of Foliar Incision scales with EM";
+        assert!(generate_precision_questions(content).is_empty());
+    }
+
+    #[test]
+    fn test_wikilink_proper_noun_not_flagged() {
+        // [[Staff of Homa]] wikilink — "critical" in the wikilink text should not fire,
+        // but standalone "critical" outside the wikilink still fires
+        let content = "# Entity\n\n- [[Staff of Homa]] is essential for her kit";
+        assert!(generate_precision_questions(content).is_empty());
+    }
+
+    #[test]
+    fn test_standalone_critical_still_flagged() {
+        // "critical" used as a standalone vague qualifier should still fire
+        let content = "# Entity\n\n- This mechanic is critical for success";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("critical"));
+    }
+
+    #[test]
+    fn test_heavy_losses_still_flagged() {
+        // "heavy" as a standalone vague qualifier should still fire
+        let content = "# Entity\n\n- Resulted in heavy losses";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("heavy"));
+    }
+
+    #[test]
+    fn test_lowercase_key_still_flagged() {
+        // "key" in lowercase standalone context (not part of a proper noun) should fire
+        let content = "# Entity\n\n- Key gameplay mechanic for progression";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("key"));
     }
 }
