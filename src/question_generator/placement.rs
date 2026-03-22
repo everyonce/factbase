@@ -67,6 +67,17 @@ pub fn check_folder_placement(
             continue;
         }
 
+        // Skip companion files: documents whose direct parent is an entity folder.
+        // Companion files in entity folders are intentionally typed by entity name,
+        // not by their top-level type folder.
+        let parent_key = Path::new(&doc.file_path)
+            .parent()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if container_by_folder.contains_key(&parent_key) {
+            continue;
+        }
+
         let Some(my_container) = doc_container.get(doc.id.as_str()) else {
             continue;
         };
@@ -367,6 +378,74 @@ mod tests {
         assert!(!check_folder_placement(&docs, &db)
             .unwrap()
             .contains_key(&orphan.id));
+    }
+
+    #[test]
+    fn test_companion_file_in_entity_folder_skipped() {
+        let (db, _tmp) = test_db();
+
+        // Entity folder: characters/diluc/ contains diluc.md
+        let diluc = make_doc("diluc1", "Diluc", "characters/diluc/diluc.md");
+        // Companion files inside the entity folder
+        let lore = make_doc("lore01", "Lore", "characters/diluc/lore.md");
+        let teams = make_doc("teams1", "Teams", "characters/diluc/teams.md");
+        // Another entity folder
+        let mondstadt = make_doc("mond01", "Mondstadt", "regions/mondstadt/mondstadt.md");
+        let region_doc = make_doc("reg001", "Region Info", "regions/mondstadt/info.md");
+
+        for d in [&diluc, &lore, &teams, &mondstadt, &region_doc] {
+            db.upsert_document(d).unwrap();
+        }
+
+        // lore.md links mostly to mondstadt entities — would normally trigger a question
+        // but should be skipped because it's a companion file in an entity folder
+        set_links(
+            &db,
+            &lore.id,
+            &[
+                (&mondstadt.id, "mentions"),
+                (&region_doc.id, "mentions"),
+            ],
+        );
+
+        let docs = vec![diluc, lore.clone(), teams.clone(), mondstadt, region_doc];
+        let result = check_folder_placement(&docs, &db).unwrap();
+
+        // Companion files must NOT generate placement questions
+        assert!(!result.contains_key(&lore.id));
+        assert!(!result.contains_key(&teams.id));
+    }
+
+    #[test]
+    fn test_non_companion_misplaced_still_fires() {
+        // A doc NOT in an entity folder should still be analyzed normally.
+        let (db, _tmp) = test_db();
+
+        let c_acme = make_doc("acme01", "Acme Corp", "acme/acme.md");
+        let c_globex = make_doc("globex1", "Globex Inc", "globex/globex.md");
+        let pa1 = make_doc("pa0001", "Alice", "acme/people/alice.md");
+        let pg1 = make_doc("pg0001", "Bob", "globex/people/bob.md");
+        let pg2 = make_doc("pg0002", "Carol", "globex/people/carol.md");
+        // Filed under acme/notes/ — not an entity folder, should still be analyzed
+        let misplaced = make_doc("doc001", "Some Doc", "acme/notes/some-doc.md");
+
+        for d in [&c_acme, &c_globex, &pa1, &pg1, &pg2, &misplaced] {
+            db.upsert_document(d).unwrap();
+        }
+
+        set_links(
+            &db,
+            &misplaced.id,
+            &[
+                (&pa1.id, "mentions"),
+                (&pg1.id, "mentions"),
+                (&pg2.id, "mentions"),
+            ],
+        );
+
+        let docs = vec![c_acme, c_globex, pa1, pg1, pg2, misplaced.clone()];
+        let result = check_folder_placement(&docs, &db).unwrap();
+        assert!(result.contains_key(&misplaced.id));
     }
 
     #[test]

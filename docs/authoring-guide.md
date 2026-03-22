@@ -279,6 +279,20 @@ Use nesting for large entities:
     /archive/          ← skipped by check
 ```
 
+### Entity Folders
+
+A subfolder named after an entity (e.g., `characters/diluc/`) is an **entity folder**. All files inside it are companion files for that entity. Companion files (`lore.md`, `teams.md`, `notes.md`) intentionally carry the entity name as their type — this is correct and will not generate placement warnings.
+
+```
+/characters/
+  /diluc/
+    /diluc.md      ← entity doc (type: "character")
+    /lore.md       ← companion file (type: "diluc", by design)
+    /teams.md      ← companion file (type: "diluc", by design)
+```
+
+The entity doc (`diluc.md`) is the primary document. Companion files are sub-documents that extend it with additional detail.
+
 ### Archiving Documents
 
 Move stable documents into an `archive/` subfolder. They stay indexed and searchable but are skipped by quality checks — no review questions, no deep-check cycles.
