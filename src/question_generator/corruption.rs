@@ -139,7 +139,7 @@ fn check_orphaned_footnote_defs(content: &str, questions: &mut Vec<ReviewQuestio
                 questions.push(ReviewQuestion::new(
                     QuestionType::Corruption,
                     Some(line_idx + 1),
-                    format!("Footnote [^{num}] is defined but never referenced in document body"),
+                    format!("Footnote [^{num}] is defined but never referenced in the document body. Remove it or restore the inline citation."),
                 ));
             }
         }
@@ -299,7 +299,6 @@ mod tests {
             .iter()
             .any(|q| q.description.contains("never referenced")));
     }
-
     #[test]
     fn test_duplicate_fact_lines() {
         let content = "# Title\n\n- Exact same fact\n- Different fact\n- Exact same fact\n";
@@ -456,5 +455,38 @@ mod tests {
             "Should not flag non-URL citation: {:?}",
             questions
         );
+    }
+
+    #[test]
+    fn test_dangling_footnote_with_inline_ref_no_question() {
+        // [^1]: defined at bottom AND [^1] referenced in body → no dangling footnote
+        let content = "- Fact [^1]\n\n---\n[^1]: Valid source, 2024-01-01\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("never referenced")),
+            "Should not flag footnote that is referenced: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_dangling_footnote_no_inline_ref_generates_question() {
+        // [^1]: defined at bottom but NO [^1] in body → one dangling_footnote question
+        let content = "- Fact with no citation\n\n---\n[^1]: Orphaned source, 2024-01-01\n";
+        let questions = generate_corruption_questions(content);
+        assert_eq!(
+            questions
+                .iter()
+                .filter(|q| q.description.contains("never referenced"))
+                .count(),
+            1,
+            "Should generate exactly one dangling footnote question: {:?}",
+            questions
+        );
+        assert!(questions[0]
+            .description
+            .contains("Remove it or restore the inline citation"));
     }
 }
