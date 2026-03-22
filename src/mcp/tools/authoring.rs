@@ -213,11 +213,20 @@ mod tests {
         assert!(fs["title"].as_str().unwrap().contains("Folder Structure"));
         assert!(fs["rule"].is_string());
         let correct = fs["correct_examples"].as_array().unwrap();
-        assert!(correct.iter().any(|e| e.as_str().unwrap().contains("people/alice/alice.md")));
-        assert!(correct.iter().any(|e| e.as_str().unwrap().contains("services/payments.md")));
+        assert!(correct
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("people/alice/alice.md")));
+        assert!(correct
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("services/payments.md")));
         let wrong = fs["wrong_examples"].as_array().unwrap();
-        assert!(wrong.iter().any(|e| e.as_str().unwrap().contains("engineering")));
-        assert!(fs["warning"].as_str().unwrap().contains("intermediate organizational subfolders"));
+        assert!(wrong
+            .iter()
+            .any(|e| e.as_str().unwrap().contains("engineering")));
+        assert!(fs["warning"]
+            .as_str()
+            .unwrap()
+            .contains("intermediate organizational subfolders"));
     }
 
     #[test]
