@@ -1,5 +1,7 @@
 # Quickstart Guide
 
+<!-- smoke-test: verify Gitea merge commit noreply email -->
+
 Get a searchable knowledge base running in under 2 minutes.
 
 ## 1. Install
