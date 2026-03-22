@@ -517,6 +517,21 @@ Reference documents:
 - ❌ Skipped by quality checks (no review questions)
 - ❌ Excluded from enrich and resolve workflows
 
+### Suppressing Question Types
+
+For canonical-source KBs (scripture, legal codes, RFCs, standards) where certain review question types are structurally inapplicable, the KB owner can suppress them entirely in `perspective.yaml`:
+
+```yaml
+review:
+  suppress_question_types: [temporal]   # no @t[] questions for canon-text KBs
+```
+
+**When to suggest this:** When a KB has a large number of facts and a question type will never have a meaningful answer for any document. For example, a Bible KB with tens of thousands of facts — temporal questions ask "when did this happen?" for scripture verses, which have no useful answer. Rather than running a massive resolve pass to mark each one `not-applicable`, the KB owner can declare the suppression at the perspective level.
+
+**Valid types:** `temporal`, `missing`, `ambiguous`, `precision`, `stale`, `conflict`, `duplicate`, `corruption`, `weak-source`
+
+**Important:** Suppression is permanent for the KB and skips generation entirely. If selective per-fact suppression is needed instead, use `<!-- reviewed:t:DATE -->` markers on individual fact lines.
+
 ---
 
 ## Common Mistakes to Avoid

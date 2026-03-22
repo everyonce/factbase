@@ -969,6 +969,7 @@ mod tests {
                 ignore_patterns: None,
                 required_fields: None,
                 glossary_types: None,
+                suppress_question_types: vec![],
             }),
             ..Default::default()
         };
@@ -997,6 +998,7 @@ mod tests {
                 ignore_patterns: None,
                 required_fields: Some(fields),
                 glossary_types: None,
+                suppress_question_types: vec![],
             }),
             ..Default::default()
         };

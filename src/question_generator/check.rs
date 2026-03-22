@@ -77,36 +77,62 @@ pub fn run_generators_with_perspective(
     citation_patterns: &[Regex],
     perspective: Option<&ReviewPerspective>,
 ) -> Vec<ReviewQuestion> {
-    let mut questions = generate_temporal_questions(body, doc_type);
-    questions.extend(generate_conflict_questions(body));
-    if full {
+    let suppressed =
+        |qt: QuestionType| -> bool { perspective.is_some_and(|p| p.is_type_suppressed(qt)) };
+
+    let mut questions = Vec::new();
+
+    if !suppressed(QuestionType::Temporal) {
+        questions.extend(generate_temporal_questions(body, doc_type));
+    }
+    if !suppressed(QuestionType::Conflict) {
+        questions.extend(generate_conflict_questions(body));
+    }
+    if full && !suppressed(QuestionType::Duplicate) {
         questions.extend(generate_duplicate_entry_questions(body));
     }
-    questions.extend(generate_missing_questions(body));
+    if !suppressed(QuestionType::Missing) {
+        questions.extend(generate_missing_questions(body));
+    }
     if full {
-        questions.extend(generate_source_quality_questions(body));
+        // source quality contributes Missing and WeakSource questions; skip only if both suppressed
+        if !suppressed(QuestionType::Missing) || !suppressed(QuestionType::WeakSource) {
+            for q in generate_source_quality_questions(body) {
+                if !suppressed(q.question_type) {
+                    questions.push(q);
+                }
+            }
+        }
         let known_source_types: Option<std::collections::HashSet<String>> = perspective
             .and_then(|p| p.source_types.as_ref())
             .map(|st| st.keys().cloned().collect());
-        questions.extend(generate_weak_source_questions(
+        if !suppressed(QuestionType::WeakSource) {
+            questions.extend(generate_weak_source_questions(
+                body,
+                citation_patterns,
+                known_source_types.as_ref(),
+            ));
+        }
+    }
+    if !suppressed(QuestionType::Ambiguous) {
+        questions.extend(generate_ambiguous_questions_with_type(
             body,
-            citation_patterns,
-            known_source_types.as_ref(),
+            doc_type,
+            defined_terms,
         ));
     }
-    questions.extend(generate_ambiguous_questions_with_type(
-        body,
-        doc_type,
-        defined_terms,
-    ));
-    questions.extend(generate_stale_questions_with_perspective(
-        body,
-        stale_days,
-        perspective,
-        doc_type,
-    ));
-    questions.extend(generate_precision_questions(body));
-    if full {
+    if !suppressed(QuestionType::Stale) {
+        questions.extend(generate_stale_questions_with_perspective(
+            body,
+            stale_days,
+            perspective,
+            doc_type,
+        ));
+    }
+    if !suppressed(QuestionType::Precision) {
+        questions.extend(generate_precision_questions(body));
+    }
+    if full && !suppressed(QuestionType::Corruption) {
         questions.extend(generate_corruption_questions(body));
     }
     questions
@@ -1629,5 +1655,79 @@ mod tests {
             !on_disk.contains("> [!review]- Review Queue"),
             "Should NOT have callout format without obsidian config"
         );
+    }
+
+    #[test]
+    fn test_suppress_temporal_generates_no_temporal_questions() {
+        let perspective = ReviewPerspective {
+            suppress_question_types: vec![QuestionType::Temporal],
+            ..Default::default()
+        };
+        // A fact with a source citation but no temporal tag triggers a temporal question
+        let body = "- Some fact without a temporal tag [^1]\n\n---\n[^1]: Some source\n";
+        let questions = run_generators_with_perspective(
+            body,
+            None,
+            &HashSet::new(),
+            365,
+            false,
+            &[],
+            Some(&perspective),
+        );
+        let has_temporal = questions
+            .iter()
+            .any(|q| q.question_type == QuestionType::Temporal);
+        assert!(!has_temporal, "Temporal questions should be suppressed");
+    }
+
+    #[test]
+    fn test_suppress_empty_generates_normally() {
+        let perspective = ReviewPerspective {
+            suppress_question_types: vec![],
+            ..Default::default()
+        };
+        // A fact with a source citation but no temporal tag triggers a temporal question
+        let body = "- Some fact without a temporal tag [^1]\n\n---\n[^1]: Some source\n";
+        let questions = run_generators_with_perspective(
+            body,
+            None,
+            &HashSet::new(),
+            365,
+            false,
+            &[],
+            Some(&perspective),
+        );
+        let has_temporal = questions
+            .iter()
+            .any(|q| q.question_type == QuestionType::Temporal);
+        assert!(
+            has_temporal,
+            "Temporal questions should be generated when not suppressed"
+        );
+    }
+
+    #[test]
+    fn test_suppress_multiple_types() {
+        let perspective = ReviewPerspective {
+            suppress_question_types: vec![QuestionType::Temporal, QuestionType::Missing],
+            ..Default::default()
+        };
+        // A fact with a source citation but no temporal tag triggers a temporal question
+        let body = "- Some fact without a temporal tag [^1]\n\n---\n[^1]: Some source\n";
+        let questions = run_generators_with_perspective(
+            body,
+            None,
+            &HashSet::new(),
+            365,
+            true,
+            &[],
+            Some(&perspective),
+        );
+        assert!(!questions
+            .iter()
+            .any(|q| q.question_type == QuestionType::Temporal));
+        assert!(!questions
+            .iter()
+            .any(|q| q.question_type == QuestionType::Missing));
     }
 }
