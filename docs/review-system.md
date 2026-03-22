@@ -132,6 +132,26 @@ The agent processes answered questions by:
 
 After processing, affected fact lines receive a `<!-- reviewed:YYYY-MM-DD -->` marker. Quality checks skip recently-reviewed facts (within 180 days) to prevent regenerating the same questions.
 
+#### Type-specific markers
+
+A bare marker suppresses **all** question types for 180 days. You can also target a specific question type using an optional prefix:
+
+```
+<!-- reviewed:YYYY-MM-DD -->        ← suppresses all question types (backward compatible)
+<!-- reviewed:p:YYYY-MM-DD -->      ← suppresses precision questions only
+<!-- reviewed:t:YYYY-MM-DD -->      ← suppresses temporal questions only
+<!-- reviewed:a:YYYY-MM-DD -->      ← suppresses ambiguous questions only
+<!-- reviewed:s:YYYY-MM-DD -->      ← suppresses stale questions only
+```
+
+Multiple markers on the same line are allowed, each suppressing a different type independently:
+
+```markdown
+- ATK is primarily @t[~2024] [^1] <!-- reviewed:p:2026-03-22 --> <!-- reviewed:t:2026-03-22 -->
+```
+
+This is useful when a fact's temporal claim has been verified but its precision hasn't been addressed yet (or vice versa).
+
 ## Question Lifecycle
 
 ```

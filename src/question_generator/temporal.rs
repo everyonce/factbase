@@ -7,7 +7,7 @@ use chrono::{Datelike, NaiveDate, Utc};
 
 use crate::models::{QuestionType, ReviewQuestion};
 use crate::patterns::{
-    extract_frontmatter_reviewed_date, extract_reviewed_date, MALFORMED_TAG_REGEX,
+    extract_frontmatter_reviewed_date, is_suppressed_for_type, ReviewedType, MALFORMED_TAG_REGEX,
     ONGOING_TAG_REGEX, SOURCE_REF_DETECT_REGEX, TEMPORAL_TAG_FULL_REGEX,
 };
 use crate::processor::{find_malformed_tags, line_has_temporal_tag, normalize_temporal_tags};
@@ -43,8 +43,7 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
-            || extract_reviewed_date(line)
-                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+            || is_suppressed_for_type(line, ReviewedType::Temporal, today, REVIEWED_SKIP_DAYS)
         {
             continue;
         }
@@ -376,6 +375,39 @@ mod tests {
         assert!(
             questions.is_empty(),
             "Recent reviewed marker should suppress temporal question"
+        );
+    }
+
+    #[test]
+    fn test_typed_temporal_marker_suppresses_temporal() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        // <!-- reviewed:t:DATE --> suppresses temporal
+        let content = format!(
+            "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:t:{} -->\n\n---\n[^1]: LinkedIn",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_temporal_questions(&content, None);
+        assert!(
+            questions.is_empty(),
+            "Typed temporal marker should suppress temporal question"
+        );
+    }
+
+    #[test]
+    fn test_typed_precision_marker_does_not_suppress_temporal() {
+        let today = Utc::now().date_naive();
+        let marker_date = today - chrono::Duration::days(30);
+        // <!-- reviewed:p:DATE --> does NOT suppress temporal
+        let content = format!(
+            "# Person\n\n- Works at Acme Corp [^1] <!-- reviewed:p:{} -->\n\n---\n[^1]: LinkedIn",
+            marker_date.format("%Y-%m-%d")
+        );
+        let questions = generate_temporal_questions(&content, None);
+        assert_eq!(
+            questions.len(),
+            1,
+            "Precision marker should not suppress temporal question"
         );
     }
 

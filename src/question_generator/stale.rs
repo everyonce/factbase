@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use crate::models::repository::ReviewPerspective;
 use crate::models::{QuestionType, ReviewQuestion, TemporalTagType};
-use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date, FACT_LINE_REGEX};
+use crate::patterns::{extract_frontmatter_reviewed_date, is_suppressed_for_type, ReviewedType, FACT_LINE_REGEX};
 use crate::processor::{parse_source_definitions, parse_source_references, parse_temporal_tags};
 
 use super::temporal::has_recent_verification;
@@ -111,8 +111,7 @@ pub fn generate_stale_questions_with_perspective(
 
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
-            || extract_reviewed_date(line)
-                .is_some_and(|d| (today - d).num_days() <= global_max_age_days)
+            || is_suppressed_for_type(line, ReviewedType::Stale, today, global_max_age_days)
         {
             continue;
         }
@@ -167,8 +166,12 @@ pub fn generate_stale_questions_with_perspective(
                             // Skip facts with a recent reviewed marker
                             // Skip facts with a recent reviewed marker (inline or frontmatter)
                             if fm_skip
-                                || extract_reviewed_date(line)
-                                    .is_some_and(|d| (today - d).num_days() <= global_max_age_days)
+                                || is_suppressed_for_type(
+                                    line,
+                                    ReviewedType::Stale,
+                                    today,
+                                    global_max_age_days,
+                                )
                             {
                                 continue;
                             }

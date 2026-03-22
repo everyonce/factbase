@@ -411,17 +411,94 @@ pub(crate) static SIMPLE_ORPHAN_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 // Reviewed-fact markers
 // =============================================================================
 
-/// Matches `<!-- reviewed:YYYY-MM-DD ... -->` markers on fact lines.
-/// Allows optional explanation text after the date (e.g., `<!-- reviewed:2026-02-21 Not a conflict -->`).
+/// Optional question-type prefix on a `<!-- reviewed:... -->` marker.
+///
+/// `None` (no prefix) means the marker suppresses **all** question types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewedType {
+    /// `p` — suppresses `@q[precision]` questions only.
+    Precision,
+    /// `t` — suppresses `@q[temporal]` questions only.
+    Temporal,
+    /// `a` — suppresses `@q[ambiguous]` questions only.
+    Ambiguous,
+    /// `s` — suppresses `@q[stale]` questions only.
+    Stale,
+}
+
+/// A single `<!-- reviewed:... -->` marker parsed from a fact line.
+#[derive(Debug, Clone)]
+pub struct ReviewedMarker {
+    pub date: chrono::NaiveDate,
+    /// `None` = suppresses all question types (backward-compatible bare marker).
+    pub question_type: Option<ReviewedType>,
+}
+
+/// Matches `<!-- reviewed:[TYPE:]YYYY-MM-DD ... -->` markers on fact lines.
+///
+/// Captures:
+/// - Group 1: optional type letter (`p`, `t`, `a`, `s`) — absent for bare markers
+/// - Group 2: date string `YYYY-MM-DD`
+///
+/// Examples matched:
+/// - `<!-- reviewed:2026-03-22 -->`
+/// - `<!-- reviewed:p:2026-03-22 -->`
+/// - `<!-- reviewed:t:2026-03-22 Not a conflict -->`
 pub(crate) static REVIEWED_MARKER_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"<!-- reviewed:(\d{4}-\d{2}-\d{2})\b.*?-->")
+    Regex::new(r"<!-- reviewed:(?:([ptasPTAS]):)?(\d{4}-\d{2}-\d{2})\b.*?-->")
         .expect("reviewed marker regex should be valid")
 });
 
+/// Parse all `<!-- reviewed:... -->` markers on a line.
+///
+/// Multiple markers on the same line are supported:
+/// ```text
+/// - Fact <!-- reviewed:p:2026-03-22 --> <!-- reviewed:t:2026-03-22 -->
+/// ```
+pub fn extract_reviewed_markers(line: &str) -> Vec<ReviewedMarker> {
+    REVIEWED_MARKER_REGEX
+        .captures_iter(line)
+        .filter_map(|caps| {
+            let date =
+                chrono::NaiveDate::parse_from_str(caps.get(2)?.as_str(), "%Y-%m-%d").ok()?;
+            let question_type = caps.get(1).map(|m| match m.as_str().to_ascii_lowercase().as_str() {
+                "p" => ReviewedType::Precision,
+                "t" => ReviewedType::Temporal,
+                "a" => ReviewedType::Ambiguous,
+                "s" => ReviewedType::Stale,
+                _ => unreachable!("regex only matches p/t/a/s"),
+            });
+            Some(ReviewedMarker { date, question_type })
+        })
+        .collect()
+}
+
+/// Return `true` if the line has a recent reviewed marker that suppresses `qt`.
+///
+/// A marker suppresses `qt` when:
+/// - Its `question_type` is `None` (bare marker — suppresses all types), **or**
+/// - Its `question_type` matches `qt`.
+///
+/// The marker must be within `skip_days` of `today` to be active.
+pub fn is_suppressed_for_type(
+    line: &str,
+    qt: ReviewedType,
+    today: chrono::NaiveDate,
+    skip_days: i64,
+) -> bool {
+    extract_reviewed_markers(line).into_iter().any(|m| {
+        (today - m.date).num_days() <= skip_days
+            && (m.question_type.is_none() || m.question_type == Some(qt))
+    })
+}
+
 /// Extract the reviewed date from a line containing a `<!-- reviewed:YYYY-MM-DD -->` marker.
+///
+/// Returns the date of the **first** marker found, regardless of type.
+/// Preserved for backward compatibility; prefer `extract_reviewed_markers` for type-aware logic.
 pub fn extract_reviewed_date(line: &str) -> Option<chrono::NaiveDate> {
     let caps = REVIEWED_MARKER_REGEX.captures(line)?;
-    chrono::NaiveDate::parse_from_str(&caps[1], "%Y-%m-%d").ok()
+    chrono::NaiveDate::parse_from_str(caps.get(2)?.as_str(), "%Y-%m-%d").ok()
 }
 
 /// Add or update a `<!-- reviewed:YYYY-MM-DD -->` marker on a line.
@@ -430,7 +507,7 @@ pub fn extract_reviewed_date(line: &str) -> Option<chrono::NaiveDate> {
 /// (preserving any explanation text). Otherwise appends the marker.
 pub(crate) fn add_or_update_reviewed_marker(line: &str, date: &chrono::NaiveDate) -> String {
     if let Some(caps) = REVIEWED_MARKER_REGEX.captures(line) {
-        let old_date = &caps[1];
+        let old_date = caps.get(2).map(|m| m.as_str()).unwrap_or("");
         let new_date = date.format("%Y-%m-%d").to_string();
         line.replacen(old_date, &new_date, 1)
     } else {
@@ -905,16 +982,102 @@ mod tests {
             extract_reviewed_date(line2).unwrap(),
             chrono::NaiveDate::from_ymd_opt(2026, 2, 21).unwrap()
         );
+        // Typed marker — extract_reviewed_date still returns the date
+        let line3 = "- Fact <!-- reviewed:p:2026-03-22 -->";
+        assert_eq!(
+            extract_reviewed_date(line3).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap()
+        );
         // No marker / invalid date
         assert!(extract_reviewed_date("- Some fact @t[~2026-02]").is_none());
         assert!(extract_reviewed_date("<!-- reviewed:2026-13-45 -->").is_none());
     }
 
     #[test]
+    fn test_extract_reviewed_markers_bare() {
+        let line = "- Fact <!-- reviewed:2026-03-22 -->";
+        let markers = extract_reviewed_markers(line);
+        assert_eq!(markers.len(), 1);
+        assert_eq!(
+            markers[0].date,
+            chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap()
+        );
+        assert!(markers[0].question_type.is_none());
+    }
+
+    #[test]
+    fn test_extract_reviewed_markers_typed() {
+        let line = "- Fact <!-- reviewed:p:2026-03-22 --> <!-- reviewed:t:2026-03-22 -->";
+        let markers = extract_reviewed_markers(line);
+        assert_eq!(markers.len(), 2);
+        assert_eq!(markers[0].question_type, Some(ReviewedType::Precision));
+        assert_eq!(markers[1].question_type, Some(ReviewedType::Temporal));
+    }
+
+    #[test]
+    fn test_extract_reviewed_markers_all_types() {
+        for (letter, expected) in [
+            ("p", ReviewedType::Precision),
+            ("t", ReviewedType::Temporal),
+            ("a", ReviewedType::Ambiguous),
+            ("s", ReviewedType::Stale),
+        ] {
+            let line = format!("- Fact <!-- reviewed:{letter}:2026-03-22 -->");
+            let markers = extract_reviewed_markers(&line);
+            assert_eq!(markers.len(), 1);
+            assert_eq!(markers[0].question_type, Some(expected));
+        }
+    }
+
+    #[test]
+    fn test_is_suppressed_for_type_bare_suppresses_all() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
+        let line = "- Fact <!-- reviewed:2026-03-22 -->";
+        assert!(is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
+        assert!(is_suppressed_for_type(line, ReviewedType::Temporal, today, 180));
+        assert!(is_suppressed_for_type(line, ReviewedType::Ambiguous, today, 180));
+        assert!(is_suppressed_for_type(line, ReviewedType::Stale, today, 180));
+    }
+
+    #[test]
+    fn test_is_suppressed_for_type_typed_only_suppresses_matching() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
+        let line = "- Fact <!-- reviewed:p:2026-03-22 -->";
+        assert!(is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
+        assert!(!is_suppressed_for_type(line, ReviewedType::Temporal, today, 180));
+        assert!(!is_suppressed_for_type(line, ReviewedType::Ambiguous, today, 180));
+        assert!(!is_suppressed_for_type(line, ReviewedType::Stale, today, 180));
+    }
+
+    #[test]
+    fn test_is_suppressed_for_type_multiple_markers() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
+        let line = "- Fact <!-- reviewed:p:2026-03-22 --> <!-- reviewed:t:2026-03-22 -->";
+        assert!(is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
+        assert!(is_suppressed_for_type(line, ReviewedType::Temporal, today, 180));
+        assert!(!is_suppressed_for_type(line, ReviewedType::Ambiguous, today, 180));
+    }
+
+    #[test]
+    fn test_is_suppressed_for_type_expired_marker() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
+        let line = "- Fact <!-- reviewed:p:2020-01-01 -->";
+        assert!(!is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
+    }
+
+    #[test]
     fn test_reviewed_marker_regex_captures() {
+        // Bare marker — group 1 (type) is absent, group 2 is date
         let text = "fact text <!-- reviewed:2025-06-01 --> more text";
         let caps = REVIEWED_MARKER_REGEX.captures(text).unwrap();
-        assert_eq!(&caps[1], "2025-06-01");
+        assert!(caps.get(1).is_none());
+        assert_eq!(caps.get(2).unwrap().as_str(), "2025-06-01");
+
+        // Typed marker — group 1 is type letter, group 2 is date
+        let text2 = "fact <!-- reviewed:p:2026-03-22 -->";
+        let caps2 = REVIEWED_MARKER_REGEX.captures(text2).unwrap();
+        assert_eq!(caps2.get(1).unwrap().as_str(), "p");
+        assert_eq!(caps2.get(2).unwrap().as_str(), "2026-03-22");
     }
 
     #[test]

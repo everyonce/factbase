@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use chrono::Utc;
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date};
+use crate::patterns::{extract_frontmatter_reviewed_date, is_suppressed_for_type, ReviewedType};
 
 use super::iter_fact_lines;
 
@@ -156,8 +156,7 @@ pub fn generate_ambiguous_questions_with_type(
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
-            || extract_reviewed_date(line)
-                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+            || is_suppressed_for_type(line, ReviewedType::Ambiguous, today, REVIEWED_SKIP_DAYS)
         {
             continue;
         }
