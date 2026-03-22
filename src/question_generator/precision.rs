@@ -64,6 +64,46 @@ const VAGUE_QUALIFIERS: &[(&str, &str)] = &[
     ("nearly", "can this be made more precise?"),
     ("almost", "can this be made more precise?"),
     ("widespread", "how widespread — what scope?"),
+    // Subjective quality
+    ("excellent", "excellent by what standard?"),
+    ("great", "great by what measure?"),
+    ("good", "good by what measure?"),
+    ("poor", "poor by what measure?"),
+    ("strong", "strong in what sense?"),
+    ("weak", "weak in what sense?"),
+    ("best", "best by what criteria?"),
+    ("worst", "worst by what criteria?"),
+    ("top", "top how — ranked by what?"),
+    ("leading", "leading by what measure?"),
+    ("premier", "premier by what standard?"),
+    // Vague frequency
+    ("often", "how often specifically?"),
+    ("rarely", "how rarely — what frequency?"),
+    ("frequently", "how frequently?"),
+    ("occasionally", "how occasionally?"),
+    ("sometimes", "how often specifically?"),
+    ("always", "are there exceptions?"),
+    ("never", "are there documented exceptions?"),
+    ("usually", "what portion of the time?"),
+    // Vague importance/notability
+    ("important", "important to whom and in what way?"),
+    ("notable", "notable by what standard?"),
+    ("famous", "famous in what context?"),
+    ("popular", "popular by what measure?"),
+    ("common", "how common — what frequency?"),
+    ("rare", "how rare — what frequency?"),
+    ("unique", "unique in what respect?"),
+    ("special", "special in what way?"),
+    ("exceptional", "exceptional by what standard?"),
+    // Scope weasels
+    ("typically", "are there exceptions?"),
+    ("traditionally", "does this still hold?"),
+    ("historically", "in what period specifically?"),
+    ("effectively", "effective how — by what measure?"),
+    ("essentially", "are there meaningful exceptions?"),
+    ("arguably", "what is the counterargument?"),
+    ("relatively", "relative to what?"),
+    ("comparatively", "compared to what?"),
 ];
 
 /// Regex that strips temporal tags, source refs, and reviewed markers from a
@@ -222,6 +262,38 @@ mod tests {
     fn test_case_insensitive() {
         let content = "# Entity\n\n- HEAVY losses reported";
         assert_eq!(generate_precision_questions(content).len(), 1);
+    }
+
+    #[test]
+    fn test_subjective_quality_flagged() {
+        let content = "# Entity\n\n- Considered an excellent performer";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("excellent"));
+    }
+
+    #[test]
+    fn test_vague_frequency_flagged() {
+        let content = "# Entity\n\n- Often cited in reviews";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("how often"));
+    }
+
+    #[test]
+    fn test_scope_weasel_flagged() {
+        let content = "# Entity\n\n- Arguably the most influential work";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("counterargument"));
+    }
+
+    #[test]
+    fn test_vague_notability_flagged() {
+        let content = "# Entity\n\n- A unique approach to the problem";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("unique"));
     }
 
     #[test]
