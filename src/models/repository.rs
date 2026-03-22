@@ -1,4 +1,5 @@
 use super::format::FormatConfig;
+use super::question::QuestionType;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -96,9 +97,20 @@ pub struct ReviewPerspective {
     pub ignore_patterns: Option<Vec<String>>,
     /// Document types to treat as glossary/definitions (default: ["definitions"])
     pub glossary_types: Option<Vec<String>>,
+    /// Question types to suppress entirely for this repository.
+    /// No questions of these types will be generated during scan/check.
+    /// Valid values: "temporal", "missing", "ambiguous", "precision",
+    ///   "stale", "conflict", "duplicate", "corruption", "weak-source"
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suppress_question_types: Vec<QuestionType>,
 }
 
 impl ReviewPerspective {
+    /// Returns true if the given question type is suppressed for this repository.
+    pub fn is_type_suppressed(&self, qt: QuestionType) -> bool {
+        self.suppress_question_types.contains(&qt)
+    }
+
     /// Resolve the effective stale_days for a given source type and document type.
     ///
     /// Priority (highest first):
@@ -215,7 +227,14 @@ pub const PERSPECTIVE_TEMPLATE: &str = "\
 #     description: Record label catalog numbers (e.g., CL 1355, SD 1361)\n\
 #   - name: section_ref\n\
 #     pattern: '\\w+ \\d+:\\d+'\n\
-#     description: Named section references in Word N:N format (e.g., Code 12:5, Title 42:1983)\n";
+#     description: Named section references in Word N:N format (e.g., Code 12:5, Title 42:1983)\n\
+\n\
+# Suppress specific question types for this repository.\n\
+# Use for canonical-source KBs where certain question types are structurally\n\
+# inapplicable (e.g., scripture, standards, legal codes, RFCs).\n\
+# Valid types: temporal, missing, ambiguous, precision, stale, conflict, duplicate, corruption, weak-source\n\
+# review:\n\
+#   suppress_question_types: [temporal]   # no @t[] questions for canon-text KBs\n";
 
 /// Load and parse `perspective.yaml` from a repository root directory.
 ///

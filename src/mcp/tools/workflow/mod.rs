@@ -1953,6 +1953,7 @@ mod tests {
                 )])),
                 ignore_patterns: None,
                 glossary_types: None,
+                suppress_question_types: vec![],
             }),
             format: None,
             link_match_mode: None,

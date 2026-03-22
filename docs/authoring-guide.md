@@ -331,6 +331,28 @@ allowed_types:
 
 Factbase will warn about documents in folders that don't match allowed types.
 
+### Suppressing Question Types
+
+For canonical-source knowledge bases (scripture, legal codes, RFCs, standards) where certain review question types are structurally inapplicable, you can suppress them entirely in `perspective.yaml`:
+
+```yaml
+review:
+  suppress_question_types: [temporal]   # no @t[] questions for canon-text KBs
+```
+
+**When to use:** When a question type will never have a meaningful answer for any document in the KB. For example, a Bible KB has tens of thousands of facts — temporal questions ask "when did this happen?" for scripture verses, which have no useful answer. Rather than running a massive resolve pass to mark each one `not-applicable`, declare the suppression at the perspective level.
+
+**Valid types:** `temporal`, `missing`, `ambiguous`, `precision`, `stale`, `conflict`, `duplicate`, `corruption`, `weak-source`
+
+**Warning:** Suppression is permanent for the KB and skips generation entirely — no questions of that type will appear on any scan or check. If you want selective per-fact suppression instead, use `<!-- reviewed:t:DATE -->` markers on individual fact lines.
+
+**Example — Bible KB:**
+```yaml
+review:
+  suppress_question_types: [temporal, stale]
+```
+This prevents temporal and stale questions from being generated for any document in the repository.
+
 ## Content Length Guidelines
 
 - **Minimum**: 100+ characters of meaningful content (very short docs may be flagged by quality checks)
