@@ -9,7 +9,7 @@ use regex::Regex;
 use std::sync::LazyLock;
 
 use crate::models::{QuestionType, ReviewQuestion};
-use crate::patterns::{extract_frontmatter_reviewed_date, extract_reviewed_date};
+use crate::patterns::{extract_frontmatter_reviewed_date, is_suppressed_for_type, ReviewedType};
 
 use super::iter_fact_lines;
 
@@ -132,8 +132,7 @@ pub fn generate_precision_questions(content: &str) -> Vec<ReviewQuestion> {
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
-            || extract_reviewed_date(line)
-                .is_some_and(|d| (today - d).num_days() <= REVIEWED_SKIP_DAYS)
+            || is_suppressed_for_type(line, ReviewedType::Precision, today, REVIEWED_SKIP_DAYS)
         {
             continue;
         }
@@ -256,6 +255,30 @@ mod tests {
         // Old marker does NOT suppress
         let content2 = "# Entity\n\n- Resulted in heavy losses <!-- reviewed:2020-01-01 -->";
         assert_eq!(generate_precision_questions(content2).len(), 1);
+    }
+
+    #[test]
+    fn test_typed_precision_marker_suppresses_precision_only() {
+        let today = chrono::Utc::now().date_naive();
+        let marker = today - chrono::Duration::days(30);
+        // <!-- reviewed:p:DATE --> suppresses precision
+        let content = format!(
+            "# Entity\n\n- Resulted in heavy losses <!-- reviewed:p:{} -->",
+            marker.format("%Y-%m-%d")
+        );
+        assert!(generate_precision_questions(&content).is_empty());
+    }
+
+    #[test]
+    fn test_typed_temporal_marker_does_not_suppress_precision() {
+        let today = chrono::Utc::now().date_naive();
+        let marker = today - chrono::Duration::days(30);
+        // <!-- reviewed:t:DATE --> does NOT suppress precision
+        let content = format!(
+            "# Entity\n\n- Resulted in heavy losses <!-- reviewed:t:{} -->",
+            marker.format("%Y-%m-%d")
+        );
+        assert_eq!(generate_precision_questions(&content).len(), 1);
     }
 
     #[test]

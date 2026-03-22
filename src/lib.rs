@@ -162,8 +162,9 @@ pub use output::{ansi, format_bytes, format_json, format_yaml, set_no_color, sho
 #[deprecated(note = "use factbase::patterns::*")]
 pub use patterns::{
     content_body, convert_inline_reviewed_to_frontmatter, extract_frontmatter_reviewed_date,
-    extract_reviewed_date, is_reference_doc, set_frontmatter_reviewed_date, strip_reviewed_markers,
-    FACT_LINE_REGEX, MANUAL_LINK_REGEX, REFERENCE_MARKER, WIKILINK_REGEX,
+    extract_reviewed_date, is_reference_doc, is_suppressed_for_type, set_frontmatter_reviewed_date,
+    strip_reviewed_markers, ReviewedMarker, ReviewedType, FACT_LINE_REGEX, MANUAL_LINK_REGEX,
+    REFERENCE_MARKER, WIKILINK_REGEX,
 };
 #[deprecated(note = "use factbase::processor::*")]
 pub use processor::{
