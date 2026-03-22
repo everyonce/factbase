@@ -22,13 +22,13 @@ pub use detect::{
     detect_merge_candidates, detect_misplaced, detect_split_candidates, discover_entities,
     extract_entity_entries, extract_sections, EntityEntry, StaleDuplicate, SuggestedEntity,
 };
+pub use entity_folder::is_entity_folder;
 pub use execute::{
     execute_merge, execute_move, execute_retype, execute_split, extract_type_override, MergeResult,
     MoveResult, RetypeResult, SplitResult,
 };
 pub use extract::extract_facts;
 pub use fs_helpers::clean_canonicalize;
-pub use entity_folder::is_entity_folder;
 pub use links::{redirect_database_links, redirect_file_links, redirect_links};
 pub use orphans::{write_orphans, OrphanOperation};
 pub use plan::{plan_merge, plan_split, MergePlan, ProposedDocument, SplitPlan};
