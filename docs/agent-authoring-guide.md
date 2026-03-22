@@ -87,6 +87,21 @@ Every section that contains factual claims must use bullet-point list items. Pro
 
 ---
 
+## ⚠️ Rule: Write Complete Facts at Write Time
+
+**When you write a fact line, complete it immediately — citation, `@t[]` tag, and precise language. Do not defer to a resolve pass.**
+
+If the source is in front of you (a file, URL, verse, record), cite it now. Facts written without citations and temporal tags become review queue debt that costs significantly more to resolve later than to write correctly up front.
+
+This applies especially to:
+- **Canonical source imports** (scripture, RFCs, legal codes, CSV/TSV data files): the citation is the row/verse/section ID, known at write time
+- **Date-stamped sources** (news, papers, emails): the `@t[]` tag comes from the source date
+- **Structured data files**: every field has a row or record reference
+
+**The general rule:** if you know the citation or temporal data at write time, write it. Never leave a fact line incomplete when the source is in front of you.
+
+---
+
 ## Temporal Tags (Critical)
 
 **Every dynamic fact MUST include a temporal tag.** Facts without dates become unreliable and unsearchable by time.
