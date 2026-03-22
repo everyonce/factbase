@@ -223,7 +223,8 @@ pub fn write_obsidian_app_json(repo_path: &std::path::Path) -> std::io::Result<(
 const KB_GITIGNORE_BLOCK: &str = "\
 # factbase regenerable artifacts — do not commit
 .factbase/factbase.db
-.factbase/*.lock
+.factbase/factbase.db-shm
+.factbase/factbase.db-wal
 .fastembed_cache/
 
 # OS artifacts
@@ -522,7 +523,8 @@ mod tests {
         assert!(added, "should create .gitignore");
         let content = std::fs::read_to_string(tmp.path().join(".gitignore")).unwrap();
         assert!(content.contains(".factbase/factbase.db"));
-        assert!(content.contains(".factbase/*.lock"));
+        assert!(content.contains(".factbase/factbase.db-shm"));
+        assert!(content.contains(".factbase/factbase.db-wal"));
         assert!(content.contains(".fastembed_cache/"));
         assert!(content.contains(".DS_Store"));
         assert!(content.contains(".vscode/"));
