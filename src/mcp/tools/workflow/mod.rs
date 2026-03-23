@@ -17,7 +17,7 @@ use crate::models::{Perspective, QuestionType};
 use serde_json::Value;
 use std::collections::HashMap;
 
-use super::helpers::{load_glossary_terms, load_perspective, resolve_repo_filter};
+use super::helpers::{load_glossary_terms, load_perspective, resolve_repo, resolve_repo_filter};
 use super::review::format_question_json;
 use super::{get_bool_arg, get_str_arg, get_str_arg_required, get_u64_arg};
 use crate::config::workflows::WorkflowsConfig;
@@ -234,30 +234,24 @@ fn setup_step(step: usize, args: &Value, wf: &WorkflowsConfig, db: &Database) ->
         }),
         3 => {
             // Validate perspective.yaml was written correctly.
-            // Use the same loading path as factbase(op='perspective'): look up the
-            // registered repo path from the DB first (absolute, reliable), then fall
-            // back to the `path` arg supplied by the caller.
+            // Use the exact same code path as factbase(op='perspective'):
+            // resolve_repo finds by ID or takes the first registered repo,
+            // then loads perspective from DB or disk. Falls back to the
+            // `path` arg only when no repo is registered yet.
             let perspective = {
-                let repos = db.list_repositories().ok().unwrap_or_default();
-                let repo = repos.into_iter().find(|r| {
-                    // Match by path arg if provided, otherwise take first repo
-                    if path != "the target directory" {
-                        r.path == std::path::Path::new(path)
-                    } else {
-                        true
-                    }
-                });
-                repo.and_then(|r| {
-                    r.perspective
-                        .or_else(|| crate::models::load_perspective_from_file(&r.path))
-                })
-                .or_else(|| {
-                    if path != "the target directory" {
-                        crate::models::load_perspective_from_file(std::path::Path::new(path))
-                    } else {
-                        None
-                    }
-                })
+                resolve_repo(db, None)
+                    .ok()
+                    .and_then(|r| {
+                        r.perspective
+                            .or_else(|| crate::models::load_perspective_from_file(&r.path))
+                    })
+                    .or_else(|| {
+                        if path != "the target directory" {
+                            crate::models::load_perspective_from_file(std::path::Path::new(path))
+                        } else {
+                            None
+                        }
+                    })
             };
             let (status, detail) = match &perspective {
                 Some(p) => {
@@ -3337,6 +3331,36 @@ mod tests {
         let parsed = step["perspective_parsed"].as_str().unwrap();
         assert!(parsed.contains("Deep sea biology"));
         assert!(parsed.contains("species"));
+    }
+
+    #[test]
+    fn test_create_step3_uses_resolve_repo_not_path_comparison() {
+        // Regression: step=3 previously found the repo by path string comparison,
+        // which could fail if the path arg differed from the stored path (e.g. trailing
+        // slash, symlink). Now it uses resolve_repo() — same as factbase(op='perspective').
+        // Verify: minimal valid perspective.yaml (focus + allowed_types + review.stale_days)
+        // passes validation when called without explicit path arg.
+        let (db, tmp) = test_db();
+        let repo_dir = tmp.path().join("chess-kb");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        crate::database::tests::test_repo_in_db(&db, "chess-kb", &repo_dir);
+
+        std::fs::write(
+            repo_dir.join("perspective.yaml"),
+            "focus: Chess openings and players\nallowed_types:\n  - opening\n  - player\nreview:\n  stale_days: 180\n",
+        )
+        .unwrap();
+
+        // Call without path arg — resolve_repo() finds the registered repo
+        let result = workflow(&db, &serde_json::json!({"workflow": "create", "step": 3})).unwrap();
+        assert_eq!(
+            result["perspective_status"], "ok",
+            "step=3 must pass for minimal valid perspective.yaml via resolve_repo"
+        );
+        let parsed = result["perspective_parsed"].as_str().unwrap();
+        assert!(parsed.contains("Chess"));
+        assert!(parsed.contains("opening"));
+        assert!(parsed.contains("review: configured"));
     }
 
     #[test]
