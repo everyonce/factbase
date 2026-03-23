@@ -286,7 +286,24 @@ fn is_roman_numeral(s: &str) -> bool {
 ///
 /// Flags uppercase sequences (2-5 chars) that aren't preceded by their expansion
 /// in the same line or a nearby heading. Common well-known acronyms are excluded.
+///
+/// Wikilinks `[[Term]]` are stripped before scanning — they are document references,
+/// not undefined terms, and should never trigger an ambiguous question.
 fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Option<String> {
+    // Strip wikilinks [[...]] — document references are not undefined terms.
+    // Covers [[id]] (factbase hex IDs), [[Title]], and [[id|Title]] (Obsidian).
+    let owned;
+    let scan_text = if text.contains("[[") {
+        use std::sync::LazyLock;
+        static WIKILINK_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+            regex::Regex::new(r"\[\[[^\]]*\]\]").expect("wikilink regex should compile")
+        });
+        owned = WIKILINK_RE.replace_all(text, "").into_owned();
+        owned.as_str()
+    } else {
+        text
+    };
+
     // Well-known acronyms that don't need definition in a knowledge base context.
     // Includes business, tech, cloud/AWS, and general industry terms.
     static KNOWN: &[&str] = &[
@@ -317,7 +334,7 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
 
     // Find uppercase sequences of 2-5 chars that look like acronyms
     let mut found: Option<&str> = None;
-    for word in text.split(|c: char| !c.is_alphanumeric() && c != '&') {
+    for word in scan_text.split(|c: char| !c.is_alphanumeric() && c != '&') {
         let trimmed = word.trim();
         if trimmed.len() < 2 || trimmed.len() > 5 {
             continue;
@@ -342,7 +359,7 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
             continue;
         }
         // Check if the expansion appears in the same line (e.g., "Total Addressable Market (TAM)")
-        let lower = text.to_lowercase();
+        let lower = scan_text.to_lowercase();
         let acronym_lower = trimmed.to_lowercase();
         if lower.contains(&format!("({acronym_lower})")) || lower.contains(&format!("({trimmed})"))
         {
@@ -831,6 +848,34 @@ mod tests {
             &terms,
         );
         assert!(q2.iter().any(|q| q.description.contains("XYZZY")));
+    }
+
+    #[test]
+    fn test_wikilinks_not_flagged_as_acronyms() {
+        // Wikilinks [[TERM]] are document references — never flag as undefined acronym
+        let q = generate_ambiguous_questions("# Doc\n\n- See [[ACME]] for details");
+        assert!(
+            q.iter().all(|q| !q.description.contains("what does")),
+            "wikilink [[ACME]] should not be flagged as undefined acronym"
+        );
+        // Obsidian-style [[id|Title]] wikilinks also suppressed
+        let q2 = generate_ambiguous_questions("# Doc\n\n- Linked to [[abc123|XYZQ]] entity");
+        assert!(
+            q2.iter().all(|q| !q.description.contains("XYZQ")),
+            "obsidian wikilink [[id|XYZQ]] should not be flagged"
+        );
+        // Multiple wikilinks on one line
+        let q3 = generate_ambiguous_questions("# Doc\n\n- Cross-ref [[ACME]] and [[XYZQ]] docs");
+        assert!(
+            q3.iter().all(|q| !q.description.contains("what does")),
+            "multiple wikilinks should not be flagged"
+        );
+        // Non-wikilink unknown acronym on same line still flagged
+        let q4 = generate_ambiguous_questions("# Doc\n\n- See [[ACME]] for XYZQ details");
+        assert!(
+            q4.iter().any(|q| q.description.contains("XYZQ")),
+            "non-wikilink unknown acronym XYZQ should still be flagged"
+        );
     }
 
     #[test]
