@@ -145,6 +145,32 @@ BCE dates are normalized to zero-padded negative years internally (e.g., `331 BC
 
 **Rule:** If it's not a year, month, day, quarter, BCE date, date range, or `?`, it does NOT go inside `@t[...]`.
 
+### Narrative Labels Are Never Valid
+
+The most common mistake is writing narrative labels as temporal tags. These are **always wrong** and will generate `@q[corruption]` review questions even when `suppress_question_types: [temporal]` is set:
+
+| ❌ WRONG | Why |
+|----------|-----|
+| `@t[infancy]` | Narrative label, not a date |
+| `@t[early ministry]` | Narrative label, not a date |
+| `@t[burning bush]` | Narrative label, not a date |
+| `@t[eternal pre-existence]` | Theological concept, not a date |
+| `@t[early adulthood]` | Narrative label, not a date |
+| `@t[patriarchal era]` | Era name, not a date |
+| `@t[origin]` | Descriptive noun, not a date |
+| `@t[territory]` | Descriptive noun, not a date |
+
+**Decision rule — ask yourself:**
+- Can you express this as a year or year range? → Use `@t[YYYY]` or `@t[YYYY..YYYY]`
+- Is the date genuinely unknown? → Use `@t[?]`
+- Is the fact permanently undatable (eternal, mythological, definitional)? → **Omit the `@t[]` tag entirely** — do NOT write a narrative label
+- Is the fact a permanent attribute that will never change? → Use `<!-- reviewed:t:YYYY-MM-DD -->` instead
+
+**Undatable facts — omit the tag entirely:**
+- Eternal/theological attributes: "Jesus is the Son of God" — no `@t[]` tag
+- Definitional properties: "The Sabbath is the seventh day" — no `@t[]` tag
+- A missing `@t[]` tag is better than a malformed one
+
 ### Static vs Dynamic Facts
 
 | Static (no date needed) | Dynamic (always date) |
