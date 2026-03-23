@@ -413,6 +413,32 @@ Only dates go inside `@t[...]`. Never put names, descriptions, statuses, or stat
 ✅ @t[=2024]  @t[2020..2023]  @t[?]
 ```
 
+### Narrative Labels Are Never Valid
+
+The most common mistake is writing narrative labels as temporal tags. These are **always wrong** and will generate `@q[corruption]` review questions even when `suppress_question_types: [temporal]` is set:
+
+```
+❌ @t[infancy]                → narrative label, not a date
+❌ @t[early ministry]         → narrative label, not a date
+❌ @t[burning bush]           → narrative label, not a date
+❌ @t[eternal pre-existence]  → theological concept, not a date
+❌ @t[early adulthood]        → narrative label, not a date
+❌ @t[patriarchal era]        → era name, not a date
+❌ @t[origin]                 → descriptive noun, not a date
+❌ @t[territory]              → descriptive noun, not a date
+```
+
+**Decision rule — ask yourself:**
+- Can you express this as a year or year range? → Use `@t[YYYY]` or `@t[YYYY..YYYY]`
+- Is the date genuinely unknown? → Use `@t[?]`
+- Is the fact permanently undatable (eternal, mythological, definitional)? → **Omit the `@t[]` tag entirely** — do NOT write a narrative label
+- Is the fact a permanent attribute that will never change? → Use `<!-- reviewed:t:YYYY-MM-DD -->` instead
+
+**Undatable facts — omit the tag entirely:**
+- Eternal/theological attributes: "Jesus is the Son of God" — no `@t[]` tag
+- Definitional properties: "The Sabbath is the seventh day" — no `@t[]` tag
+- A missing `@t[]` tag is better than a malformed one
+
 ### Employment & Roles
 ```markdown
 ## Role
