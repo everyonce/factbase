@@ -1363,6 +1363,7 @@ fn resolve_step2_batch(
                 ("ctx", &ctx),
                 ("applicability_check", APPLICABILITY_CHECK),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
+                ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
             ],
         );
         let fanout_types: Vec<(String, usize)> = type_distribution
@@ -1585,7 +1586,7 @@ fn improve_step(
             "step_name": "resolve",
             "doc_id": doc_arg,
             "skipped_steps": skipped,
-            "instruction": resolve(wf, "improve.resolve", DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx), ("applicability_check", APPLICABILITY_CHECK)]),
+            "instruction": resolve(wf, "improve.resolve", DEFAULT_IMPROVE_RESOLVE_INSTRUCTION, &[("doc_hint", &doc_hint), ("stale", &stale.to_string()), ("ctx", &ctx), ("applicability_check", APPLICABILITY_CHECK), ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE)]),
             "next_tool": "factbase", "suggested_op": "review_queue",
             "suggested_args": {"doc_id": doc_arg, "include_context": true},
             "policy": {"stale_days": stale},
@@ -2824,20 +2825,20 @@ mod tests {
         let step = improve_step(2, Some("abc123"), &None, &[], &db, &wf());
         let instruction = step["instruction"].as_str().unwrap();
         assert!(
-            instruction.contains("MISSING an @t[...]"),
-            "improve/resolve temporal guidance must explain the fact line is missing a tag"
+            instruction.contains("TEMPORAL"),
+            "improve/resolve temporal guidance must include TEMPORAL section"
         );
         assert!(
-            instruction.contains("tag must appear in your answer"),
-            "must require the @t tag in the answer"
-        );
-        assert!(
-            instruction.contains("static fact"),
-            "improve/resolve must reject 'static fact' dismissals"
+            instruction.contains("@t[YYYY]") || instruction.contains("@t[YYYY..YYYY]"),
+            "must show tag format"
         );
         assert!(
             instruction.contains("no audit trail"),
             "improve/resolve must explain why dismissals are rejected"
+        );
+        assert!(
+            instruction.contains("well-known") || instruction.contains("static"),
+            "improve/resolve must reject bare dismissals"
         );
     }
 
@@ -4640,6 +4641,7 @@ mod tests {
                 ("ctx", ""),
                 ("applicability_check", APPLICABILITY_CHECK),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
+                ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
             ],
         );
         assert!(
@@ -4680,6 +4682,7 @@ mod tests {
                 ("ctx", ""),
                 ("applicability_check", APPLICABILITY_CHECK),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
+                ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
             ],
         );
         assert!(
@@ -4721,6 +4724,7 @@ mod tests {
                 ("stale", "180"),
                 ("ctx", ""),
                 ("applicability_check", APPLICABILITY_CHECK),
+                ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
             ],
         );
         assert!(
@@ -4839,6 +4843,26 @@ mod tests {
         assert!(
             transition_apply.contains("AFTER WRITING"),
             "transition.apply must contain scan_after_write"
+        );
+
+        // resolve.answer_intro renders temporal_tag_resolve
+        assert!(
+            intro.contains("TEMPORAL"),
+            "resolve.answer_intro must contain TEMPORAL_TAG_RESOLVE"
+        );
+        assert!(
+            intro.contains("no audit trail"),
+            "resolve.answer_intro TEMPORAL_TAG_RESOLVE must include audit trail warning"
+        );
+
+        // improve.resolve renders temporal_tag_resolve
+        assert!(
+            improve_resolve.contains("TEMPORAL"),
+            "improve.resolve must contain TEMPORAL_TAG_RESOLVE"
+        );
+        assert!(
+            improve_resolve.contains("no audit trail"),
+            "improve.resolve TEMPORAL_TAG_RESOLVE must include audit trail warning"
         );
     }
 
