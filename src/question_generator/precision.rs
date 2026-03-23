@@ -104,6 +104,27 @@ const VAGUE_QUALIFIERS: &[(&str, &str)] = &[
     ("arguably", "what is the counterargument?"),
     ("relatively", "relative to what?"),
     ("comparatively", "compared to what?"),
+    // Absolute/superlative qualifiers
+    ("extreme", "extreme by what measure — what specific value?"),
+    ("legendary", "legendary by what standard — what is the measurable basis?"),
+    ("outstanding", "outstanding by what measure?"),
+    ("remarkable", "remarkable by what standard?"),
+    ("unparalleled", "unparalleled how — compared to what?"),
+    ("unprecedented", "unprecedented in what scope or timeframe?"),
+    ("extraordinary", "extraordinary by what measure?"),
+    ("phenomenal", "phenomenal by what standard?"),
+    ("impressive", "impressive by what measure?"),
+    ("formidable", "formidable in what respect — what specific capability?"),
+    ("powerful", "powerful by what measure?"),
+    ("capable", "capable of what specifically?"),
+    ("advanced", "advanced relative to what baseline?"),
+    ("sophisticated", "sophisticated in what way — what specific capability?"),
+    ("modern", "modern as of when — what specific era or date?"),
+    ("cutting-edge", "cutting-edge as of when — what specific capability?"),
+    ("state-of-the-art", "state-of-the-art as of when — what specific capability?"),
+    ("world-class", "world-class by what measure or ranking?"),
+    ("top-tier", "top-tier by what ranking or criteria?"),
+    ("elite", "elite by what standard or criteria?"),
 ];
 
 /// Regex that strips temporal tags, source refs, and reviewed markers from a
@@ -390,5 +411,43 @@ mod tests {
         let q = generate_precision_questions(content);
         assert_eq!(q.len(), 1);
         assert!(q[0].description.contains("key"));
+    }
+
+    #[test]
+    fn test_extreme_depths_flagged() {
+        let content = "# Entity\n\n- Alvin can dive to extreme depths";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("extreme"));
+    }
+
+    #[test]
+    fn test_legendary_vessel_flagged() {
+        let content = "# Entity\n\n- Alvin is a legendary research vessel";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("legendary"));
+    }
+
+    #[test]
+    fn test_extraordinary_damage_flagged() {
+        let content = "# Entity\n\n- It caused extraordinary damage";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("extraordinary"));
+    }
+
+    #[test]
+    fn test_cutting_edge_flagged() {
+        let content = "# Entity\n\n- Using cutting-edge sonar technology";
+        let q = generate_precision_questions(content);
+        assert_eq!(q.len(), 1);
+        assert!(q[0].description.contains("cutting-edge"));
+    }
+
+    #[test]
+    fn test_specific_depth_not_flagged() {
+        let content = "# Entity\n\n- Alvin dives to 4,500 meters";
+        assert!(generate_precision_questions(content).is_empty());
     }
 }
