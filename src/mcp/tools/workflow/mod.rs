@@ -59,9 +59,26 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
             .unwrap_or(0)
     };
 
+    // For create/setup workflows, inject the registered repo path as a fallback
+    // so that step 3 (perspective validation) can find perspective.yaml even when
+    // the caller omits the `path` argument (the repo is already registered in the DB).
+    let args_with_path;
+    let create_args = if args.get("path").is_none() {
+        if let Some(ref rp) = repo_path {
+            let mut a = args.clone();
+            a["path"] = serde_json::json!(rp.to_string_lossy().as_ref());
+            args_with_path = a;
+            &args_with_path
+        } else {
+            args
+        }
+    } else {
+        args
+    };
+
     match workflow_name.as_str() {
         // --- Primary workflows (new 4-verb design) ---
-        "create" => Ok(create_step(step, args, &wf_config)),
+        "create" => Ok(create_step(step, create_args, &wf_config)),
         "add" => {
             let topic = get_str_arg(args, "topic");
             let doc_id = get_str_arg(args, "doc_id");
@@ -125,7 +142,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
 
         // --- Legacy aliases ---
         "bootstrap" | "setup" => Ok(rebrand_step(
-            create_step(step, args, &wf_config),
+            create_step(step, create_args, &wf_config),
             "create",
             workflow_name.as_str(),
         )),
@@ -3225,6 +3242,33 @@ mod tests {
         let parsed = step["perspective_parsed"].as_str().unwrap();
         assert!(parsed.contains("Mycology"));
         assert!(parsed.contains("species"));
+    }
+
+    #[test]
+    fn test_create_step3_uses_registered_repo_path_when_path_arg_absent() {
+        // Regression: workflow(create, step=3) failed validation even when perspective.yaml
+        // was valid, because the agent omitted the `path` arg (repo already registered).
+        // Fix: workflow() injects repo_path from DB into args when `path` is absent.
+        let (db, tmp) = test_db();
+        let repo_dir = tmp.path().join("kb");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        crate::database::tests::test_repo_in_db(&db, "chess-kb", &repo_dir);
+
+        std::fs::write(
+            repo_dir.join("perspective.yaml"),
+            "focus: Chess\nallowed_types:\n  - opening\n  - player\n",
+        )
+        .unwrap();
+
+        // Call without `path` arg — should still pass validation via registered repo path
+        let result = workflow(&db, &serde_json::json!({"workflow": "create", "step": 3})).unwrap();
+        assert_eq!(
+            result["perspective_status"], "ok",
+            "step=3 should pass when perspective.yaml is valid at registered repo path"
+        );
+        let parsed = result["perspective_parsed"].as_str().unwrap();
+        assert!(parsed.contains("Chess"));
+        assert!(parsed.contains("opening"));
     }
 
     #[test]
