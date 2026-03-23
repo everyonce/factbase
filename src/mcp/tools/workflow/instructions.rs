@@ -56,7 +56,12 @@ pub(crate) const WRITE_COMPLETE_RULE: &str = "\
 ⚠️ WRITE COMPLETE FACTS: When you write a fact line, complete it immediately — citation, @t[] tag, \
 and precise language. Do not defer to a resolve pass. If the source is in front of you (a file, URL, \
 verse, record), cite it now. Facts written without citations and temporal tags become review queue \
-debt that costs significantly more to resolve later than to write correctly up front.";
+debt that costs significantly more to resolve later than to write correctly up front.\n\
+\n\
+⚠️ INLINE QUALITY CHECK: After calling factbase(op='create') or factbase(op='update'), check the \
+response for `quality_warnings`. If any warnings are present, fix them immediately in the same \
+document before moving to the next — you still have the source in context. Call \
+factbase(op='update') with the corrected content.";
 
 /// Post-write scan reminder injected via `{scan_after_write}`.
 ///
