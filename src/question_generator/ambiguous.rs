@@ -153,6 +153,11 @@ pub fn generate_ambiguous_questions_with_type(
     // Skip acronym detection for glossary/definition documents
     let skip_acronyms = is_glossary_doc(doc_type, content);
 
+    // Collect wikilink targets from the full document — terms that appear as
+    // [[TERM]] or [[id|TERM]] anywhere are cross-document references, not
+    // undefined abbreviations, and should not generate ambiguous questions.
+    let wikilink_targets = collect_wikilink_targets(content);
+
     for (line_number, line, fact_text) in iter_fact_lines(content) {
         // Skip facts with a recent reviewed marker (inline or frontmatter)
         if fm_skip
@@ -169,7 +174,7 @@ pub fn generate_ambiguous_questions_with_type(
                 if skip_acronyms {
                     None
                 } else {
-                    detect_undefined_acronym(&fact_text, defined_terms)
+                    detect_undefined_acronym(&fact_text, defined_terms, &wikilink_targets)
                 }
             });
 
@@ -282,6 +287,32 @@ fn is_roman_numeral(s: &str) -> bool {
     !s.is_empty() && RE.is_match(s)
 }
 
+/// Collect all wikilink display targets from a document.
+///
+/// Extracts the display text from `[[target]]` and `[[id|display]]` wikilinks
+/// anywhere in the document. Used to suppress ambiguous questions for terms
+/// that are cross-document references.
+fn collect_wikilink_targets(content: &str) -> HashSet<String> {
+    use std::sync::LazyLock;
+    static RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+        regex::Regex::new(r"\[\[([^\]]*)\]\]").expect("wikilink target regex should compile")
+    });
+    let mut targets = HashSet::new();
+    for cap in RE.captures_iter(content) {
+        let inner = &cap[1];
+        // [[id|display]] → use display text; [[target]] → use target as-is
+        let display = if let Some(pos) = inner.find('|') {
+            inner[pos + 1..].trim()
+        } else {
+            inner.trim()
+        };
+        if !display.is_empty() {
+            targets.insert(display.to_string());
+        }
+    }
+    targets
+}
+
 /// Detect undefined acronyms/abbreviations that could have multiple meanings.
 ///
 /// Flags uppercase sequences (2-5 chars) that aren't preceded by their expansion
@@ -289,7 +320,11 @@ fn is_roman_numeral(s: &str) -> bool {
 ///
 /// Wikilinks `[[Term]]` are stripped before scanning — they are document references,
 /// not undefined terms, and should never trigger an ambiguous question.
-fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Option<String> {
+fn detect_undefined_acronym(
+    text: &str,
+    defined_terms: &HashSet<String>,
+    wikilink_targets: &HashSet<String>,
+) -> Option<String> {
     // Strip wikilinks [[...]] — document references are not undefined terms.
     // Covers [[id]] (factbase hex IDs), [[Title]], and [[id|Title]] (Obsidian).
     let owned;
@@ -353,6 +388,13 @@ fn detect_undefined_acronym(text: &str, defined_terms: &HashSet<String>) -> Opti
         }
         // Skip terms defined in the repo's definitions files
         if defined_terms
+            .iter()
+            .any(|t| t.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        // Skip terms that appear as wikilink targets anywhere in the document
+        if wikilink_targets
             .iter()
             .any(|t| t.eq_ignore_ascii_case(trimmed))
         {
@@ -876,6 +918,50 @@ mod tests {
             q4.iter().any(|q| q.description.contains("XYZQ")),
             "non-wikilink unknown acronym XYZQ should still be flagged"
         );
+    }
+
+    #[test]
+    fn test_wikilink_in_document_suppresses_acronym_on_other_line() {
+        // [[RCAI]] on one line, RCAI plain text on another → suppressed
+        // (RCAI is a 4-char unknown acronym that would normally be flagged)
+        let content = "# Doc\n\n- [[RCAI]] is a revenue cycle company.\n- RCAI uses AI.";
+        let q = generate_ambiguous_questions(content);
+        assert!(
+            q.iter().all(|q| !q.description.contains("RCAI")),
+            "RCAI appears as wikilink in doc — should not be flagged on other line"
+        );
+
+        // No wikilink anywhere → DOES generate question
+        let content2 = "# Doc\n\n- RCAI is a revenue cycle company.";
+        let q2 = generate_ambiguous_questions(content2);
+        assert!(
+            q2.iter().any(|q| q.description.contains("RCAI")),
+            "RCAI with no wikilink should be flagged"
+        );
+
+        // Piped wikilink [[rcai|RCAI]] → suppressed
+        let content3 = "# Doc\n\n- [[rcai|RCAI]] leads in AI.";
+        let q3 = generate_ambiguous_questions(content3);
+        assert!(
+            q3.iter().all(|q| !q.description.contains("RCAI")),
+            "piped wikilink [[rcai|RCAI]] should suppress the question"
+        );
+    }
+
+    #[test]
+    fn test_collect_wikilink_targets() {
+        // Simple wikilink
+        let t = collect_wikilink_targets("See [[ACME]] for details");
+        assert!(t.contains("ACME"));
+        // Piped wikilink — display text extracted
+        let t2 = collect_wikilink_targets("See [[abc123|XSOLIS]] for details");
+        assert!(t2.contains("XSOLIS"));
+        assert!(!t2.contains("abc123"));
+        // Multiple wikilinks
+        let t3 = collect_wikilink_targets("[[FOO]] and [[bar|BAZ]] are linked");
+        assert!(t3.contains("FOO") && t3.contains("BAZ"));
+        // No wikilinks
+        assert!(collect_wikilink_targets("plain text XYZQ").is_empty());
     }
 
     #[test]
