@@ -113,9 +113,8 @@ static STRIP_ANNOTATIONS: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Strips wikilinks: `[[Entity Name]]` and `[[Entity Name|display]]`.
-static STRIP_WIKILINKS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\[\[[^\]]*\]\]").expect("wikilink regex")
-});
+static STRIP_WIKILINKS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\[\[[^\]]*\]\]").expect("wikilink regex"));
 
 /// Strips title-case proper noun phrases: 2+ consecutive words where each
 /// word starts with an uppercase letter, with lowercase prepositions/articles

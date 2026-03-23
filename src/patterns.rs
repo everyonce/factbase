@@ -459,16 +459,20 @@ pub fn extract_reviewed_markers(line: &str) -> Vec<ReviewedMarker> {
     REVIEWED_MARKER_REGEX
         .captures_iter(line)
         .filter_map(|caps| {
-            let date =
-                chrono::NaiveDate::parse_from_str(caps.get(2)?.as_str(), "%Y-%m-%d").ok()?;
-            let question_type = caps.get(1).map(|m| match m.as_str().to_ascii_lowercase().as_str() {
-                "p" => ReviewedType::Precision,
-                "t" => ReviewedType::Temporal,
-                "a" => ReviewedType::Ambiguous,
-                "s" => ReviewedType::Stale,
-                _ => unreachable!("regex only matches p/t/a/s"),
-            });
-            Some(ReviewedMarker { date, question_type })
+            let date = chrono::NaiveDate::parse_from_str(caps.get(2)?.as_str(), "%Y-%m-%d").ok()?;
+            let question_type =
+                caps.get(1)
+                    .map(|m| match m.as_str().to_ascii_lowercase().as_str() {
+                        "p" => ReviewedType::Precision,
+                        "t" => ReviewedType::Temporal,
+                        "a" => ReviewedType::Ambiguous,
+                        "s" => ReviewedType::Stale,
+                        _ => unreachable!("regex only matches p/t/a/s"),
+                    });
+            Some(ReviewedMarker {
+                date,
+                question_type,
+            })
         })
         .collect()
 }
@@ -1033,36 +1037,96 @@ mod tests {
     fn test_is_suppressed_for_type_bare_suppresses_all() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
         let line = "- Fact <!-- reviewed:2026-03-22 -->";
-        assert!(is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
-        assert!(is_suppressed_for_type(line, ReviewedType::Temporal, today, 180));
-        assert!(is_suppressed_for_type(line, ReviewedType::Ambiguous, today, 180));
-        assert!(is_suppressed_for_type(line, ReviewedType::Stale, today, 180));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Precision,
+            today,
+            180
+        ));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Temporal,
+            today,
+            180
+        ));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Ambiguous,
+            today,
+            180
+        ));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Stale,
+            today,
+            180
+        ));
     }
 
     #[test]
     fn test_is_suppressed_for_type_typed_only_suppresses_matching() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
         let line = "- Fact <!-- reviewed:p:2026-03-22 -->";
-        assert!(is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
-        assert!(!is_suppressed_for_type(line, ReviewedType::Temporal, today, 180));
-        assert!(!is_suppressed_for_type(line, ReviewedType::Ambiguous, today, 180));
-        assert!(!is_suppressed_for_type(line, ReviewedType::Stale, today, 180));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Precision,
+            today,
+            180
+        ));
+        assert!(!is_suppressed_for_type(
+            line,
+            ReviewedType::Temporal,
+            today,
+            180
+        ));
+        assert!(!is_suppressed_for_type(
+            line,
+            ReviewedType::Ambiguous,
+            today,
+            180
+        ));
+        assert!(!is_suppressed_for_type(
+            line,
+            ReviewedType::Stale,
+            today,
+            180
+        ));
     }
 
     #[test]
     fn test_is_suppressed_for_type_multiple_markers() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
         let line = "- Fact <!-- reviewed:p:2026-03-22 --> <!-- reviewed:t:2026-03-22 -->";
-        assert!(is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
-        assert!(is_suppressed_for_type(line, ReviewedType::Temporal, today, 180));
-        assert!(!is_suppressed_for_type(line, ReviewedType::Ambiguous, today, 180));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Precision,
+            today,
+            180
+        ));
+        assert!(is_suppressed_for_type(
+            line,
+            ReviewedType::Temporal,
+            today,
+            180
+        ));
+        assert!(!is_suppressed_for_type(
+            line,
+            ReviewedType::Ambiguous,
+            today,
+            180
+        ));
     }
 
     #[test]
     fn test_is_suppressed_for_type_expired_marker() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 3, 22).unwrap();
         let line = "- Fact <!-- reviewed:p:2020-01-01 -->";
-        assert!(!is_suppressed_for_type(line, ReviewedType::Precision, today, 180));
+        assert!(!is_suppressed_for_type(
+            line,
+            ReviewedType::Precision,
+            today,
+            180
+        ));
     }
 
     #[test]

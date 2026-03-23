@@ -173,8 +173,12 @@ fn check_duplicate_fact_lines(content: &str, questions: &mut Vec<ReviewQuestion>
     }
 }
 
-/// Detect footnote definitions that contain a URL but no date (YYYY-MM-DD).
-/// Web citations without an access date cannot contribute to temporal coverage.
+/// Detect footnote definitions that contain a URL but no date.
+/// Web citations without any date indicator cannot contribute to temporal coverage.
+///
+/// Accepts any recognizable date format: YYYY-MM-DD, YYYY-MM, month name + year,
+/// or a standalone year (19xx/20xx). URLs are stripped before the date check so
+/// that years embedded in URL paths (e.g. `/2024/03/`) don't count as access dates.
 fn check_undated_url_citations(content: &str, questions: &mut Vec<ReviewQuestion>) {
     for (line_idx, line) in content.lines().enumerate() {
         if let Some(cap) = SOURCE_DEF_REGEX.captures(line) {
@@ -183,25 +187,10 @@ fn check_undated_url_citations(content: &str, questions: &mut Vec<ReviewQuestion
             if !def_text.contains("http://") && !def_text.contains("https://") {
                 continue;
             }
-            // Check for any YYYY-MM-DD date pattern
-            let has_date = def_text.as_bytes().windows(10).any(|w| {
-                matches!(
-                    w,
-                    [
-                        b'0'..=b'9',
-                        b'0'..=b'9',
-                        b'0'..=b'9',
-                        b'0'..=b'9',
-                        b'-',
-                        b'0'..=b'9',
-                        b'0'..=b'9',
-                        b'-',
-                        b'0'..=b'9',
-                        b'0'..=b'9'
-                    ]
-                )
-            });
-            if !has_date {
+            // Strip URLs before checking for dates so that years in URL paths
+            // (e.g. https://example.com/2024/03/post) don't count as access dates.
+            let non_url = strip_urls(def_text);
+            if !citation_has_date(&non_url) {
                 let num = &cap[1];
                 questions.push(ReviewQuestion::new(
                     QuestionType::Corruption,
@@ -211,6 +200,48 @@ fn check_undated_url_citations(content: &str, questions: &mut Vec<ReviewQuestion
             }
         }
     }
+}
+
+/// Remove all http/https URLs from text, leaving surrounding context intact.
+fn strip_urls(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut remaining = text;
+    loop {
+        let http_pos = remaining.find("http://");
+        let https_pos = remaining.find("https://");
+        let url_pos = match (http_pos, https_pos) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        match url_pos {
+            None => {
+                result.push_str(remaining);
+                break;
+            }
+            Some(pos) => {
+                result.push_str(&remaining[..pos]);
+                let after = &remaining[pos..];
+                let url_len = after
+                    .find(|c: char| c.is_whitespace())
+                    .unwrap_or(after.len());
+                remaining = &remaining[pos + url_len..];
+            }
+        }
+    }
+    result
+}
+
+/// Return true if the text contains any recognizable date indicator.
+///
+/// Accepts: YYYY-MM-DD, YYYY-MM, month name + year (e.g. "March 2024"),
+/// or a standalone year in the range 1900–2099.
+fn citation_has_date(text: &str) -> bool {
+    use crate::patterns::{MONTH_NAME_REGEX, YEAR_REGEX};
+    // YEAR_REGEX matches \b(19|20)\d{2}\b — covers YYYY, YYYY-MM, YYYY-MM-DD
+    // (the year portion always has a word boundary before the following '-' or end).
+    YEAR_REGEX.is_match(text) || MONTH_NAME_REGEX.is_match(text)
 }
 
 #[cfg(test)]
@@ -488,5 +519,95 @@ mod tests {
         assert!(questions[0]
             .description
             .contains("Remove it or restore the inline citation"));
+    }
+
+    // === False-positive regression tests for check_undated_url_citations ===
+    // These patterns were generating ~85% false positives because the old check
+    // only accepted YYYY-MM-DD and didn't strip URL paths before checking.
+
+    #[test]
+    fn test_url_citation_with_year_month_not_flagged() {
+        // YYYY-MM format is a valid date indicator
+        let content = "- Fact [^1]\n\n[^1]: https://example.com/page, accessed 2024-03\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "YYYY-MM should be accepted as a date: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_url_citation_with_month_name_not_flagged() {
+        // "March 2024" is a valid date indicator
+        let content = "- Fact [^1]\n\n[^1]: https://example.com/page, March 2024\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Month name + year should be accepted as a date: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_url_citation_with_year_only_not_flagged() {
+        // A standalone year is a valid date indicator
+        let content = "- Fact [^1]\n\n[^1]: https://example.com/page, retrieved 2024\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Standalone year should be accepted as a date: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_url_with_year_in_path_but_no_access_date_flagged() {
+        // Year in URL path (/2024/03/) must NOT count as an access date
+        let content =
+            "- Fact [^1]\n\n[^1]: https://example.com/2024/03/article — confirms feature\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Year in URL path should not count as access date: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_url_with_year_in_path_plus_access_date_not_flagged() {
+        // Year in URL path + explicit access date → should not flag
+        let content =
+            "- Fact [^1]\n\n[^1]: https://example.com/2024/03/article, accessed 2024-03\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "URL with path year + access date should not be flagged: {:?}",
+            questions
+        );
+    }
+
+    #[test]
+    fn test_url_citation_abbreviated_month_not_flagged() {
+        // "Jan 2024" style — covered by MONTH_NAME_REGEX
+        let content = "- Fact [^1]\n\n[^1]: https://example.com/page, Jan 2024\n";
+        let questions = generate_corruption_questions(content);
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.description.contains("accessed YYYY-MM-DD")),
+            "Abbreviated month + year should be accepted: {:?}",
+            questions
+        );
     }
 }
