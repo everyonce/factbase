@@ -100,6 +100,75 @@ fn content_coverage_warning(content: &str) -> Option<String> {
     }
 }
 
+/// Run fast, single-document quality checks and return a JSON array of warnings.
+///
+/// Checks (no DB or multi-doc context needed):
+/// - Malformed temporal tags (`@t[narrative]`)
+/// - Fact lines missing a `[^N]` citation
+/// - Orphan footnote definitions (defined but never referenced)
+pub(crate) fn inline_quality_warnings(content: &str) -> Value {
+    use crate::patterns::{SOURCE_DEF_REGEX, SOURCE_REF_DETECT_REGEX};
+    use crate::processor::find_malformed_tags;
+    use crate::question_generator::iter_fact_lines;
+
+    let mut warnings: Vec<Value> = Vec::new();
+
+    // 1. Malformed temporal tags
+    for (line, raw) in find_malformed_tags(content) {
+        warnings.push(serde_json::json!({
+            "line": line,
+            "type": "temporal",
+            "text": raw,
+            "issue": "malformed temporal tag — use @t[YYYY], @t[YYYY..YYYY], @t[~YYYY], or @t[?]"
+        }));
+    }
+
+    // 2. Fact lines missing a citation
+    for (line_number, raw_line, _) in iter_fact_lines(content) {
+        if !SOURCE_REF_DETECT_REGEX.is_match(raw_line) {
+            warnings.push(serde_json::json!({
+                "line": line_number,
+                "type": "missing_citation",
+                "text": raw_line.trim().chars().take(120).collect::<String>(),
+                "issue": "no source footnote [^N] — add a citation"
+            }));
+        }
+    }
+
+    // 3. Orphan footnote definitions (defined but not referenced)
+    let referenced: std::collections::HashSet<u32> = content
+        .lines()
+        .enumerate()
+        .flat_map(|(_, line)| {
+            // skip definition lines
+            if line.trim_start().starts_with("[^") && line.contains("]:") {
+                return vec![];
+            }
+            crate::patterns::SOURCE_REF_CAPTURE_REGEX
+                .captures_iter(line)
+                .filter_map(|c| c.get(1)?.as_str().parse::<u32>().ok())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    for (line_idx, line) in content.lines().enumerate() {
+        if let Some(cap) = SOURCE_DEF_REGEX.captures(line) {
+            if let Ok(num) = cap[1].parse::<u32>() {
+                if !referenced.contains(&num) {
+                    warnings.push(serde_json::json!({
+                        "line": line_idx + 1,
+                        "type": "orphan_footnote",
+                        "text": line.trim().chars().take(120).collect::<String>(),
+                        "issue": format!("[^{num}] is defined but never referenced in a fact line")
+                    }));
+                }
+            }
+        }
+    }
+
+    Value::Array(warnings)
+}
+
 /// Get the resolved format config for a repository.
 fn resolve_repo_format(repo: &crate::models::Repository) -> crate::models::ResolvedFormat {
     repo.perspective
@@ -328,7 +397,8 @@ pub fn create_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         "title": title,
         "doc_type": doc_type,
         "file_path": file_path.to_string_lossy(),
-        "message": format!("Document '{}' ({}) created at {}. Run scan to index.", title, id, path)
+        "message": format!("Document '{}' ({}) created at {}. Run scan to index.", title, id, path),
+        "quality_warnings": inline_quality_warnings(content)
     });
     if let Some(warning) = content_coverage_warning(content) {
         response["warning"] = Value::String(warning);
@@ -501,7 +571,8 @@ pub fn update_document(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         "file_path": file_path.to_string_lossy(),
         "title_changed": new_title.is_some(),
         "content_changed": new_content.is_some(),
-        "message": format!("Document '{}' ({}) updated. Run scan to re-index.", title, id)
+        "message": format!("Document '{}' ({}) updated. Run scan to re-index.", title, id),
+        "quality_warnings": new_content.map(|c| inline_quality_warnings(c)).unwrap_or(Value::Array(vec![]))
     });
     if !stored_suggestions.is_empty() {
         response["suggestions_stored"] = serde_json::json!(stored_suggestions);
@@ -2313,5 +2384,163 @@ mod tests {
             result.get("warning").is_none(),
             "should not warn on well-covered update: {result}"
         );
+    }
+
+    #[test]
+    fn test_inline_quality_warnings_malformed_tag() {
+        let content = "- Met with client @t[last week] [^1]\n\n---\n[^1]: Notes";
+        let warnings = inline_quality_warnings(content);
+        let arr = warnings.as_array().unwrap();
+        assert!(
+            arr.iter().any(|w| w["type"] == "temporal"),
+            "should flag malformed tag: {arr:?}"
+        );
+    }
+
+    #[test]
+    fn test_inline_quality_warnings_missing_citation() {
+        let content = "- Revenue grew 40% YoY @t[2024]";
+        let warnings = inline_quality_warnings(content);
+        let arr = warnings.as_array().unwrap();
+        assert!(
+            arr.iter().any(|w| w["type"] == "missing_citation"),
+            "should flag missing citation: {arr:?}"
+        );
+    }
+
+    #[test]
+    fn test_inline_quality_warnings_orphan_footnote() {
+        let content = "- Fact @t[2024] [^1]\n\n---\n[^1]: Source A\n[^2]: Orphan source";
+        let warnings = inline_quality_warnings(content);
+        let arr = warnings.as_array().unwrap();
+        assert!(
+            arr.iter().any(|w| w["type"] == "orphan_footnote"),
+            "should flag orphan footnote: {arr:?}"
+        );
+    }
+
+    #[test]
+    fn test_inline_quality_warnings_clean_content() {
+        let content = "- Fact @t[2024] [^1]\n\n---\n[^1]: Source A";
+        let warnings = inline_quality_warnings(content);
+        let arr = warnings.as_array().unwrap();
+        assert!(arr.is_empty(), "clean content should have no warnings: {arr:?}");
+    }
+
+    #[test]
+    fn test_create_document_returns_quality_warnings() {
+        use crate::database::tests::test_db;
+        use crate::models::Repository;
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        // Content with a malformed tag — should surface in quality_warnings
+        let args = serde_json::json!({
+            "repo": "r1",
+            "path": "test.md",
+            "title": "Test",
+            "content": "- Fact @t[last week] [^1]\n\n---\n[^1]: Source"
+        });
+        let result = create_document(&db, &args).unwrap();
+        let qw = result["quality_warnings"].as_array().unwrap();
+        assert!(
+            qw.iter().any(|w| w["type"] == "temporal"),
+            "create should return temporal warning: {result}"
+        );
+    }
+
+    #[test]
+    fn test_update_document_returns_quality_warnings() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S").unwrap();
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        let args = serde_json::json!({
+            "id": "abc123",
+            "content": "- Fact @t[last week] [^1]\n\n---\n[^1]: Source"
+        });
+        let result = update_document(&db, &args).unwrap();
+        let qw = result["quality_warnings"].as_array().unwrap();
+        assert!(
+            qw.iter().any(|w| w["type"] == "temporal"),
+            "update should return temporal warning: {result}"
+        );
+    }
+
+    #[test]
+    fn test_update_document_no_content_has_empty_quality_warnings() {
+        use crate::database::tests::test_db;
+        use crate::models::{Document, Repository};
+        use tempfile::TempDir;
+
+        let (db, _tmp) = test_db();
+        let repo_dir = TempDir::new().unwrap();
+        let repo = Repository {
+            id: "r1".into(),
+            name: "R1".into(),
+            path: repo_dir.path().to_path_buf(),
+            perspective: None,
+            created_at: chrono::Utc::now(),
+            last_indexed_at: None,
+            last_lint_at: None,
+        };
+        db.upsert_repository(&repo).unwrap();
+
+        let file = repo_dir.path().join("test.md");
+        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S").unwrap();
+        let doc = Document {
+            id: "abc123".into(),
+            repo_id: "r1".into(),
+            file_path: "test.md".into(),
+            title: "Title".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S".into(),
+            file_hash: "h1".into(),
+            ..Document::test_default()
+        };
+        db.upsert_document(&doc).unwrap();
+
+        // Title-only update (no content) → quality_warnings should be empty array
+        let args = serde_json::json!({"id": "abc123", "title": "New Title"});
+        let result = update_document(&db, &args).unwrap();
+        let qw = result["quality_warnings"].as_array().unwrap();
+        assert!(qw.is_empty(), "title-only update should have empty quality_warnings");
     }
 }
