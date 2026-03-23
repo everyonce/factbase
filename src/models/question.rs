@@ -1,8 +1,8 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 /// Type of review question indicating what kind of issue was detected
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum QuestionType {
     /// Missing temporal information
     Temporal,
@@ -63,6 +63,20 @@ impl std::str::FromStr for QuestionType {
             "weak-source" => Ok(QuestionType::WeakSource),
             _ => Err(format!("Unknown question type: {s}")),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for QuestionType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<QuestionType>().map_err(|_| {
+            serde::de::Error::custom(format!(
+                "suppress_question_types: '{}' not recognized — \
+                 valid values are: temporal, conflict, missing, ambiguous, \
+                 stale, precision, weak-source, duplicate, corruption",
+                s
+            ))
+        })
     }
 }
 
@@ -357,5 +371,69 @@ mod tests {
         let json = q.to_json();
         assert!(json.get("confidence").is_none());
         assert!(json.get("confidence_reason").is_none());
+    }
+
+    // --- Case-insensitive YAML deserialization ---
+
+    #[test]
+    fn test_question_type_deserialize_lowercase() {
+        let qt: QuestionType = serde_yaml_ng::from_str("stale").unwrap();
+        assert_eq!(qt, QuestionType::Stale);
+    }
+
+    #[test]
+    fn test_question_type_deserialize_uppercase() {
+        let qt: QuestionType = serde_yaml_ng::from_str("TEMPORAL").unwrap();
+        assert_eq!(qt, QuestionType::Temporal);
+    }
+
+    #[test]
+    fn test_question_type_deserialize_pascalcase() {
+        let qt: QuestionType = serde_yaml_ng::from_str("Stale").unwrap();
+        assert_eq!(qt, QuestionType::Stale);
+    }
+
+    #[test]
+    fn test_suppress_question_types_lowercase_yaml() {
+        use crate::models::repository::ReviewPerspective;
+        let p: ReviewPerspective =
+            serde_yaml_ng::from_str("suppress_question_types: [stale]").unwrap();
+        assert_eq!(p.suppress_question_types, vec![QuestionType::Stale]);
+    }
+
+    #[test]
+    fn test_suppress_question_types_mixed_case_yaml() {
+        use crate::models::repository::ReviewPerspective;
+        let p: ReviewPerspective =
+            serde_yaml_ng::from_str("suppress_question_types: [temporal, stale]").unwrap();
+        assert_eq!(
+            p.suppress_question_types,
+            vec![QuestionType::Temporal, QuestionType::Stale]
+        );
+    }
+
+    #[test]
+    fn test_suppress_question_types_all_uppercase_yaml() {
+        use crate::models::repository::ReviewPerspective;
+        let p: ReviewPerspective =
+            serde_yaml_ng::from_str("suppress_question_types: [TEMPORAL]").unwrap();
+        assert_eq!(p.suppress_question_types, vec![QuestionType::Temporal]);
+    }
+
+    #[test]
+    fn test_suppress_question_types_invalid_gives_clear_error() {
+        use crate::models::repository::ReviewPerspective;
+        let err =
+            serde_yaml_ng::from_str::<ReviewPerspective>("suppress_question_types: [invalid_type]")
+                .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid_type"),
+            "error should mention the bad value: {msg}"
+        );
+        assert!(
+            msg.contains("temporal") || msg.contains("valid values"),
+            "error should list valid values: {msg}"
+        );
     }
 }
