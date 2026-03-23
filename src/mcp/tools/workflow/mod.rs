@@ -1247,6 +1247,7 @@ fn resolve_step2_batch(
             ("stale", &stale.to_string()),
             ("ctx", &ctx),
             ("evidence_requirement", EVIDENCE_REQUIREMENT),
+            ("confidence_levels", CONFIDENCE_LEVELS),
         ],
     );
 
@@ -1364,6 +1365,7 @@ fn resolve_step2_batch(
                 ("applicability_check", APPLICABILITY_CHECK),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
                 ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
+                ("confidence_levels", CONFIDENCE_LEVELS),
             ],
         );
         let fanout_types: Vec<(String, usize)> = type_distribution
@@ -2510,54 +2512,56 @@ mod tests {
 
     #[test]
     fn test_resolve_intro_has_author_confidence_path() {
-        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        // These checks apply to CONFIDENCE_LEVELS (injected via {confidence_levels})
         assert!(
-            intro.contains("author"),
-            "resolve intro must document the author confidence path"
+            CONFIDENCE_LEVELS.contains("author"),
+            "confidence levels must document the author confidence path"
         );
         assert!(
-            intro.contains("author-confirmed") || intro.contains("NEVER self-authorize"),
-            "resolve intro must note author answers require explicit human instruction"
+            CONFIDENCE_LEVELS.contains("author-confirmed")
+                || CONFIDENCE_LEVELS.contains("NEVER self-authorize"),
+            "confidence levels must note author answers require explicit human instruction"
         );
         assert!(
-            intro.contains("KB owner"),
-            "resolve intro must explain when author confidence is appropriate"
+            CONFIDENCE_LEVELS.contains("KB owner"),
+            "confidence levels must explain when author confidence is appropriate"
         );
     }
 
     // Scenario 5: agent self-authorizes from document context (conflict/self-consistent)
     #[test]
     fn test_resolve_intro_bans_author_in_automated_context() {
-        let intro = DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION;
+        // These checks apply to CONFIDENCE_LEVELS (injected via {confidence_levels})
         assert!(
-            intro.contains("PROHIBITED in automated"),
-            "resolve intro must explicitly ban author: in automated/non-interactive runs"
+            CONFIDENCE_LEVELS.contains("PROHIBITED in automated"),
+            "confidence levels must explicitly ban author: in automated/non-interactive runs"
         );
         assert!(
-            intro.contains("document-internal"),
-            "resolve intro must show document-internal as the correct alternative for self-consistent facts"
+            CONFIDENCE_LEVELS.contains("document-internal"),
+            "confidence levels must show document-internal as the correct alternative for self-consistent facts"
         );
         assert!(
-            intro.contains("Reasoning from document context does NOT qualify"),
-            "resolve intro must state that reasoning from doc context does not authorize author:"
+            CONFIDENCE_LEVELS.contains("Reasoning from document context does NOT qualify"),
+            "confidence levels must state that reasoning from doc context does not authorize author:"
         );
     }
 
     // Scenario 6: agent self-authorizes for terminology (precision question)
     #[test]
     fn test_resolve_answer_instruction_bans_author_in_automated_context() {
-        let instr = DEFAULT_RESOLVE_ANSWER_INSTRUCTION;
+        // These checks apply to CONFIDENCE_LEVELS (injected via {confidence_levels})
         assert!(
-            instr.contains("PROHIBITED in automated"),
-            "resolve answer instruction must explicitly ban author: in automated runs"
+            CONFIDENCE_LEVELS.contains("PROHIBITED in automated"),
+            "confidence levels must explicitly ban author: in automated runs"
         );
         assert!(
-            instr.contains("document-internal"),
-            "resolve answer instruction must show document-internal as alternative"
+            CONFIDENCE_LEVELS.contains("document-internal"),
+            "confidence levels must show document-internal as alternative"
         );
         assert!(
-            instr.contains("Being confident") || instr.contains("reasoning from document context"),
-            "resolve answer instruction must state confidence alone does not authorize author:"
+            CONFIDENCE_LEVELS.contains("Being confident")
+                || CONFIDENCE_LEVELS.contains("Reasoning from document context"),
+            "confidence levels must state confidence alone does not authorize author:"
         );
     }
 
@@ -4642,6 +4646,7 @@ mod tests {
                 ("applicability_check", APPLICABILITY_CHECK),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
                 ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
+                ("confidence_levels", CONFIDENCE_LEVELS),
             ],
         );
         assert!(
@@ -4672,7 +4677,7 @@ mod tests {
         let wf = wf();
         let (db, _tmp) = test_db();
 
-        // resolve.answer_intro renders evidence_requirement and applicability_check
+        // resolve.answer_intro renders evidence_requirement, applicability_check, and confidence_levels
         let intro = resolve(
             &wf,
             "resolve.answer_intro",
@@ -4683,6 +4688,7 @@ mod tests {
                 ("applicability_check", APPLICABILITY_CHECK),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
                 ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
+                ("confidence_levels", CONFIDENCE_LEVELS),
             ],
         );
         assert!(
@@ -4697,8 +4703,12 @@ mod tests {
             intro.contains("APPLICABILITY CHECK"),
             "resolve.answer_intro must contain APPLICABILITY_CHECK"
         );
+        assert!(
+            intro.contains("CONFIDENCE LEVELS"),
+            "resolve.answer_intro must contain CONFIDENCE_LEVELS"
+        );
 
-        // resolve.answer renders evidence_requirement
+        // resolve.answer renders evidence_requirement and confidence_levels
         let answer = resolve(
             &wf,
             "resolve.answer",
@@ -4707,11 +4717,16 @@ mod tests {
                 ("stale", "180"),
                 ("ctx", ""),
                 ("evidence_requirement", EVIDENCE_REQUIREMENT),
+                ("confidence_levels", CONFIDENCE_LEVELS),
             ],
         );
         assert!(
             answer.contains("EVIDENCE REQUIREMENT"),
             "resolve.answer must contain EVIDENCE_REQUIREMENT"
+        );
+        assert!(
+            answer.contains("CONFIDENCE LEVELS"),
+            "resolve.answer must contain CONFIDENCE_LEVELS"
         );
 
         // improve.resolve renders applicability_check
@@ -4864,6 +4879,58 @@ mod tests {
             improve_resolve.contains("no audit trail"),
             "improve.resolve TEMPORAL_TAG_RESOLVE must include audit trail warning"
         );
+    }
+
+    /// Verify that CONFIDENCE_LEVELS renders fully in both resolve instructions.
+    /// Guards against truncation — the full text (including author: prohibition and
+    /// self-consistent fact pattern) must appear in the rendered output.
+    #[test]
+    fn test_confidence_levels_renders_fully_in_both_instructions() {
+        let wf = wf();
+
+        let render = |key: &str, default: &str, extra: &[(&str, &str)]| {
+            let mut params = vec![
+                ("stale", "180"),
+                ("ctx", ""),
+                ("evidence_requirement", EVIDENCE_REQUIREMENT),
+                ("confidence_levels", CONFIDENCE_LEVELS),
+            ];
+            params.extend_from_slice(extra);
+            resolve(&wf, key, default, &params)
+        };
+
+        let intro = render(
+            "resolve.answer_intro",
+            DEFAULT_RESOLVE_ANSWER_INTRO_INSTRUCTION,
+            &[
+                ("applicability_check", APPLICABILITY_CHECK),
+                ("temporal_tag_resolve", TEMPORAL_TAG_RESOLVE),
+            ],
+        );
+        let answer = render("resolve.answer", DEFAULT_RESOLVE_ANSWER_INSTRUCTION, &[]);
+
+        for (label, rendered) in [("intro", &intro), ("answer", &answer)] {
+            assert!(
+                rendered.contains("CONFIDENCE LEVELS"),
+                "{label}: must contain CONFIDENCE LEVELS header"
+            );
+            assert!(
+                rendered.contains("PROHIBITED in automated"),
+                "{label}: must contain author: prohibition rule"
+            );
+            assert!(
+                rendered.contains("document-internal"),
+                "{label}: must contain self-consistent fact pattern"
+            );
+            assert!(
+                rendered.contains("Reasoning from document context does NOT qualify"),
+                "{label}: must contain full author: prohibition text"
+            );
+            assert!(
+                rendered.contains("NEVER self-authorize"),
+                "{label}: must contain NEVER self-authorize guardrail"
+            );
+        }
     }
 
     #[test]
