@@ -23,6 +23,10 @@ pub fn kb_status(db: &Database, repo_id: Option<&str>) -> Result<Value, Factbase
 
     let (active, deleted, by_type, last_scan, last_maintain, docs_with_review) =
         if let Some(ref r) = repo {
+            // Always invalidate the in-memory stats cache before reading.
+            // The MCP server and CLI scan run in separate processes; the MCP
+            // server's cache is stale after an external scan writes new docs.
+            db.invalidate_stats_cache(&r.id);
             let stats = db.get_stats(&r.id, None)?;
             let docs_with_review = db.count_docs_with_review_queue(Some(&r.id))?;
             (
@@ -178,7 +182,7 @@ fn build_summary_table(args: SummaryTableArgs<'_>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::database::tests::{test_db, test_repo_in_db};
+    use crate::database::tests::{test_db, test_doc, test_repo_in_db};
     use tempfile::TempDir;
 
     #[test]
@@ -220,6 +224,36 @@ mod tests {
         let result = kb_status(&db, None).unwrap();
         assert_eq!(result["docs"]["active"], 0);
         assert_eq!(result["review"]["open"], 0);
+    }
+
+    #[test]
+    fn test_kb_status_reflects_docs_written_by_external_db_instance() {
+        // Simulate the MCP-vs-CLI scenario: one DB instance (the MCP server)
+        // has a stale in-memory cache while a second instance (the CLI scan)
+        // writes documents to the same SQLite file.
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+
+        // "MCP server" instance — opened first, cache starts empty
+        let db_mcp = crate::database::Database::new(&db_path).unwrap();
+        let repo_dir = TempDir::new().unwrap();
+        test_repo_in_db(&db_mcp, "test-repo", repo_dir.path());
+
+        // Prime the cache with 0 docs (simulates an early status call)
+        let before = kb_status(&db_mcp, None).unwrap();
+        assert_eq!(before["docs"]["active"], 0);
+
+        // "CLI scan" instance — separate Database handle, same file
+        let db_cli = crate::database::Database::new(&db_path).unwrap();
+        db_cli.upsert_document(&test_doc("doc1", "Doc 1")).unwrap();
+        db_cli.upsert_document(&test_doc("doc2", "Doc 2")).unwrap();
+
+        // MCP server calls status again — must see the new docs, not the cached 0
+        let after = kb_status(&db_mcp, None).unwrap();
+        assert_eq!(
+            after["docs"]["active"], 2,
+            "kb_status must bypass stale cache and read live data"
+        );
     }
 
     #[test]
