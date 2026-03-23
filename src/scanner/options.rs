@@ -41,6 +41,8 @@ pub struct ScanOptions {
     pub file_offset: usize,
     /// Force full re-sync of review questions from all documents (migration/repair)
     pub reindex_reviews: bool,
+    /// Discard existing review questions and regenerate from scratch using current rules
+    pub regenerate_reviews: bool,
 }
 
 impl Default for ScanOptions {
@@ -64,6 +66,7 @@ impl Default for ScanOptions {
             deadline: None,
             file_offset: 0,
             reindex_reviews: false,
+            regenerate_reviews: false,
         }
     }
 }
@@ -101,6 +104,8 @@ mod tests {
         assert!(!opts.skip_links);
         assert!(!opts.skip_embeddings);
         assert!(!opts.force_relink);
+        assert!(!opts.reindex_reviews);
+        assert!(!opts.regenerate_reviews);
     }
 
     #[test]

@@ -225,6 +225,7 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
         skip_embeddings: args.no_embed,
         force_relink: args.relink,
         reindex_reviews: args.reindex_reviews,
+        regenerate_reviews: args.regenerate_reviews,
         ..ScanOptions::from_config(&config)
     };
 
@@ -244,6 +245,10 @@ pub async fn cmd_scan(args: ScanArgs) -> anyhow::Result<()> {
 
     if args.relink && !quiet {
         println!("Relink mode - detecting links for all documents");
+    }
+
+    if args.regenerate_reviews && !quiet {
+        println!("Regenerate reviews mode - discarding existing review questions and regenerating from current rules");
     }
 
     let progress = ProgressReporter::Cli { quiet };
