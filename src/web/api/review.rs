@@ -185,19 +185,49 @@ pub struct ApplyRequest {
 }
 
 /// POST /api/apply - Apply answered review questions to documents.
-///
-/// Review application is now agent-driven. Returns CLI/agent instructions.
 pub async fn post_apply(
+    State(state): State<Arc<WebAppState>>,
     Json(body): Json<ApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
-    let mut cmd = "Use your MCP agent to apply review answers via update_document".to_string();
-    if let Some(ref repo) = body.repo {
-        cmd.push_str(&format!(" (repo: {repo})"));
-    }
+    use crate::answer_processor::apply_all::{ApplyConfig, ApplyStatus, apply_all_review_answers};
+
+    let db = state.db.clone();
+    let config = ApplyConfig {
+        doc_id_filter: body.doc_id.as_deref(),
+        repo_filter: body.repo.as_deref(),
+        dry_run: body.dry_run.unwrap_or(false),
+        since: None,
+        deadline: None,
+        acquire_write_guard: false,
+    };
+
+    let result = apply_all_review_answers(&db, &config, &crate::ProgressReporter::Silent)
+        .await
+        .map_err(super::errors::handle_error)?;
+
+    let documents: Vec<Value> = result
+        .documents
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "doc_id": d.doc_id,
+                "doc_title": d.doc_title,
+                "questions_applied": d.questions_applied,
+                "status": match d.status {
+                    ApplyStatus::Applied => "applied",
+                    ApplyStatus::DryRun => "dry_run",
+                    ApplyStatus::Error => "error",
+                },
+                "error": d.error,
+            })
+        })
+        .collect();
+
     Ok(Json(serde_json::json!({
-        "status": "agent_required",
-        "message": cmd,
-        "hint": "Review application is now handled by the MCP agent. Use the 'resolve' workflow."
+        "status": "ok",
+        "total_applied": result.total_applied,
+        "total_errors": result.total_errors,
+        "documents": documents,
     })))
 }
 
