@@ -426,13 +426,17 @@ mod tests {
             ],
         );
 
-        let docs_v2 = vec![
-            c_acme, c_globex, pa1, pg1, pg2, pg3, pg4, doc.clone(),
-        ];
+        let docs_v2 = vec![c_acme, c_globex, pa1, pg1, pg2, pg3, pg4, doc.clone()];
         let result_v2 = check_folder_placement(&docs_v2, &db).unwrap();
         let text_v2 = result_v2[&doc.id][0].description.clone();
 
-        assert_eq!(text_v1, text_v2, "question text must not change when link count changes");
-        assert!(!text_v1.contains(char::is_numeric), "question text must not contain numbers");
+        assert_eq!(
+            text_v1, text_v2,
+            "question text must not change when link count changes"
+        );
+        assert!(
+            !text_v1.contains(char::is_numeric),
+            "question text must not contain numbers"
+        );
     }
 }
