@@ -127,9 +127,18 @@ pub struct ScanArgs {
     pub assess: bool,
     #[arg(
         long,
-        help = "Force full re-sync of review questions from all documents (migration/repair)"
+        help = "Force full re-sync of review questions from all documents (migration/repair). \
+                Reads existing questions from markdown and reimports them into the DB."
     )]
     pub reindex_reviews: bool,
+    #[arg(
+        long,
+        help = "Discard all existing review questions and regenerate from scratch using current \
+                rules. Unlike --reindex-reviews (which syncs markdown → DB), this re-runs the \
+                question generators against current fact lines and rewrites both the document \
+                and the DB. Use after a bug fix to clear stale questions."
+    )]
+    pub regenerate_reviews: bool,
 }
 
 #[cfg(test)]
@@ -266,5 +275,17 @@ mod tests {
     fn test_scan_args_reindex_reviews_default_false() {
         let args = ScanArgs::try_parse_from(["scan"]).unwrap();
         assert!(!args.reindex_reviews);
+    }
+
+    #[test]
+    fn test_scan_args_regenerate_reviews() {
+        let args = ScanArgs::try_parse_from(["scan", "--regenerate-reviews"]).unwrap();
+        assert!(args.regenerate_reviews);
+    }
+
+    #[test]
+    fn test_scan_args_regenerate_reviews_default_false() {
+        let args = ScanArgs::try_parse_from(["scan"]).unwrap();
+        assert!(!args.regenerate_reviews);
     }
 }

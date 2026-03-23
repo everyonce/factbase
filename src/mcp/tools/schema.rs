@@ -213,6 +213,8 @@ fn factbase_schema(repo_path: Option<&Path>) -> Value {
                 // Scan
                 "force_reindex": { "type": "boolean", "description": "Force re-generation of all embeddings" },
                 "skip_embeddings": { "type": "boolean", "description": "Skip embedding generation" },
+                "reindex_reviews": { "type": "boolean", "description": "Reimport review questions from markdown into DB (sync markdown → DB)" },
+                "regenerate_reviews": { "type": "boolean", "description": "Discard existing review questions and regenerate from scratch using current rules (re-runs generators → DB + markdown). Use after a bug fix to clear stale questions." },
                 "time_budget_secs": { "type": "integer", "description": "Time budget in seconds (5-600)" },
                 "resume": { "type": "string", "description": "Resume token from previous call" },
                 // Check

@@ -757,6 +757,59 @@ pub async fn full_scan(
         result.duplicates = check_duplicates(db, &changed_ids)?;
     }
 
+    // Regenerate reviews: discard existing review sections and re-run question generators.
+    // This is distinct from reindex_reviews (which syncs markdown → DB).
+    // regenerate_reviews throws away what is written and regenerates from scratch
+    // using current rules, then writes the result to both disk and DB.
+    if ctx.opts.regenerate_reviews {
+        let mut regenerated_docs = 0usize;
+        let mut regenerated_questions = 0usize;
+        let defined_terms = std::collections::HashSet::new();
+        for (id, doc) in &known {
+            // Resolve absolute path for disk read/write
+            let abs_path = repo.path.join(&doc.file_path);
+            let disk_content =
+                fs::read_to_string(&abs_path).unwrap_or_else(|_| doc.content.clone());
+            // Strip the review section to get the body only
+            let body = crate::patterns::content_body(&disk_content);
+            // Re-run all question generators against the current fact lines
+            let questions = crate::question_generator::check::run_generators(
+                body,
+                doc.doc_type.as_deref(),
+                &defined_terms,
+                365,
+                true,
+                &[],
+            );
+            // Detect callout format from existing content
+            let use_callout = crate::processor::is_callout_review(&disk_content);
+            // Build new content: body + freshly generated questions
+            let updated = crate::processor::append_review_questions(body, &questions, use_callout);
+            if abs_path.exists() {
+                if let Err(e) = fs::write(&abs_path, &updated) {
+                    warn!(
+                        "regenerate_reviews: failed to write {}: {e}",
+                        abs_path.display()
+                    );
+                    continue;
+                }
+                let new_hash = content_hash(&updated);
+                let _ = db.update_document_content(id, &updated, &new_hash);
+                if let Some(qs) = crate::processor::parse_review_queue(&updated) {
+                    regenerated_questions += qs.len();
+                    let _ = db.sync_review_questions(id, &qs);
+                }
+                regenerated_docs += 1;
+            }
+        }
+        if regenerated_docs > 0 {
+            info!(
+                "Regenerated review questions: {} questions across {} documents",
+                regenerated_questions, regenerated_docs
+            );
+        }
+    }
+
     // Pass 2: Detect links using LLM (skip if --no-links)
     ctx.progress.phase("Detecting links");
     let link_output = run_link_detection_phase(LinkPhaseInput {
@@ -2392,6 +2445,66 @@ mod tests {
         assert_eq!(
             unanswered_after, 0,
             "DB review_questions must be cleared after all questions answered"
+        );
+    }
+
+    /// --regenerate-reviews discards existing review questions and regenerates from scratch.
+    /// A document with a stale question (one that would no longer be generated) should have
+    /// that question replaced by freshly generated ones.
+    #[tokio::test]
+    async fn test_full_scan_regenerate_reviews_replaces_stale_questions() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+
+        // Doc has a fact with a temporal tag — the temporal question is stale (tag present).
+        // It also has a stale manually-written question that generators would NOT produce.
+        let content = "---\nfactbase_id: regen01\n---\n# Doc\n\n- A fact @t[=2024-01]\n\n<!-- factbase:review -->\n- [ ] `@q[temporal]` \"A fact @t[=2024-01]\" - when was this true?\n";
+        let path = tmp.path().join("doc.md");
+        std::fs::write(&path, content).unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let progress = ProgressReporter::Silent;
+
+        // First scan: indexes the doc
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // Second scan with regenerate_reviews=true
+        let opts2 = ScanOptions {
+            skip_links: true,
+            regenerate_reviews: true,
+            ..Default::default()
+        };
+        let ctx2 = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts2,
+            &progress,
+        );
+        full_scan(&repo, &db, &ctx2).await.unwrap();
+
+        // The stale temporal question (fact already has @t tag) should be gone
+        let on_disk = std::fs::read_to_string(&path).unwrap();
+        // The fact has @t[=2024-01] so no temporal question should be generated
+        assert!(
+            !on_disk.contains("@q[temporal]"),
+            "stale temporal question should be removed after regenerate_reviews; got:\n{on_disk}"
         );
     }
 }
