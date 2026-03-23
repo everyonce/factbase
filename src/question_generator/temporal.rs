@@ -694,4 +694,28 @@ mod tests {
         let questions = generate_temporal_questions(content, None);
         assert_eq!(questions.len(), 0);
     }
+
+    #[test]
+    fn test_at_unknown_does_not_generate_temporal_question() {
+        // @t[?] is a valid temporal tag (author acknowledged date is unknown)
+        // — must NOT generate a temporal question so the prune step can close old ones
+        let content = "# Doc\n\n- Some fact @t[?]";
+        let questions = generate_temporal_questions(content, None);
+        assert!(questions.is_empty(), "@t[?] should satisfy temporal check");
+    }
+
+    #[test]
+    fn test_at_unknown_with_citation_does_not_generate_temporal_question() {
+        // @t[?] satisfies the temporal check even when a citation is present
+        let content = "# Doc\n\n- Some fact @t[?] [^1]\n\n---\n[^1]: Some source";
+        let questions = generate_temporal_questions(content, None);
+        let temporal: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("when was this true?"))
+            .collect();
+        assert!(
+            temporal.is_empty(),
+            "@t[?] with citation should not generate 'when was this true?' question"
+        );
+    }
 }
