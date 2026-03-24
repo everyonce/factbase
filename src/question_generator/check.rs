@@ -77,8 +77,9 @@ pub fn run_generators_with_perspective(
     citation_patterns: &[Regex],
     perspective: Option<&ReviewPerspective>,
 ) -> Vec<ReviewQuestion> {
-    let suppressed =
-        |qt: QuestionType| -> bool { perspective.is_some_and(|p| p.is_type_suppressed(qt)) };
+    let suppressed = |qt: QuestionType| -> bool {
+        perspective.is_some_and(|p| p.is_suppressed_for_doc(qt, doc_type))
+    };
 
     let mut questions = Vec::new();
 
@@ -1728,5 +1729,63 @@ mod tests {
         assert!(!questions
             .iter()
             .any(|q| q.question_type == QuestionType::Missing));
+    }
+
+    #[test]
+    fn test_suppress_temporal_by_doc_type_suppresses_for_matching_type() {
+        let perspective = ReviewPerspective {
+            suppress_question_types_by_type: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert("character".to_string(), vec![QuestionType::Temporal]);
+                m
+            }),
+            ..Default::default()
+        };
+        let body = "- Some fact without a temporal tag [^1]\n\n---\n[^1]: Some source\n";
+        // Suppressed for "character"
+        let questions = run_generators_with_perspective(
+            body,
+            Some("character"),
+            &HashSet::new(),
+            365,
+            false,
+            &[],
+            Some(&perspective),
+        );
+        assert!(
+            !questions
+                .iter()
+                .any(|q| q.question_type == QuestionType::Temporal),
+            "Temporal questions should be suppressed for 'character' doc type"
+        );
+    }
+
+    #[test]
+    fn test_suppress_temporal_by_doc_type_does_not_suppress_other_types() {
+        let perspective = ReviewPerspective {
+            suppress_question_types_by_type: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert("character".to_string(), vec![QuestionType::Temporal]);
+                m
+            }),
+            ..Default::default()
+        };
+        let body = "- Some fact without a temporal tag [^1]\n\n---\n[^1]: Some source\n";
+        // Not suppressed for "person"
+        let questions = run_generators_with_perspective(
+            body,
+            Some("person"),
+            &HashSet::new(),
+            365,
+            false,
+            &[],
+            Some(&perspective),
+        );
+        assert!(
+            questions
+                .iter()
+                .any(|q| q.question_type == QuestionType::Temporal),
+            "Temporal questions should NOT be suppressed for 'person' doc type"
+        );
     }
 }

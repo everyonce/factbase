@@ -573,6 +573,19 @@ review:
 
 **Important:** Suppression is permanent for the KB and skips generation entirely. If selective per-fact suppression is needed instead, use `<!-- reviewed:t:DATE -->` markers on individual fact lines.
 
+#### Per-document-type suppression
+
+For mixed KBs where only certain document types have stable facts, use `suppress_question_types_by_type`:
+
+```yaml
+review:
+  suppress_question_types_by_type:
+    character: [temporal]          # game characters — element/weapon never change
+    historical_event: [temporal, stale]
+```
+
+This suppresses the listed question types only for documents of the matching type. Other document types are unaffected. Use this when the KB contains both time-varying facts (e.g., player accounts) and permanently-true facts (e.g., game character attributes).
+
 ---
 
 ## Common Mistakes to Avoid

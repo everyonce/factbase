@@ -2001,6 +2001,7 @@ mod tests {
                 ignore_patterns: None,
                 glossary_types: None,
                 suppress_question_types: vec![],
+                suppress_question_types_by_type: None,
             }),
             format: None,
             link_match_mode: None,

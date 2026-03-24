@@ -103,12 +103,32 @@ pub struct ReviewPerspective {
     ///   "stale", "conflict", "duplicate", "corruption", "weak-source"
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub suppress_question_types: Vec<QuestionType>,
+    /// Per-document-type question type suppression.
+    /// Keys are document type names (e.g., "character", "historical_event").
+    /// Values are lists of question types to suppress for that document type.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppress_question_types_by_type: Option<HashMap<String, Vec<QuestionType>>>,
 }
 
 impl ReviewPerspective {
-    /// Returns true if the given question type is suppressed for this repository.
+    /// Returns true if the given question type is suppressed for this repository
+    /// or for the specific document type.
     pub fn is_type_suppressed(&self, qt: QuestionType) -> bool {
         self.suppress_question_types.contains(&qt)
+    }
+
+    /// Returns true if the given question type is suppressed, considering both
+    /// repo-level suppression and per-document-type suppression.
+    pub fn is_suppressed_for_doc(&self, qt: QuestionType, doc_type: Option<&str>) -> bool {
+        if self.suppress_question_types.contains(&qt) {
+            return true;
+        }
+        if let (Some(by_type), Some(dt)) = (&self.suppress_question_types_by_type, doc_type) {
+            if let Some(types) = by_type.get(dt) {
+                return types.contains(&qt);
+            }
+        }
+        false
     }
 
     /// Resolve the effective stale_days for a given source type and document type.
@@ -689,6 +709,48 @@ mod tests {
         assert_eq!(
             r.resolve_stale_days(Some("unknown-type"), None, 365),
             Some(180)
+        );
+    }
+
+    #[test]
+    fn test_is_suppressed_for_doc_repo_level() {
+        let r = ReviewPerspective {
+            suppress_question_types: vec![QuestionType::Temporal],
+            ..Default::default()
+        };
+        assert!(r.is_suppressed_for_doc(QuestionType::Temporal, None));
+        assert!(r.is_suppressed_for_doc(QuestionType::Temporal, Some("character")));
+        assert!(!r.is_suppressed_for_doc(QuestionType::Missing, None));
+    }
+
+    #[test]
+    fn test_is_suppressed_for_doc_per_type() {
+        let r = ReviewPerspective {
+            suppress_question_types_by_type: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert("character".to_string(), vec![QuestionType::Temporal]);
+                m
+            }),
+            ..Default::default()
+        };
+        // Suppressed for "character" doc type
+        assert!(r.is_suppressed_for_doc(QuestionType::Temporal, Some("character")));
+        // Not suppressed for other doc types
+        assert!(!r.is_suppressed_for_doc(QuestionType::Temporal, Some("person")));
+        assert!(!r.is_suppressed_for_doc(QuestionType::Temporal, None));
+        // Other question types not suppressed for "character"
+        assert!(!r.is_suppressed_for_doc(QuestionType::Missing, Some("character")));
+    }
+
+    #[test]
+    fn test_suppress_question_types_by_type_yaml() {
+        let yaml = "suppress_question_types_by_type:\n  character: [temporal]\n  historical_event: [temporal, stale]";
+        let p: ReviewPerspective = serde_yaml_ng::from_str(yaml).unwrap();
+        let by_type = p.suppress_question_types_by_type.unwrap();
+        assert_eq!(by_type["character"], vec![QuestionType::Temporal]);
+        assert_eq!(
+            by_type["historical_event"],
+            vec![QuestionType::Temporal, QuestionType::Stale]
         );
     }
 }
