@@ -25,6 +25,9 @@ export interface ReviewStats {
   answered: number;
   unanswered: number;
   deferred: number;
+  needs_input: number;
+  needs_approval: number;
+  auto_resolved: number;
 }
 
 export interface OrganizeStats {
@@ -43,6 +46,8 @@ export interface ReviewQuestion {
   answer?: string;
   confidence?: string;
   confidence_reason?: string;
+  agent_suggestion?: string;
+  agent_reasoning?: string;
 }
 
 export interface DocumentReview {
@@ -170,6 +175,23 @@ export interface DocumentLinks {
   title: string;
   links_to: DocumentLink[];
   linked_from: DocumentLink[];
+}
+
+export interface PreviewLine {
+  line: number;
+  content: string;
+  highlighted: boolean;
+}
+
+export interface DocumentPreviewResponse {
+  doc_id: string;
+  doc_title: string;
+  file_path: string;
+  target_line: number | null;
+  start_line: number;
+  end_line: number;
+  total_lines: number;
+  lines: PreviewLine[];
 }
 
 export interface Repository {
@@ -354,6 +376,12 @@ class ApiClient {
 
   async getDocumentLinks(id: string): Promise<DocumentLinks> {
     return this.request(`/api/documents/${encodeURIComponent(id)}/links`);
+  }
+
+  async getDocumentPreview(id: string, line?: number, context = 10): Promise<DocumentPreviewResponse> {
+    const query = new URLSearchParams({ context: context.toString() });
+    if (line !== undefined) query.set('line', line.toString());
+    return this.request(`/api/documents/${encodeURIComponent(id)}/preview?${query}`);
   }
 
   async getRepositories(): Promise<{ repositories: Repository[] }> {

@@ -3,20 +3,24 @@
  * Side panel showing document content with line highlighting and links.
  */
 
-import { api, Document, DocumentLink, ApiRequestError } from '../api';
+import { api, Document, DocumentLink, DocumentPreviewResponse, PreviewLine, ApiRequestError } from '../api';
 
 interface PreviewState {
   loading: boolean;
   error: string | null;
   document: Document | null;
+  preview: DocumentPreviewResponse | null;
   highlightLine: number | null;
+  agentReasoning: string | null;
 }
 
 const state: PreviewState = {
   loading: false,
   error: null,
   document: null,
+  preview: null,
   highlightLine: null,
+  agentReasoning: null,
 };
 
 let isOpen = false;
@@ -68,6 +72,28 @@ function renderContent(content: string, highlightLine: number | null): string {
   }).join('');
 }
 
+function renderPreviewLines(lines: PreviewLine[], totalLines: number, startLine: number, endLine: number): string {
+  const isWindowed = endLine < totalLines || startLine > 1;
+  const header = isWindowed
+    ? `<div class="px-4 py-1 text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">Lines ${startLine}–${endLine} of ${totalLines}</div>`
+    : '';
+  const rows = lines.map(({ line, content, highlighted }) => {
+    const highlightClass = highlighted
+      ? 'bg-yellow-100 dark:bg-yellow-900/50 border-l-4 border-yellow-400'
+      : '';
+    const lineNumClass = highlighted
+      ? 'text-yellow-600 dark:text-yellow-400 font-bold'
+      : 'text-gray-400 dark:text-gray-600';
+    return `
+      <div class="flex ${highlightClass}" ${highlighted ? 'id="highlighted-line"' : ''}>
+        <span class="select-none w-10 flex-shrink-0 text-right pr-3 ${lineNumClass} text-xs leading-6">${line}</span>
+        <pre class="flex-1 text-sm leading-6 whitespace-pre-wrap break-words text-gray-800 dark:text-gray-200">${escapeHtml(content) || ' '}</pre>
+      </div>
+    `;
+  }).join('');
+  return header + rows;
+}
+
 function renderPanel(): string {
   if (state.loading) {
     return `
@@ -91,25 +117,42 @@ function renderPanel(): string {
     `;
   }
 
-  if (!state.document) {
+  if (!state.document && !state.preview) {
     return `<div class="p-4 text-gray-500 dark:text-gray-400">No document selected</div>`;
   }
 
-  const doc = state.document;
+  // Use preview data if available (windowed), otherwise fall back to full document
+  const title = state.preview?.doc_title ?? state.document?.title ?? '';
+  const filePath = state.preview?.file_path ?? state.document?.file_path ?? '';
+  const docId = state.preview?.doc_id ?? state.document?.id ?? '';
+  const docType = state.document?.doc_type ?? '';
+
+  const reasoningBanner = state.agentReasoning
+    ? `<div class="flex-shrink-0 px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-b border-amber-200 dark:border-amber-800 text-xs text-amber-700 dark:text-amber-300">
+        <span class="font-medium">Agent flagged this because:</span> ${escapeHtml(state.agentReasoning)}
+      </div>`
+    : '';
+
+  const contentHtml = state.preview
+    ? renderPreviewLines(state.preview.lines, state.preview.total_lines, state.preview.start_line, state.preview.end_line)
+    : state.document?.content
+      ? renderContent(state.document.content, state.highlightLine)
+      : '<p class="text-gray-500 dark:text-gray-400">No content available</p>';
+
   return `
     <div class="flex flex-col h-full">
       <!-- Header -->
       <div class="flex-shrink-0 p-4 border-b border-gray-200 dark:border-gray-700">
         <div class="flex items-start justify-between">
           <div class="flex-1 min-w-0">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white truncate" id="preview-title">${escapeHtml(doc.title)}</h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(doc.file_path)}</p>
-            <div class="mt-1 flex items-center space-x-2">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white truncate" id="preview-title">${escapeHtml(title)}</h3>
+            <p class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(filePath)}</p>
+            ${docType ? `<div class="mt-1 flex items-center space-x-2">
               <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
-                ${escapeHtml(doc.doc_type)}
+                ${escapeHtml(docType)}
               </span>
-              <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(doc.id)}</span>
-            </div>
+              <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(docId)}</span>
+            </div>` : ''}
           </div>
           <button id="preview-close-btn" class="ml-2 p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200" aria-label="Close preview">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -119,27 +162,29 @@ function renderPanel(): string {
         </div>
       </div>
 
-      <!-- Links section -->
+      ${reasoningBanner}
+
+      ${state.document ? `<!-- Links section -->
       <div class="flex-shrink-0 p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
         <div class="grid grid-cols-2 gap-4">
           <div>
             <h4 class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2" id="links-to-heading">Links to</h4>
             <nav aria-labelledby="links-to-heading">
-              ${renderLinks(doc.links_to || [])}
+              ${renderLinks(state.document.links_to || [])}
             </nav>
           </div>
           <div>
             <h4 class="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2" id="linked-from-heading">Linked from</h4>
             <nav aria-labelledby="linked-from-heading">
-              ${renderLinks(doc.linked_from || [])}
+              ${renderLinks(state.document.linked_from || [])}
             </nav>
           </div>
         </div>
-      </div>
+      </div>` : ''}
 
       <!-- Content -->
-      <div class="flex-1 overflow-auto p-4 font-mono bg-white dark:bg-gray-900" role="region" aria-label="Document content">
-        ${doc.content ? renderContent(doc.content, state.highlightLine) : '<p class="text-gray-500 dark:text-gray-400">No content available</p>'}
+      <div class="flex-1 overflow-auto font-mono bg-white dark:bg-gray-900" role="region" aria-label="Document content">
+        ${contentHtml}
       </div>
     </div>
   `;
@@ -178,20 +223,27 @@ function setupPanelHandlers(): void {
   });
 }
 
-async function fetchDocument(docId: string): Promise<void> {
+async function fetchDocument(docId: string, highlightLine?: number): Promise<void> {
   state.loading = true;
   state.error = null;
   state.document = null;
+  state.preview = null;
   updatePanel();
 
   try {
-    const doc = await api.getDocument(docId);
-    const links = await api.getDocumentLinks(docId);
-    state.document = {
-      ...doc,
-      links_to: links.links_to,
-      linked_from: links.linked_from,
-    };
+    if (highlightLine !== undefined) {
+      // Use focused preview endpoint for line-specific context
+      state.preview = await api.getDocumentPreview(docId, highlightLine);
+    } else {
+      // Full document view with links
+      const doc = await api.getDocument(docId);
+      const links = await api.getDocumentLinks(docId);
+      state.document = {
+        ...doc,
+        links_to: links.links_to,
+        linked_from: links.linked_from,
+      };
+    }
   } catch (e) {
     if (e instanceof ApiRequestError) {
       state.error = e.message;
@@ -204,8 +256,9 @@ async function fetchDocument(docId: string): Promise<void> {
   }
 }
 
-export function openPreview(docId: string, highlightLine?: number): void {
+export function openPreview(docId: string, highlightLine?: number, agentReasoning?: string): void {
   state.highlightLine = highlightLine ?? null;
+  state.agentReasoning = agentReasoning ?? null;
 
   if (!isOpen) {
     // Create panel if not exists
@@ -213,7 +266,7 @@ export function openPreview(docId: string, highlightLine?: number): void {
     isOpen = true;
   }
 
-  fetchDocument(docId);
+  fetchDocument(docId, highlightLine);
 }
 
 export function closePreview(): void {
@@ -226,8 +279,10 @@ export function closePreview(): void {
   }
   isOpen = false;
   state.document = null;
+  state.preview = null;
   state.error = null;
   state.highlightLine = null;
+  state.agentReasoning = null;
 }
 
 function createPanel(): void {
@@ -290,6 +345,8 @@ export function cleanupPreview(): void {
   }
   isOpen = false;
   state.document = null;
+  state.preview = null;
   state.error = null;
   state.highlightLine = null;
+  state.agentReasoning = null;
 }

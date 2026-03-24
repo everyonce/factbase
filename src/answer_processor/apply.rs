@@ -592,6 +592,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }
     }
 

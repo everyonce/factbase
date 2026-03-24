@@ -72,6 +72,7 @@ export function renderQuestionCard(
         class="preview-line-btn text-xs text-blue-600 dark:text-blue-400 hover:underline"
         data-doc-id="${escapeHtml(docId)}"
         data-line-ref="${question.line_ref}"
+        ${question.agent_reasoning ? `data-agent-reasoning="${escapeHtml(question.agent_reasoning)}"` : ''}
       >Line ${question.line_ref}</button>`
     : '';
 

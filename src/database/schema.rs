@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 21;
+pub(super) const SCHEMA_VERSION: i32 = 23;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -217,6 +217,18 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         "Add confidence and agent_suggestion to review_questions",
         "", // handled in post-migration hook (idempotent column adds)
     ),
+    // Version 22: Add reason column to organization_suggestions
+    (
+        22,
+        "Add reason to organization_suggestions",
+        "", // handled in post-migration hook (idempotent column add)
+    ),
+    // Version 23: Add agent_reasoning column to review_questions
+    (
+        23,
+        "Add agent_reasoning to review_questions",
+        "", // handled in post-migration hook (idempotent column add)
+    ),
 ];
 
 impl Database {
@@ -361,6 +373,7 @@ impl Database {
                 suggestion_type TEXT NOT NULL,
                 suggested_value TEXT NOT NULL,
                 source TEXT NOT NULL DEFAULT 'update',
+                reason TEXT,
                 created_at TIMESTAMP NOT NULL,
                 FOREIGN KEY (doc_id) REFERENCES documents(id)
             );
@@ -418,6 +431,7 @@ impl Database {
                 updated_at TEXT NOT NULL,
                 confidence TEXT,
                 agent_suggestion TEXT,
+                agent_reasoning TEXT,
                 FOREIGN KEY (doc_id) REFERENCES documents(id),
                 UNIQUE(doc_id, question_index)
             );
@@ -503,6 +517,12 @@ impl Database {
                 }
                 if *version == 21 {
                     Self::add_review_question_confidence_columns(conn)?;
+                }
+                if *version == 22 {
+                    Self::add_organization_suggestion_reason_column(conn)?;
+                }
+                if *version == 23 {
+                    Self::add_review_question_agent_reasoning_column(conn)?;
                 }
 
                 Self::set_schema_version(conn, *version)?;
@@ -678,6 +698,38 @@ impl Database {
             .unwrap_or(false);
         if !exists {
             conn.execute_batch("ALTER TABLE documents ADD COLUMN review_section_hash TEXT;")?;
+        }
+        Ok(())
+    }
+
+    /// Idempotently add reason column to organization_suggestions (migration 22).
+    fn add_organization_suggestion_reason_column(conn: &DbConn) -> Result<(), FactbaseError> {
+        let has_reason: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('organization_suggestions') WHERE name = 'reason'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_reason {
+            conn.execute_batch("ALTER TABLE organization_suggestions ADD COLUMN reason TEXT;")?;
+        }
+        Ok(())
+    }
+
+    /// Idempotently add agent_reasoning column to review_questions (migration 23).
+    fn add_review_question_agent_reasoning_column(conn: &DbConn) -> Result<(), FactbaseError> {
+        let has_col: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('review_questions') WHERE name = 'agent_reasoning'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_col {
+            conn.execute_batch(
+                "ALTER TABLE review_questions ADD COLUMN agent_reasoning TEXT;",
+            )?;
         }
         Ok(())
     }

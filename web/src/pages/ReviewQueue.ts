@@ -372,10 +372,12 @@ function setupPreviewHandlers(container: HTMLElement): void {
   // Question line preview buttons
   container.querySelectorAll('.preview-line-btn').forEach(btn => {
     btn.addEventListener('click', (e) => {
-      const docId = (e.currentTarget as HTMLElement).dataset.docId;
-      const lineRef = (e.currentTarget as HTMLElement).dataset.lineRef;
+      const el = e.currentTarget as HTMLElement;
+      const docId = el.dataset.docId;
+      const lineRef = el.dataset.lineRef;
+      const agentReasoning = el.dataset.agentReasoning;
       if (docId) {
-        openPreview(docId, lineRef ? parseInt(lineRef, 10) : undefined);
+        openPreview(docId, lineRef ? parseInt(lineRef, 10) : undefined, agentReasoning);
       }
     });
   });

@@ -102,16 +102,18 @@ pub fn check_folder_placement(
             if other_count > current_count {
                 let current_title = &container_by_folder[my_container].1;
                 let other_title = &container_by_folder[other_folder].1;
-                questions.entry(doc.id.clone()).or_default().push(
-                    ReviewQuestion::new(
-                        QuestionType::Ambiguous,
-                        None,
-                        format!(
-                            "Filed under '{}' but most entity links point to '{}'. Is this document filed correctly?",
-                            current_title, other_title
-                        ),
+                let mut q = ReviewQuestion::new(
+                    QuestionType::Ambiguous,
+                    None,
+                    format!(
+                        "Filed under '{}' but most entity links point to '{}'. Is this document filed correctly?",
+                        current_title, other_title
                     ),
                 );
+                q.agent_reasoning = Some(format!(
+                    "majority-links:{other_title} links-to-other:{other_count} links-to-current:{current_count} total-links:{total}"
+                ));
+                questions.entry(doc.id.clone()).or_default().push(q);
             }
         }
     }

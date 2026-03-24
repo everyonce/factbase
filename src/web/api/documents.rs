@@ -75,6 +75,71 @@ pub async fn get_document_links(
     Ok(Json(links))
 }
 
+/// Query parameters for document preview.
+#[derive(Debug, Deserialize)]
+pub struct PreviewQuery {
+    /// Target line number (1-based)
+    pub line: Option<u64>,
+    /// Number of context lines on each side (default: 10)
+    pub context: Option<u64>,
+}
+
+/// GET /api/documents/:id/preview - Get windowed document content around a line.
+///
+/// Query params:
+/// - `line`: Target line number (1-based). If omitted, returns first `context*2` lines.
+/// - `context`: Lines of context on each side (default: 10)
+pub async fn get_document_preview(
+    State(state): State<Arc<WebAppState>>,
+    Path(id): Path<String>,
+    Query(query): Query<PreviewQuery>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    let db = state.db.clone();
+    let target_line = query.line.unwrap_or(0) as usize;
+    let context = query.context.unwrap_or(10) as usize;
+
+    let result = super::run_blocking_web(move || {
+        let doc = db.require_document(&id)?;
+        let lines: Vec<&str> = doc.content.lines().collect();
+        let total = lines.len();
+
+        let (start, end) = if target_line == 0 {
+            (0, (context * 2).min(total))
+        } else {
+            let idx = target_line.saturating_sub(1); // 0-based
+            let start = idx.saturating_sub(context);
+            let end = (idx + context + 1).min(total);
+            (start, end)
+        };
+
+        let window: Vec<Value> = lines[start..end]
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let line_num = start + i + 1;
+                serde_json::json!({
+                    "line": line_num,
+                    "content": line,
+                    "highlighted": target_line > 0 && line_num == target_line,
+                })
+            })
+            .collect();
+
+        Ok(serde_json::json!({
+            "doc_id": doc.id,
+            "doc_title": doc.title,
+            "file_path": doc.file_path,
+            "target_line": if target_line > 0 { Value::Number(target_line.into()) } else { Value::Null },
+            "start_line": start + 1,
+            "end_line": end,
+            "total_lines": total,
+            "lines": window,
+        }))
+    })
+    .await?;
+    Ok(Json(result))
+}
+
 /// GET /api/repos - List all repositories.
 pub async fn list_repos(
     State(state): State<Arc<WebAppState>>,
@@ -132,5 +197,29 @@ mod tests {
         let query: DocumentQuery = serde_json::from_str(json).unwrap();
         assert!(query.include_preview.is_none());
         assert_eq!(query.max_content_length, Some(500));
+    }
+
+    #[test]
+    fn test_preview_query_deserialize_empty() {
+        let json = r#"{}"#;
+        let query: PreviewQuery = serde_json::from_str(json).unwrap();
+        assert!(query.line.is_none());
+        assert!(query.context.is_none());
+    }
+
+    #[test]
+    fn test_preview_query_deserialize_full() {
+        let json = r#"{"line": 27, "context": 5}"#;
+        let query: PreviewQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.line, Some(27));
+        assert_eq!(query.context, Some(5));
+    }
+
+    #[test]
+    fn test_preview_query_line_only() {
+        let json = r#"{"line": 1}"#;
+        let query: PreviewQuery = serde_json::from_str(json).unwrap();
+        assert_eq!(query.line, Some(1));
+        assert!(query.context.is_none());
     }
 }

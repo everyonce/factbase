@@ -136,6 +136,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
                     "suggested_type": c.suggested_type,
                     "confidence": c.confidence,
                     "rationale": c.rationale,
+                    "reason": c.reason,
                 })
             }).collect::<Vec<_>>(),
             "total_suggestions": misplaced_candidates.len(),
@@ -221,6 +222,7 @@ pub async fn organize_analyze<E: EmbeddingProvider>(
                 "suggested_type": c.suggested_type,
                 "confidence": c.confidence,
                 "rationale": c.rationale,
+                "reason": c.reason,
             })
         }).collect::<Vec<_>>(),
         "ghost_count": ghost_files.len(),

@@ -69,10 +69,34 @@ async function fetchData(): Promise<void> {
 }
 
 function updateUI(): void {
-  // Update review count
+  // Update review count — show triage breakdown
   const reviewCount = document.getElementById('review-count');
   if (reviewCount) {
-    reviewCount.textContent = state.loading ? '...' : (state.review?.unanswered.toString() ?? '-');
+    if (state.loading) {
+      reviewCount.innerHTML = '...';
+    } else if (state.review) {
+      const r = state.review;
+      const total = r.unanswered + r.deferred;
+      reviewCount.innerHTML = `
+        <div class="space-y-1 text-base">
+          <div class="flex items-center gap-2">
+            <span class="text-2xl sm:text-3xl font-bold text-red-600 dark:text-red-400">${r.needs_input}</span>
+            <span class="text-sm text-gray-500 dark:text-gray-400">needs your input</span>
+          </div>
+          <div class="flex items-center gap-2 text-sm">
+            <span class="font-semibold text-amber-600 dark:text-amber-400">🟡 ${r.needs_approval}</span>
+            <span class="text-gray-500 dark:text-gray-400">needs approval</span>
+          </div>
+          <div class="flex items-center gap-2 text-sm">
+            <span class="font-semibold text-green-600 dark:text-green-400">🟢 ${r.auto_resolved}</span>
+            <span class="text-gray-500 dark:text-gray-400">auto-resolved</span>
+          </div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">${total} total pending</div>
+        </div>
+      `;
+    } else {
+      reviewCount.innerHTML = '-';
+    }
   }
 
   // Update deferred count
@@ -174,7 +198,7 @@ export function renderDashboard(): string {
               <p class="text-sm text-gray-500 dark:text-gray-400">Pending questions</p>
             </div>
           </div>
-          <div id="review-count" class="mt-3 sm:mt-4 text-2xl sm:text-3xl font-bold text-blue-600 dark:text-blue-400">-</div>
+          <div id="review-count" class="mt-3 sm:mt-4">-</div>
           <div id="deferred-count" class="mt-1 text-sm text-amber-600 dark:text-amber-400"></div>
         </a>
         <a href="#/organize" class="block bg-white dark:bg-gray-800 rounded-lg shadow p-4 sm:p-6 hover:shadow-lg transition-shadow">

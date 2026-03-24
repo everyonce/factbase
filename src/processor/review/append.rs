@@ -265,6 +265,7 @@ mod tests {
             line_number: 0,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }];
         let result = append_review_questions(content, &questions, false);
         let heading_count = result
@@ -297,6 +298,7 @@ mod tests {
             line_number: 0,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }];
         let after_first = append_review_questions(content, &q1, false);
         let heading_count = after_first
@@ -314,6 +316,7 @@ mod tests {
             line_number: 0,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }];
         let after_second = append_review_questions(&after_first, &q2, false);
         let heading_count = after_second

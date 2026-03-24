@@ -102,6 +102,9 @@ pub struct ReviewQuestion {
     /// Reason for the confidence level (e.g., "fact in definition document").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence_reason: Option<String>,
+    /// Agent reasoning that triggered this question (e.g., "term appears in 7 documents with inconsistent meanings").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_reasoning: Option<String>,
 }
 
 impl ReviewQuestion {
@@ -116,6 +119,7 @@ impl ReviewQuestion {
             line_number: 0,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }
     }
 

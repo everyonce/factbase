@@ -32,6 +32,9 @@ pub struct ReviewStatsResponse {
     pub answered: u64,
     pub unanswered: u64,
     pub deferred: u64,
+    pub needs_input: u64,
+    pub needs_approval: u64,
+    pub auto_resolved: u64,
 }
 
 /// Response for organize stats endpoint.
@@ -105,11 +108,17 @@ fn compute_review_stats(db: &Database) -> Result<ReviewStatsResponse, FactbaseEr
         .unwrap_or(0);
     let deferred = result.get("deferred").and_then(Value::as_u64).unwrap_or(0);
 
+    let (needs_input, auto_resolved, needs_approval) =
+        db.count_review_triage().unwrap_or((0, 0, 0));
+
     Ok(ReviewStatsResponse {
         total,
         answered,
         unanswered,
         deferred,
+        needs_input,
+        needs_approval,
+        auto_resolved,
     })
 }
 
@@ -175,12 +184,35 @@ mod tests {
             answered: 5,
             unanswered: 10,
             deferred: 2,
+            needs_input: 7,
+            needs_approval: 1,
+            auto_resolved: 2,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"total\":15"));
         assert!(json.contains("\"answered\":5"));
         assert!(json.contains("\"unanswered\":10"));
         assert!(json.contains("\"deferred\":2"));
+        assert!(json.contains("\"needs_input\":7"));
+        assert!(json.contains("\"needs_approval\":1"));
+        assert!(json.contains("\"auto_resolved\":2"));
+    }
+
+    #[test]
+    fn test_review_stats_triage_fields_serialize() {
+        let resp = ReviewStatsResponse {
+            total: 0,
+            answered: 0,
+            unanswered: 0,
+            deferred: 0,
+            needs_input: 0,
+            needs_approval: 0,
+            auto_resolved: 0,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        assert!(json.contains("\"needs_input\":0"));
+        assert!(json.contains("\"needs_approval\":0"));
+        assert!(json.contains("\"auto_resolved\":0"));
     }
 
     #[test]
@@ -219,6 +251,9 @@ mod tests {
             answered: 10,
             unanswered: 0,
             deferred: 0,
+            needs_input: 0,
+            needs_approval: 0,
+            auto_resolved: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"unanswered\":0"));
@@ -231,6 +266,9 @@ mod tests {
             answered: 0,
             unanswered: 10,
             deferred: 0,
+            needs_input: 10,
+            needs_approval: 0,
+            auto_resolved: 0,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"answered\":0"));

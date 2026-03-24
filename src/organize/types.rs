@@ -25,6 +25,9 @@ pub struct MergeCandidate {
     pub suggested_keep: String,
     /// Rationale for the merge suggestion
     pub rationale: String,
+    /// Agent-provided reasoning (e.g., specific evidence for the suggestion)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// A section of a document identified by header.
@@ -74,6 +77,9 @@ pub struct MisplacedCandidate {
     pub confidence: f32,
     /// Rationale for the suggestion
     pub rationale: String,
+    /// Agent-provided reasoning (e.g., specific evidence for the suggestion)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// A discrete fact extracted from a document for tracking through reorganization.

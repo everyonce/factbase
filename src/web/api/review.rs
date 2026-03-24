@@ -366,6 +366,7 @@ fn group_questions_by_doc(result: &Value) -> Value {
             "answer": q["answer"],
             "confidence": q["confidence"],
             "agent_suggestion": q["agent_suggestion"],
+            "agent_reasoning": q["agent_reasoning"],
         });
         if !doc_data.contains_key(&doc_id) {
             doc_order.push(doc_id.clone());

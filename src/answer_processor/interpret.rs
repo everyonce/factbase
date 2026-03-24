@@ -492,6 +492,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "dismiss"),
@@ -515,6 +516,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "delete");
         match result {
@@ -536,6 +538,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "split: separate roles");
         match result {
@@ -561,6 +564,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "No, left March 2024");
         match result {
@@ -588,6 +592,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "defer");
         assert!(matches!(result, ChangeInstruction::Defer));
@@ -604,6 +609,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "per LinkedIn profile");
         // Source citations from review answers are dismissed — they should not
@@ -626,6 +632,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "per LinkedIn 2024-06");
         assert!(
@@ -645,6 +652,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "confirmed");
         match result {
@@ -669,6 +677,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "yes");
         match result {
@@ -728,6 +737,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "Still current 2024-02");
         match result {
@@ -774,6 +784,7 @@ mod tests {
             line_number: 10,
         confidence: None,
         confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "per LinkedIn 2024-01"),
@@ -793,6 +804,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "these are sequential promotions at the same company"),
@@ -812,6 +824,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "correct: ended 2021-06");
         assert!(
@@ -832,6 +845,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "still current per LinkedIn scraped 2026-02-10");
         assert!(
@@ -848,6 +862,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result2 = interpret_answer(&q2, "yes");
         assert!(
@@ -868,6 +883,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "confirmed");
         match result {
@@ -896,6 +912,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "yes"),
@@ -917,6 +934,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "Unable to verify from available sources"),
@@ -937,6 +955,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "per LinkedIn 2024-06"),
@@ -958,6 +977,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(
@@ -979,6 +999,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "defer"),
@@ -997,6 +1018,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "delete"),
@@ -1019,6 +1041,7 @@ mod tests {
             line_number: 10,
         confidence: None,
         confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "Corroborated by account document (0db425) which lists them as technical implementation contact @t[~] sourced from 2026-01-15 transition meeting. Role is current.");
         match result {
@@ -1047,6 +1070,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "per LinkedIn 2024-06");
         match result {
@@ -1074,6 +1098,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "role appears unchanged based on available info"),
@@ -1096,6 +1121,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "Beard (1998) findings are still current");
         match result {
@@ -1124,6 +1150,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "Still current per 2024-06 review");
         match result {
@@ -1149,6 +1176,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(&q, "yes");
         match result {
@@ -1174,6 +1202,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let result = interpret_answer(
             &q,
@@ -1196,6 +1225,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "defer"),
@@ -1214,6 +1244,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "delete"),
@@ -1233,6 +1264,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         assert!(matches!(
             interpret_answer(&q, "split: separate roles"),
