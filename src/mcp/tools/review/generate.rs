@@ -334,6 +334,7 @@ mod tests {
                 line_number: 1,
                 confidence: None,
                 confidence_reason: None,
+            agent_reasoning: None,
             },
             ReviewQuestion {
                 question_type: QuestionType::Missing,
@@ -344,6 +345,7 @@ mod tests {
                 line_number: 2,
                 confidence: None,
                 confidence_reason: None,
+            agent_reasoning: None,
             },
         ];
 
@@ -366,6 +368,7 @@ mod tests {
                 line_number: 1,
                 confidence: None,
                 confidence_reason: None,
+            agent_reasoning: None,
             },
             ReviewQuestion {
                 question_type: QuestionType::Conflict,
@@ -376,6 +379,7 @@ mod tests {
                 line_number: 2,
                 confidence: None,
                 confidence_reason: None,
+            agent_reasoning: None,
             },
         ];
 
@@ -394,6 +398,7 @@ mod tests {
             line_number: 1,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
 
         let json = format_question_json(&question, None);
@@ -413,6 +418,7 @@ mod tests {
             line_number: 1,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
 
         let json = format_question_json(&question, None);

@@ -2,7 +2,7 @@
 //!
 //! Axum-based server for the web UI, running on a separate port from the MCP server.
 
-use super::api::documents::{get_document, get_document_links, list_repos};
+use super::api::documents::{get_document, get_document_links, get_document_preview, list_repos};
 use super::api::organize::{
     approve_suggestion, assign_orphan, dismiss_suggestion, get_document_suggestions, list_orphans,
     list_suggestions,
@@ -83,6 +83,7 @@ impl WebServer {
             // Document API routes (read-only)
             .route("/api/documents/{id}", get(get_document))
             .route("/api/documents/{id}/links", get(get_document_links))
+            .route("/api/documents/{id}/preview", get(get_document_preview))
             .route("/api/repos", get(list_repos))
             // Static asset routes - fallback after all API routes
             .route("/", get(index_handler))

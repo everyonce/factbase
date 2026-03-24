@@ -87,6 +87,7 @@ pub fn parse_review_queue(content: &str) -> Option<Vec<ReviewQuestion>> {
                 line_number,
                 confidence: None,
                 confidence_reason: None,
+            agent_reasoning: None,
             });
 
             i = j;

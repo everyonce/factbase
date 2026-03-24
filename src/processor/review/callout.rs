@@ -238,6 +238,7 @@ mod tests {
             line_number: 0,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }];
         let result = append_review_questions(content, &questions, true);
         assert!(
@@ -267,6 +268,7 @@ mod tests {
             line_number: 0,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         }];
         // Even with use_callout=false, existing callout format is preserved
         let result = append_review_questions(content, &questions, false);

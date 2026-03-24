@@ -78,10 +78,16 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
         } else {
             let normalized = normalize_temporal_tags(line);
             if let Some(cap) = ONGOING_TAG_REGEX.captures(&normalized) {
-                // Check for stale ongoing tags
+                // Check for stale ongoing tags.
+                // Pre-screen: only ask if there's a reason to doubt the fact is still current.
+                // Skip when neither staleness signals nor a source citation are present —
+                // those facts are treated as stable/permanent (e.g. game attributes, historical
+                // facts) with no external evidence requiring re-verification.
                 let start_date = &cap[1];
                 if is_stale_ongoing(start_date, current_year)
                     && !has_recent_verification(line, today)
+                    && (has_staleness_signals(&fact_text)
+                        || SOURCE_REF_DETECT_REGEX.is_match(line))
                 {
                     questions.push(ReviewQuestion::new(
                         QuestionType::Temporal,
@@ -107,6 +113,20 @@ pub fn generate_temporal_questions(content: &str, doc_type: Option<&str>) -> Vec
     }
 
     questions
+}
+
+/// Check if a fact text contains explicit signals that the fact may have changed.
+///
+/// Returns `true` for keywords that indicate mutability: "changed", "updated",
+/// "replaced", "as of". These are the signals mentioned in the task spec.
+/// Absence of these signals (combined with no source citation) means the fact
+/// is treated as stable/permanent and no stale-ongoing question is generated.
+fn has_staleness_signals(text: &str) -> bool {
+    let lower = text.to_lowercase();
+    lower.contains("changed")
+        || lower.contains("updated")
+        || lower.contains("replaced")
+        || lower.contains("as of")
 }
 
 /// Check if an ongoing tag is stale (started more than 1 year ago).
@@ -230,10 +250,10 @@ mod tests {
 
     #[test]
     fn test_generate_temporal_questions_stale_ongoing() {
-        // Use a date that's definitely >1 year old
-        let content = "# Person\n\n- CTO at Acme @t[2020..]";
+        // Use a date that's definitely >1 year old, with a citation so the pre-screen passes
+        let content = "# Person\n\n- CTO at Acme @t[2020..] [^1]\n\n---\n[^1]: LinkedIn";
         let questions = generate_temporal_questions(content, None);
-        // Should generate a stale ongoing question
+        // Should generate a stale ongoing question (citation present)
         assert!(!questions.is_empty());
         assert!(questions[0].description.contains("still current?"));
     }
@@ -293,8 +313,8 @@ mod tests {
 
     #[test]
     fn test_stale_ongoing_without_verification_still_generates() {
-        // @t[2024..] is stale, no @t[~] → should generate question
-        let content = "# Person\n\n- CTO at Acme @t[2024..]";
+        // @t[2024..] is stale, no @t[~], but has citation → should generate question
+        let content = "# Person\n\n- CTO at Acme @t[2024..] [^1]\n\n---\n[^1]: LinkedIn";
         let questions = generate_temporal_questions(content, None);
         let stale: Vec<_> = questions
             .iter()
@@ -305,8 +325,8 @@ mod tests {
 
     #[test]
     fn test_stale_ongoing_with_old_verification_still_generates() {
-        // @t[2024..] is stale, @t[~2024-06] is >180 days old → should still generate
-        let content = "# Person\n\n- CTO at Acme @t[2024..] @t[~2024-06]";
+        // @t[2024..] is stale, @t[~2024-06] is >180 days old, has citation → should still generate
+        let content = "# Person\n\n- CTO at Acme @t[2024..] @t[~2024-06] [^1]\n\n---\n[^1]: LinkedIn";
         let questions = generate_temporal_questions(content, None);
         let stale: Vec<_> = questions
             .iter()
@@ -717,5 +737,99 @@ mod tests {
             temporal.is_empty(),
             "@t[?] with citation should not generate 'when was this true?' question"
         );
+    }
+
+    // --- Temporal auto-resolution tests ---
+
+    #[test]
+    fn test_stale_ongoing_no_signals_no_citation_skipped() {
+        // Permanent attribute: stale tag, no staleness signals, no source citation → skip
+        let content = "# Character\n\n- Element: Pyro @t[2020..]";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "Permanent attribute with no signals/citation should not generate stale question"
+        );
+    }
+
+    #[test]
+    fn test_stale_ongoing_with_staleness_signal_generates() {
+        // Fact contains "changed" → should still generate question
+        let content = "# Doc\n\n- Role changed to CTO @t[2020..]";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert_eq!(
+            stale.len(),
+            1,
+            "Fact with staleness signal 'changed' should generate stale question"
+        );
+    }
+
+    #[test]
+    fn test_stale_ongoing_with_updated_signal_generates() {
+        let content = "# Doc\n\n- Status updated to Active @t[2020..]";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert_eq!(stale.len(), 1, "'updated' signal should generate stale question");
+    }
+
+    #[test]
+    fn test_stale_ongoing_with_replaced_signal_generates() {
+        let content = "# Doc\n\n- Replaced by new system @t[2020..]";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert_eq!(stale.len(), 1, "'replaced' signal should generate stale question");
+    }
+
+    #[test]
+    fn test_stale_ongoing_with_as_of_signal_generates() {
+        let content = "# Doc\n\n- As of launch, Element: Pyro @t[2020..]";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert_eq!(stale.len(), 1, "'as of' signal should generate stale question");
+    }
+
+    #[test]
+    fn test_stale_ongoing_with_citation_generates() {
+        // Has source citation → should still generate question even without staleness signals
+        let content = "# Doc\n\n- Element: Pyro @t[2020..] [^1]\n\n---\n[^1]: Game wiki";
+        let questions = generate_temporal_questions(content, None);
+        let stale: Vec<_> = questions
+            .iter()
+            .filter(|q| q.description.contains("still current?"))
+            .collect();
+        assert_eq!(
+            stale.len(),
+            1,
+            "Fact with source citation should still generate stale question"
+        );
+    }
+
+    #[test]
+    fn test_has_staleness_signals_detects_keywords() {
+        assert!(has_staleness_signals("Role changed to CTO"));
+        assert!(has_staleness_signals("Status updated to Active"));
+        assert!(has_staleness_signals("Replaced by new system"));
+        assert!(has_staleness_signals("As of 2024, still active"));
+        assert!(has_staleness_signals("CHANGED role"));
+        assert!(!has_staleness_signals("Element: Pyro"));
+        assert!(!has_staleness_signals("Weapon Type: Sword"));
+        assert!(!has_staleness_signals("Rarity: 5-star"));
     }
 }

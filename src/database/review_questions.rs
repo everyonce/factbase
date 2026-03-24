@@ -60,8 +60,8 @@ impl Database {
 
             conn.execute(
                 "INSERT INTO review_questions \
-                 (doc_id, question_index, question_type, description, line_ref, answer, status, created_at, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+                 (doc_id, question_index, question_type, description, line_ref, answer, status, agent_reasoning, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
                 rusqlite::params![
                     doc_id,
                     idx as i64,
@@ -70,6 +70,7 @@ impl Database {
                     q.line_ref.map(|l| l as i64),
                     q.answer,
                     status,
+                    q.agent_reasoning,
                     now
                 ],
             )?;
@@ -155,7 +156,7 @@ impl Database {
         let page_sql = format!(
             "SELECT rq.id, rq.doc_id, d.title, rq.question_index, rq.question_type, \
                     rq.description, rq.line_ref, rq.answer, rq.status, \
-                    rq.confidence, rq.agent_suggestion, d.file_path \
+                    rq.confidence, rq.agent_suggestion, rq.agent_reasoning, d.file_path \
              FROM review_questions rq \
              JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
              WHERE {page_where} \
@@ -179,7 +180,8 @@ impl Database {
                 let status: String = row.get(8)?;
                 let confidence: Option<String> = row.get(9)?;
                 let agent_suggestion: Option<String> = row.get(10)?;
-                let file_path: String = row.get(11)?;
+                let agent_reasoning: Option<String> = row.get(11)?;
+                let file_path: String = row.get(12)?;
                 Ok((
                     row_id,
                     doc_id,
@@ -192,6 +194,7 @@ impl Database {
                     status,
                     confidence,
                     agent_suggestion,
+                    agent_reasoning,
                     file_path,
                 ))
             })?
@@ -209,6 +212,7 @@ impl Database {
                     status,
                     confidence,
                     agent_suggestion,
+                    agent_reasoning,
                     file_path,
                 )| {
                     let is_deferred = status == "deferred" || status == "believed";
@@ -229,6 +233,7 @@ impl Database {
                         "status": status,
                         "confidence": confidence_val,
                         "agent_suggestion": agent_suggestion,
+                        "agent_reasoning": agent_reasoning,
                     });
                     if is_deferred {
                         obj["deferred"] = Value::Bool(true);
@@ -239,6 +244,32 @@ impl Database {
             .collect();
 
         Ok((questions, total_answered, total_unanswered, total_deferred))
+    }
+
+    /// Count unanswered review questions grouped into triage buckets.
+    ///
+    /// Returns `(needs_input, auto_resolved, needs_approval)`:
+    /// - `needs_input`: unanswered with no confidence or confidence='deferred' (🔴)
+    /// - `auto_resolved`: unanswered with confidence='high' and an answer suggestion (🟢)
+    /// - `needs_approval`: unanswered, everything else (🟡)
+    pub fn count_review_triage(&self) -> Result<(u64, u64, u64), FactbaseError> {
+        let conn = self.get_conn()?;
+        let sql = "SELECT \
+            COALESCE(SUM(CASE WHEN rq.status != 'verified' AND rq.status != 'dismissed' \
+                              AND (rq.confidence IS NULL OR rq.confidence = 'deferred') \
+                              THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN rq.status != 'verified' AND rq.status != 'dismissed' \
+                              AND rq.confidence = 'high' AND rq.answer IS NOT NULL \
+                              THEN 1 ELSE 0 END), 0), \
+            COALESCE(SUM(CASE WHEN rq.status != 'verified' AND rq.status != 'dismissed' \
+                              AND NOT (rq.confidence IS NULL OR rq.confidence = 'deferred') \
+                              AND NOT (rq.confidence = 'high' AND rq.answer IS NOT NULL) \
+                              THEN 1 ELSE 0 END), 0) \
+          FROM review_questions rq \
+          JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
+          WHERE rq.status != 'dismissed'";
+        conn.query_row(sql, [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .map_err(FactbaseError::from)
     }
 
     /// Update the status of a single review question in the DB.
@@ -1293,5 +1324,45 @@ mod tests {
 
         let hints = db.get_conflict_hints(None, 3).unwrap();
         assert_eq!(hints.len(), 3);
+    }
+
+    #[test]
+    fn test_agent_reasoning_stored_and_returned() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let mut q = make_question(QuestionType::Ambiguous, "Filed under wrong folder?");
+        q.agent_reasoning = Some("majority-links:Globex links-to-other:3 links-to-current:1 total-links:4".to_string());
+        db.sync_review_questions(&doc_id, &[q]).unwrap();
+
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "unanswered".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, _) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(
+            qs[0]["agent_reasoning"],
+            "majority-links:Globex links-to-other:3 links-to-current:1 total-links:4"
+        );
+    }
+
+    #[test]
+    fn test_agent_reasoning_null_when_not_set() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        db.sync_review_questions(&doc_id, &[make_question(QuestionType::Temporal, "When?")])
+            .unwrap();
+
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "unanswered".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, _) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(qs.len(), 1);
+        assert!(qs[0]["agent_reasoning"].is_null());
     }
 }

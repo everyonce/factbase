@@ -90,6 +90,7 @@ pub fn detect_misplaced(
                     rationale: format!(
                         "Similarity to '{closest_type}': {closest_sim:.2}, to '{current_type}': {current_sim:.2}"
                     ),
+                    reason: None,
                 });
             }
         }
@@ -232,6 +233,7 @@ mod tests {
             suggested_type: "person".to_string(),
             confidence: 0.15,
             rationale: "Similarity to 'person': 0.85, to 'project': 0.70".to_string(),
+            reason: None,
         };
         assert_eq!(candidate.doc_id, "abc123");
         assert_eq!(candidate.current_type, "project");

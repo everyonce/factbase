@@ -115,6 +115,7 @@ pub fn detect_merge_candidates(
                 similarity,
                 suggested_keep,
                 rationale,
+                reason: None,
             });
         }
     }
@@ -143,6 +144,7 @@ mod tests {
             similarity: 0.97,
             suggested_keep: "abc123".to_string(),
             rationale: "Keep 'Document A': more content".to_string(),
+            reason: None,
         };
 
         assert_eq!(candidate.doc1_id, "abc123");

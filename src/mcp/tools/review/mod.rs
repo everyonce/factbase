@@ -173,6 +173,7 @@ mod tests {
             line_number: 10,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let json = format_question_json(&q, Some(("abc123", "Test Doc")));
         assert_eq!(json["doc_id"], "abc123");
@@ -191,6 +192,7 @@ mod tests {
             line_number: 20,
             confidence: None,
             confidence_reason: None,
+            agent_reasoning: None,
         };
         let json = format_question_json(&q, Some(("def456", "Another Doc")));
         assert_eq!(json["type"], "missing");

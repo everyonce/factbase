@@ -11,6 +11,7 @@ pub struct OrganizationSuggestion {
     pub suggestion_type: String,
     pub suggested_value: String,
     pub source: String,
+    pub reason: Option<String>,
     pub created_at: String,
 }
 
@@ -23,11 +24,23 @@ impl Database {
         suggested_value: &str,
         source: &str,
     ) -> Result<i64, FactbaseError> {
+        self.insert_suggestion_with_reason(doc_id, suggestion_type, suggested_value, source, None)
+    }
+
+    /// Insert a new organization suggestion with an optional reason.
+    pub fn insert_suggestion_with_reason(
+        &self,
+        doc_id: &str,
+        suggestion_type: &str,
+        suggested_value: &str,
+        source: &str,
+        reason: Option<&str>,
+    ) -> Result<i64, FactbaseError> {
         let conn = self.get_conn()?;
         conn.execute(
-            "INSERT INTO organization_suggestions (doc_id, suggestion_type, suggested_value, source, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![doc_id, suggestion_type, suggested_value, source, Utc::now().to_rfc3339()],
+            "INSERT INTO organization_suggestions (doc_id, suggestion_type, suggested_value, source, reason, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            rusqlite::params![doc_id, suggestion_type, suggested_value, source, reason, Utc::now().to_rfc3339()],
         )?;
         Ok(conn.last_insert_rowid())
     }
@@ -41,7 +54,7 @@ impl Database {
         let (sql, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) =
             if let Some(rid) = repo_id {
                 (
-                "SELECT s.id, s.doc_id, s.suggestion_type, s.suggested_value, s.source, s.created_at
+                "SELECT s.id, s.doc_id, s.suggestion_type, s.suggested_value, s.source, s.reason, s.created_at
                  FROM organization_suggestions s
                  JOIN documents d ON d.id = s.doc_id
                  WHERE d.repo_id = ?1
@@ -50,7 +63,7 @@ impl Database {
             )
             } else {
                 (
-                    "SELECT id, doc_id, suggestion_type, suggested_value, source, created_at
+                    "SELECT id, doc_id, suggestion_type, suggested_value, source, reason, created_at
                  FROM organization_suggestions
                  ORDER BY created_at"
                         .to_string(),
@@ -69,7 +82,8 @@ impl Database {
                 suggestion_type: row.get(2)?,
                 suggested_value: row.get(3)?,
                 source: row.get(4)?,
-                created_at: row.get(5)?,
+                reason: row.get(5)?,
+                created_at: row.get(6)?,
             });
         }
         Ok(results)
@@ -178,5 +192,48 @@ mod tests {
         let count = db.delete_suggestions_for_doc("d1").unwrap();
         assert_eq!(count, 2);
         assert!(db.list_suggestions(None).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_insert_suggestion_with_reason() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        let mut doc = test_doc("d1", "Test Doc");
+        doc.repo_id = repo.id.clone();
+        db.upsert_document(&doc).unwrap();
+
+        db.insert_suggestion_with_reason(
+            "d1",
+            "move",
+            "new/path/",
+            "update",
+            Some("12 of 14 links point to new-testament documents"),
+        )
+        .unwrap();
+
+        let suggestions = db.list_suggestions(None).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(
+            suggestions[0].reason.as_deref(),
+            Some("12 of 14 links point to new-testament documents")
+        );
+    }
+
+    #[test]
+    fn test_insert_suggestion_reason_defaults_to_none() {
+        let (db, _tmp) = test_db();
+        let repo = test_repo();
+        db.upsert_repository(&repo).unwrap();
+        let mut doc = test_doc("d1", "Test Doc");
+        doc.repo_id = repo.id.clone();
+        db.upsert_document(&doc).unwrap();
+
+        db.insert_suggestion("d1", "move", "new/path/", "update")
+            .unwrap();
+
+        let suggestions = db.list_suggestions(None).unwrap();
+        assert_eq!(suggestions.len(), 1);
+        assert!(suggestions[0].reason.is_none());
     }
 }
