@@ -154,7 +154,8 @@ impl Database {
 
         let page_sql = format!(
             "SELECT rq.doc_id, d.title, rq.question_index, rq.question_type, \
-                    rq.description, rq.line_ref, rq.answer, rq.status \
+                    rq.description, rq.line_ref, rq.answer, rq.status, \
+                    rq.confidence, rq.agent_suggestion \
              FROM review_questions rq \
              JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
              WHERE {page_where} \
@@ -175,6 +176,8 @@ impl Database {
                 let line_ref: Option<i64> = row.get(5)?;
                 let answer: Option<String> = row.get(6)?;
                 let status: String = row.get(7)?;
+                let confidence: Option<String> = row.get(8)?;
+                let agent_suggestion: Option<String> = row.get(9)?;
                 Ok((
                     doc_id,
                     doc_title,
@@ -184,6 +187,8 @@ impl Database {
                     line_ref,
                     answer,
                     status,
+                    confidence,
+                    agent_suggestion,
                 ))
             })?
             .filter_map(Result::ok)
@@ -197,9 +202,13 @@ impl Database {
                     line_ref,
                     answer,
                     status,
+                    confidence,
+                    agent_suggestion,
                 )| {
                     let is_deferred = status == "deferred" || status == "believed";
                     let answered = status == "verified";
+                    // confidence defaults to "deferred" when not set (no attempt made)
+                    let confidence_val = confidence.as_deref().unwrap_or("deferred");
                     let mut obj = serde_json::json!({
                         "type": question_type,
                         "description": description,
@@ -210,6 +219,8 @@ impl Database {
                         "answered": answered,
                         "answer": answer,
                         "status": status,
+                        "confidence": confidence_val,
+                        "agent_suggestion": agent_suggestion,
                     });
                     if is_deferred {
                         obj["deferred"] = Value::Bool(true);
@@ -230,12 +241,41 @@ impl Database {
         status: &str,
         answer: Option<&str>,
     ) -> Result<(), FactbaseError> {
+        self.update_review_question_status_with_confidence(
+            doc_id,
+            question_index,
+            status,
+            answer,
+            None,
+            None,
+        )
+    }
+
+    /// Update the status of a single review question in the DB, including confidence metadata.
+    pub fn update_review_question_status_with_confidence(
+        &self,
+        doc_id: &str,
+        question_index: usize,
+        status: &str,
+        answer: Option<&str>,
+        confidence: Option<&str>,
+        agent_suggestion: Option<&str>,
+    ) -> Result<(), FactbaseError> {
         let conn = self.get_conn()?;
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "UPDATE review_questions SET status = ?1, answer = ?2, updated_at = ?3 \
-             WHERE doc_id = ?4 AND question_index = ?5",
-            rusqlite::params![status, answer, now, doc_id, question_index as i64],
+            "UPDATE review_questions SET status = ?1, answer = ?2, updated_at = ?3, \
+             confidence = ?4, agent_suggestion = ?5 \
+             WHERE doc_id = ?6 AND question_index = ?7",
+            rusqlite::params![
+                status,
+                answer,
+                now,
+                confidence,
+                agent_suggestion,
+                doc_id,
+                question_index as i64
+            ],
         )?;
         Ok(())
     }
@@ -849,6 +889,155 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
         assert!(affected.is_empty());
+    }
+
+    #[test]
+    fn test_confidence_and_agent_suggestion_stored_and_returned() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![make_question(QuestionType::Temporal, "When?")];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        // Store confidence + agent_suggestion via the new method
+        db.update_review_question_status_with_confidence(
+            &doc_id,
+            0,
+            "verified",
+            Some("@t[2024]"),
+            Some("high"),
+            Some("The date is clearly stated in the document."),
+        )
+        .unwrap();
+
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "answered".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, _) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0]["confidence"], "high");
+        assert_eq!(
+            qs[0]["agent_suggestion"],
+            "The date is clearly stated in the document."
+        );
+    }
+
+    #[test]
+    fn test_confidence_defaults_to_deferred_when_null() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![make_question(QuestionType::Temporal, "When?")];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        // No confidence set — should default to "deferred" in API response
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "unanswered".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, _) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0]["confidence"], "deferred");
+        assert!(qs[0]["agent_suggestion"].is_null());
+    }
+
+    #[test]
+    fn test_low_confidence_stored_correctly() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![make_question(QuestionType::Missing, "Source?")];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        db.update_review_question_status_with_confidence(
+            &doc_id,
+            0,
+            "verified",
+            Some("Wikipedia article"),
+            Some("low"),
+            Some("Found a possible match but not certain."),
+        )
+        .unwrap();
+
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "answered".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, _) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(qs[0]["confidence"], "low");
+        assert_eq!(
+            qs[0]["agent_suggestion"],
+            "Found a possible match but not certain."
+        );
+    }
+
+    #[test]
+    fn test_migration_v21_adds_columns_to_existing_db() {
+        // Simulate a v20 database and verify migration v21 adds the columns
+        let temp = tempfile::TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+
+        {
+            let conn = rusqlite::Connection::open(&db_path).expect("open connection");
+            conn.execute_batch(
+                "CREATE TABLE review_questions (
+                    id INTEGER PRIMARY KEY,
+                    doc_id TEXT NOT NULL,
+                    question_index INTEGER NOT NULL,
+                    question_type TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    line_ref INTEGER,
+                    answer TEXT,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                PRAGMA user_version = 20;",
+            )
+            .expect("create table");
+        }
+
+        // Opening the database should apply migration v21
+        let db = crate::database::Database::new(&db_path).expect("open database");
+        let conn = db.get_conn().expect("get connection");
+
+        let has_confidence: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('review_questions') WHERE name = 'confidence'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query column");
+        assert!(
+            has_confidence,
+            "confidence column should exist after migration v21"
+        );
+
+        let has_agent_suggestion: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('review_questions') WHERE name = 'agent_suggestion'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("query column");
+        assert!(
+            has_agent_suggestion,
+            "agent_suggestion column should exist after migration v21"
+        );
+    }
+
+    #[test]
+    fn test_migration_v21_idempotent() {
+        // Running migration v21 twice should not fail
+        let temp = tempfile::TempDir::new().expect("create temp dir");
+        let db_path = temp.path().join("test.db");
+        let _db = crate::database::Database::new(&db_path).expect("first open");
+        // Second open should succeed without error
+        let _db2 = crate::database::Database::new(&db_path).expect("second open");
     }
 
     #[test]

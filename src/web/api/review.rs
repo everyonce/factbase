@@ -111,6 +111,7 @@ pub async fn post_answer(
         question_index: body.question_index as usize,
         answer: body.answer,
         confidence: None,
+        agent_suggestion: None,
     };
 
     let result = super::run_blocking_web(move || services::answer_question(&db, &params)).await?;
@@ -132,6 +133,7 @@ pub async fn post_bulk_answer(
             question_index: a.question_index as usize,
             answer: a.answer,
             confidence: None,
+            agent_suggestion: None,
         })
         .collect();
 
@@ -189,7 +191,7 @@ pub async fn post_apply(
     State(state): State<Arc<WebAppState>>,
     Json(body): Json<ApplyRequest>,
 ) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
-    use crate::answer_processor::apply_all::{ApplyConfig, ApplyStatus, apply_all_review_answers};
+    use crate::answer_processor::apply_all::{apply_all_review_answers, ApplyConfig, ApplyStatus};
 
     let db = state.db.clone();
     let config = ApplyConfig {

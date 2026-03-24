@@ -80,6 +80,8 @@ pub fn answer_question(db: &Database, args: &Value) -> Result<Value, FactbaseErr
         question_index: crate::mcp::tools::get_u64_arg_required(args, "question_index")? as usize,
         answer: crate::mcp::tools::get_str_arg_required(args, "answer")?,
         confidence: crate::mcp::tools::get_str_arg(args, "confidence").map(String::from),
+        agent_suggestion: crate::mcp::tools::get_str_arg(args, "agent_suggestion")
+            .map(String::from),
     };
     services::answer_question(db, &params)
 }
@@ -121,6 +123,10 @@ pub fn bulk_answer_questions(
                     })?,
                 confidence: a
                     .get("confidence")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                agent_suggestion: a
+                    .get("agent_suggestion")
                     .and_then(|v| v.as_str())
                     .map(String::from),
             })

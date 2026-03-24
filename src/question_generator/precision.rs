@@ -106,7 +106,10 @@ const VAGUE_QUALIFIERS: &[(&str, &str)] = &[
     ("comparatively", "compared to what?"),
     // Absolute/superlative qualifiers
     ("extreme", "extreme by what measure — what specific value?"),
-    ("legendary", "legendary by what standard — what is the measurable basis?"),
+    (
+        "legendary",
+        "legendary by what standard — what is the measurable basis?",
+    ),
     ("outstanding", "outstanding by what measure?"),
     ("remarkable", "remarkable by what standard?"),
     ("unparalleled", "unparalleled how — compared to what?"),
@@ -114,14 +117,26 @@ const VAGUE_QUALIFIERS: &[(&str, &str)] = &[
     ("extraordinary", "extraordinary by what measure?"),
     ("phenomenal", "phenomenal by what standard?"),
     ("impressive", "impressive by what measure?"),
-    ("formidable", "formidable in what respect — what specific capability?"),
+    (
+        "formidable",
+        "formidable in what respect — what specific capability?",
+    ),
     ("powerful", "powerful by what measure?"),
     ("capable", "capable of what specifically?"),
     ("advanced", "advanced relative to what baseline?"),
-    ("sophisticated", "sophisticated in what way — what specific capability?"),
+    (
+        "sophisticated",
+        "sophisticated in what way — what specific capability?",
+    ),
     ("modern", "modern as of when — what specific era or date?"),
-    ("cutting-edge", "cutting-edge as of when — what specific capability?"),
-    ("state-of-the-art", "state-of-the-art as of when — what specific capability?"),
+    (
+        "cutting-edge",
+        "cutting-edge as of when — what specific capability?",
+    ),
+    (
+        "state-of-the-art",
+        "state-of-the-art as of when — what specific capability?",
+    ),
     ("world-class", "world-class by what measure or ranking?"),
     ("top-tier", "top-tier by what ranking or criteria?"),
     ("elite", "elite by what standard or criteria?"),
