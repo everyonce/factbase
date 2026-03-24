@@ -353,6 +353,19 @@ review:
 ```
 This prevents temporal and stale questions from being generated for any document in the repository.
 
+#### Per-document-type suppression
+
+For mixed KBs where only certain document types have stable facts (e.g., game characters whose attributes never change, or historical events), use `suppress_question_types_by_type`:
+
+```yaml
+review:
+  suppress_question_types_by_type:
+    character: [temporal]          # game characters — element/weapon never change
+    historical_event: [temporal, stale]
+```
+
+This suppresses the listed question types only for documents of the matching type. Other document types are unaffected.
+
 ## Content Length Guidelines
 
 - **Minimum**: 100+ characters of meaningful content (very short docs may be flagged by quality checks)

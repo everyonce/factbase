@@ -970,6 +970,7 @@ mod tests {
                 required_fields: None,
                 glossary_types: None,
                 suppress_question_types: vec![],
+                suppress_question_types_by_type: None,
             }),
             ..Default::default()
         };
@@ -999,6 +1000,7 @@ mod tests {
                 required_fields: Some(fields),
                 glossary_types: None,
                 suppress_question_types: vec![],
+                suppress_question_types_by_type: None,
             }),
             ..Default::default()
         };
