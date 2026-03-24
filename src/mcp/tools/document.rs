@@ -2424,7 +2424,10 @@ mod tests {
         let content = "- Fact @t[2024] [^1]\n\n---\n[^1]: Source A";
         let warnings = inline_quality_warnings(content);
         let arr = warnings.as_array().unwrap();
-        assert!(arr.is_empty(), "clean content should have no warnings: {arr:?}");
+        assert!(
+            arr.is_empty(),
+            "clean content should have no warnings: {arr:?}"
+        );
     }
 
     #[test]
@@ -2481,13 +2484,18 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S").unwrap();
+        fs::write(
+            &file,
+            "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S",
+        )
+        .unwrap();
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S"
+                .into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -2525,13 +2533,18 @@ mod tests {
         db.upsert_repository(&repo).unwrap();
 
         let file = repo_dir.path().join("test.md");
-        fs::write(&file, "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S").unwrap();
+        fs::write(
+            &file,
+            "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S",
+        )
+        .unwrap();
         let doc = Document {
             id: "abc123".into(),
             repo_id: "r1".into(),
             file_path: "test.md".into(),
             title: "Title".into(),
-            content: "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S".into(),
+            content: "<!-- factbase:abc123 -->\n# Title\n\n- old @t[2020] [^1]\n\n---\n[^1]: S"
+                .into(),
             file_hash: "h1".into(),
             ..Document::test_default()
         };
@@ -2541,6 +2554,9 @@ mod tests {
         let args = serde_json::json!({"id": "abc123", "title": "New Title"});
         let result = update_document(&db, &args).unwrap();
         let qw = result["quality_warnings"].as_array().unwrap();
-        assert!(qw.is_empty(), "title-only update should have empty quality_warnings");
+        assert!(
+            qw.is_empty(),
+            "title-only update should have empty quality_warnings"
+        );
     }
 }

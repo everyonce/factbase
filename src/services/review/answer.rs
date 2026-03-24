@@ -46,6 +46,7 @@ pub struct AnswerQuestionParams {
     pub question_index: usize,
     pub answer: String,
     pub confidence: Option<String>,
+    pub agent_suggestion: Option<String>,
 }
 
 /// Single item in a bulk answer request.
@@ -55,6 +56,7 @@ pub struct BulkAnswerItem {
     pub question_index: usize,
     pub answer: String,
     pub confidence: Option<String>,
+    pub agent_suggestion: Option<String>,
 }
 
 /// Marks a review question as answered.
@@ -149,11 +151,22 @@ pub fn answer_question(
     db.update_document_content(&params.doc_id, &new_content, &new_hash)?;
     // Sync review question status to DB
     let db_status = if defer { "deferred" } else { "verified" };
-    let _ = db.update_review_question_status(
+    // Derive confidence level: deferred → "deferred", else use provided confidence or default "high"
+    let db_confidence = if defer {
+        "deferred"
+    } else {
+        match params.confidence.as_deref() {
+            Some("low") => "low",
+            _ => "high",
+        }
+    };
+    let _ = db.update_review_question_status_with_confidence(
         &params.doc_id,
         params.question_index,
         db_status,
         Some(&answer_text),
+        Some(db_confidence),
+        params.agent_suggestion.as_deref(),
     );
 
     let type_str = question.question_type.as_str();
@@ -513,6 +526,7 @@ mod tests {
                 question_index: 0,
                 answer: "VALID: primary source".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -565,6 +579,7 @@ mod tests {
                 question_index: 0,
                 answer: "@t[2020]".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -610,6 +625,7 @@ mod tests {
                 question_index: 0,
                 answer: "New answer".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -634,6 +650,7 @@ mod tests {
                 question_index: 0,
                 answer: "test".into(),
                 confidence: None,
+                agent_suggestion: None,
             })
             .collect();
         assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
@@ -649,6 +666,7 @@ mod tests {
                 question_index: 0,
                 answer: "yes".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         );
         assert!(result.is_err());
@@ -702,6 +720,7 @@ mod tests {
                 question_index: 0,
                 answer: "2024".into(),
                 confidence: Some("believed".into()),
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -734,6 +753,7 @@ mod tests {
             question_index: 0,
             answer: "yes".into(),
             confidence: None,
+            agent_suggestion: None,
         }];
         // Doc not found propagates as an error
         assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
@@ -784,6 +804,7 @@ mod tests {
                 question_index: 0,
                 answer: "VALID: sufficient per policy".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -806,6 +827,7 @@ mod tests {
                 question_index: 0,
                 answer: "dismiss: internal source".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -828,6 +850,7 @@ mod tests {
                 answer: "resolve_question: VALID — citation satisfies internal_sources policy"
                     .into(),
                 confidence: Some("verified".into()),
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -855,6 +878,7 @@ mod tests {
                 question_index: 0,
                 answer: "probably ok".into(),
                 confidence: Some("deferred".into()),
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -900,6 +924,7 @@ mod tests {
                 question_index: 0,
                 answer: "dismiss".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();
@@ -945,6 +970,7 @@ mod tests {
                 question_index: 0,
                 answer: "VALID: already accepted".into(),
                 confidence: None,
+                agent_suggestion: None,
             },
         )
         .unwrap();

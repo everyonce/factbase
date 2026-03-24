@@ -126,6 +126,10 @@ pub fn answer_questions(
                         .get("confidence")
                         .and_then(|v| v.as_str())
                         .map(String::from),
+                    agent_suggestion: a
+                        .get("agent_suggestion")
+                        .and_then(|v| v.as_str())
+                        .map(String::from),
                 })
             })
             .collect::<Result<Vec<_>, FactbaseError>>()?;
@@ -155,6 +159,10 @@ pub fn answer_questions(
                 question_index,
                 answer: answer_text.to_string(),
                 confidence,
+                agent_suggestion: args
+                    .get("agent_suggestion")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             },
         )
     }

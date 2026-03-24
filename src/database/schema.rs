@@ -15,7 +15,7 @@ use super::{Database, DbConn};
 use crate::error::FactbaseError;
 
 /// Current schema version. Increment when adding migrations.
-pub(super) const SCHEMA_VERSION: i32 = 20;
+pub(super) const SCHEMA_VERSION: i32 = 21;
 
 /// Database migrations. Each entry is (version, description, sql).
 /// Migrations are run in order for versions > current user_version.
@@ -210,6 +210,12 @@ pub(super) const MIGRATIONS: &[(i32, &str, &str)] = &[
         20,
         "Reset believed review questions to open",
         "UPDATE review_questions SET status = 'open', answer = NULL WHERE status = 'believed';",
+    ),
+    // Version 21: Add confidence and agent_suggestion columns to review_questions
+    (
+        21,
+        "Add confidence and agent_suggestion to review_questions",
+        "", // handled in post-migration hook (idempotent column adds)
     ),
 ];
 
@@ -410,6 +416,8 @@ impl Database {
                 status TEXT NOT NULL DEFAULT 'open',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                confidence TEXT,
+                agent_suggestion TEXT,
                 FOREIGN KEY (doc_id) REFERENCES documents(id),
                 UNIQUE(doc_id, question_index)
             );
@@ -492,6 +500,9 @@ impl Database {
                             count
                         );
                     }
+                }
+                if *version == 21 {
+                    Self::add_review_question_confidence_columns(conn)?;
                 }
 
                 Self::set_schema_version(conn, *version)?;
@@ -634,6 +645,24 @@ impl Database {
         }
         if count > 0 {
             tracing::info!("Backfilled FTS5 index for {} documents", count);
+        }
+        Ok(())
+    }
+
+    /// Idempotently add confidence and agent_suggestion columns to review_questions (migration 21).
+    fn add_review_question_confidence_columns(conn: &DbConn) -> Result<(), FactbaseError> {
+        let has_confidence: bool = conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM pragma_table_info('review_questions') WHERE name = 'confidence'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(false);
+        if !has_confidence {
+            conn.execute_batch(
+                "ALTER TABLE review_questions ADD COLUMN confidence TEXT; \
+                 ALTER TABLE review_questions ADD COLUMN agent_suggestion TEXT;",
+            )?;
         }
         Ok(())
     }
