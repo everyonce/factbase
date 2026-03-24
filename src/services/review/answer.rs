@@ -417,6 +417,71 @@ pub fn bulk_answer_questions(
     }))
 }
 
+/// Bulk-approve questions by their DB row IDs, using each question's stored
+/// `agent_suggestion` as the answer.
+///
+/// Returns `(approved, errors)` where `errors` is a list of `(id, message)` pairs.
+#[instrument(name = "svc_bulk_approve_questions", skip(db, question_ids, progress))]
+pub fn bulk_approve_questions(
+    db: &Database,
+    question_ids: &[i64],
+    progress: &ProgressReporter,
+) -> Result<Value, FactbaseError> {
+    let mut approved = 0usize;
+    let mut errors: Vec<Value> = Vec::new();
+
+    for (i, &row_id) in question_ids.iter().enumerate() {
+        progress.report(i + 1, question_ids.len(), &format!("Approving question {row_id}"));
+
+        let row = match db.get_review_question_by_row_id(row_id)? {
+            Some(r) => r,
+            None => {
+                errors.push(serde_json::json!({
+                    "id": row_id,
+                    "error": "Question not found"
+                }));
+                continue;
+            }
+        };
+
+        let (doc_id, question_index, agent_suggestion) = row;
+        let answer = match agent_suggestion {
+            Some(ref s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                errors.push(serde_json::json!({
+                    "id": row_id,
+                    "error": "No agent_suggestion to approve"
+                }));
+                continue;
+            }
+        };
+
+        match answer_question(
+            db,
+            &AnswerQuestionParams {
+                doc_id,
+                question_index,
+                answer,
+                confidence: Some("high".to_string()),
+                agent_suggestion: agent_suggestion.clone(),
+            },
+        ) {
+            Ok(_) => approved += 1,
+            Err(e) => {
+                errors.push(serde_json::json!({
+                    "id": row_id,
+                    "error": e.to_string()
+                }));
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "approved": approved,
+        "errors": errors
+    }))
+}
+
 /// Stamp `<!-- ✓ -->` on the footnote definition line when a weak-source question
 /// is dismissed via a definitive answer (VALID or dismiss prefix).
 /// This prevents the footnote from being re-flagged on subsequent scans.
@@ -757,6 +822,64 @@ mod tests {
         }];
         // Doc not found propagates as an error
         assert!(bulk_answer_questions(&db, &items, &ProgressReporter::Silent).is_err());
+    }
+
+    #[test]
+    fn test_bulk_approve_empty_ids() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let result = bulk_approve_questions(&db, &[], &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["approved"], 0);
+        assert!(result["errors"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_bulk_approve_not_found_id_goes_to_errors() {
+        let (db, _tmp) = crate::database::tests::test_db();
+        let result = bulk_approve_questions(&db, &[99999], &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["approved"], 0);
+        let errors = result["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["id"], 99999);
+    }
+
+    #[test]
+    fn test_bulk_approve_no_agent_suggestion_goes_to_errors() {
+        use crate::database::tests::{test_db, test_doc_with_repo, test_repo_with_id};
+        use crate::models::{QuestionType, ReviewQuestion};
+
+        let (db, _tmp) = test_db();
+        let repo = test_repo_with_id("r1");
+        db.upsert_repository(&repo).unwrap();
+        let doc = test_doc_with_repo("doc1", "r1", "Test");
+        db.upsert_document(&doc).unwrap();
+
+        // Sync a question with no agent_suggestion
+        db.sync_review_questions(
+            "doc1",
+            &[ReviewQuestion::new(
+                QuestionType::Temporal,
+                None,
+                "When?".to_string(),
+            )],
+        )
+        .unwrap();
+
+        // Get the row id
+        let conn = db.get_conn().unwrap();
+        let row_id: i64 = conn
+            .query_row(
+                "SELECT id FROM review_questions WHERE doc_id = 'doc1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(conn);
+
+        let result = bulk_approve_questions(&db, &[row_id], &ProgressReporter::Silent).unwrap();
+        assert_eq!(result["approved"], 0);
+        let errors = result["errors"].as_array().unwrap();
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0]["id"], row_id);
     }
 
     fn make_weak_source_doc(

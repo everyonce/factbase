@@ -153,7 +153,7 @@ impl Database {
         let offset_idx = args.len();
 
         let page_sql = format!(
-            "SELECT rq.doc_id, d.title, rq.question_index, rq.question_type, \
+            "SELECT rq.id, rq.doc_id, d.title, rq.question_index, rq.question_type, \
                     rq.description, rq.line_ref, rq.answer, rq.status, \
                     rq.confidence, rq.agent_suggestion \
              FROM review_questions rq \
@@ -168,17 +168,19 @@ impl Database {
         let mut stmt = conn.prepare(&page_sql)?;
         let questions: Vec<Value> = stmt
             .query_map(refs.as_slice(), |row| {
-                let doc_id: String = row.get(0)?;
-                let doc_title: String = row.get(1)?;
-                let question_index: i64 = row.get(2)?;
-                let question_type: String = row.get(3)?;
-                let description: String = row.get(4)?;
-                let line_ref: Option<i64> = row.get(5)?;
-                let answer: Option<String> = row.get(6)?;
-                let status: String = row.get(7)?;
-                let confidence: Option<String> = row.get(8)?;
-                let agent_suggestion: Option<String> = row.get(9)?;
+                let row_id: i64 = row.get(0)?;
+                let doc_id: String = row.get(1)?;
+                let doc_title: String = row.get(2)?;
+                let question_index: i64 = row.get(3)?;
+                let question_type: String = row.get(4)?;
+                let description: String = row.get(5)?;
+                let line_ref: Option<i64> = row.get(6)?;
+                let answer: Option<String> = row.get(7)?;
+                let status: String = row.get(8)?;
+                let confidence: Option<String> = row.get(9)?;
+                let agent_suggestion: Option<String> = row.get(10)?;
                 Ok((
+                    row_id,
                     doc_id,
                     doc_title,
                     question_index,
@@ -194,6 +196,7 @@ impl Database {
             .filter_map(Result::ok)
             .map(
                 |(
+                    row_id,
                     doc_id,
                     doc_title,
                     question_index,
@@ -210,6 +213,7 @@ impl Database {
                     // confidence defaults to "deferred" when not set (no attempt made)
                     let confidence_val = confidence.as_deref().unwrap_or("deferred");
                     let mut obj = serde_json::json!({
+                        "id": row_id,
                         "type": question_type,
                         "description": description,
                         "line_ref": line_ref,
@@ -562,6 +566,31 @@ impl Database {
             .collect()
         };
         Ok(rows)
+    }
+
+    /// Fetch a review question row by its primary key `id`.
+    ///
+    /// Returns `(doc_id, question_index, agent_suggestion)` or `None` if not found.
+    pub fn get_review_question_by_row_id(
+        &self,
+        row_id: i64,
+    ) -> Result<Option<(String, usize, Option<String>)>, FactbaseError> {
+        use rusqlite::OptionalExtension;
+        let conn = self.get_conn()?;
+        let result = conn
+            .query_row(
+                "SELECT doc_id, question_index, agent_suggestion \
+                 FROM review_questions WHERE id = ?1",
+                [row_id],
+                |row| {
+                    let doc_id: String = row.get(0)?;
+                    let qi: i64 = row.get(1)?;
+                    let suggestion: Option<String> = row.get(2)?;
+                    Ok((doc_id, qi as usize, suggestion))
+                },
+            )
+            .optional()?;
+        Ok(result)
     }
 
     /// Check if the review_questions table has any rows (used to detect if populated).

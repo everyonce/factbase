@@ -9,7 +9,7 @@ use super::api::organize::{
 };
 use super::api::review::{
     get_document_questions, get_review_status, list_review_queue, post_answer, post_apply,
-    post_bulk_answer, post_check, post_scan,
+    post_approve_bulk, post_bulk_answer, post_check, post_scan,
 };
 use super::api::stats::{get_organize_stats, get_review_stats, get_stats};
 use super::assets::{index_handler, static_handler};
@@ -67,6 +67,7 @@ impl WebServer {
             .route("/api/review/status", get(get_review_status))
             // Action API routes
             .route("/api/apply", post(post_apply))
+            .route("/api/approve-bulk", post(post_approve_bulk))
             .route("/api/scan", post(post_scan))
             .route("/api/check", post(post_check))
             // Organize API routes
