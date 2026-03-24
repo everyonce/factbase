@@ -75,7 +75,7 @@ pub async fn list_review_queue(
         services::get_review_queue(&db, &params, &ProgressReporter::Silent)
     })
     .await?;
-    Ok(Json(result))
+    Ok(Json(group_questions_by_doc(&result)))
 }
 
 /// GET /api/review/queue/:doc_id - Get questions for specific document.
@@ -86,7 +86,7 @@ pub async fn get_document_questions(
     let db = state.db.clone();
 
     let params = ReviewQueueParams {
-        doc_id: Some(doc_id),
+        doc_id: Some(doc_id.clone()),
         limit: 10,
         ..Default::default()
     };
@@ -95,7 +95,20 @@ pub async fn get_document_questions(
         services::get_review_queue(&db, &params, &ProgressReporter::Silent)
     })
     .await?;
-    Ok(Json(result))
+    let grouped = group_questions_by_doc(&result);
+    // Return the single DocumentReview for this doc, or an empty one
+    let doc = grouped["documents"]
+        .as_array()
+        .and_then(|docs| docs.first().cloned())
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "doc_id": doc_id,
+                "doc_title": "",
+                "file_path": "",
+                "questions": [],
+            })
+        });
+    Ok(Json(doc))
 }
 
 /// POST /api/review/answer/:doc_id - Answer a single question.
@@ -334,6 +347,61 @@ pub async fn post_approve_bulk(
     })))
 }
 
+/// Groups a flat `questions` array from the service layer into `documents: DocumentReview[]`
+/// as expected by the frontend `ReviewQueueResponse` type.
+fn group_questions_by_doc(result: &Value) -> Value {
+    let questions = result["questions"].as_array().cloned().unwrap_or_default();
+
+    let mut doc_order: Vec<String> = Vec::new();
+    let mut doc_data: std::collections::HashMap<String, (String, String, Vec<Value>)> =
+        std::collections::HashMap::new();
+
+    for q in &questions {
+        let doc_id = q["doc_id"].as_str().unwrap_or("").to_string();
+        let question = serde_json::json!({
+            "question_type": q["type"],
+            "description": q["description"],
+            "line_ref": q["line_ref"],
+            "answered": q["answered"],
+            "answer": q["answer"],
+            "confidence": q["confidence"],
+            "agent_suggestion": q["agent_suggestion"],
+        });
+        if !doc_data.contains_key(&doc_id) {
+            doc_order.push(doc_id.clone());
+            doc_data.insert(
+                doc_id.clone(),
+                (
+                    q["doc_title"].as_str().unwrap_or("").to_string(),
+                    q["file_path"].as_str().unwrap_or("").to_string(),
+                    Vec::new(),
+                ),
+            );
+        }
+        doc_data.get_mut(&doc_id).unwrap().2.push(question);
+    }
+
+    let documents: Vec<Value> = doc_order
+        .into_iter()
+        .map(|doc_id| {
+            let (doc_title, file_path, qs) = doc_data.remove(&doc_id).unwrap();
+            serde_json::json!({
+                "doc_id": doc_id,
+                "doc_title": doc_title,
+                "file_path": file_path,
+                "questions": qs,
+            })
+        })
+        .collect();
+
+    serde_json::json!({
+        "documents": documents,
+        "total": result["total"],
+        "answered": result["answered"],
+        "unanswered": result["unanswered"],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,5 +551,106 @@ mod tests {
         let json = r#"{"question_ids": []}"#;
         let req: ApproveBulkRequest = serde_json::from_str(json).unwrap();
         assert!(req.question_ids.is_empty());
+    }
+
+    #[test]
+    fn test_group_questions_by_doc_empty() {
+        let result = serde_json::json!({
+            "questions": [],
+            "total": 0,
+            "answered": 0,
+            "unanswered": 0,
+        });
+        let grouped = group_questions_by_doc(&result);
+        assert_eq!(grouped["documents"].as_array().unwrap().len(), 0);
+        assert_eq!(grouped["total"], 0);
+    }
+
+    #[test]
+    fn test_group_questions_by_doc_single_doc() {
+        let result = serde_json::json!({
+            "questions": [
+                {
+                    "doc_id": "abc123",
+                    "doc_title": "My Doc",
+                    "file_path": "/kb/my-doc.md",
+                    "type": "temporal",
+                    "description": "When did this happen?",
+                    "line_ref": 5,
+                    "answered": false,
+                    "answer": null,
+                    "confidence": "deferred",
+                    "agent_suggestion": null,
+                }
+            ],
+            "total": 1,
+            "answered": 0,
+            "unanswered": 1,
+        });
+        let grouped = group_questions_by_doc(&result);
+        let docs = grouped["documents"].as_array().unwrap();
+        assert_eq!(docs.len(), 1);
+        assert_eq!(docs[0]["doc_id"], "abc123");
+        assert_eq!(docs[0]["doc_title"], "My Doc");
+        assert_eq!(docs[0]["file_path"], "/kb/my-doc.md");
+        let qs = docs[0]["questions"].as_array().unwrap();
+        assert_eq!(qs.len(), 1);
+        assert_eq!(qs[0]["question_type"], "temporal");
+        assert_eq!(qs[0]["description"], "When did this happen?");
+    }
+
+    #[test]
+    fn test_group_questions_by_doc_multiple_docs() {
+        let result = serde_json::json!({
+            "questions": [
+                {
+                    "doc_id": "aaa",
+                    "doc_title": "Doc A",
+                    "file_path": "/kb/a.md",
+                    "type": "conflict",
+                    "description": "Q1",
+                    "line_ref": null,
+                    "answered": false,
+                    "answer": null,
+                    "confidence": "deferred",
+                    "agent_suggestion": null,
+                },
+                {
+                    "doc_id": "bbb",
+                    "doc_title": "Doc B",
+                    "file_path": "/kb/b.md",
+                    "type": "missing",
+                    "description": "Q2",
+                    "line_ref": null,
+                    "answered": false,
+                    "answer": null,
+                    "confidence": "deferred",
+                    "agent_suggestion": null,
+                },
+                {
+                    "doc_id": "aaa",
+                    "doc_title": "Doc A",
+                    "file_path": "/kb/a.md",
+                    "type": "stale",
+                    "description": "Q3",
+                    "line_ref": null,
+                    "answered": false,
+                    "answer": null,
+                    "confidence": "deferred",
+                    "agent_suggestion": null,
+                },
+            ],
+            "total": 3,
+            "answered": 0,
+            "unanswered": 3,
+        });
+        let grouped = group_questions_by_doc(&result);
+        let docs = grouped["documents"].as_array().unwrap();
+        assert_eq!(docs.len(), 2);
+        // First doc is "aaa" (insertion order preserved)
+        assert_eq!(docs[0]["doc_id"], "aaa");
+        assert_eq!(docs[0]["questions"].as_array().unwrap().len(), 2);
+        assert_eq!(docs[1]["doc_id"], "bbb");
+        assert_eq!(docs[1]["questions"].as_array().unwrap().len(), 1);
     }
 }
