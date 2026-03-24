@@ -534,10 +534,9 @@ pub async fn check_all_documents(
                 std::fs::write(&path, &updated)?;
                 let new_hash = content_hash(&updated);
                 db.update_document_content(&doc.id, &updated, &new_hash)?;
-                // Sync review questions to DB index
-                if let Some(questions) = parse_review_queue(&updated) {
-                    let _ = db.sync_review_questions(&doc.id, &questions);
-                }
+                // Always sync (even empty) so stale deferred entries are purged
+                let synced_qs = parse_review_queue(&updated).unwrap_or_default();
+                let _ = db.sync_review_questions(&doc.id, &synced_qs);
             }
         }
         if count > 0 {
