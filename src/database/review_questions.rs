@@ -155,7 +155,7 @@ impl Database {
         let page_sql = format!(
             "SELECT rq.id, rq.doc_id, d.title, rq.question_index, rq.question_type, \
                     rq.description, rq.line_ref, rq.answer, rq.status, \
-                    rq.confidence, rq.agent_suggestion \
+                    rq.confidence, rq.agent_suggestion, d.file_path \
              FROM review_questions rq \
              JOIN documents d ON rq.doc_id = d.id AND d.is_deleted = FALSE \
              WHERE {page_where} \
@@ -179,6 +179,7 @@ impl Database {
                 let status: String = row.get(8)?;
                 let confidence: Option<String> = row.get(9)?;
                 let agent_suggestion: Option<String> = row.get(10)?;
+                let file_path: String = row.get(11)?;
                 Ok((
                     row_id,
                     doc_id,
@@ -191,6 +192,7 @@ impl Database {
                     status,
                     confidence,
                     agent_suggestion,
+                    file_path,
                 ))
             })?
             .filter_map(Result::ok)
@@ -207,6 +209,7 @@ impl Database {
                     status,
                     confidence,
                     agent_suggestion,
+                    file_path,
                 )| {
                     let is_deferred = status == "deferred" || status == "believed";
                     let answered = status == "verified";
@@ -219,6 +222,7 @@ impl Database {
                         "line_ref": line_ref,
                         "doc_id": doc_id,
                         "doc_title": doc_title,
+                        "file_path": file_path,
                         "question_index": question_index,
                         "answered": answered,
                         "answer": answer,
