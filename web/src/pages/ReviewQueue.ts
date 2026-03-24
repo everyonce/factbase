@@ -47,6 +47,7 @@ interface ReviewQueueState {
   approvalIndex: number;
   sessionStats: SessionStats | null;
   inboxCounts: InboxCounts | null;
+  sessionStartCount: number;
 }
 
 const state: ReviewQueueState = {
@@ -63,6 +64,7 @@ const state: ReviewQueueState = {
   approvalIndex: 0,
   sessionStats: null,
   inboxCounts: null,
+  sessionStartCount: 0,
 };
 
 const QUESTION_TYPES = ['temporal', 'conflict', 'missing', 'ambiguous', 'stale', 'duplicate', 'corruption', 'precision', 'weak-source'];
@@ -93,6 +95,7 @@ async function fetchData(): Promise<void> {
     // Recompute triage buckets; reset approval index on fresh load
     state.triageBuckets = classifyQuestions(data.documents);
     state.approvalIndex = 0;
+    state.sessionStartCount = 0; // reset on fresh load so it's recaptured when entering triage
     // Compute inbox counts and persist trend
     state.inboxCounts = {
       autoResolved: data.answered,
@@ -301,7 +304,7 @@ function updateUI(): void {
   }
 
   if (state.viewMode === 'triage' && state.triageBuckets) {
-    content.innerHTML = renderTriageView(state.triageBuckets, state.approvalIndex, state.sessionStats);
+    content.innerHTML = renderTriageView(state.triageBuckets, state.approvalIndex, state.sessionStats, state.sessionStartCount);
     setupAnswerFormHandlers(content, {
       onSuccess: handleTriageAnswerSuccess,
       onError: handleAnswerError,
@@ -339,11 +342,17 @@ function updateUI(): void {
 function setupInboxHandlers(container: HTMLElement): void {
   container.querySelector('#inbox-needs-approval-btn')?.addEventListener('click', () => {
     state.viewMode = 'triage';
+    if (state.sessionStartCount === 0 && state.triageBuckets) {
+      state.sessionStartCount = state.triageBuckets.quickApprovals.length + state.triageBuckets.quickAnswers.length + state.triageBuckets.researchNeeded.length;
+    }
     updateUI();
     setupViewModeToggle();
   });
   container.querySelector('#inbox-needs-input-btn')?.addEventListener('click', () => {
     state.viewMode = 'triage';
+    if (state.sessionStartCount === 0 && state.triageBuckets) {
+      state.sessionStartCount = state.triageBuckets.quickApprovals.length + state.triageBuckets.quickAnswers.length + state.triageBuckets.researchNeeded.length;
+    }
     updateUI();
     setupViewModeToggle();
   });
@@ -673,6 +682,9 @@ function setupBackToInboxHandler(): void {
 function setupViewModeToggle(): void {
   document.getElementById('view-mode-toggle')?.addEventListener('click', () => {
     state.viewMode = state.viewMode === 'triage' ? 'document' : 'triage';
+    if (state.viewMode === 'triage' && state.sessionStartCount === 0 && state.triageBuckets) {
+      state.sessionStartCount = state.triageBuckets.quickApprovals.length + state.triageBuckets.quickAnswers.length + state.triageBuckets.researchNeeded.length;
+    }
     updateUI();
     // Re-attach handlers after re-render
     setupViewModeToggle();
@@ -808,6 +820,7 @@ export function cleanupReviewQueue(): void {
   state.approvalIndex = 0;
   state.sessionStats = null;
   state.inboxCounts = null;
+  state.sessionStartCount = 0;
   clearFormStates();
   clearBulkState();
   cleanupPreview();
