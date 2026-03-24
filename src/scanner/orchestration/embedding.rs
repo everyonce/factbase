@@ -167,9 +167,10 @@ pub async fn run_embedding_phase(
                 db_write_ms += db_start.elapsed().as_millis() as u64;
 
                 saved_doc_ids.insert(chunk_info.doc_idx, id);
-                input
-                    .progress
-                    .report(saved_doc_ids.len(), total_docs, "documents embedded");
+                let n = saved_doc_ids.len();
+                if n % 50 == 0 || n == total_docs {
+                    input.progress.report(n, total_docs, "Generating Embeddings");
+                }
                 saved_doc_ids
                     .get(&chunk_info.doc_idx)
                     .expect("just inserted")
