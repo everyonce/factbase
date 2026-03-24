@@ -749,6 +749,10 @@ pub async fn full_scan(
                     synced_questions, synced_docs
                 );
             }
+            // Purge deferred entries whose question_index is now out of range.
+            // These are stale pointers left when a document was regenerated with
+            // fewer questions before the DB index was populated.
+            let _ = db.purge_orphaned_deferred_questions(Some(&repo.id));
         }
     }
 
@@ -795,10 +799,10 @@ pub async fn full_scan(
                 }
                 let new_hash = content_hash(&updated);
                 let _ = db.update_document_content(id, &updated, &new_hash);
-                if let Some(qs) = crate::processor::parse_review_queue(&updated) {
-                    regenerated_questions += qs.len();
-                    let _ = db.sync_review_questions(id, &qs);
-                }
+                // Always sync (even empty) so stale deferred entries are purged
+                let qs = crate::processor::parse_review_queue(&updated).unwrap_or_default();
+                regenerated_questions += qs.len();
+                let _ = db.sync_review_questions(id, &qs);
                 regenerated_docs += 1;
             }
         }

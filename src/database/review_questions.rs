@@ -597,6 +597,46 @@ impl Database {
         Ok(result)
     }
 
+    /// Purge orphaned deferred/believed entries where `question_index >= current question count`.
+    ///
+    /// After a document's review section is regenerated with fewer questions, deferred entries
+    /// with stale indices become un-answerable zombies. This method removes them.
+    ///
+    /// Returns the number of rows deleted.
+    pub fn purge_orphaned_deferred_questions(
+        &self,
+        repo_id: Option<&str>,
+    ) -> Result<usize, FactbaseError> {
+        let conn = self.get_conn()?;
+        // For each doc, count current questions and delete deferred entries with index >= count.
+        // We do this with a single SQL statement using a correlated subquery.
+        let count = if let Some(rid) = repo_id {
+            conn.execute(
+                "DELETE FROM review_questions \
+                 WHERE status IN ('deferred', 'believed') \
+                   AND doc_id IN (SELECT id FROM documents WHERE repo_id = ?1 AND is_deleted = FALSE) \
+                   AND question_index >= ( \
+                       SELECT COUNT(*) FROM review_questions rq2 \
+                       WHERE rq2.doc_id = review_questions.doc_id \
+                         AND rq2.status != 'dismissed' \
+                   )",
+                [rid],
+            )?
+        } else {
+            conn.execute(
+                "DELETE FROM review_questions \
+                 WHERE status IN ('deferred', 'believed') \
+                   AND question_index >= ( \
+                       SELECT COUNT(*) FROM review_questions rq2 \
+                       WHERE rq2.doc_id = review_questions.doc_id \
+                         AND rq2.status != 'dismissed' \
+                   )",
+                [],
+            )?
+        };
+        Ok(count)
+    }
+
     /// Check if the review_questions table has any rows (used to detect if populated).
     pub fn has_review_questions_indexed(&self) -> bool {
         let conn = match self.get_conn() {
@@ -1071,6 +1111,120 @@ mod tests {
         let _db = crate::database::Database::new(&db_path).expect("first open");
         // Second open should succeed without error
         let _db2 = crate::database::Database::new(&db_path).expect("second open");
+    }
+
+    #[test]
+    fn test_purge_orphaned_deferred_questions_removes_stale_indices() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        // Sync 3 questions (indices 0, 1, 2)
+        let questions = vec![
+            make_question(QuestionType::Temporal, "Q0"),
+            make_question(QuestionType::Missing, "Q1"),
+            make_question(QuestionType::Stale, "Q2"),
+        ];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        // Defer question at index 2
+        db.update_review_question_status(&doc_id, 2, "deferred", Some("defer: later"))
+            .unwrap();
+
+        // Simulate regeneration: doc now has only 2 questions (indices 0, 1)
+        // but we manually delete index 2 from the DB to simulate sync_review_questions
+        // being called with 2 questions — except we DON'T call sync here to test purge.
+        // Instead, manually insert a stale deferred entry at index 5 (out of range for 3 questions).
+        {
+            let conn = db.get_conn().unwrap();
+            let now = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO review_questions \
+                 (doc_id, question_index, question_type, description, status, created_at, updated_at) \
+                 VALUES (?1, 5, 'temporal', 'Stale deferred at index 5', 'deferred', ?2, ?2)",
+                rusqlite::params![doc_id, now],
+            )
+            .unwrap();
+        }
+
+        // Now we have 4 rows: indices 0 (open), 1 (open), 2 (deferred), 5 (deferred)
+        // Index 5 is out of range (only 4 rows total, max valid index = 3)
+        let count = db.purge_orphaned_deferred_questions(None).unwrap();
+        assert_eq!(count, 1, "should delete the stale deferred entry at index 5");
+
+        // Verify index 2 (deferred, in range) is still there
+        let params = ReviewQueueDbParams {
+            limit: 10,
+            status_filter: "deferred".to_string(),
+            ..Default::default()
+        };
+        let (qs, _, _, deferred) = db.query_review_questions_db(&params).unwrap();
+        assert_eq!(deferred, 1, "index 2 deferred should remain");
+        assert_eq!(qs[0]["question_index"], 2);
+    }
+
+    #[test]
+    fn test_purge_orphaned_deferred_questions_noop_when_all_valid() {
+        let (db, _tmp) = test_db();
+        let doc_id = setup(&db);
+
+        let questions = vec![
+            make_question(QuestionType::Temporal, "Q0"),
+            make_deferred_question(QuestionType::Missing, "Q1"),
+        ];
+        db.sync_review_questions(&doc_id, &questions).unwrap();
+
+        // Index 1 is deferred and in range (2 questions total, max valid = 1)
+        let count = db.purge_orphaned_deferred_questions(None).unwrap();
+        assert_eq!(count, 0, "no orphaned entries to purge");
+    }
+
+    #[test]
+    fn test_purge_orphaned_deferred_questions_respects_repo_filter() {
+        let (db, _tmp) = test_db();
+
+        // Set up two repos
+        let repo1 = test_repo_with_id("repo1");
+        let repo2 = test_repo_with_id("repo2");
+        db.upsert_repository(&repo1).unwrap();
+        db.upsert_repository(&repo2).unwrap();
+
+        let doc1 = test_doc_with_repo("doc1", "repo1", "Doc 1");
+        let doc2 = test_doc_with_repo("doc2", "repo2", "Doc 2");
+        db.upsert_document(&doc1).unwrap();
+        db.upsert_document(&doc2).unwrap();
+
+        // Both docs get a stale deferred entry at index 5
+        for doc_id in &["doc1", "doc2"] {
+            db.sync_review_questions(
+                doc_id,
+                &[make_question(QuestionType::Temporal, "Q0")],
+            )
+            .unwrap();
+            let conn = db.get_conn().unwrap();
+            let now = chrono::Utc::now().to_rfc3339();
+            conn.execute(
+                "INSERT INTO review_questions \
+                 (doc_id, question_index, question_type, description, status, created_at, updated_at) \
+                 VALUES (?1, 5, 'temporal', 'Stale', 'deferred', ?2, ?2)",
+                rusqlite::params![doc_id, now],
+            )
+            .unwrap();
+        }
+
+        // Purge only repo1
+        let count = db.purge_orphaned_deferred_questions(Some("repo1")).unwrap();
+        assert_eq!(count, 1, "should only purge repo1's stale entry");
+
+        // repo2's stale entry should still be there
+        let conn = db.get_conn().unwrap();
+        let remaining: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM review_questions WHERE doc_id = 'doc2' AND status = 'deferred'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining, 1, "repo2 stale entry should remain");
     }
 
     #[test]
