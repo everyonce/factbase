@@ -495,3 +495,167 @@ describe('AnswerForm structured inputs', () => {
     expect(deleteBtn).not.toBeNull();
   });
 });
+
+import {
+  classifyQuestions,
+  renderTriageView,
+  renderSessionSummary,
+} from './components/TriageView';
+import type { DocumentReview } from './api';
+
+function makeDoc(id: string, questions: Partial<import('./api').ReviewQuestion>[]): DocumentReview {
+  return {
+    doc_id: id,
+    doc_title: `Doc ${id}`,
+    file_path: `/kb/${id}.md`,
+    questions: questions.map((q, i) => ({
+      question_type: q.question_type ?? 'temporal',
+      description: q.description ?? `Question ${i}`,
+      answered: q.answered ?? false,
+      answer: q.answer,
+      confidence: q.confidence,
+      confidence_reason: q.confidence_reason,
+      line_ref: q.line_ref,
+    })),
+  };
+}
+
+describe('TriageView', () => {
+  describe('classifyQuestions', () => {
+    it('puts high-confidence answered questions into quickApprovals', () => {
+      const docs = [makeDoc('a', [{ confidence: 'high', answer: 'yes', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.quickApprovals).toHaveLength(1);
+      expect(buckets.quickAnswers).toHaveLength(0);
+      expect(buckets.researchNeeded).toHaveLength(0);
+    });
+
+    it('puts deferred questions into researchNeeded', () => {
+      const docs = [makeDoc('a', [{ confidence: 'deferred', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.researchNeeded).toHaveLength(1);
+      expect(buckets.quickApprovals).toHaveLength(0);
+    });
+
+    it('puts low-confidence questions into quickAnswers', () => {
+      const docs = [makeDoc('a', [{ confidence: 'low', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.quickAnswers).toHaveLength(1);
+    });
+
+    it('puts questions with no confidence into quickAnswers', () => {
+      const docs = [makeDoc('a', [{ answered: false }])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.quickAnswers).toHaveLength(1);
+    });
+
+    it('skips already-answered questions', () => {
+      const docs = [makeDoc('a', [{ answered: true, confidence: 'high', answer: 'yes' }])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.quickApprovals).toHaveLength(0);
+      expect(buckets.quickAnswers).toHaveLength(0);
+      expect(buckets.researchNeeded).toHaveLength(0);
+    });
+
+    it('classifies mixed questions correctly', () => {
+      const docs = [makeDoc('a', [
+        { confidence: 'high', answer: 'yes', answered: false },
+        { confidence: 'deferred', answered: false },
+        { answered: false },
+      ])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.quickApprovals).toHaveLength(1);
+      expect(buckets.researchNeeded).toHaveLength(1);
+      expect(buckets.quickAnswers).toHaveLength(1);
+    });
+
+    it('preserves doc context on each item', () => {
+      const docs = [makeDoc('doc42', [{ confidence: 'high', answer: 'x', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      expect(buckets.quickApprovals[0].docId).toBe('doc42');
+      expect(buckets.quickApprovals[0].docTitle).toBe('Doc doc42');
+      expect(buckets.quickApprovals[0].questionIndex).toBe(0);
+    });
+  });
+
+  describe('renderTriageView', () => {
+    let container: HTMLElement;
+
+    beforeEach(() => {
+      container = document.createElement('div');
+      document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+      document.body.removeChild(container);
+    });
+
+    it('renders empty state when no questions', () => {
+      const buckets = { quickApprovals: [], quickAnswers: [], researchNeeded: [] };
+      container.innerHTML = renderTriageView(buckets, 0, null);
+      expect(container.textContent).toContain('No pending review questions');
+    });
+
+    it('renders session summary when all done and stats provided', () => {
+      const buckets = { quickApprovals: [], quickAnswers: [], researchNeeded: [] };
+      const stats = { approved: 3, answered: 2, skipped: 1, startCount: 6 };
+      container.innerHTML = renderTriageView(buckets, 0, stats);
+      expect(container.textContent).toContain('Session complete');
+      expect(container.textContent).toContain('3');
+      expect(container.textContent).toContain('2');
+    });
+
+    it('renders quick approvals section when items present', () => {
+      const docs = [makeDoc('a', [{ confidence: 'high', answer: 'yes', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      container.innerHTML = renderTriageView(buckets, 0, null);
+      expect(container.textContent).toContain('Quick approvals');
+      expect(container.querySelector('.triage-approve-btn')).not.toBeNull();
+      expect(container.querySelector('.triage-reject-btn')).not.toBeNull();
+    });
+
+    it('renders quick answers section when items present', () => {
+      const docs = [makeDoc('a', [{ answered: false }])];
+      const buckets = classifyQuestions(docs);
+      container.innerHTML = renderTriageView(buckets, 0, null);
+      expect(container.textContent).toContain('Quick answers');
+    });
+
+    it('renders research needed section when items present', () => {
+      const docs = [makeDoc('a', [{ confidence: 'deferred', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      container.innerHTML = renderTriageView(buckets, 0, null);
+      expect(container.textContent).toContain('Research needed');
+    });
+
+    it('shows agent suggestion in approval card', () => {
+      const docs = [makeDoc('a', [{ confidence: 'high', answer: 'The answer is 42', answered: false }])];
+      const buckets = classifyQuestions(docs);
+      container.innerHTML = renderTriageView(buckets, 0, null);
+      expect(container.textContent).toContain('The answer is 42');
+    });
+
+    it('shows only current approval card (others hidden)', () => {
+      const docs = [makeDoc('a', [
+        { confidence: 'high', answer: 'a1', answered: false },
+        { confidence: 'high', answer: 'a2', answered: false },
+      ])];
+      const buckets = classifyQuestions(docs);
+      container.innerHTML = renderTriageView(buckets, 0, null);
+      const cards = container.querySelectorAll('.triage-approval-card');
+      expect(cards[0].classList.contains('block')).toBe(true);
+      expect(cards[1].classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('renderSessionSummary', () => {
+    it('shows correct counts', () => {
+      const container = document.createElement('div');
+      container.innerHTML = renderSessionSummary({ approved: 5, answered: 3, skipped: 2, startCount: 10 });
+      expect(container.textContent).toContain('5');
+      expect(container.textContent).toContain('3');
+      expect(container.textContent).toContain('2');
+      expect(container.textContent).toContain('Session complete');
+    });
+  });
+});
