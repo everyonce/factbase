@@ -275,6 +275,65 @@ pub struct ScanCheckRequest {
     pub repo: Option<String>,
 }
 
+/// Request body for bulk-approving agent-pre-filled answers.
+#[derive(Debug, Deserialize)]
+pub struct ApproveBulkRequest {
+    /// DB row IDs of questions to approve (uses each question's agent_suggestion as the answer)
+    pub question_ids: Vec<i64>,
+    /// If true, immediately apply answers to documents
+    #[serde(default)]
+    pub apply: bool,
+}
+
+/// POST /api/approve-bulk - Approve agent-pre-filled answers for multiple questions.
+///
+/// Uses each question's stored `agent_suggestion` as the answer.
+/// If `apply: true`, also runs apply_all to write changes to documents.
+pub async fn post_approve_bulk(
+    State(state): State<Arc<WebAppState>>,
+    Json(body): Json<ApproveBulkRequest>,
+) -> Result<Json<Value>, (StatusCode, Json<ApiError>)> {
+    use crate::answer_processor::apply_all::{apply_all_review_answers, ApplyConfig};
+
+    let db = state.db.clone();
+    let question_ids = body.question_ids.clone();
+
+    let approve_result = super::run_blocking_web(move || {
+        services::bulk_approve_questions(&db, &question_ids, &crate::ProgressReporter::Silent)
+    })
+    .await?;
+
+    let approved = approve_result["approved"].as_u64().unwrap_or(0) as usize;
+    let errors = approve_result["errors"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+
+    let applied = if body.apply && approved > 0 {
+        let db2 = state.db.clone();
+        let config = ApplyConfig {
+            doc_id_filter: None,
+            repo_filter: None,
+            dry_run: false,
+            since: None,
+            deadline: None,
+            acquire_write_guard: false,
+        };
+        let apply_result = apply_all_review_answers(&db2, &config, &crate::ProgressReporter::Silent)
+            .await
+            .map_err(super::errors::handle_error)?;
+        apply_result.total_applied
+    } else {
+        0
+    };
+
+    Ok(Json(serde_json::json!({
+        "approved": approved,
+        "applied": applied,
+        "errors": errors,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,5 +460,28 @@ mod tests {
         let json = r#"{}"#;
         let req: ScanCheckRequest = serde_json::from_str(json).unwrap();
         assert!(req.repo.is_none());
+    }
+
+    #[test]
+    fn test_approve_bulk_request_deserialize() {
+        let json = r#"{"question_ids": [1, 2, 3], "apply": true}"#;
+        let req: ApproveBulkRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.question_ids, vec![1, 2, 3]);
+        assert!(req.apply);
+    }
+
+    #[test]
+    fn test_approve_bulk_request_apply_defaults_false() {
+        let json = r#"{"question_ids": [42]}"#;
+        let req: ApproveBulkRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.question_ids, vec![42]);
+        assert!(!req.apply);
+    }
+
+    #[test]
+    fn test_approve_bulk_request_empty_ids() {
+        let json = r#"{"question_ids": []}"#;
+        let req: ApproveBulkRequest = serde_json::from_str(json).unwrap();
+        assert!(req.question_ids.is_empty());
     }
 }
