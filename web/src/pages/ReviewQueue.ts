@@ -23,8 +23,15 @@ import {
   TriageBuckets,
   SessionStats,
 } from '../components/TriageView';
+import {
+  InboxCounts,
+  renderInboxView,
+  saveTrend,
+  loadTrend,
+  computeTrendMessage,
+} from '../components/InboxView';
 
-type ViewMode = 'triage' | 'document';
+type ViewMode = 'inbox' | 'triage' | 'document';
 
 interface ReviewQueueState {
   data: ReviewQueueResponse | null;
@@ -39,6 +46,7 @@ interface ReviewQueueState {
   triageBuckets: TriageBuckets | null;
   approvalIndex: number;
   sessionStats: SessionStats | null;
+  inboxCounts: InboxCounts | null;
 }
 
 const state: ReviewQueueState = {
@@ -50,10 +58,11 @@ const state: ReviewQueueState = {
   filterType: '',
   successMessage: null,
   bulkMode: false,
-  viewMode: 'triage',
+  viewMode: 'inbox',
   triageBuckets: null,
   approvalIndex: 0,
   sessionStats: null,
+  inboxCounts: null,
 };
 
 const QUESTION_TYPES = ['temporal', 'conflict', 'missing', 'ambiguous', 'stale', 'duplicate', 'corruption', 'precision', 'weak-source'];
@@ -84,6 +93,13 @@ async function fetchData(): Promise<void> {
     // Recompute triage buckets; reset approval index on fresh load
     state.triageBuckets = classifyQuestions(data.documents);
     state.approvalIndex = 0;
+    // Compute inbox counts and persist trend
+    state.inboxCounts = {
+      autoResolved: data.answered,
+      needsApproval: state.triageBuckets.quickApprovals.length,
+      needsInput: state.triageBuckets.researchNeeded.length,
+    };
+    saveTrend(state.inboxCounts.needsInput);
   } catch (e) {
     if (e instanceof ApiRequestError) {
       state.error = e.message;
@@ -276,6 +292,14 @@ function updateUI(): void {
     return;
   }
 
+  if (state.viewMode === 'inbox' && state.inboxCounts) {
+    const trend = loadTrend();
+    const trendMessage = computeTrendMessage(trend, state.inboxCounts.needsInput);
+    content.innerHTML = renderInboxView(state.inboxCounts, trendMessage);
+    setupInboxHandlers(content);
+    return;
+  }
+
   if (state.viewMode === 'triage' && state.triageBuckets) {
     content.innerHTML = renderTriageView(state.triageBuckets, state.approvalIndex, state.sessionStats);
     setupAnswerFormHandlers(content, {
@@ -310,6 +334,19 @@ function updateUI(): void {
 
   // Set up preview button handlers
   setupPreviewHandlers(content);
+}
+
+function setupInboxHandlers(container: HTMLElement): void {
+  container.querySelector('#inbox-needs-approval-btn')?.addEventListener('click', () => {
+    state.viewMode = 'triage';
+    updateUI();
+    setupViewModeToggle();
+  });
+  container.querySelector('#inbox-needs-input-btn')?.addEventListener('click', () => {
+    state.viewMode = 'triage';
+    updateUI();
+    setupViewModeToggle();
+  });
 }
 
 function setupPreviewHandlers(container: HTMLElement): void {
@@ -545,11 +582,21 @@ export function renderReviewQueue(): string {
     ? 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
     : 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800';
 
+  const isInbox = state.viewMode === 'inbox';
+
   return `
     <div class="space-y-4 sm:space-y-6">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <h2 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Review Queue</h2>
+        <div class="flex items-center gap-3">
+          ${!isInbox ? `
+          <button id="back-to-inbox-btn" class="inline-flex items-center text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+            ← Inbox
+          </button>
+          ` : ''}
+          <h2 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">${isInbox ? 'Review Inbox' : 'Review Queue'}</h2>
+        </div>
         <div class="flex items-center gap-2">
+          ${!isInbox ? `
           <button
             id="view-mode-toggle"
             class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium rounded-md ${viewModeClass}"
@@ -564,6 +611,7 @@ export function renderReviewQueue(): string {
           >
             ${bulkModeLabel}
           </button>
+          ` : ''}
           ` : ''}
         </div>
       </div>
@@ -595,6 +643,7 @@ export function initReviewQueue(): void {
   setupBulkModeToggle();
   setupViewModeToggle();
   setupApplyHandlers();
+  setupBackToInboxHandler();
   fetchData();
 }
 
@@ -613,12 +662,21 @@ function setupBulkModeToggle(): void {
   document.getElementById('bulk-mode-toggle')?.addEventListener('click', toggleBulkMode);
 }
 
+function setupBackToInboxHandler(): void {
+  document.getElementById('back-to-inbox-btn')?.addEventListener('click', () => {
+    state.viewMode = 'inbox';
+    updateUI();
+    setupBackToInboxHandler();
+  });
+}
+
 function setupViewModeToggle(): void {
   document.getElementById('view-mode-toggle')?.addEventListener('click', () => {
     state.viewMode = state.viewMode === 'triage' ? 'document' : 'triage';
     updateUI();
-    // Re-attach view toggle handler after re-render
+    // Re-attach handlers after re-render
     setupViewModeToggle();
+    setupBackToInboxHandler();
   });
 }
 
@@ -745,9 +803,11 @@ export function cleanupReviewQueue(): void {
   state.error = null;
   state.successMessage = null;
   state.bulkMode = false;
+  state.viewMode = 'inbox';
   state.triageBuckets = null;
   state.approvalIndex = 0;
   state.sessionStats = null;
+  state.inboxCounts = null;
   clearFormStates();
   clearBulkState();
   cleanupPreview();

@@ -501,6 +501,12 @@ import {
   renderTriageView,
   renderSessionSummary,
 } from './components/TriageView';
+import {
+  renderInboxView,
+  computeTrendMessage,
+  saveTrend,
+  loadTrend,
+} from './components/InboxView';
 import type { DocumentReview } from './api';
 
 function makeDoc(id: string, questions: Partial<import('./api').ReviewQuestion>[]): DocumentReview {
@@ -656,6 +662,129 @@ describe('TriageView', () => {
       expect(container.textContent).toContain('3');
       expect(container.textContent).toContain('2');
       expect(container.textContent).toContain('Session complete');
+    });
+  });
+});
+
+describe('InboxView', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  describe('renderInboxView', () => {
+    let container: HTMLElement;
+
+    beforeEach(() => {
+      container = document.createElement('div');
+      document.body.appendChild(container);
+    });
+
+    afterEach(() => {
+      document.body.removeChild(container);
+    });
+
+    it('renders all three bucket counts', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 47, needsApproval: 12, needsInput: 3 }, '');
+      expect(container.textContent).toContain('47');
+      expect(container.textContent).toContain('12');
+      expect(container.textContent).toContain('3');
+    });
+
+    it('renders bucket labels', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 0, needsApproval: 0, needsInput: 0 }, '');
+      expect(container.textContent).toContain('Auto-resolved');
+      expect(container.textContent).toContain('Needs approval');
+      expect(container.textContent).toContain('Needs your input');
+    });
+
+    it('renders trend message when provided', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 5, needsApproval: 2, needsInput: 1 }, '✅ KB health good — agent is handling most questions automatically.');
+      expect(container.textContent).toContain('KB health good');
+    });
+
+    it('does not render trend section when message is empty', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 5, needsApproval: 2, needsInput: 1 }, '');
+      expect(container.textContent).not.toContain('KB health');
+    });
+
+    it('disables approval button when count is zero', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 0, needsApproval: 0, needsInput: 0 }, '');
+      const approvalBtn = container.querySelector('#inbox-needs-approval-btn') as HTMLButtonElement;
+      expect(approvalBtn.disabled).toBe(true);
+    });
+
+    it('enables approval button when count > 0', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 0, needsApproval: 5, needsInput: 0 }, '');
+      const approvalBtn = container.querySelector('#inbox-needs-approval-btn') as HTMLButtonElement;
+      expect(approvalBtn.disabled).toBe(false);
+    });
+
+    it('renders inbox-view class', () => {
+      container.innerHTML = renderInboxView({ autoResolved: 1, needsApproval: 2, needsInput: 3 }, '');
+      expect(container.querySelector('.inbox-view')).not.toBeNull();
+    });
+  });
+
+  describe('computeTrendMessage', () => {
+    it('returns empty string with fewer than 3 entries', () => {
+      expect(computeTrendMessage([], 0)).toBe('');
+      expect(computeTrendMessage([{ date: '2026-03-22', count: 5 }], 5)).toBe('');
+      expect(computeTrendMessage([{ date: '2026-03-21', count: 3 }, { date: '2026-03-22', count: 5 }], 5)).toBe('');
+    });
+
+    it('returns warning when trend is increasing', () => {
+      const entries = [
+        { date: '2026-03-17', count: 1 },
+        { date: '2026-03-18', count: 2 },
+        { date: '2026-03-19', count: 3 },
+        { date: '2026-03-20', count: 4 },
+        { date: '2026-03-21', count: 5 },
+      ];
+      const msg = computeTrendMessage(entries, 5);
+      expect(msg).toContain('⚠️');
+      expect(msg).toContain('increasing');
+    });
+
+    it('returns good health message when needsInput is near zero', () => {
+      const entries = [
+        { date: '2026-03-17', count: 0 },
+        { date: '2026-03-18', count: 1 },
+        { date: '2026-03-19', count: 0 },
+      ];
+      const msg = computeTrendMessage(entries, 0);
+      expect(msg).toContain('✅');
+      expect(msg).toContain('KB health good');
+    });
+
+    it('returns empty string for stable non-zero trend', () => {
+      const entries = [
+        { date: '2026-03-17', count: 3 },
+        { date: '2026-03-18', count: 3 },
+        { date: '2026-03-19', count: 3 },
+      ];
+      const msg = computeTrendMessage(entries, 3);
+      expect(msg).toBe('');
+    });
+  });
+
+  describe('saveTrend / loadTrend', () => {
+    it('saves and loads trend entries', () => {
+      saveTrend(5);
+      const entries = loadTrend();
+      expect(entries.length).toBe(1);
+      expect(entries[0].count).toBe(5);
+    });
+
+    it('updates existing entry for same day', () => {
+      saveTrend(3);
+      saveTrend(7);
+      const entries = loadTrend();
+      expect(entries.length).toBe(1);
+      expect(entries[0].count).toBe(7);
+    });
+
+    it('returns empty array when nothing stored', () => {
+      expect(loadTrend()).toEqual([]);
     });
   });
 });
