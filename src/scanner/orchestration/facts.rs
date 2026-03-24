@@ -16,7 +16,7 @@ use crate::{Database, EmbeddingProvider};
 /// Minimum number of documents before emitting interval progress messages.
 const PROGRESS_THRESHOLD: usize = 50;
 /// Emit a progress line every N documents processed.
-const PROGRESS_INTERVAL_DOCS: usize = 10;
+const PROGRESS_INTERVAL_DOCS: usize = 50;
 /// Also emit a progress line if this many seconds have elapsed since the last one.
 const PROGRESS_INTERVAL_SECS: u64 = 5;
 
@@ -147,7 +147,7 @@ pub async fn run_fact_embedding_phase(
                 input.progress.report(
                     docs_processed,
                     total_docs,
-                    &format!("fact embeddings ({total_generated} facts embedded)"),
+                    "Generating Fact Embeddings",
                 );
                 last_progress = Instant::now();
             }

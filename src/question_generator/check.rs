@@ -316,7 +316,9 @@ pub async fn check_all_documents(
             .map(|(ci, doc)| {
                 let idx = chunk_start + ci;
                 async move {
-                    progress.report(idx + 1, total_active, &format!("Checking {}", doc.title));
+                    if (idx + 1) % 50 == 0 || idx + 1 == total_active {
+                        progress.report(idx + 1, total_active, "Checking Documents");
+                    }
 
                     // Prefer fresh content from disk over potentially stale database content.
                     // Review application writes reviewed markers to files but doesn't

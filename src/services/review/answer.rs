@@ -285,15 +285,9 @@ pub fn bulk_answer_questions(
             .get(doc_id)
             .ok_or_else(|| FactbaseError::internal(format!("missing disk content for {doc_id}")))?;
 
-        progress.report(
-            i + 1,
-            total_docs,
-            &format!(
-                "Answering {} question(s) in {}",
-                answers_for_doc.len(),
-                doc_id
-            ),
-        );
+        if (i + 1) % 50 == 0 || i + 1 == total_docs {
+            progress.report(i + 1, total_docs, "Answering Questions");
+        }
 
         let questions = parse_review_queue(disk_content).unwrap_or_default();
         let mut actionable: Vec<(usize, String, Option<String>)> = Vec::new();
@@ -431,7 +425,9 @@ pub fn bulk_approve_questions(
     let mut errors: Vec<Value> = Vec::new();
 
     for (i, &row_id) in question_ids.iter().enumerate() {
-        progress.report(i + 1, question_ids.len(), &format!("Approving question {row_id}"));
+        if (i + 1) % 50 == 0 || i + 1 == question_ids.len() {
+            progress.report(i + 1, question_ids.len(), "Approving Questions");
+        }
 
         let row = match db.get_review_question_by_row_id(row_id)? {
             Some(r) => r,

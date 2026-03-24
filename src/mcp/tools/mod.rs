@@ -836,7 +836,7 @@ mod tests {
         let has_embedding = messages.iter().any(|m| {
             m.get("message")
                 .and_then(|v| v.as_str())
-                .is_some_and(|s| s.contains("embedded"))
+                .is_some_and(|s| s.contains("Generating Embeddings"))
         });
         assert!(
             has_embedding,
