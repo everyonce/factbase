@@ -157,11 +157,10 @@ pub async fn run_link_detection_phase(
 
         link_pb.set_position((batch_idx + 1) as u64);
         let docs_done = (batch_idx + 1) * link_batch_size;
-        input.progress.report(
-            docs_done.min(docs_to_scan.len()),
-            docs_to_scan.len(),
-            "documents link-detected",
-        );
+        let actual_done = docs_done.min(docs_to_scan.len());
+        if actual_done % 50 == 0 || actual_done == docs_to_scan.len() {
+            input.progress.report(actual_done, docs_to_scan.len(), "Detecting Links");
+        }
 
         // Prepare batch data — load full content only for this batch
         let mut batch_docs: Vec<(String, String, String)> = Vec::with_capacity(chunk.len());
