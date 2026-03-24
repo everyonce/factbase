@@ -293,9 +293,11 @@ pub async fn full_scan(
         for pre in pre_read.into_iter() {
             global_idx += 1;
             pb.set_position(global_idx as u64);
-            if !ctx.opts.show_progress {
+            if !ctx.opts.show_progress
+                && (global_idx % 50 == 0 || global_idx == total_files)
+            {
                 ctx.progress
-                    .report(global_idx, total_files, "files processed");
+                    .report(global_idx, total_files, "Indexing");
             }
 
             // Skip files older than --since filter
