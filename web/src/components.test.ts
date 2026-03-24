@@ -357,3 +357,141 @@ describe('Toast components', () => {
     });
   });
 });
+
+import { renderAnswerForm, setupAnswerFormHandlers, clearFormStates } from './components/AnswerForm';
+
+describe('AnswerForm structured inputs', () => {
+  let container: HTMLElement;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    clearFormStates();
+  });
+
+  afterEach(() => {
+    document.body.removeChild(container);
+    clearFormStates();
+  });
+
+  const TYPES_WITH_STRUCTURED = ['temporal', 'stale', 'conflict', 'missing', 'ambiguous', 'precision', 'weak-source'];
+  const TYPES_WITHOUT = ['duplicate', 'corruption'];
+
+  for (const type of TYPES_WITH_STRUCTURED) {
+    it(`renders structured inputs for ${type}`, () => {
+      container.innerHTML = renderAnswerForm('doc1', 0, type);
+      expect(container.querySelector('.structured-inputs')).not.toBeNull();
+      expect(container.querySelector('.freeform-fallback')).not.toBeNull();
+      expect(container.querySelector('.toggle-freeform')).not.toBeNull();
+    });
+  }
+
+  for (const type of TYPES_WITHOUT) {
+    it(`renders freeform textarea for ${type}`, () => {
+      container.innerHTML = renderAnswerForm('doc1', 0, type);
+      expect(container.querySelector('.structured-inputs')).toBeNull();
+      expect(container.querySelector('textarea')).not.toBeNull();
+    });
+  }
+
+  it('temporal: renders start/end year inputs and unknown checkbox', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'temporal');
+    expect(container.querySelector('input[name="t-start"]')).not.toBeNull();
+    expect(container.querySelector('input[name="t-end"]')).not.toBeNull();
+    expect(container.querySelector('input[name="t-unknown"]')).not.toBeNull();
+    expect(container.querySelector('.t-preview')).not.toBeNull();
+  });
+
+  it('stale: renders still-accurate button and source URL input', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'stale');
+    expect(container.querySelector('[data-action="still-accurate"]')).not.toBeNull();
+    expect(container.querySelector('input[name="s-source"]')).not.toBeNull();
+  });
+
+  it('conflict: renders radio buttons for resolution options', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'conflict');
+    const radios = container.querySelectorAll('input[name="c-resolution"]');
+    expect(radios.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('missing: renders URL, title, and date inputs', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'missing');
+    expect(container.querySelector('input[name="m-url"]')).not.toBeNull();
+    expect(container.querySelector('input[name="m-title"]')).not.toBeNull();
+    expect(container.querySelector('input[name="m-date"]')).not.toBeNull();
+  });
+
+  it('ambiguous: renders definition input', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'ambiguous');
+    expect(container.querySelector('input[name="a-definition"]')).not.toBeNull();
+  });
+
+  it('precision: renders two-path radio selector', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'precision');
+    const radios = container.querySelectorAll('input[name="p-path"]');
+    expect(radios.length).toBe(2);
+    expect(container.querySelector('input[name="p-value"]')).not.toBeNull();
+    expect(container.querySelector('input[name="p-reason"]')).not.toBeNull();
+  });
+
+  it('weak-source: renders URL input and cannot-improve checkbox', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'weak-source');
+    expect(container.querySelector('input[name="w-url"]')).not.toBeNull();
+    expect(container.querySelector('input[name="w-cannot"]')).not.toBeNull();
+  });
+
+  it('toggle freeform shows/hides structured inputs', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'temporal');
+    setupAnswerFormHandlers(container, { onSuccess: () => {}, onError: () => {} });
+
+    const toggleBtn = container.querySelector('.toggle-freeform') as HTMLButtonElement;
+    const structured = container.querySelector('.structured-inputs') as HTMLElement;
+    const freeform = container.querySelector('.freeform-fallback') as HTMLElement;
+
+    // Initially structured visible, freeform hidden
+    expect(freeform.classList.contains('hidden')).toBe(true);
+    expect(structured.classList.contains('hidden')).toBe(false);
+
+    // Click toggle → show freeform
+    toggleBtn.click();
+    expect(freeform.classList.contains('hidden')).toBe(false);
+    expect(structured.classList.contains('hidden')).toBe(true);
+    expect(toggleBtn.textContent?.trim()).toBe('Structured');
+
+    // Click again → back to structured
+    toggleBtn.click();
+    expect(freeform.classList.contains('hidden')).toBe(true);
+    expect(structured.classList.contains('hidden')).toBe(false);
+    expect(toggleBtn.textContent?.trim()).toBe('Freeform');
+  });
+
+  it('temporal: live preview updates on input', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'temporal');
+    setupAnswerFormHandlers(container, { onSuccess: () => {}, onError: () => {} });
+
+    const startInput = container.querySelector('input[name="t-start"]') as HTMLInputElement;
+    const endInput = container.querySelector('input[name="t-end"]') as HTMLInputElement;
+    const preview = container.querySelector('.t-preview') as HTMLElement;
+
+    startInput.value = '2022';
+    startInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(preview.textContent).toBe('@t[=2022]');
+
+    endInput.value = '2024';
+    endInput.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(preview.textContent).toBe('@t[2022..2024]');
+
+    const unknownCb = container.querySelector('input[name="t-unknown"]') as HTMLInputElement;
+    unknownCb.checked = true;
+    unknownCb.dispatchEvent(new Event('input', { bubbles: true }));
+    expect(preview.textContent).toBe('@t[?]');
+  });
+
+  it('renders dismiss and delete fact buttons', () => {
+    container.innerHTML = renderAnswerForm('doc1', 0, 'temporal');
+    const dismissBtn = container.querySelector('[data-action="dismiss"]');
+    const deleteBtn = container.querySelector('[data-action="delete"]');
+    expect(dismissBtn).not.toBeNull();
+    expect(deleteBtn).not.toBeNull();
+  });
+});
