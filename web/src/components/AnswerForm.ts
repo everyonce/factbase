@@ -47,7 +47,7 @@ const INPUT_CLS = 'rounded border border-gray-300 dark:border-gray-600 dark:bg-g
 const LABEL_CLS = 'text-sm text-gray-600 dark:text-gray-400';
 const RADIO_LABEL_CLS = 'flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer';
 
-function renderTemporalInputs(id: string): string {
+function renderTemporalInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <div class="flex flex-wrap gap-3 items-center">
@@ -71,7 +71,7 @@ function renderTemporalInputs(id: string): string {
     </div>`;
 }
 
-function renderStaleInputs(id: string): string {
+function renderStaleInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <div class="flex flex-wrap gap-2 items-center">
@@ -88,7 +88,7 @@ function renderStaleInputs(id: string): string {
     </div>`;
 }
 
-function renderConflictInputs(id: string): string {
+function renderConflictInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <label class="${RADIO_LABEL_CLS}">
@@ -110,7 +110,7 @@ function renderConflictInputs(id: string): string {
     </div>`;
 }
 
-function renderMissingInputs(id: string): string {
+function renderMissingInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <input type="url" name="m-url" placeholder="Source URL"
@@ -127,7 +127,7 @@ function renderMissingInputs(id: string): string {
     </div>`;
 }
 
-function renderAmbiguousInputs(id: string): string {
+function renderAmbiguousInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <input type="text" name="a-definition" placeholder="What does this term mean in context?"
@@ -138,7 +138,7 @@ function renderAmbiguousInputs(id: string): string {
     </div>`;
 }
 
-function renderPrecisionInputs(id: string): string {
+function renderPrecisionInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <label class="${RADIO_LABEL_CLS}">
@@ -156,7 +156,7 @@ function renderPrecisionInputs(id: string): string {
     </div>`;
 }
 
-function renderWeakSourceInputs(id: string): string {
+function renderWeakSourceInputs(_id: string): string {
   return `
     <div class="space-y-2">
       <input type="url" name="w-url" placeholder="Better source URL"
