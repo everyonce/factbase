@@ -1,6 +1,7 @@
 /**
  * ReviewQueue page component.
- * Lists all pending review questions grouped by document.
+ * Lists all pending review questions grouped by document (document view)
+ * or grouped by action type (triage view, default).
  */
 
 import { api, ReviewQueueResponse, DocumentReview, Repository, ApiRequestError, ApplyResult } from '../api';
@@ -16,6 +17,14 @@ import { openPreview, cleanupPreview } from '../components/DocumentPreview';
 import { renderSkeletonDocumentGroup } from '../components/Loading';
 import { renderError, setupRetryHandler } from '../components/Error';
 import { toast } from '../components/Toast';
+import {
+  classifyQuestions,
+  renderTriageView,
+  TriageBuckets,
+  SessionStats,
+} from '../components/TriageView';
+
+type ViewMode = 'triage' | 'document';
 
 interface ReviewQueueState {
   data: ReviewQueueResponse | null;
@@ -26,6 +35,10 @@ interface ReviewQueueState {
   filterType: string;
   successMessage: string | null;
   bulkMode: boolean;
+  viewMode: ViewMode;
+  triageBuckets: TriageBuckets | null;
+  approvalIndex: number;
+  sessionStats: SessionStats | null;
 }
 
 const state: ReviewQueueState = {
@@ -37,6 +50,10 @@ const state: ReviewQueueState = {
   filterType: '',
   successMessage: null,
   bulkMode: false,
+  viewMode: 'triage',
+  triageBuckets: null,
+  approvalIndex: 0,
+  sessionStats: null,
 };
 
 const QUESTION_TYPES = ['temporal', 'conflict', 'missing', 'ambiguous', 'stale', 'duplicate', 'corruption', 'precision', 'weak-source'];
@@ -64,6 +81,9 @@ async function fetchData(): Promise<void> {
 
     state.data = data;
     state.repos = reposResponse.repositories;
+    // Recompute triage buckets; reset approval index on fresh load
+    state.triageBuckets = classifyQuestions(data.documents);
+    state.approvalIndex = 0;
   } catch (e) {
     if (e instanceof ApiRequestError) {
       state.error = e.message;
@@ -256,7 +276,18 @@ function updateUI(): void {
     return;
   }
 
-  // Filter to show only documents with unanswered questions first
+  if (state.viewMode === 'triage' && state.triageBuckets) {
+    content.innerHTML = renderTriageView(state.triageBuckets, state.approvalIndex, state.sessionStats);
+    setupAnswerFormHandlers(content, {
+      onSuccess: handleTriageAnswerSuccess,
+      onError: handleAnswerError,
+    });
+    setupPreviewHandlers(content);
+    setupTriageHandlers(content);
+    return;
+  }
+
+  // Document view (alternate)
   const sortedDocs = [...state.data.documents].sort((a, b) => {
     const aUnanswered = a.questions.filter(q => !q.answered).length;
     const bUnanswered = b.questions.filter(q => !q.answered).length;
@@ -333,6 +364,29 @@ function handleAnswerSuccess(docId: string, questionIndex: number, answer: strin
 
   // Show toast notification
   toast.success(`Answer submitted for question ${questionIndex + 1}`);
+  updateUI();
+}
+
+function handleTriageAnswerSuccess(docId: string, questionIndex: number, answer: string): void {
+  if (state.data) {
+    const doc = state.data.documents.find(d => d.doc_id === docId);
+    if (doc && doc.questions[questionIndex]) {
+      doc.questions[questionIndex].answered = true;
+      doc.questions[questionIndex].answer = answer;
+      state.data.answered++;
+      state.data.unanswered--;
+    }
+  }
+  // Update session stats
+  if (!state.sessionStats) {
+    state.sessionStats = { approved: 0, answered: 0, skipped: 0, startCount: state.data?.unanswered ?? 0 };
+  }
+  state.sessionStats.answered++;
+  // Recompute buckets
+  if (state.data) {
+    state.triageBuckets = classifyQuestions(state.data.documents);
+  }
+  toast.success('Answer submitted');
   updateUI();
 }
 
@@ -486,28 +540,46 @@ export function renderReviewQueue(): string {
     ? 'bg-blue-600 text-white hover:bg-blue-700'
     : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600';
 
+  const viewModeLabel = state.viewMode === 'triage' ? 'By document' : 'Triage view';
+  const viewModeClass = state.viewMode === 'triage'
+    ? 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+    : 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-200 hover:bg-blue-200 dark:hover:bg-blue-800';
+
   return `
     <div class="space-y-4 sm:space-y-6">
       <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <h2 class="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">Review Queue</h2>
-        <button
-          id="bulk-mode-toggle"
-          class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium rounded-md ${bulkModeClass}"
-        >
-          ${bulkModeLabel}
-        </button>
+        <div class="flex items-center gap-2">
+          <button
+            id="view-mode-toggle"
+            class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium rounded-md ${viewModeClass}"
+            title="${state.viewMode === 'triage' ? 'Switch to document-grouped view' : 'Switch to triage view'}"
+          >
+            ${viewModeLabel}
+          </button>
+          ${state.viewMode === 'document' ? `
+          <button
+            id="bulk-mode-toggle"
+            class="inline-flex items-center justify-center px-3 py-2 text-sm font-medium rounded-md ${bulkModeClass}"
+          >
+            ${bulkModeLabel}
+          </button>
+          ` : ''}
+        </div>
       </div>
       <div id="workflow-stepper">${renderWorkflowStepper()}</div>
       <div id="deferred-banner">${renderDeferredBanner()}</div>
       <div id="apply-bar">${renderApplyBar()}</div>
       <div id="review-message"></div>
       <div id="bulk-actions-container"></div>
+      ${state.viewMode === 'document' ? `
       <div id="review-filters" class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
         ${renderFilters()}
       </div>
       <div id="review-summary" class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
         ${renderSummary()}
       </div>
+      ` : ''}
       <div id="review-queue-content">
         <div class="text-center py-8">
           <div class="inline-block animate-spin rounded-full h-8 w-8 border-4 border-gray-300 border-t-blue-600"></div>
@@ -521,6 +593,7 @@ export function renderReviewQueue(): string {
 export function initReviewQueue(): void {
   setupFilterHandlers();
   setupBulkModeToggle();
+  setupViewModeToggle();
   setupApplyHandlers();
   fetchData();
 }
@@ -540,13 +613,141 @@ function setupBulkModeToggle(): void {
   document.getElementById('bulk-mode-toggle')?.addEventListener('click', toggleBulkMode);
 }
 
+function setupViewModeToggle(): void {
+  document.getElementById('view-mode-toggle')?.addEventListener('click', () => {
+    state.viewMode = state.viewMode === 'triage' ? 'document' : 'triage';
+    updateUI();
+    // Re-attach view toggle handler after re-render
+    setupViewModeToggle();
+  });
+}
+
+function setupTriageHandlers(container: HTMLElement): void {
+  // Approve button
+  container.querySelectorAll('.triage-approve-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const el = e.currentTarget as HTMLElement;
+      const docId = el.dataset.docId;
+      const idx = parseInt(el.dataset.questionIndex || '0', 10);
+      if (!docId || !state.data) return;
+      const doc = state.data.documents.find(d => d.doc_id === docId);
+      const answer = doc?.questions[idx]?.answer || 'approve';
+      await submitTriageAction(docId, idx, answer, 'approved');
+    });
+  });
+
+  // Reject button
+  container.querySelectorAll('.triage-reject-btn').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const el = e.currentTarget as HTMLElement;
+      const docId = el.dataset.docId;
+      const idx = parseInt(el.dataset.questionIndex || '0', 10);
+      if (!docId) return;
+      await submitTriageAction(docId, idx, 'dismiss', 'rejected');
+    });
+  });
+
+  // Skip button
+  container.querySelectorAll('.triage-skip-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const el = e.currentTarget as HTMLElement;
+      const docId = el.dataset.docId;
+      const idx = parseInt(el.dataset.questionIndex || '0', 10);
+      if (!docId || !state.triageBuckets) return;
+      // Move this item to end of quick approvals (skip it)
+      const bucket = state.triageBuckets.quickApprovals;
+      const itemIdx = bucket.findIndex(i => i.docId === docId && i.questionIndex === idx);
+      if (itemIdx !== -1) {
+        const [item] = bucket.splice(itemIdx, 1);
+        bucket.push(item);
+        // Adjust approvalIndex
+        if (state.approvalIndex >= bucket.length) state.approvalIndex = 0;
+      }
+      if (!state.sessionStats) {
+        state.sessionStats = { approved: 0, answered: 0, skipped: 0, startCount: state.data?.unanswered ?? 0 };
+      }
+      state.sessionStats.skipped++;
+      updateUI();
+    });
+  });
+
+  // Keyboard shortcuts for quick approvals (space=approve, backspace=reject)
+  const approvalStack = container.querySelector('#triage-approvals-stack');
+  if (approvalStack) {
+    const handleKey = async (e: KeyboardEvent) => {
+      // Only fire when not in an input/textarea
+      const tag = (e.target as HTMLElement).tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (!state.triageBuckets) return;
+      const bucket = state.triageBuckets.quickApprovals;
+      const item = bucket[state.approvalIndex];
+      if (!item) return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        const answer = item.question.answer || 'approve';
+        await submitTriageAction(item.docId, item.questionIndex, answer, 'approved');
+      } else if (e.code === 'Backspace') {
+        e.preventDefault();
+        await submitTriageAction(item.docId, item.questionIndex, 'dismiss', 'rejected');
+      }
+    };
+    document.addEventListener('keydown', handleKey);
+    // Store cleanup ref on container
+    (container as HTMLElement & { _triageKeyHandler?: (e: KeyboardEvent) => void })._triageKeyHandler = handleKey;
+  }
+}
+
+async function submitTriageAction(
+  docId: string,
+  questionIndex: number,
+  answer: string,
+  action: 'approved' | 'rejected'
+): Promise<void> {
+  try {
+    await api.answerQuestion(docId, questionIndex, answer);
+    if (state.data) {
+      const doc = state.data.documents.find(d => d.doc_id === docId);
+      if (doc && doc.questions[questionIndex]) {
+        doc.questions[questionIndex].answered = true;
+        doc.questions[questionIndex].answer = answer;
+        state.data.answered++;
+        state.data.unanswered--;
+      }
+    }
+    if (!state.sessionStats) {
+      state.sessionStats = { approved: 0, answered: 0, skipped: 0, startCount: state.data?.unanswered ?? 0 };
+    }
+    if (action === 'approved') state.sessionStats.approved++;
+    else state.sessionStats.answered++;
+
+    // Advance approval index or recompute buckets
+    if (state.data) {
+      state.triageBuckets = classifyQuestions(state.data.documents);
+      state.approvalIndex = 0;
+    }
+    updateUI();
+  } catch (e) {
+    toast.error(e instanceof Error ? e.message : 'Failed to submit');
+  }
+}
+
 export function cleanupReviewQueue(): void {
+  // Remove triage keyboard handler if present
+  const content = document.getElementById('review-queue-content');
+  if (content) {
+    const handler = (content as HTMLElement & { _triageKeyHandler?: (e: KeyboardEvent) => void })._triageKeyHandler;
+    if (handler) document.removeEventListener('keydown', handler);
+  }
   // Reset state for next visit
   state.data = null;
   state.loading = true;
   state.error = null;
   state.successMessage = null;
   state.bulkMode = false;
+  state.triageBuckets = null;
+  state.approvalIndex = 0;
+  state.sessionStats = null;
   clearFormStates();
   clearBulkState();
   cleanupPreview();
