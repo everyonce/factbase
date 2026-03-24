@@ -19,10 +19,10 @@ impl ProgressReporter {
     pub fn report(&self, current: usize, total: usize, message: &str) {
         match self {
             Self::Cli { quiet: false } => {
-                eprintln!("[{current}/{total}] {message}");
+                eprintln!("{message} [{current}/{total}]");
             }
             Self::Mcp { sender } => {
-                eprintln!("[{current}/{total}] {message}");
+                eprintln!("{message} [{current}/{total}]");
                 if let Some(tx) = sender {
                     let _ = tx.send(serde_json::json!({
                         "progress": current,
