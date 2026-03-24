@@ -214,6 +214,20 @@ impl Database {
         }
     }
 
+    /// Update the last indexed timestamp for a repository.
+    pub fn update_last_indexed_at(
+        &self,
+        repo_id: &str,
+        timestamp: DateTime<Utc>,
+    ) -> Result<(), FactbaseError> {
+        let conn = self.get_conn()?;
+        conn.execute(
+            "UPDATE repositories SET last_indexed_at = ?1 WHERE id = ?2",
+            rusqlite::params![timestamp.to_rfc3339(), repo_id],
+        )?;
+        Ok(())
+    }
+
     /// Update the last lint timestamp for a repository.
     pub fn update_last_lint_at(
         &self,
@@ -433,5 +447,26 @@ mod tests {
         let result = db.resolve_repo_id("nonexistent");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("nonexistent"));
+    }
+
+    #[test]
+    fn test_update_last_indexed_at() {
+        let (db, _tmp) = test_db();
+        db.add_repository(&test_repo()).unwrap();
+
+        let ts = chrono::Utc::now();
+        db.update_last_indexed_at("test-repo", ts).unwrap();
+
+        let repo = db.get_repository("test-repo").unwrap().unwrap();
+        assert!(
+            repo.last_indexed_at.is_some(),
+            "last_indexed_at should be set after update"
+        );
+        // Timestamps round-trip through RFC3339 with second precision
+        let stored = repo.last_indexed_at.unwrap();
+        assert!(
+            (stored - ts).num_seconds().abs() <= 1,
+            "stored timestamp should match within 1 second"
+        );
     }
 }

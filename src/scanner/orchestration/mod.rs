@@ -933,6 +933,9 @@ pub async fn full_scan(
         docs_with_no_facts,
     });
 
+    // Record scan completion time so the dashboard can show "Last Scan: <time>".
+    let _ = db.update_last_indexed_at(&repo.id, Utc::now());
+
     Ok(result)
 }
 
@@ -2451,6 +2454,47 @@ mod tests {
     /// --regenerate-reviews discards existing review questions and regenerates from scratch.
     /// A document with a stale question (one that would no longer be generated) should have
     /// that question replaced by freshly generated ones.
+    #[tokio::test]
+    async fn test_full_scan_updates_last_indexed_at() {
+        let (db, _db_tmp) = test_db();
+        let (tmp, repo) = setup_repo(&db);
+        std::fs::write(tmp.path().join("doc.md"), "# Doc\n\nContent.").unwrap();
+
+        let scanner = super::super::Scanner::new(&[]);
+        let processor = DocumentProcessor::new();
+        let embedding = MockEmbedding::new(1024);
+        let link_detector = LinkDetector::new();
+        let opts = ScanOptions {
+            skip_links: true,
+            ..Default::default()
+        };
+        let progress = ProgressReporter::Silent;
+        let ctx = scan_ctx(
+            &scanner,
+            &processor,
+            &embedding,
+            &link_detector,
+            &opts,
+            &progress,
+        );
+
+        // Before scan: last_indexed_at is None
+        let before = db.get_repository(&repo.id).unwrap().unwrap();
+        assert!(
+            before.last_indexed_at.is_none(),
+            "last_indexed_at should be None before scan"
+        );
+
+        full_scan(&repo, &db, &ctx).await.unwrap();
+
+        // After scan: last_indexed_at should be set
+        let after = db.get_repository(&repo.id).unwrap().unwrap();
+        assert!(
+            after.last_indexed_at.is_some(),
+            "last_indexed_at should be set after full_scan"
+        );
+    }
+
     #[tokio::test]
     async fn test_full_scan_regenerate_reviews_replaces_stale_questions() {
         let (db, _db_tmp) = test_db();
