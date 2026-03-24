@@ -507,6 +507,7 @@ import {
   saveTrend,
   loadTrend,
 } from './components/InboxView';
+import { renderConfidenceBadge } from './components/QuestionCard';
 import type { DocumentReview } from './api';
 
 function makeDoc(id: string, questions: Partial<import('./api').ReviewQuestion>[]): DocumentReview {
@@ -525,6 +526,41 @@ function makeDoc(id: string, questions: Partial<import('./api').ReviewQuestion>[
     })),
   };
 }
+
+describe('renderConfidenceBadge', () => {
+  it('returns empty string for undefined confidence', () => {
+    expect(renderConfidenceBadge(undefined)).toBe('');
+  });
+
+  it('returns empty string for deferred confidence', () => {
+    expect(renderConfidenceBadge('deferred')).toBe('');
+  });
+
+  it('renders green badge for high confidence', () => {
+    const html = renderConfidenceBadge('high');
+    expect(html).toContain('high');
+    expect(html).toContain('bg-green-100');
+    expect(html).toContain('bg-green-500');
+  });
+
+  it('renders amber badge for medium confidence', () => {
+    const html = renderConfidenceBadge('medium');
+    expect(html).toContain('medium');
+    expect(html).toContain('bg-amber-100');
+    expect(html).toContain('bg-amber-500');
+  });
+
+  it('renders red badge for low confidence', () => {
+    const html = renderConfidenceBadge('low');
+    expect(html).toContain('low');
+    expect(html).toContain('bg-red-100');
+    expect(html).toContain('bg-red-500');
+  });
+
+  it('returns empty string for unknown confidence value', () => {
+    expect(renderConfidenceBadge('unknown-value')).toBe('');
+  });
+});
 
 describe('TriageView', () => {
   describe('classifyQuestions', () => {

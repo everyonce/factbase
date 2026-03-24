@@ -9,7 +9,7 @@
  */
 
 import { ReviewQuestion, DocumentReview } from '../api';
-import { renderQuestionTypeBadge } from './QuestionCard';
+import { renderQuestionTypeBadge, renderConfidenceBadge } from './QuestionCard';
 import { renderAnswerForm } from './AnswerForm';
 
 export interface TriageItem {
@@ -167,6 +167,7 @@ function renderQuickAnswerCard(item: TriageItem): string {
       <div class="flex items-center space-x-2 mb-2">
         ${renderQuestionTypeBadge(question.question_type)}
         <span class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(docTitle)}</span>
+        ${renderConfidenceBadge(question.confidence)}
         ${question.line_ref ? `<button class="preview-line-btn text-xs text-blue-600 dark:text-blue-400 hover:underline" data-doc-id="${escapeHtml(docId)}" data-line-ref="${question.line_ref}">Line ${question.line_ref}</button>` : ''}
       </div>
       <p class="text-gray-700 dark:text-gray-300 mb-3">${escapeHtml(question.description)}</p>

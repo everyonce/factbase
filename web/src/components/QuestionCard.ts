@@ -30,6 +30,22 @@ export function renderQuestionTypeBadge(type: string): string {
   return `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${colors.bg} ${colors.text}">@q[${escapeHtml(type)}]</span>`;
 }
 
+const CONFIDENCE_STYLES: Record<string, { bg: string; text: string; dot: string }> = {
+  high:   { bg: 'bg-green-100 dark:bg-green-900', text: 'text-green-700 dark:text-green-300', dot: 'bg-green-500' },
+  medium: { bg: 'bg-amber-100 dark:bg-amber-900', text: 'text-amber-700 dark:text-amber-300', dot: 'bg-amber-500' },
+  low:    { bg: 'bg-red-100 dark:bg-red-900',     text: 'text-red-700 dark:text-red-300',     dot: 'bg-red-500' },
+};
+
+/** Renders a subtle confidence badge. Returns '' for deferred/unknown. */
+export function renderConfidenceBadge(confidence?: string): string {
+  if (!confidence || confidence === 'deferred') return '';
+  const style = CONFIDENCE_STYLES[confidence];
+  if (!style) return '';
+  return `<span class="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${style.bg} ${style.text}" title="Agent confidence: ${confidence}">
+    <span class="w-1.5 h-1.5 rounded-full ${style.dot}"></span>🤖 ${confidence}
+  </span>`;
+}
+
 export interface QuestionCardOptions {
   showAnswerForm?: boolean;
   showCheckbox?: boolean;
@@ -74,6 +90,7 @@ export function renderQuestionCard(
           ${checkbox}
           ${renderQuestionTypeBadge(question.question_type)}
           ${answeredBadge}
+          ${renderConfidenceBadge(question.confidence)}
           ${lineRef}
         </div>
       </div>
