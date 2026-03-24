@@ -274,10 +274,28 @@ export function renderSessionSummary(stats: SessionStats): string {
 // Main render
 // ============================================================================
 
+function renderProgressBar(remaining: number, startCount: number): string {
+  if (startCount === 0) return '';
+  const answered = startCount - remaining;
+  const pct = Math.round((answered / startCount) * 100);
+  return `
+    <div class="sticky top-0 z-10 bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-700 px-1 py-2 mb-2">
+      <div class="flex items-center justify-between text-sm mb-1">
+        <span class="font-medium text-gray-700 dark:text-gray-300">${answered} of ${startCount} questions answered</span>
+        <span class="text-gray-500 dark:text-gray-400">${pct}%</span>
+      </div>
+      <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+        <div class="bg-blue-500 h-2 rounded-full transition-all duration-300" style="width: ${pct}%"></div>
+      </div>
+    </div>
+  `;
+}
+
 export function renderTriageView(
   buckets: TriageBuckets,
   approvalIndex: number,
-  sessionStats: SessionStats | null
+  sessionStats: SessionStats | null,
+  sessionStartCount: number = 0
 ): string {
   const total = buckets.quickApprovals.length + buckets.quickAnswers.length + buckets.researchNeeded.length;
 
@@ -297,6 +315,7 @@ export function renderTriageView(
 
   return `
     <div class="space-y-6" id="triage-view">
+      ${renderProgressBar(total, sessionStartCount)}
       ${renderQuickApprovalsSection(buckets.quickApprovals, approvalIndex)}
       ${renderQuickAnswersSection(buckets.quickAnswers)}
       ${renderResearchSection(buckets.researchNeeded)}
