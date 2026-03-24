@@ -84,9 +84,9 @@ impl WebServer {
             .route("/api/documents/{id}", get(get_document))
             .route("/api/documents/{id}/links", get(get_document_links))
             .route("/api/repos", get(list_repos))
-            // Static asset routes - must come after API routes
+            // Static asset routes - fallback after all API routes
             .route("/", get(index_handler))
-            .route("/*path", get(static_handler))
+            .fallback(static_handler)
             .with_state(self.state);
 
         let addr: SocketAddr = format!("127.0.0.1:{}", self.port).parse()?;

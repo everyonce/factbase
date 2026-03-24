@@ -88,13 +88,12 @@ pub async fn serve_asset(path: &str) -> impl IntoResponse {
     }
 }
 
-/// Axum handler for serving static assets.
+/// Axum fallback handler for serving static assets.
 ///
-/// Extracts the path from the request and serves the corresponding asset.
-pub async fn static_handler(
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> impl IntoResponse {
-    serve_asset(&path).await
+/// Used as the router fallback so it only fires when no API route matches.
+/// Extracts the path from the URI and serves the corresponding asset.
+pub async fn static_handler(uri: axum::http::Uri) -> impl IntoResponse {
+    serve_asset(uri.path()).await
 }
 
 /// Axum handler for serving the root index.html.
