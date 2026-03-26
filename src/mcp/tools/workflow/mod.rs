@@ -890,36 +890,36 @@ fn refresh_step(
                 "when_done": "Call workflow with workflow='refresh', step=4"
             })
         }
-        4 => {
+        4 => serde_json::json!({
+            "workflow": "refresh",
+            "step": 4, "total_steps": total,
+            "instruction": resolve(wf, "refresh.cleanup", DEFAULT_REFRESH_CLEANUP_INSTRUCTION, &[]),
+            "next_tool": "factbase", "suggested_op": "scan",
+            "when_done": "Call workflow with workflow='refresh', step=5"
+        }),
+        5 => {
             let type_dist = compute_type_distribution(db);
             let total_unanswered: usize = type_dist.iter().map(|(_, c)| c).sum();
             if total_unanswered == 0 {
                 return serde_json::json!({
                     "workflow": "refresh",
-                    "step": 4, "total_steps": total,
-                    "instruction": "No review questions to resolve. Skip to cleanup.",
+                    "step": 5, "total_steps": total,
+                    "instruction": "No review questions to resolve. Skip to report.",
                     "total_unanswered": 0,
-                    "when_done": "Call workflow with workflow='refresh', step=5"
+                    "when_done": "Call workflow with workflow='refresh', step=6"
                 });
             }
             serde_json::json!({
                 "workflow": "refresh",
-                "step": 4, "total_steps": total,
+                "step": 5, "total_steps": total,
                 "instruction": resolve(wf, "refresh.resolve", DEFAULT_REFRESH_RESOLVE_INSTRUCTION, &[("ctx", &ctx)]),
                 "next_tool": "workflow",
                 "suggested_args": {"workflow": "resolve", "step": 1},
                 "total_unanswered": total_unanswered,
                 "deferred_count": deferred,
-                "when_done": "After resolve completes, call workflow with workflow='refresh', step=5"
+                "when_done": "After resolve completes, call workflow with workflow='refresh', step=6"
             })
         }
-        5 => serde_json::json!({
-            "workflow": "refresh",
-            "step": 5, "total_steps": total,
-            "instruction": resolve(wf, "refresh.cleanup", DEFAULT_REFRESH_CLEANUP_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "scan",
-            "when_done": "Call workflow with workflow='refresh', step=6"
-        }),
         _ => {
             let type_dist = compute_type_distribution(db);
             let remaining: usize = type_dist.iter().map(|(_, c)| c).sum();
@@ -6817,6 +6817,32 @@ mod tests {
         assert_eq!(step["workflow"], "refresh");
         assert_eq!(step["step"], 3);
         assert!(step.get("entity_quality").is_some());
+    }
+
+    #[test]
+    fn test_refresh_step4_cleanup_scan() {
+        let (db, _tmp) = test_db();
+        let step = refresh_step(4, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "refresh");
+        assert_eq!(step["step"], 4);
+        assert_eq!(step["suggested_op"], "scan");
+        assert!(step["when_done"]
+            .as_str()
+            .unwrap()
+            .contains("step=5"));
+    }
+
+    #[test]
+    fn test_refresh_step5_resolve() {
+        let (db, _tmp) = test_db();
+        let step = refresh_step(5, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "refresh");
+        assert_eq!(step["step"], 5);
+        // No questions → skip message
+        assert!(step["when_done"]
+            .as_str()
+            .unwrap()
+            .contains("step=6"));
     }
 
     #[test]
