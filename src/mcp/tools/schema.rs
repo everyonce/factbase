@@ -128,7 +128,7 @@ fn search_schema(repo_path: Option<&Path>) -> Value {
 }
 
 fn workflow_schema(repo_path: Option<&Path>) -> Value {
-    let default_desc = "Guided multi-step workflows for factbase tasks. workflow= to specify: create, add, maintain, refresh, correct, transition\nCall with step=1 to start. Use workflow='list' for details.\nOPERATING PRINCIPLE: Routing behavior depends on the workflow type — do NOT apply the same rule to all cases.\n- For correct/transition: the user is telling you the truth. Route to correct/transition IMMEDIATELY as your FIRST action — do NOT search or verify their claim first. Searching first may cause you to answer from training data and skip the workflow.\n- For add/ingest: search the KB first to avoid creating duplicates. Then proceed with ingestion.\n- For clarification (unclear entity named): ask ONE focused question — do NOT search to formulate it.\n- Uncertain about WHAT ACTION? → Execute with the best-fit workflow. The workflow handles validation.\nIMPORTANT: If the user explicitly names a workflow (e.g. \"use the correction workflow\"), ALWAYS use that workflow — do NOT override.\nRouting rules (apply in order):\n- 'build', 'create', 'start', 'new KB' → workflow(create)\n- 'add [new topic/entity]' → workflow(add, topic=...)\n- 'add [note/flag/tag] to [existing entity]' → workflow(correct) [add vs correct: add=CREATE new entities not yet in KB; correct=MODIFY existing entities (add notes, annotations). 'Add a note to X' → correct if X exists]\n- 'scan', 'index', 'reindex' → workflow(maintain) — do NOT call factbase(op='scan') directly\n- 'check for new', 'look for updates', 'what's new' → workflow(refresh) [add vs refresh: add=CREATE new docs; refresh=UPDATE existing docs]\n- factual correction about existing entity → workflow(correct) IMMEDIATELY as FIRST action. Do NOT search first (may cause you to answer from training data)\n- change that happened over time → workflow(transition)\n- vague improvement requests ('clean up', 'fix', 'improve', 'organize') → workflow(maintain, user_message='<user exact words>') — workflow will ask for scope confirmation; no entity named → ASK one focused clarifying question\ncorrect vs transition — was the old information ever actually true?\n  NO → it was always wrong → use correct; YES → it was true until a specific point → use transition\n⚠️ KB IS SOURCE OF TRUTH: ALWAYS use factbase workflows FIRST — do NOT answer from training data, use web_search, or query memory instead of the KB.\n⚠️ CLARIFICATION: If no entity or change is specified and you cannot infer a reasonable default, ask ONE focused clarifying question. Do NOT ask when a reasonable default workflow exists (e.g. 'Make the KB better' → maintain).";
+    let default_desc = "Multi-step guided workflows for factbase tasks.\nCall workflow(workflow=NAME, step=1) to start. The tool returns step-by-step instructions.\nUnsure which workflow to use? Call workflow(workflow='list') for descriptions of each.\n\nWHEN TO USE WHICH WORKFLOW:\n- New KB from scratch → workflow(create)\n- Add new entity/topic → workflow(add, topic=NAME)\n- Modify existing entity (correction, annotation) → workflow(correct)\n- Entity changed over time (rename, acquisition) → workflow(transition)\n- scan/check/maintain quality → workflow(maintain)\n- Check for recent changes, update stale facts → workflow(refresh)\n- Answer review queue questions → workflow(resolve)\n\n⚠️ KB IS SOURCE OF TRUTH: Always query factbase before answering from training data.";
     let desc =
         load_schema_override("workflow", repo_path).unwrap_or_else(|| default_desc.to_string());
     serde_json::json!({
@@ -137,7 +137,7 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
         "inputSchema": {
             "type": "object",
             "properties": {
-                "workflow": { "type": "string", "description": "Workflow name: 'create', 'add', 'maintain', 'refresh', 'correct', 'transition', 'resolve', or 'list'. Legacy aliases also accepted: bootstrap, setup, update, ingest, enrich, improve\n\ncorrect: Use when the old information was ALWAYS WRONG — a factual error, misidentification, or false claim that was never true. Example: a company name was consistently misspelled (it was NEVER called 48U, it was always FortyAU). The agent analyzed the situation wrongly and stored a false fact.\n\ntransition: Use when the old information WAS TRUE at the time, but the entity itself changed. Example: a company that used to be called Advent Health Partners and was ACQUIRED and renamed to Trend Health Partners. The name Advent was valid until the acquisition date.\n\nKey test: ask 'was the old value ever actually true?' — if NO → correct. If YES, it was true until a specific date → transition.\n\nrefresh: Use when the user wants to check for recent updates, new developments, latest news, or whether anything has changed about a topic. Trigger phrases: 'check for updates', 'look for recent', 'what's new', 'has anything changed', 'recent news/developments/discoveries', 'latest info'. Example: 'Has anything changed with [topic]?' → refresh, topic='[topic]'. IMPORTANT: refresh=UPDATE existing docs with new info from external research; add=CREATE new docs." },
+                "workflow": { "type": "string", "description": "Workflow name: 'create', 'add', 'maintain', 'refresh', 'correct', 'transition', 'resolve', or 'list'. Legacy aliases also accepted: bootstrap, setup, update, ingest, enrich, improve" },
                 "step": { "type": "integer", "description": "Step number (default: 1 = start)" },
                 "domain": { "type": "string", "description": "For create: domain description (e.g. 'mycology', 'ancient Mediterranean history')" },
                 "entity_types": { "type": "string", "description": "For create: optional comma-separated entity types (e.g. 'species, habitats, researchers')" },
@@ -467,37 +467,22 @@ mod tests {
     }
 
     #[test]
-    fn test_workflow_schema_has_operating_principle() {
+    fn test_workflow_schema_has_when_to_use_section() {
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
         assert!(
-            desc.contains("OPERATING PRINCIPLE"),
-            "workflow description should have OPERATING PRINCIPLE at top level"
+            desc.starts_with("Multi-step guided workflows"),
+            "workflow description should start with 'Multi-step guided workflows'"
         );
         assert!(
-            desc.starts_with("Guided multi-step workflows") && desc.contains("OPERATING PRINCIPLE"),
-            "OPERATING PRINCIPLE should appear near the top of the description"
+            desc.contains("WHEN TO USE WHICH WORKFLOW"),
+            "workflow description should have WHEN TO USE WHICH WORKFLOW section"
         );
         assert!(
-            desc.contains("correct/transition") && desc.contains("IMMEDIATELY"),
-            "operating principle should say correct/transition routes immediately"
-        );
-        assert!(
-            desc.contains("add/ingest") && desc.contains("search the KB first"),
-            "operating principle should say add/ingest searches first for dedup"
-        );
-        assert!(
-            desc.contains("ask ONE focused question"),
-            "operating principle should handle ambiguous entity case"
-        );
-        // Principle must appear before routing rules
-        let principle_pos = desc.find("OPERATING PRINCIPLE").unwrap();
-        let routing_pos = desc.find("Routing rules").unwrap();
-        assert!(
-            principle_pos < routing_pos,
-            "OPERATING PRINCIPLE must appear before routing rules"
+            desc.contains("workflow(create)") && desc.contains("workflow(maintain)"),
+            "description should list workflow names"
         );
     }
 
@@ -537,17 +522,10 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
+        // Clarification guidance moved to step 1 responses; description just lists workflows
         assert!(
-            desc.contains("CLARIFICATION") || desc.contains("clarifying question"),
-            "workflow description should include clarification instruction"
-        );
-        assert!(
-            desc.contains("ONE") || desc.contains("one"),
-            "workflow description should say to ask only one question"
-        );
-        assert!(
-            desc.contains("reasonable default"),
-            "workflow description should say not to ask when a reasonable default exists"
+            desc.contains("workflow='list'"),
+            "workflow description should direct agents to use list for details"
         );
     }
 
@@ -557,12 +535,11 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
+        // correct vs transition disambiguation moved to step 1 responses
         assert!(
-            desc.contains("was the old information ever actually true"),
-            "workflow description should include correct vs transition decision rule"
+            desc.contains("workflow(correct)") && desc.contains("workflow(transition)"),
+            "description should list both correct and transition workflows"
         );
-        assert!(desc.contains("NO"), "should have NO branch");
-        assert!(desc.contains("YES"), "should have YES branch");
     }
 
     #[test]
@@ -571,9 +548,10 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
+        // User override guidance moved to step 1 responses; description stays concise
         assert!(
-            desc.contains("ALWAYS use that workflow"),
-            "workflow description should tell agent to respect explicit user workflow choice"
+            desc.contains("step=1"),
+            "workflow description should show how to start a workflow"
         );
     }
 
@@ -583,17 +561,10 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
+        // Immediate-call guidance moved to step 1 responses; description lists workflows concisely
         assert!(
-            desc.contains("CALL IMMEDIATELY") || desc.contains("IMMEDIATELY"),
-            "workflow description should instruct agent to call correct/transition/refresh immediately"
-        );
-        assert!(
-            desc.contains("FIRST action") || desc.contains("FIRST tool call"),
-            "workflow description should say to call as first action"
-        );
-        assert!(
-            desc.contains("Do NOT search") || desc.contains("do NOT search"),
-            "workflow description should warn against searching first"
+            desc.contains("workflow(correct)") && desc.contains("workflow(transition)"),
+            "description should list correct and transition as workflow options"
         );
     }
 
@@ -619,10 +590,6 @@ mod tests {
             desc.contains("scan") && desc.contains("maintain"),
             "workflow description should route 'scan' to maintain"
         );
-        assert!(
-            desc.contains("index") || desc.contains("reindex"),
-            "workflow description should route 'index'/'reindex' to maintain"
-        );
     }
 
     #[test]
@@ -638,10 +605,6 @@ mod tests {
         assert!(
             desc.contains("training data"),
             "workflow description should warn against answering from training data"
-        );
-        assert!(
-            desc.contains("web_search"),
-            "workflow description should warn against using web_search instead of KB"
         );
     }
 
@@ -671,17 +634,14 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
+        // Routing details moved to step 1 responses; description lists correct for modifications
         assert!(
-            desc.contains("add vs correct"),
-            "workflow description should distinguish add vs correct"
+            desc.contains("workflow(correct)"),
+            "workflow description should list correct workflow"
         );
         assert!(
-            desc.contains("Add a note to X") || desc.contains("add a note"),
-            "workflow description should route 'add a note to X' to correct"
-        );
-        assert!(
-            desc.contains("correct") && desc.contains("existing entities"),
-            "workflow description should say correct is for existing entities"
+            desc.contains("correction") || desc.contains("annotation"),
+            "workflow description should mention what correct is for"
         );
     }
 
@@ -892,15 +852,14 @@ mod tests {
 
     #[test]
     fn test_routing_benchmark_harness_instruction_in_workflow_schema() {
-        // The workflow tool description must contain the clarification instruction
-        // that the harness injects: agents should output ASK for ambiguous prompts.
+        // The workflow tool description must contain enough routing info for agents.
         let result = tools_list();
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
         assert!(
-            desc.contains("clarifying question") || desc.contains("CLARIFICATION"),
-            "workflow schema must include clarification instruction for ambiguous prompts"
+            desc.contains("WHEN TO USE WHICH WORKFLOW") || desc.contains("workflow='list'"),
+            "workflow schema must include routing guidance or direct agents to list"
         );
     }
 
@@ -911,8 +870,8 @@ mod tests {
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
         assert!(
-            desc.contains("Routing rules"),
-            "workflow description should have explicit 'Routing rules' section"
+            desc.contains("WHEN TO USE WHICH WORKFLOW"),
+            "workflow description should have routing guidance section"
         );
     }
 
@@ -923,8 +882,8 @@ mod tests {
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
         assert!(
-            desc.contains("build") || desc.contains("new KB"),
-            "workflow description should route 'build'/'new KB' to create"
+            desc.contains("New KB") || desc.contains("from scratch"),
+            "workflow description should route 'new KB from scratch' to create"
         );
         assert!(
             desc.contains("workflow(create)"),
@@ -939,11 +898,13 @@ mod tests {
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
         assert!(
-            desc.contains("change that happened over time") || desc.contains("happened over time"),
-            "workflow description should route 'change that happened over time' to transition"
+            desc.contains("changed over time")
+                || desc.contains("rename")
+                || desc.contains("acquisition"),
+            "workflow description should route entity changes to transition"
         );
         assert!(
-            desc.contains("workflow(transition)") || desc.contains("transition"),
+            desc.contains("workflow(transition)"),
             "workflow description should show transition as routing target"
         );
     }
@@ -954,13 +915,10 @@ mod tests {
         let tools = result["tools"].as_array().unwrap();
         let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf["description"].as_str().unwrap();
+        // Ambiguous-entity handling moved to step 1 responses; description stays concise
         assert!(
-            desc.contains("no entity named") || desc.contains("no entity"),
-            "workflow description should route 'no entity named' to ASK"
-        );
-        assert!(
-            desc.contains("ASK"),
-            "workflow description should say ASK when no entity is named"
+            desc.contains("workflow='list'"),
+            "workflow description should direct agents to list for details when unsure"
         );
     }
 }

@@ -191,13 +191,13 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
 
         "list" => Ok(serde_json::json!({
             "workflows": [
-                {"name": "create", "description": "Build a knowledge base from scratch. Provide domain='mycology' (or any domain) to get tailored structure suggestions, then guided setup: init, perspective, first documents, scan, verify. Accepts: domain, entity_types, path."},
-                {"name": "add", "description": "Grow the knowledge base. With topic='X': research and create new entities. With doc_id='X': improve that specific document. With neither: scan for gaps and enrich existing docs."},
-                {"name": "maintain", "description": "Internal quality maintenance: scan, detect links, check quality, link suggestions, organize analysis, resolve all questions, cleanup scan, report. Answers from existing knowledge only — no external research. With doc_id: maintain just that document."},
-                {"name": "refresh", "description": "Research-enabled update: scan, check, then actively research entities using available tools (web search, etc.) to find latest info, update facts, add temporal tags, resolve questions, cleanup, report. USE THIS when the user asks about recent updates, new developments, latest news, or whether anything has changed. Trigger phrases: 'check for updates', 'look for recent', 'what\\'s new', 'has anything changed', 'recent news/developments/discoveries'. Example: 'Has anything changed with [topic]?' → refresh, topic='[topic]'. IMPORTANT: refresh=UPDATE existing docs with new info; add=CREATE new docs. Optional filters: doc_type, doc_id, staleness threshold."},
-                {"name": "correct", "description": "Propagate a fact correction across the entire KB. Provide correction='what is wrong and what is true' and optional source='who said it, when'. Finds all documents containing the false claim and fixes them with an audit trail."},
-                {"name": "transition", "description": "Handle temporal entity changes — renames, mergers, acquisitions, role changes. Unlike correct (which fixes false claims), transition handles things that WERE true and CHANGED. Asks how to reference the entity going forward before making changes. Provide change='what changed' and optional effective_date, source."},
-                {"name": "resolve", "description": "(Advanced) Answer existing review queue questions, apply changes, cleanup. Use maintain instead for full maintenance. Optionally pass question_type to filter by type."},
+                {"name": "create", "description": "Build a new KB from scratch. Guides you through: directory init, perspective.yaml config, first example documents, scan, verify. Params: domain, entity_types, path."},
+                {"name": "add", "description": "Add content to an existing KB. With topic='X': research and create new docs for that topic. With doc_id='X': improve that specific document end-to-end. With neither: scan for gaps and enrich lowest-quality docs."},
+                {"name": "maintain", "description": "Quality maintenance pass (no external research). Steps: scan, detect links, check quality, suggest links, organize analysis, resolve questions, report. Params: doc_id (to scope to one document)."},
+                {"name": "refresh", "description": "Research-enabled update pass. Steps: scan, check, research entities for new info, cleanup scan, resolve questions, report. Use when facts may be stale or new developments exist. Params: doc_type, doc_id."},
+                {"name": "correct", "description": "Propagate a fact correction across all KB documents. Finds every document containing the false claim and fixes them with an audit trail. Use when something was always wrong. Params: correction, source."},
+                {"name": "transition", "description": "Handle a real-world change to an entity (rename, acquisition, role change). Unlike correct, the old value WAS true until the change date. Params: change, effective_date, source."},
+                {"name": "resolve", "description": "Answer pending review queue questions, apply answers to documents, verify. Can filter by question_type. Use maintain for a full maintenance pass instead."},
             ],
             "aliases": {
                 "bootstrap": "create", "setup": "create",
@@ -5306,8 +5306,8 @@ mod tests {
         let resolve_wf = workflows.iter().find(|w| w["name"] == "resolve").unwrap();
         let desc = resolve_wf["description"].as_str().unwrap();
         assert!(
-            desc.contains("clean"),
-            "resolve description should mention cleanup"
+            desc.contains("review queue") || desc.contains("questions"),
+            "resolve description should mention review queue questions"
         );
     }
 
@@ -6826,10 +6826,7 @@ mod tests {
         assert_eq!(step["workflow"], "refresh");
         assert_eq!(step["step"], 4);
         assert_eq!(step["suggested_op"], "scan");
-        assert!(step["when_done"]
-            .as_str()
-            .unwrap()
-            .contains("step=5"));
+        assert!(step["when_done"].as_str().unwrap().contains("step=5"));
     }
 
     #[test]
@@ -6839,10 +6836,7 @@ mod tests {
         assert_eq!(step["workflow"], "refresh");
         assert_eq!(step["step"], 5);
         // No questions → skip message
-        assert!(step["when_done"]
-            .as_str()
-            .unwrap()
-            .contains("step=6"));
+        assert!(step["when_done"].as_str().unwrap().contains("step=6"));
     }
 
     #[test]
@@ -6868,16 +6862,8 @@ mod tests {
             "schema desc should mention refresh routing"
         );
         assert!(
-            desc.contains("recent")
-                || desc.contains("what's new")
-                || desc.contains("check for updates"),
-            "schema desc should include refresh trigger phrases"
-        );
-        assert!(
-            desc.contains("add=")
-                || desc.contains("add vs refresh")
-                || desc.contains("add=research"),
-            "schema desc should distinguish add from refresh"
+            desc.contains("recent") || desc.contains("stale"),
+            "schema desc should include refresh use case"
         );
     }
 
@@ -6893,14 +6879,6 @@ mod tests {
             workflow_param_desc.contains("refresh"),
             "workflow param should describe refresh"
         );
-        assert!(
-            workflow_param_desc.contains("recent") || workflow_param_desc.contains("what's new"),
-            "workflow param should include refresh trigger phrases"
-        );
-        assert!(
-            workflow_param_desc.contains("UPDATE") || workflow_param_desc.contains("update"),
-            "workflow param should distinguish refresh (update) from add (create)"
-        );
     }
 
     #[test]
@@ -6912,14 +6890,8 @@ mod tests {
         let refresh = workflows.iter().find(|w| w["name"] == "refresh").unwrap();
         let desc = refresh["description"].as_str().unwrap();
         assert!(
-            desc.contains("recent")
-                || desc.contains("what's new")
-                || desc.contains("check for updates"),
-            "refresh list description should include trigger phrases"
-        );
-        assert!(
-            desc.contains("UPDATE") || desc.contains("update"),
-            "refresh list description should distinguish from add"
+            desc.contains("stale") || desc.contains("update"),
+            "refresh list description should describe its use case"
         );
     }
 
@@ -7594,9 +7566,8 @@ mod tests {
             .find(|w| w["name"] == "transition")
             .unwrap();
         let desc = transition["description"].as_str().unwrap();
-        assert!(desc.contains("temporal entity changes"));
-        assert!(desc.contains("rename"));
-        assert!(desc.contains("merger"));
+        assert!(desc.contains("rename") || desc.contains("acquisition"));
+        assert!(desc.contains("change") || desc.contains("entity"));
     }
 
     #[test]
@@ -7620,17 +7591,10 @@ mod tests {
         let tools_arr = tools["tools"].as_array().unwrap();
         let wf_tool = tools_arr.iter().find(|t| t["name"] == "workflow").unwrap();
         let desc = wf_tool["description"].as_str().unwrap();
+        // Override/routing guidance moved to step 1 responses; description stays concise
         assert!(
-            desc.contains("explicitly names a workflow"),
-            "workflow description should tell agent to respect explicit user choice"
-        );
-        assert!(
-            desc.contains("ALWAYS use that workflow"),
-            "workflow description should use ALWAYS language"
-        );
-        assert!(
-            desc.contains("do NOT override"),
-            "workflow description should forbid overriding user choice"
+            desc.contains("WHEN TO USE WHICH WORKFLOW"),
+            "workflow description should have routing guidance"
         );
     }
 
@@ -7642,10 +7606,10 @@ mod tests {
         let workflow_param_desc = wf_tool["inputSchema"]["properties"]["workflow"]["description"]
             .as_str()
             .unwrap();
+        // Disambiguation details moved to step 1 responses; param desc lists workflow names
         assert!(
-            workflow_param_desc.contains("ALWAYS WRONG")
-                || workflow_param_desc.contains("never true"),
-            "correct description should clarify it applies to facts that were never true"
+            workflow_param_desc.contains("correct"),
+            "workflow param should list correct as an option"
         );
     }
 
@@ -7657,10 +7621,10 @@ mod tests {
         let workflow_param_desc = wf_tool["inputSchema"]["properties"]["workflow"]["description"]
             .as_str()
             .unwrap();
+        // Disambiguation details moved to step 1 responses; param desc lists workflow names
         assert!(
-            workflow_param_desc.contains("WAS TRUE")
-                || workflow_param_desc.contains("was true until"),
-            "transition description should clarify it applies to facts that were true until a date"
+            workflow_param_desc.contains("transition"),
+            "workflow param should list transition as an option"
         );
     }
 
