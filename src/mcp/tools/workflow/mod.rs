@@ -761,7 +761,7 @@ fn maintain_step(
             "workflow": "maintain",
             "step": 3, "total_steps": total,
             "instruction": resolve(wf, "maintain.check", DEFAULT_MAINTAIN_CHECK_INSTRUCTION, &[]),
-            "next_tool": "factbase", "suggested_op": "check",
+            "next_tool": "check_repository",
             "when_done": "Call workflow with workflow='maintain', step=4"
         }),
         4 => serde_json::json!({
@@ -866,7 +866,7 @@ fn refresh_step(
             "workflow": "refresh",
             "step": 2, "total_steps": total,
             "instruction": resolve(wf, "refresh.check", DEFAULT_REFRESH_CHECK_INSTRUCTION, &[("ctx", &ctx)]),
-            "next_tool": "factbase", "suggested_op": "check",
+            "next_tool": "check_repository",
             "when_done": "Call workflow with workflow='refresh', step=3"
         }),
         3 => {
@@ -6520,7 +6520,7 @@ mod tests {
         let step = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf(), None);
         assert_eq!(step["workflow"], "maintain");
         assert_eq!(step["step"], 3);
-        assert_eq!(step["next_tool"], "factbase");
+        assert_eq!(step["next_tool"], "check_repository");
     }
 
     #[test]
@@ -6805,9 +6805,13 @@ mod tests {
     #[test]
     fn test_maintain_runs_check_only_at_step_3() {
         let (db, _tmp) = test_db();
-        // Step 3 should suggest check
+        // Step 3 should use check_repository
         let step3 = maintain_step(3, &serde_json::json!({}), &None, 0, &db, &wf(), None);
-        assert_eq!(step3["suggested_op"], "check");
+        assert_eq!(step3["next_tool"], "check_repository");
+        assert!(
+            step3.get("suggested_op").is_none(),
+            "maintain step 3 should not have suggested_op"
+        );
 
         // No other maintain step should suggest check
         for s in [1, 2, 4, 5, 6, 7] {
