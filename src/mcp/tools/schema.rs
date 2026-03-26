@@ -145,6 +145,8 @@ fn workflow_schema(repo_path: Option<&Path>) -> Value {
                 "topic": { "type": "string", "description": "For add: what to research (triggers ingest mode)" },
                 "doc_type": { "type": "string", "description": "For add/refresh/resolve: document type to focus on" },
                 "doc_id": { "type": "string", "description": "For add: document ID to improve. For refresh: specific document to refresh." },
+                "mode": { "type": "string", "description": "For refresh: 'exhaustive' to loop all KB entities by attention_score instead of reading data_sources. Default: source-driven (reads data_sources for last N days)." },
+                "days": { "type": "integer", "description": "For refresh source-driven mode: how many days back to pull from data_sources (default: 7)." },
                 "correction": { "type": "string", "description": "For correct: free text describing what is wrong and what the true fact is." },
                 "change": { "type": "string", "description": "For transition: what changed — free text (e.g. 'Acme Corp rebranded to NewCo as of today')." },
                 "effective_date": { "type": "string", "description": "For transition: when the change happened (ISO date). Defaults to today if omitted." },
@@ -500,6 +502,19 @@ mod tests {
         assert!(values.contains(&"research_batch"));
     }
 
+    #[test]
+    fn test_workflow_schema_has_mode_and_days_params() {
+        let result = tools_list();
+        let tools = result["tools"].as_array().unwrap();
+        let wf = tools.iter().find(|t| t["name"] == "workflow").unwrap();
+        let props = &wf["inputSchema"]["properties"];
+        let mode = props.get("mode").expect("workflow schema should have mode param");
+        assert!(mode["type"].as_str().unwrap() == "string");
+        assert!(mode["description"].as_str().unwrap().contains("exhaustive"));
+        let days = props.get("days").expect("workflow schema should have days param");
+        assert!(days["type"].as_str().unwrap() == "integer");
+        assert!(days["description"].as_str().unwrap().contains("days"));
+    }
     #[test]
     fn test_workflow_description_is_compact() {
         let result = tools_list();
