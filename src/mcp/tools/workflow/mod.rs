@@ -194,7 +194,7 @@ pub fn workflow(db: &Database, args: &Value) -> Result<Value, FactbaseError> {
                 {"name": "create", "description": "Build a new KB from scratch. Guides you through: directory init, perspective.yaml config, first example documents, scan, verify. Params: domain, entity_types, path."},
                 {"name": "add", "description": "Add content to an existing KB. With topic='X': research and create new docs for that topic. With doc_id='X': improve that specific document end-to-end. With neither: scan for gaps and enrich lowest-quality docs."},
                 {"name": "maintain", "description": "Quality maintenance pass (no external research). Steps: scan, detect links, check quality, suggest links, organize analysis, resolve questions, report. Params: doc_id (to scope to one document)."},
-                {"name": "refresh", "description": "Research-enabled update pass. Steps: scan, check, research entities for new info, cleanup scan, resolve questions, report. Use when facts may be stale or new developments exist. Params: doc_type (scope to one entity type), doc_id (scope to one entity), repo (scope to one repository or folder prefix)."},
+                {"name": "refresh", "description": "Research-enabled update pass. Default (source-driven): reads data_sources from perspective.yaml and queries for new content from the last 7 days — auto-creates new entities, updates existing ones. Pass mode='exhaustive' to loop through all KB entities by attention_score instead. Pass days=N to change the time window. Params: mode ('exhaustive' for entity-driven), days (default 7), doc_type, doc_id, repo."},
                 {"name": "correct", "description": "Propagate a fact correction across all KB documents. Finds every document containing the false claim and fixes them with an audit trail. Use when something was always wrong. Params: correction, source."},
                 {"name": "transition", "description": "Handle a real-world change to an entity (rename, acquisition, role change). Unlike correct, the old value WAS true until the change date. Params: change, effective_date, source."},
                 {"name": "resolve", "description": "Answer pending review queue questions, apply answers to documents, verify. Can filter by question_type. Use maintain for a full maintenance pass instead."},
@@ -870,57 +870,129 @@ fn refresh_step(
             "when_done": "Call workflow with workflow='refresh', step=3"
         }),
         3 => {
-            // Build entity list for research, filtered by args
-            let doc_type = get_str_arg(args, "doc_type");
-            let doc_id = get_str_arg(args, "doc_id");
-            let repo = get_str_arg(args, "repo");
+            // Branch on mode: default is source-driven, mode='exhaustive' is entity-driven
+            let mode = get_str_arg(args, "mode").unwrap_or("source");
+            let days = get_u64_arg(args, "days", 7);
+            let days_str = days.to_string();
 
-            // Single-entity mode: no pagination needed
-            if let Some(id) = doc_id {
-                let quality = entity_quality(db, id)
-                    .map(|q| Value::Array(vec![q]))
-                    .unwrap_or(Value::Array(vec![]));
-                return serde_json::json!({
+            if mode == "exhaustive" {
+                // Entity-driven mode (existing pagination behavior)
+                let doc_type = get_str_arg(args, "doc_type");
+                let doc_id = get_str_arg(args, "doc_id");
+                let repo = get_str_arg(args, "repo");
+
+                // Single-entity mode: no pagination needed
+                if let Some(id) = doc_id {
+                    let quality = entity_quality(db, id)
+                        .map(|q| Value::Array(vec![q]))
+                        .unwrap_or(Value::Array(vec![]));
+                    return serde_json::json!({
+                        "workflow": "refresh",
+                        "step": 3, "total_steps": total,
+                        "mode": "exhaustive",
+                        "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
+                        "entity_quality": quality,
+                        "continue": false,
+                        "when_done": "Call workflow with workflow='refresh', step=4"
+                    });
+                }
+
+                // Decode resume offset from token
+                let offset: usize = get_str_arg(args, "resume")
+                    .and_then(|t| crate::mcp::tools::helpers::decode_resume_token(t))
+                    .and_then(|v| v["offset"].as_u64())
+                    .map(|n| n as usize)
+                    .unwrap_or(0);
+
+                let (items, has_more) = bulk_quality_paged(db, doc_type, repo, offset);
+                let next_offset = offset + items.len();
+
+                let mut resp = serde_json::json!({
                     "workflow": "refresh",
                     "step": 3, "total_steps": total,
+                    "mode": "exhaustive",
                     "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
-                    "entity_quality": quality,
-                    "continue": false,
-                    "when_done": "Call workflow with workflow='refresh', step=4"
+                    "entity_quality": items,
+                    "note": "Entities sorted by attention_score (highest first) within this batch.",
+                    "continue": has_more,
                 });
-            }
-
-            // Decode resume offset from token
-            let offset: usize = get_str_arg(args, "resume")
-                .and_then(|t| crate::mcp::tools::helpers::decode_resume_token(t))
-                .and_then(|v| v["offset"].as_u64())
-                .map(|n| n as usize)
-                .unwrap_or(0);
-
-            let (items, has_more) = bulk_quality_paged(db, doc_type, repo, offset);
-            let next_offset = offset + items.len();
-
-            let mut resp = serde_json::json!({
-                "workflow": "refresh",
-                "step": 3, "total_steps": total,
-                "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
-                "entity_quality": items,
-                "note": "Entities sorted by attention_score (highest first) within this batch.",
-                "continue": has_more,
-            });
-            if has_more {
-                let token = crate::mcp::tools::helpers::encode_resume_token(
-                    &serde_json::json!({"offset": next_offset}),
-                );
-                resp["resume"] = Value::String(token);
-                resp["when_done"] = Value::String(
-                    "After updating this batch, call workflow(workflow='refresh', step=3, resume=<token>) to continue. Keep going until continue=false.".into()
-                );
+                if has_more {
+                    let token = crate::mcp::tools::helpers::encode_resume_token(
+                        &serde_json::json!({"offset": next_offset}),
+                    );
+                    resp["resume"] = Value::String(token);
+                    resp["when_done"] = Value::String(
+                        "After updating this batch, call workflow(workflow='refresh', step=3, mode='exhaustive', resume=<token>) to continue. Keep going until continue=false.".into()
+                    );
+                } else {
+                    resp["when_done"] =
+                        Value::String("Call workflow with workflow='refresh', step=4".into());
+                }
+                resp
             } else {
-                resp["when_done"] =
-                    Value::String("Call workflow with workflow='refresh', step=4".into());
+                // Source-driven mode (default)
+                // Check if perspective has data_sources configured
+                let has_data_sources = perspective
+                    .as_ref()
+                    .and_then(|p| p.data_sources.as_ref())
+                    .map(|ds| match ds {
+                        serde_json::Value::Array(arr) => !arr.is_empty(),
+                        serde_json::Value::Null => false,
+                        _ => true,
+                    })
+                    .unwrap_or(false);
+
+                if !has_data_sources {
+                    // Fallback to entity-driven with note
+                    let doc_type = get_str_arg(args, "doc_type");
+                    let repo = get_str_arg(args, "repo");
+                    let offset: usize = get_str_arg(args, "resume")
+                        .and_then(|t| crate::mcp::tools::helpers::decode_resume_token(t))
+                        .and_then(|v| v["offset"].as_u64())
+                        .map(|n| n as usize)
+                        .unwrap_or(0);
+
+                    let (items, has_more) = bulk_quality_paged(db, doc_type, repo, offset);
+                    let next_offset = offset + items.len();
+
+                    let fallback_note = resolve(wf, "refresh.no_data_sources_fallback", NO_DATA_SOURCES_FALLBACK, &[]);
+                    let mut resp = serde_json::json!({
+                        "workflow": "refresh",
+                        "step": 3, "total_steps": total,
+                        "mode": "entity-driven (fallback)",
+                        "fallback_reason": fallback_note,
+                        "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
+                        "entity_quality": items,
+                        "note": "No data_sources configured — using entity-driven mode. Add data_sources to perspective.yaml to enable source-driven refresh.",
+                        "continue": has_more,
+                    });
+                    if has_more {
+                        let token = crate::mcp::tools::helpers::encode_resume_token(
+                            &serde_json::json!({"offset": next_offset}),
+                        );
+                        resp["resume"] = Value::String(token);
+                        resp["when_done"] = Value::String(
+                            "After updating this batch, call workflow(workflow='refresh', step=3, resume=<token>) to continue. Keep going until continue=false.".into()
+                        );
+                    } else {
+                        resp["when_done"] =
+                            Value::String("Call workflow with workflow='refresh', step=4".into());
+                    }
+                    return resp;
+                }
+
+                // Source-driven: return instruction to query data sources
+                serde_json::json!({
+                    "workflow": "refresh",
+                    "step": 3, "total_steps": total,
+                    "mode": "source-driven",
+                    "days": days,
+                    "instruction": resolve(wf, "refresh.source_driven", DEFAULT_REFRESH_SOURCE_DRIVEN_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES), ("days", &days_str), ("entity_create_rules", ENTITY_CREATE_RULES)]),
+                    "next_tool": "factbase", "suggested_op": "perspective",
+                    "continue": false,
+                    "when_done": "After processing all source content, call workflow with workflow='refresh', step=4"
+                })
             }
-            resp
         }
         4 => serde_json::json!({
             "workflow": "refresh",
@@ -6992,6 +7064,184 @@ mod tests {
             desc.contains("stale") || desc.contains("update"),
             "refresh list description should describe its use case"
         );
+    }
+
+    #[test]
+    fn test_refresh_list_description_mentions_both_modes() {
+        let (db, _tmp) = test_db();
+        let args = serde_json::json!({"workflow": "list"});
+        let result = workflow(&db, &args).unwrap();
+        let workflows = result["workflows"].as_array().unwrap();
+        let refresh = workflows.iter().find(|w| w["name"] == "refresh").unwrap();
+        let desc = refresh["description"].as_str().unwrap();
+        assert!(
+            desc.contains("source-driven") || desc.contains("data_sources"),
+            "refresh description should mention source-driven mode"
+        );
+        assert!(
+            desc.contains("exhaustive"),
+            "refresh description should mention exhaustive mode"
+        );
+        assert!(
+            desc.contains("days"),
+            "refresh description should mention days param"
+        );
+    }
+
+    #[test]
+    fn test_refresh_step3_default_is_source_driven_no_data_sources_fallback() {
+        // No perspective → no data_sources → fallback to entity-driven
+        let (db, _tmp) = test_db();
+        let step = refresh_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["workflow"], "refresh");
+        assert_eq!(step["step"], 3);
+        // Should fall back to entity-driven since no data_sources
+        let mode = step["mode"].as_str().unwrap_or("");
+        assert!(
+            mode.contains("fallback") || mode.contains("entity"),
+            "no data_sources should fall back to entity-driven: {mode}"
+        );
+        assert!(
+            step.get("fallback_reason").is_some(),
+            "fallback should include reason"
+        );
+    }
+
+    #[test]
+    fn test_refresh_step3_source_driven_with_data_sources() {
+        let (db, _tmp) = test_db();
+        let perspective = Some(Perspective {
+            data_sources: Some(serde_json::json!([
+                {"type": "web", "description": "Public web research"}
+            ])),
+            ..Default::default()
+        });
+        let step = refresh_step(3, &serde_json::json!({}), &perspective, 0, &db, &wf());
+        assert_eq!(step["mode"], "source-driven");
+        assert_eq!(step["days"], 7);
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("data_sources") || instr.contains("source"));
+        assert_eq!(step["next_tool"], "factbase");
+        assert_eq!(step["suggested_op"], "perspective");
+        assert_eq!(step["continue"], false);
+        assert!(step["when_done"].as_str().unwrap().contains("step=4"));
+    }
+
+    #[test]
+    fn test_refresh_step3_source_driven_custom_days() {
+        let (db, _tmp) = test_db();
+        let perspective = Some(Perspective {
+            data_sources: Some(serde_json::json!([{"type": "web"}])),
+            ..Default::default()
+        });
+        let step = refresh_step(
+            3,
+            &serde_json::json!({"days": 14}),
+            &perspective,
+            0,
+            &db,
+            &wf(),
+        );
+        assert_eq!(step["mode"], "source-driven");
+        assert_eq!(step["days"], 14);
+        let instr = step["instruction"].as_str().unwrap();
+        assert!(instr.contains("14"), "instruction should mention the days value");
+    }
+
+    #[test]
+    fn test_refresh_step3_exhaustive_mode_entity_driven() {
+        use crate::database::tests::{test_doc_with_repo, test_repo_in_db};
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "r1", std::path::Path::new("/tmp/r1"));
+        for i in 0..5usize {
+            let doc = test_doc_with_repo(&format!("d{i:03}"), "r1", &format!("Doc {i:03}"));
+            db.upsert_document(&doc).unwrap();
+        }
+        let step = refresh_step(
+            3,
+            &serde_json::json!({"mode": "exhaustive"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
+        assert_eq!(step["mode"], "exhaustive");
+        assert!(
+            step.get("entity_quality").is_some(),
+            "exhaustive mode should include entity_quality"
+        );
+    }
+
+    #[test]
+    fn test_refresh_step3_exhaustive_mode_pagination() {
+        use crate::database::tests::{test_doc_with_repo, test_repo_in_db};
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "r1", std::path::Path::new("/tmp/r1"));
+        for i in 0..25usize {
+            let doc = test_doc_with_repo(&format!("d{i:03}"), "r1", &format!("Doc {i:03}"));
+            db.upsert_document(&doc).unwrap();
+        }
+        let step = refresh_step(
+            3,
+            &serde_json::json!({"mode": "exhaustive"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
+        assert_eq!(step["mode"], "exhaustive");
+        assert_eq!(step["continue"], true);
+        assert!(step.get("resume").is_some());
+        let when_done = step["when_done"].as_str().unwrap();
+        assert!(when_done.contains("exhaustive"), "resume hint should include mode=exhaustive");
+    }
+
+    #[test]
+    fn test_bulk_quality_excludes_archived_docs() {
+        use crate::database::tests::test_repo_in_db;
+        use crate::models::Document;
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "test-repo", std::path::Path::new("/tmp/test"));
+        // Normal doc
+        db.upsert_document(&Document {
+            id: "normal01".to_string(),
+            content: "# Normal\n\n- Fact".to_string(),
+            title: "Normal".to_string(),
+            file_path: "people/normal.md".to_string(),
+            ..Document::test_default()
+        })
+        .unwrap();
+        // Archived doc
+        db.upsert_document(&Document {
+            id: "arch01".to_string(),
+            content: "# Archived\n\n- Old fact".to_string(),
+            title: "Archived".to_string(),
+            file_path: "people/archive/old.md".to_string(),
+            ..Document::test_default()
+        })
+        .unwrap();
+        // Top-level archive
+        db.upsert_document(&Document {
+            id: "arch02".to_string(),
+            content: "# Also Archived\n\n- Old fact".to_string(),
+            title: "Also Archived".to_string(),
+            file_path: "archive/very-old.md".to_string(),
+            ..Document::test_default()
+        })
+        .unwrap();
+
+        let quality = bulk_quality(&db, None, None);
+        let items = quality.as_array().unwrap();
+        assert_eq!(items.len(), 1, "bulk_quality should exclude archived docs");
+        assert_eq!(items[0]["id"], "normal01");
+    }
+
+    #[test]
+    fn test_is_archived_path() {
+        assert!(is_archived_path("people/archive/old.md"));
+        assert!(is_archived_path("archive/very-old.md"));
+        assert!(!is_archived_path("people/alice.md"));
+        assert!(!is_archived_path("archived-projects/foo.md")); // not /archive/ prefix
     }
 
     // --- Legacy alias tests ---

@@ -701,6 +701,7 @@ pub(super) fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&
     let mut items: Vec<Value> = docs
         .iter()
         .filter(|doc| !crate::patterns::is_reference_doc(&doc.content))
+        .filter(|doc| !is_archived_path(&doc.file_path))
         .map(|doc| {
             let empty = (Vec::new(), Vec::new());
             let (outgoing, incoming) = links_map.get(&doc.id).unwrap_or(&empty);
@@ -732,6 +733,12 @@ pub(super) fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&
         sb.cmp(&sa)
     });
     Value::Array(items)
+}
+
+/// Returns true if the file path is under an archive directory.
+/// Mirrors the `is_archived` logic in `question_generator/check.rs`.
+pub(super) fn is_archived_path(file_path: &str) -> bool {
+    file_path.contains("/archive/") || file_path.starts_with("archive/")
 }
 
 const REFRESH_PAGE_SIZE: usize = 20;
@@ -766,6 +773,7 @@ pub(super) fn bulk_quality_paged(
     let mut items: Vec<Value> = docs
         .iter()
         .filter(|doc| !crate::patterns::is_reference_doc(&doc.content))
+        .filter(|doc| !is_archived_path(&doc.file_path))
         .map(|doc| {
             let empty = (Vec::new(), Vec::new());
             let (outgoing, incoming) = links_map.get(&doc.id).unwrap_or(&empty);

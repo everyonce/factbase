@@ -289,6 +289,57 @@ pub(crate) const DEFAULT_REFRESH_SCAN_INSTRUCTION: &str = "Re-index the factbase
 
 pub(crate) const DEFAULT_REFRESH_CHECK_INSTRUCTION: &str = "Run quality checks to identify stale facts and other issues.\n\n1. Call factbase(op='check') (one call — no paging needed).\n2. Record: questions_total, breakdown by type\n3. Pay special attention to stale questions — these are the primary targets for refresh";
 
+/// Shared entity creation rules injected via `{entity_create_rules}` into source-driven refresh
+/// and ingest create instructions. Keeps entity creation logic consistent across both workflows.
+pub(crate) const ENTITY_CREATE_RULES: &str = "\
+Entity creation rules:\n\
+- Place in typed folders matching allowed_types from perspective.yaml (e.g., species/, events/, definitions/)\n\
+- First # Heading = document title\n\
+- Use exact entity names matching other document titles for cross-linking\n\
+- Never modify <!-- factbase:XXXXXX --> headers\n\
+- Entity discovery: if you find an entity that fits the KB's allowed types and is mentioned across multiple documents or is significant enough to warrant its own entry, create a new document for it\n\
+- For entities external to your domain (well-known products, standards, organizations you reference but don't track in depth), add `<!-- factbase:reference -->` after the factbase ID header\n\
+- ⚠️ NEW ENTITY TYPE: If you see a pattern suggesting a new entity TYPE not in allowed_types (multiple entries that don't fit any existing type), surface it to the user BEFORE creating: \"Found multiple entries suggesting a new type '[type-name]' — add it to allowed_types in perspective.yaml?\" Wait for confirmation before proceeding.";
+
+/// Fallback message when no data_sources are configured in perspective.yaml.
+pub(crate) const NO_DATA_SOURCES_FALLBACK: &str = "\
+No `data_sources` configured in perspective.yaml — falling back to entity-driven refresh.\n\
+To use source-driven mode (the default), add `data_sources` to perspective.yaml. Example:\n\
+```yaml\n\
+data_sources:\n\
+  - type: web\n\
+    description: Public web research sufficient\n\
+  - type: local_files\n\
+    path: /path/to/files\n\
+    description: What these files contain\n\
+```\n\
+See workflow(create, step=4) for the full data_sources schema.\n\n\
+Falling back to entity-driven mode: researching existing entities for updates.";
+
+pub(crate) const DEFAULT_REFRESH_SOURCE_DRIVEN_INSTRUCTION: &str = "\
+Research new content from your configured data sources and update the KB.\n\
+Time window: last {days} days (pass days=N to change).\n\n\
+**Step 1: Read data sources**\n\
+Call factbase(op='perspective') to get the `data_sources` configuration.\n\n\
+**Step 2: Query each source for recent content**\n\
+For each source in data_sources:\n\
+- `type: web` — search for recent news/updates relevant to the KB's focus\n\
+- `type: local_files` — read files modified in the last {days} days at the given path\n\
+- `type: slack` — search the configured channels for messages from the last {days} days\n\
+- `type: manual` — ask the user: \"Any new content to add from [source description]?\"\n\n\
+**Step 3: For each content chunk, classify and act**\n\
+For each piece of content found:\n\
+1. Call search(query='...') to check if it matches an existing entity\n\
+2. If it describes a **new entity** in scope → create it using factbase(op='create')\n\
+3. If it contains **new facts for an existing entity** → update with factbase(op='update')\n\
+4. If it's not relevant to the KB's focus → skip\n\n\
+{entity_create_rules}\n\n\
+**Step 4: Source and temporal tags**\n\
+Every new or updated fact MUST have:\n\
+- A source footnote citing where you found it (URL, file path, channel+date, etc.)\n\
+- A temporal tag: @t[=YYYY-MM] for the date found, or @t[~YYYY] if approximate\n\n\
+Work through all sources systematically. After processing all content, call workflow(workflow='refresh', step=4).{ctx}{format_rules}";
+
 pub(crate) const DEFAULT_REFRESH_RESEARCH_INSTRUCTION: &str = "Research and update entities with latest information.\n\nFor each entity that needs refreshing (prioritize stale facts, then low temporal/source coverage):\n\n1. Call factbase(op='get_entity') to read the current document\n2. Use your available tools (web search, local search, etc.) to find the latest information about this entity\n3. Compare findings with existing facts:\n   - Facts that changed: update the fact text, add new @t[...] tag with current date, update source footnote\n   - Facts confirmed current: update the @t[~YYYY-MM] tag to show when last verified, update source\n   - New facts discovered: add with @t[...] tag and source footnote\n   - Entities discovered during research: create new documents if they fit the KB's allowed types\n4. Call factbase(op='update') with the modified content\n\nWork through entities systematically. After updating each entity, move to the next.\n\n💡 SCOPING: You can limit this step to a subset of entities by passing parameters to the workflow call:\n   - doc_type='X'  — only entities of that type (e.g. doc_type='person')\n   - repo='X'      — only entities in that repository or folder prefix\n   - Both together — e.g. workflow(refresh, step=3, doc_type='person', repo='healthstream')\n\n⚠️ SOURCE REQUIREMENT: Every update MUST cite a specific, verifiable source. Do not update facts without evidence.{ctx}{format_rules}";
 
 pub(crate) const DEFAULT_REFRESH_RESOLVE_INSTRUCTION: &str = "Resolve any review questions generated during the refresh.\n\n1. Call workflow(workflow='resolve', step=1) to see the queue distribution\n2. Process questions using the resolve workflow (step=2 loop)\n3. Apply answers and verify\n\nSince you just researched these entities, you should be able to answer most questions from your recent findings.{ctx}";
