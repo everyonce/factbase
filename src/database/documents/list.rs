@@ -110,6 +110,17 @@ impl Database {
         title_filter: Option<&str>,
         limit: usize,
     ) -> Result<Vec<Document>, FactbaseError> {
+        self.list_documents_paged(doc_type, repo_id, title_filter, limit, 0)
+    }
+
+    pub fn list_documents_paged(
+        &self,
+        doc_type: Option<&str>,
+        repo_id: Option<&str>,
+        title_filter: Option<&str>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<Document>, FactbaseError> {
         let conn = self.get_conn()?;
         let mut sql = format!(
             "SELECT {DOCUMENT_COLUMNS}
@@ -129,7 +140,7 @@ impl Database {
             write_str!(sql, " AND title LIKE ?{}", param_idx);
         }
 
-        write_str!(sql, " ORDER BY title LIMIT {}", limit);
+        write_str!(sql, " ORDER BY title LIMIT {} OFFSET {}", limit, offset);
 
         let mut stmt = conn.prepare_cached(&sql)?;
         let mut results = Vec::with_capacity(limit);

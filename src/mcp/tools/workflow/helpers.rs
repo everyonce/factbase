@@ -734,6 +734,71 @@ pub(super) fn bulk_quality(db: &Database, doc_type: Option<&str>, repo: Option<&
     Value::Array(items)
 }
 
+const REFRESH_PAGE_SIZE: usize = 20;
+
+/// Paged variant of bulk_quality for refresh step 3.
+/// Returns (items, has_more, next_offset).
+pub(super) fn bulk_quality_paged(
+    db: &Database,
+    doc_type: Option<&str>,
+    repo: Option<&str>,
+    offset: usize,
+) -> (Vec<Value>, bool) {
+    // Fetch one extra to detect if more pages remain
+    let fetch = REFRESH_PAGE_SIZE + 1;
+    let docs = match db.list_documents_paged(doc_type, repo, None, fetch, offset) {
+        Ok(d) => d,
+        Err(_) => return (Vec::new(), false),
+    };
+    let has_more = docs.len() == fetch;
+    let docs = if has_more {
+        &docs[..REFRESH_PAGE_SIZE]
+    } else {
+        &docs[..]
+    };
+
+    if docs.is_empty() {
+        return (Vec::new(), false);
+    }
+    let doc_ids: Vec<&str> = docs.iter().map(|d| d.id.as_str()).collect();
+    let links_map = db.get_links_for_documents(&doc_ids).unwrap_or_default();
+
+    let mut items: Vec<Value> = docs
+        .iter()
+        .filter(|doc| !crate::patterns::is_reference_doc(&doc.content))
+        .map(|doc| {
+            let empty = (Vec::new(), Vec::new());
+            let (outgoing, incoming) = links_map.get(&doc.id).unwrap_or(&empty);
+            let mut stats = build_quality_stats(&doc.content, outgoing.len(), incoming.len());
+            let obj = stats.as_object_mut().unwrap();
+            obj.insert("id".into(), Value::String(doc.id.clone()));
+            obj.insert("title".into(), Value::String(doc.title.clone()));
+            if let Some(ref t) = doc.doc_type {
+                obj.insert("type".into(), Value::String(t.clone()));
+            }
+            let contexts: Vec<&str> = incoming
+                .iter()
+                .filter_map(|l| l.context.as_deref())
+                .filter(|c| !c.is_empty())
+                .collect();
+            if let Some(suggested) = detect_weak_identification(&doc.title, &doc.content, &contexts)
+            {
+                obj.insert("weak_identification".into(), Value::String(suggested));
+                let score = obj["attention_score"].as_u64().unwrap_or(0);
+                obj.insert("attention_score".into(), Value::Number((score + 3).into()));
+            }
+            stats
+        })
+        .collect();
+
+    items.sort_by(|a, b| {
+        let sa = a["attention_score"].as_u64().unwrap_or(0);
+        let sb = b["attention_score"].as_u64().unwrap_or(0);
+        sb.cmp(&sa)
+    });
+    (items, has_more)
+}
+
 /// Parse the `skip` parameter into a list of step names to skip.
 pub(super) fn parse_skip_steps(args: &Value) -> Vec<String> {
     if let Some(arr) = args.get("skip").and_then(|v| v.as_array()) {

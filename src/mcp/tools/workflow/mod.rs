@@ -874,21 +874,53 @@ fn refresh_step(
             let doc_type = get_str_arg(args, "doc_type");
             let doc_id = get_str_arg(args, "doc_id");
             let repo = get_str_arg(args, "repo");
-            let quality = if let Some(id) = doc_id {
-                entity_quality(db, id)
+
+            // Single-entity mode: no pagination needed
+            if let Some(id) = doc_id {
+                let quality = entity_quality(db, id)
                     .map(|q| Value::Array(vec![q]))
-                    .unwrap_or(Value::Array(vec![]))
-            } else {
-                bulk_quality(db, doc_type, repo)
-            };
-            serde_json::json!({
+                    .unwrap_or(Value::Array(vec![]));
+                return serde_json::json!({
+                    "workflow": "refresh",
+                    "step": 3, "total_steps": total,
+                    "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
+                    "entity_quality": quality,
+                    "continue": false,
+                    "when_done": "Call workflow with workflow='refresh', step=4"
+                });
+            }
+
+            // Decode resume offset from token
+            let offset: usize = get_str_arg(args, "resume")
+                .and_then(|t| crate::mcp::tools::helpers::decode_resume_token(t))
+                .and_then(|v| v["offset"].as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(0);
+
+            let (items, has_more) = bulk_quality_paged(db, doc_type, repo, offset);
+            let next_offset = offset + items.len();
+
+            let mut resp = serde_json::json!({
                 "workflow": "refresh",
                 "step": 3, "total_steps": total,
                 "instruction": resolve(wf, "refresh.research", DEFAULT_REFRESH_RESEARCH_INSTRUCTION, &[("ctx", &ctx), ("format_rules", FORMAT_RULES)]),
-                "entity_quality": quality,
-                "note": "Entities sorted by attention_score (highest first). Focus on stale and low-coverage entities.",
-                "when_done": "Call workflow with workflow='refresh', step=4"
-            })
+                "entity_quality": items,
+                "note": "Entities sorted by attention_score (highest first) within this batch.",
+                "continue": has_more,
+            });
+            if has_more {
+                let token = crate::mcp::tools::helpers::encode_resume_token(
+                    &serde_json::json!({"offset": next_offset}),
+                );
+                resp["resume"] = Value::String(token);
+                resp["when_done"] = Value::String(
+                    "After updating this batch, call workflow(workflow='refresh', step=3, resume=<token>) to continue. Keep going until continue=false.".into()
+                );
+            } else {
+                resp["when_done"] =
+                    Value::String("Call workflow with workflow='refresh', step=4".into());
+            }
+            resp
         }
         4 => serde_json::json!({
             "workflow": "refresh",
@@ -6817,6 +6849,73 @@ mod tests {
         assert_eq!(step["workflow"], "refresh");
         assert_eq!(step["step"], 3);
         assert!(step.get("entity_quality").is_some());
+        // Empty DB → continue=false, no resume token
+        assert_eq!(step["continue"], false);
+        assert!(step.get("resume").is_none());
+        assert!(step["when_done"].as_str().unwrap().contains("step=4"));
+    }
+
+    #[test]
+    fn test_refresh_step3_pagination_continue_true() {
+        use crate::database::tests::{test_doc_with_repo, test_repo_in_db};
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "r1", std::path::Path::new("/tmp/r1"));
+        // Insert more than REFRESH_PAGE_SIZE (20) docs
+        for i in 0..25usize {
+            let doc = test_doc_with_repo(&format!("d{i:03}"), "r1", &format!("Doc {i:03}"));
+            db.upsert_document(&doc).unwrap();
+        }
+        let step = refresh_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        assert_eq!(step["continue"], true);
+        assert!(step.get("resume").is_some());
+        let items = step["entity_quality"].as_array().unwrap();
+        assert_eq!(items.len(), 20);
+        assert!(step["when_done"].as_str().unwrap().contains("resume="));
+    }
+
+    #[test]
+    fn test_refresh_step3_pagination_resume_last_page() {
+        use crate::database::tests::{test_doc_with_repo, test_repo_in_db};
+        let (db, _tmp) = test_db();
+        test_repo_in_db(&db, "r1", std::path::Path::new("/tmp/r1"));
+        for i in 0..25usize {
+            let doc = test_doc_with_repo(&format!("d{i:03}"), "r1", &format!("Doc {i:03}"));
+            db.upsert_document(&doc).unwrap();
+        }
+        // Get first page to obtain resume token
+        let page1 = refresh_step(3, &serde_json::json!({}), &None, 0, &db, &wf());
+        let token = page1["resume"].as_str().unwrap();
+        // Resume to get second (last) page
+        let page2 = refresh_step(
+            3,
+            &serde_json::json!({"resume": token}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
+        assert_eq!(page2["continue"], false);
+        assert!(page2.get("resume").is_none());
+        let items = page2["entity_quality"].as_array().unwrap();
+        assert_eq!(items.len(), 5);
+        assert!(page2["when_done"].as_str().unwrap().contains("step=4"));
+    }
+
+    #[test]
+    fn test_refresh_step3_doc_id_no_pagination() {
+        let (db, _tmp) = test_db();
+        insert_test_doc(&db, "e001", "# Entity\n\n- Fact @t[2024-01]");
+        let step = refresh_step(
+            3,
+            &serde_json::json!({"doc_id": "e001"}),
+            &None,
+            0,
+            &db,
+            &wf(),
+        );
+        assert_eq!(step["continue"], false);
+        assert!(step.get("resume").is_none());
+        assert!(step["when_done"].as_str().unwrap().contains("step=4"));
     }
 
     #[test]
